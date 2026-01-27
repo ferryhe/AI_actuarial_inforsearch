@@ -1,0 +1,9 @@
+[project]
+name = "ai_actuarial_inforsearch"
+version = "0.1.0"
+description = "Actuarial AI article/file discovery and archiving tool"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+ai-actuarial = "ai_actuarial.cli:main"
