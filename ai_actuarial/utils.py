@@ -124,6 +124,8 @@ def normalize_url(base: str, link: str) -> str | None:
     if not link:
         return None
     link = link.strip()
+    if not link:
+        return None
     if link.startswith("mailto:") or link.startswith("javascript:"):
         return None
     return urljoin(base, link)

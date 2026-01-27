@@ -8,7 +8,6 @@ import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import urlparse
 
 from .storage import Storage
