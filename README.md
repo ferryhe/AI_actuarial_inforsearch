@@ -18,6 +18,7 @@ python -m ai_actuarial update
 - Index database: `data/index.db`
 - Last run new files: `data/last_run_new.json`
 - Export: `python -m ai_actuarial export --format md --output data/files.md`
+- Timestamped updates: `data/updates/update_YYYYMMDD_HHMMSSZ.(json|md)`
 
 Downloaded files keep their original filenames. If a name conflicts, a suffix
 like `_1`, `_2` is appended.

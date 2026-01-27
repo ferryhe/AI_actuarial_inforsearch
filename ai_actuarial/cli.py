@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -109,6 +110,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             all_new.extend(items)
 
     storage.write_last_run(cfg["paths"]["last_run_new"], all_new)
+    _write_timestamped_updates(cfg, all_new)
     storage.close()
 
     print(f"New files: {len(all_new)}")
@@ -240,6 +242,17 @@ def _write_markdown(path: Path, rows: list[dict]) -> None:
             ]
             safe = [v.replace("|", " ") for v in values]
             f.write("| " + " | ".join(safe) + " |\n")
+
+
+def _write_timestamped_updates(cfg: dict, rows: list[dict]) -> None:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    updates_dir = cfg.get("paths", {}).get("updates_dir", "data/updates")
+    out_json = Path(updates_dir) / f"update_{ts}.json"
+    out_md = Path(updates_dir) / f"update_{ts}.md"
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+    _write_markdown(out_md, rows)
 
 
 if __name__ == "__main__":
