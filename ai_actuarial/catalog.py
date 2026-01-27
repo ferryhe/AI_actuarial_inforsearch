@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
 import os
+import re
+import json
+import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 from .storage import Storage
 
+# ---------------------------------------------------------------------------
+# Catalog rules / keywords
+# ---------------------------------------------------------------------------
 
 AI_TERMS = [
     "artificial intelligence",
@@ -163,6 +168,10 @@ CATEGORY_RULES: dict[str, list[str]] = {
 
 _KEYBERT_MODEL = None
 
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
 
 @dataclass
 class CatalogItem:
@@ -176,42 +185,249 @@ class CatalogItem:
     category: str
 
 
-def _read_pdf(path: Path, max_chars: int) -> str:
+# ---------------------------------------------------------------------------
+# Text extraction (fast path + optional marker fallback) + lightweight caching
+# ---------------------------------------------------------------------------
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?])\s+")
+
+
+def _trim_semantic(text: str, max_chars: int) -> str:
+    """Trim without chopping in the middle of a sentence when possible."""
+    if not text:
+        return ""
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+
+    chunk = text[:max_chars]
+    parts = _SENTENCE_SPLIT.split(chunk.strip())
+    if len(parts) <= 1:
+        return chunk.rstrip()
+
+    # drop last potentially incomplete sentence
+    trimmed = " ".join(parts[:-1]).rstrip()
+    return trimmed if trimmed else chunk.rstrip()
+
+
+def _looks_bad(text: str) -> bool:
+    """Heuristic: detect failed/low-quality extraction (esp. scanned PDFs)."""
+    if not text:
+        return True
+    if len(text) < 800:
+        return True
+    # Too many control chars often indicates extraction noise
+    weird = sum(1 for c in text if ord(c) < 9 or (11 <= ord(c) < 32))
+    if weird / max(len(text), 1) > 0.02:
+        return True
+    # Lots of repeated blank lines
+    if text.count("\n\n\n") > 5:
+        return True
+    return False
+
+
+def _cache_dir() -> Path:
+    # Default under project root; override if you want
+    base = os.getenv("CATALOG_CACHE_DIR", ".cache/catalog_extract")
+    p = Path(base)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _cache_key(path: Path, max_chars: int, extractor_version: str) -> str:
+    # Keyed by absolute path + size + mtime + max_chars + extractor version
+    try:
+        st = path.stat()
+        payload = f"{path.resolve()}|{st.st_size}|{int(st.st_mtime)}|{max_chars}|{extractor_version}"
+    except Exception:
+        payload = f"{path}|{max_chars}|{extractor_version}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _read_cache(path: Path, key: str) -> str | None:
+    fp = _cache_dir() / f"{key}.json"
+    if not fp.exists():
+        return None
+    try:
+        obj = json.loads(fp.read_text(encoding="utf-8"))
+        return obj.get("text") or None
+    except Exception:
+        return None
+
+
+def _write_cache(key: str, text: str) -> None:
+    fp = _cache_dir() / f"{key}.json"
+    try:
+        fp.write_text(
+            json.dumps(
+                {
+                    "text": text,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Cache is best-effort
+        pass
+
+
+def _read_pdf_fast(path: Path, max_chars: int, max_pages: int = 20) -> str:
     from pypdf import PdfReader
 
-    text_parts: list[str] = []
     reader = PdfReader(str(path))
-    for page in reader.pages[:10]:
-        page_text = page.extract_text() or ""
-        text_parts.append(page_text)
-        if sum(len(t) for t in text_parts) >= max_chars:
+    out: list[str] = []
+    used = 0
+
+    for i, page in enumerate(reader.pages[:max_pages], start=1):
+        t = page.extract_text() or ""
+        t = re.sub(r"\n{3,}", "\n\n", t).strip()
+        if not t:
+            continue
+        block = f"[p{i}]\n{t}\n"
+        out.append(block)
+        used += len(block)
+        if used >= max_chars:
             break
-    return "\n".join(text_parts)[:max_chars]
+
+    return _trim_semantic("\n".join(out), max_chars)
+
+
+def _read_pdf_marker(path: Path, max_chars: int) -> str:
+    """Slow path: use marker-pdf to get cleaner markdown, then flatten to text.
+
+    Enable via env:
+      PDF_USE_MARKER=1
+
+    Note: marker API can differ by version; this function tries a couple patterns.
+    """
+    md: str | None = None
+
+    # Try common marker entry points (best-effort)
+    try:
+        # marker>=? sometimes exposes PdfConverter like this
+        from marker.converters.pdf import PdfConverter  # type: ignore
+
+        converter = PdfConverter()
+        md = converter.convert(str(path))  # type: ignore
+    except Exception:
+        md = None
+
+    if md is None:
+        try:
+            # Some installs may provide a simple convert function
+            from marker import convert  # type: ignore
+
+            md = convert(str(path))  # type: ignore
+        except Exception as e:
+            raise RuntimeError("marker convert not available") from e
+
+    # Flatten markdown -> plain text for keyword/category stage
+    md = re.sub(r"`{3}.*?`{3}", " ", md, flags=re.S)  # code blocks
+    md = re.sub(r"!\[.*?\]\(.*?\)", " ", md)  # images
+    md = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", md)  # keep link text
+    md = re.sub(r"^[#>\-*_]+\s*", "", md, flags=re.M)  # headings/quotes/bullets
+    text = re.sub(r"\n{3,}", "\n\n", md).strip()
+    return _trim_semantic(text, max_chars)
+
+
+def _read_pdf(path: Path, max_chars: int) -> str:
+    # Extraction version string: changes when you change logic
+    extractor_version = "pdf_v2_fast_plus_marker_fallback"
+    key = _cache_key(path, max_chars, extractor_version)
+    cached = _read_cache(path, key)
+    if cached is not None:
+        return cached
+
+    max_pages = int(os.getenv("PDF_MAX_PAGES", "20"))
+    text = _read_pdf_fast(path, max_chars, max_pages=max_pages)
+
+    if _looks_bad(text) and os.getenv("PDF_USE_MARKER") == "1":
+        try:
+            text = _read_pdf_marker(path, max_chars)
+        except Exception:
+            # keep fast result if marker fails
+            pass
+
+    _write_cache(key, text)
+    return text
 
 
 def _read_docx(path: Path, max_chars: int) -> str:
     import docx
 
+    extractor_version = "docx_v2_para_plus_tables"
+    key = _cache_key(path, max_chars, extractor_version)
+    cached = _read_cache(path, key)
+    if cached is not None:
+        return cached
+
     doc = docx.Document(str(path))
-    text = "\n".join(p.text for p in doc.paragraphs if p.text)
-    return text[:max_chars]
+    parts: list[str] = []
+
+    # Paragraphs
+    for p in doc.paragraphs:
+        t = (p.text or "").strip()
+        if t:
+            parts.append(t)
+
+    # Tables (often critical for business/regulatory docs)
+    if os.getenv("DOCX_TABLES_DISABLE") != "1":
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [(c.text or "").strip() for c in row.cells]
+                if any(cells):
+                    parts.append(" | ".join(" ".join(c.split()) for c in cells))
+
+    text = _trim_semantic("\n".join(parts), max_chars)
+    _write_cache(key, text)
+    return text
 
 
 def _read_pptx(path: Path, max_chars: int) -> str:
     from pptx import Presentation
 
+    extractor_version = "pptx_v2_slide_boundaries"
+    key = _cache_key(path, max_chars, extractor_version)
+    cached = _read_cache(path, key)
+    if cached is not None:
+        return cached
+
     prs = Presentation(str(path))
-    texts: list[str] = []
-    for slide in prs.slides:
+    parts: list[str] = []
+    used = 0
+
+    for s_idx, slide in enumerate(prs.slides, start=1):
+        slide_texts: list[str] = []
         for shape in slide.shapes:
             if hasattr(shape, "text"):
-                texts.append(shape.text)
-        if sum(len(t) for t in texts) >= max_chars:
+                t = (shape.text or "").strip()
+                if t:
+                    slide_texts.append(t)
+
+        if not slide_texts:
+            continue
+
+        block = f"[slide {s_idx}]\n" + "\n".join(slide_texts) + "\n"
+        parts.append(block)
+        used += len(block)
+        if used >= max_chars:
             break
-    return "\n".join(texts)[:max_chars]
+
+    text = _trim_semantic("\n".join(parts), max_chars)
+    _write_cache(key, text)
+    return text
 
 
 def extract_text(path: Path, max_chars: int = 20000) -> str:
+    """Extract text for lightweight keyword/category + heuristic summary.
+
+    Notes:
+    - This is optimized for speed and robustness, not perfect layout fidelity.
+    - PDF uses fast pypdf extraction, with optional marker fallback when enabled.
+    - Extraction results are cached to avoid repeatedly re-parsing the same file.
+    """
     if not path.exists():
         return ""
     suffix = path.suffix.lower()
@@ -225,6 +441,11 @@ def extract_text(path: Path, max_chars: int = 20000) -> str:
     except Exception:
         return ""
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Summarization / keyword extraction / categorization (existing logic)
+# ---------------------------------------------------------------------------
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -380,6 +601,11 @@ def _fallback_keywords(text: str, top_n: int) -> list[str]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Catalog build / output
+# ---------------------------------------------------------------------------
+
+
 def build_catalog(
     storage: Storage,
     site_filter: str | None,
@@ -428,6 +654,54 @@ def build_catalog(
         if limit is not None and len(items) >= limit:
             break
     return items
+
+
+def build_catalog_batch(
+    storage: Storage,
+    site_filter: str | None,
+    row_limit: int,
+    ai_only: bool = False,
+    offset: int = 0,
+) -> tuple[list[CatalogItem], int]:
+    rows = storage.export_files()
+    if offset > 0:
+        rows = rows[offset:]
+    if row_limit is not None:
+        rows = rows[:row_limit]
+    items: list[CatalogItem] = []
+    filters: list[str] = []
+    if site_filter:
+        filters = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
+    for row in rows:
+        site = row.get("source_site")
+        if filters:
+            if not site or not any(f in site.lower() for f in filters):
+                continue
+        path = row.get("local_path")
+        if not path:
+            continue
+        text = extract_text(Path(path))
+        if not text:
+            continue
+        title = row.get("title")
+        keywords = extract_keywords(text, title=title)
+        if ai_only and not is_ai_related(text, keywords, title=title):
+            continue
+        summary = summarize(text, keywords)
+        category = categorize(title, text, keywords)
+        items.append(
+            CatalogItem(
+                source_site=site,
+                title=title,
+                original_filename=row.get("original_filename"),
+                url=row.get("url"),
+                local_path=path,
+                keywords=keywords,
+                summary=summary,
+                category=category,
+            )
+        )
+    return items, len(rows)
 
 
 def write_catalog_md(path: Path, items: Iterable[CatalogItem], append: bool = False) -> None:
