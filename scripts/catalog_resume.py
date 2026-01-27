@@ -5,6 +5,7 @@ import os
 import sqlite3
 import sys
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -260,7 +261,7 @@ def main() -> int:
                         file_sha256=file_sha256,
                         catalog_version=catalog_version,
                         status="ok",
-                        processed_at=sqlite3.datetime.datetime.utcnow().isoformat() + "Z",
+                        processed_at=datetime.now(timezone.utc).isoformat(),
                         error=None,
                     )
                     total_processed += 1
@@ -286,7 +287,7 @@ def main() -> int:
                     file_sha256=file_sha256,
                     catalog_version=catalog_version,
                     status="ok",
-                    processed_at=sqlite3.datetime.datetime.utcnow().isoformat() + "Z",
+                    processed_at=datetime.now(timezone.utc).isoformat(),
                     error=None,
                 )
 
@@ -313,7 +314,7 @@ def main() -> int:
                     file_sha256=file_sha256,
                     catalog_version=catalog_version,
                     status="error",
-                    processed_at=sqlite3.datetime.datetime.utcnow().isoformat() + "Z",
+                    processed_at=datetime.now(timezone.utc).isoformat(),
                     error=str(e),
                 )
 
