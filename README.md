@@ -105,3 +105,23 @@ python -m ai_actuarial --site "SOA AI Bulletin" --max-pages 10 --max-depth 1 upd
 ```
 python -m ai_actuarial export --format md --output data/files.md
 ```
+
+## Catalog (Keywords + Summary)
+
+Generate a first-pass catalog using open-source models (English output):
+
+```
+python -m ai_actuarial catalog --site "SOA,CAS" --limit 100
+```
+
+If model downloads are slow or blocked, use TF-IDF fallback:
+
+```
+KEYBERT_DISABLE=1 python -m ai_actuarial catalog --site "SOA,CAS" --limit 100
+```
+
+Outputs:
+- `data/catalog.md`
+- `data/catalog.json`
+
+Use `--ai-only` to keep only AI-related items.

@@ -281,9 +281,16 @@ class Crawler:
     ) -> list[dict]:
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         keywords = [k.lower() for k in (cfg.keywords or [])]
+        exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
+        exclude_prefixes = [p.lower() for p in (cfg.exclude_prefixes or [])]
         try:
             data, headers, final_url = self._request(url)
         except Exception:
+            return []
+
+        if exclude and self._is_excluded(final_url, exclude):
+            return []
+        if exclude_prefixes and self._has_excluded_prefix(os.path.basename(final_url), exclude_prefixes):
             return []
 
         if self._is_file_url(final_url, exts):
@@ -306,17 +313,27 @@ class Crawler:
         page_text = html_to_text(html).lower()
         if keywords and not any(k in page_text for k in keywords):
             return []
+        if exclude and page_title and self._is_excluded(page_title, exclude):
+            return []
 
         new_items: list[dict] = []
         links = self._extract_links(final_url, html)
         for link in links:
             if not self._is_file_url(link, exts):
                 continue
+            if exclude and self._is_excluded(link, exclude):
+                continue
+            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
+                continue
             if self.storage.file_exists(link):
                 continue
             try:
                 fdata, fheaders, ffinal = self._request(link)
             except Exception:
+                continue
+            if exclude and self._is_excluded(ffinal, exclude):
+                continue
+            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
                 continue
             item = self._handle_file(
                 ffinal,

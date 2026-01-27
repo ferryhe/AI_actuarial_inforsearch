@@ -6,10 +6,12 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from pathlib import Path
 
 import yaml
 
 from .crawler import Crawler, SiteConfig
+from .catalog import build_catalog, write_catalog_md
 from .search import search_all
 from .storage import Storage
 
@@ -84,6 +86,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         max_results = int(search_cfg.get("max_results", 5))
         languages = search_cfg.get("languages", ["en"])
         country = search_cfg.get("country")
+        search_exclude = search_cfg.get("exclude_keywords", [])
         results = search_all(
             queries,
             max_results,
@@ -104,6 +107,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                     delay_seconds=search_cfg.get("delay_seconds", 0.5),
                     keywords=cfg["defaults"].get("keywords", []),
                     file_exts=cfg["defaults"].get("file_exts", []),
+                    exclude_keywords=search_exclude,
                 ),
                 source_site=result.source,
             )
@@ -121,6 +125,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
     storage = Storage(cfg["paths"]["db"])
     rows = storage.export_files()
+    rows = [r for r in rows if r.get("local_path")]
     storage.close()
 
     out_path = Path(args.output)
@@ -155,6 +160,34 @@ def cmd_export(args: argparse.Namespace) -> int:
             )
             writer.writeheader()
             writer.writerows(rows)
+    return 0
+
+
+def cmd_catalog(args: argparse.Namespace) -> int:
+    cfg = _load_config(args.config)
+    storage = Storage(cfg["paths"]["db"])
+    items = build_catalog(
+        storage,
+        site_filter=args.site,
+        limit=args.limit,
+        offset=args.offset,
+        ai_only=args.ai_only,
+    )
+    storage.close()
+
+    out_md = Path(args.output_md)
+    out_json = Path(args.output_json)
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    if args.append and out_json.exists():
+        with open(out_json, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+    else:
+        existing = []
+    existing.extend([item.__dict__ for item in items])
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    write_catalog_md(out_md, items, append=args.append)
+    print(f"Catalog items: {len(items)}")
     return 0
 
 
@@ -196,6 +229,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--format", choices=["json", "csv", "md"], default="csv")
     p_export.add_argument("--output", default="data/files.csv")
     p_export.set_defaults(func=cmd_export)
+
+    p_catalog = sub.add_parser("catalog", help="Generate catalog with keywords and summaries")
+    p_catalog.add_argument("--site", default=None, help="Only include sites matching this text")
+    p_catalog.add_argument("--limit", type=int, default=100, help="Max files to process")
+    p_catalog.add_argument("--offset", type=int, default=0, help="Skip the first N files")
+    p_catalog.add_argument("--ai-only", action="store_true", help="Only keep AI-related items")
+    p_catalog.add_argument("--output-md", default="data/catalog.md")
+    p_catalog.add_argument("--output-json", default="data/catalog.json")
+    p_catalog.add_argument("--append", action="store_true", help="Append to existing outputs")
+    p_catalog.set_defaults(func=cmd_catalog)
 
     return p
 

@@ -34,6 +34,13 @@ search:
     - "en"
     - "zh"
   country: "us"
+  exclude_keywords:
+    - "election"
+    - "research funding"
+    - "volunteer"
+    - "about"
+    - "actuarial books"
+    - "brochure"
   queries:
     - "actuary artificial intelligence report filetype:pdf"
     - "actuarial machine learning report filetype:pdf"
