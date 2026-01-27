@@ -20,7 +20,7 @@ A Python tool for discovering, downloading, and cataloging AI-related documents 
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/AI_actuarial_inforsearch.git
+git clone https://github.com/ferryhe/AI_actuarial_inforsearch.git
 cd AI_actuarial_inforsearch
 
 # Install dependencies
