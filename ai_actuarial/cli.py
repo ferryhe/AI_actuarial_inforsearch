@@ -10,7 +10,14 @@ from pathlib import Path
 import yaml
 
 from .crawler import Crawler, SiteConfig
-from .catalog import build_catalog, write_catalog_md
+from .catalog import (
+    CATALOG_VERSION,
+    CatalogItem,
+    build_catalog,
+    build_catalog_incremental,
+    write_catalog_jsonl,
+    write_catalog_md,
+)
 from .catalog_incremental import run_incremental_catalog
 from .search import search_all
 from .storage import Storage
@@ -194,26 +201,59 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         print(f"[legacy] Catalog items: {len(items)}")
         return 0
     
-    # Incremental mode (default)
-    out_jsonl = Path(args.output_jsonl)
-    out_md = Path(args.output_md)
-    
-    stats = run_incremental_catalog(
-        db_path=db_path,
-        out_jsonl=out_jsonl,
-        out_md=out_md,
-        batch=args.batch,
+    if args.legacy_incremental:
+        out_jsonl = Path(args.output_jsonl)
+        out_md = Path(args.output_md)
+
+        stats = run_incremental_catalog(
+            db_path=db_path,
+            out_jsonl=out_jsonl,
+            out_md=out_md,
+            batch=args.batch,
+            site_filter=args.site,
+            ai_only=args.ai_only,
+            catalog_version=args.version,
+            max_chars=args.max_chars,
+            retry_errors=args.retry_errors,
+        )
+
+        print(
+            f"Catalog done: scanned={stats['scanned']} processed={stats['processed']} "
+            f"written={stats['written']} skipped_ai={stats['skipped_ai']} errors={stats['errors']}"
+        )
+        return 0
+
+    # Storage-backed incremental mode (default)
+    storage = Storage(db_path)
+    items = build_catalog_incremental(
+        storage,
         site_filter=args.site,
+        limit=args.limit,
+        offset=args.offset,
         ai_only=args.ai_only,
-        catalog_version=args.catalog_version,
-        max_chars=args.max_chars,
+        pipeline_version=args.version,
         retry_errors=args.retry_errors,
     )
-    
-    print(
-        f"Catalog done: scanned={stats['scanned']} processed={stats['processed']} "
-        f"written={stats['written']} skipped_ai={stats['skipped_ai']} errors={stats['errors']}"
-    )
+    storage.close()
+
+    out_jsonl = Path(args.output_jsonl)
+    out_md = Path(args.output_md)
+    write_catalog_jsonl(out_jsonl, items)
+    md_items = [
+        CatalogItem(
+            source_site=i.get("source_site"),
+            title=i.get("title"),
+            original_filename=i.get("original_filename"),
+            url=i.get("url"),
+            local_path=i.get("local_path"),
+            keywords=i.get("keywords") or [],
+            summary=i.get("summary") or "",
+            category=i.get("category") or "",
+        )
+        for i in items
+    ]
+    write_catalog_md(out_md, md_items, append=True)
+    print(f"[incremental] Catalog items: {len(items)}")
     return 0
 
 
@@ -259,16 +299,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_catalog = sub.add_parser("catalog", help="Generate catalog with keywords and summaries")
     p_catalog.add_argument("--site", default=None, help="Only include sites matching this text")
     p_catalog.add_argument("--ai-only", action="store_true", help="Only keep AI-related items")
+    p_catalog.add_argument(
+        "--legacy-incremental",
+        action="store_true",
+        help="Use legacy incremental pipeline (catalog_incremental.py)",
+    )
     p_catalog.add_argument("--output-md", default="data/catalog.md", help="Markdown output path")
     # Incremental mode options (default)
     p_catalog.add_argument(
-        "--batch", type=int, 
+        "--batch", type=int,
         default=int(os.getenv("CATALOG_BATCH", "200")),
         help="Batch size for incremental processing (default: 200)"
     )
     p_catalog.add_argument(
+        "--version",
         "--catalog-version",
-        default=os.getenv("CATALOG_VERSION", "catalog_v1"),
+        dest="version",
+        default=CATALOG_VERSION,
         help="Version string for catalog (change to force reprocessing)"
     )
     p_catalog.add_argument(

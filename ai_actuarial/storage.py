@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -14,6 +15,7 @@ class Storage:
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
         self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._tx_depth = 0
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -121,6 +123,36 @@ class Storage:
                     f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"
                 )
         self._conn.commit()
+
+    def _maybe_commit(self) -> None:
+        if self._tx_depth == 0:
+            self._conn.commit()
+
+    @contextmanager
+    def transaction(self):
+        sp_name = None
+        if self._tx_depth == 0:
+            self._conn.execute("BEGIN")
+        else:
+            sp_name = f"sp_{self._tx_depth}"
+            self._conn.execute(f"SAVEPOINT {sp_name}")
+        self._tx_depth += 1
+        try:
+            yield
+        except Exception:
+            self._tx_depth -= 1
+            if sp_name is None:
+                self._conn.rollback()
+            else:
+                self._conn.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                self._conn.execute(f"RELEASE SAVEPOINT {sp_name}")
+            raise
+        else:
+            self._tx_depth -= 1
+            if sp_name is None:
+                self._conn.commit()
+            else:
+                self._conn.execute(f"RELEASE SAVEPOINT {sp_name}")
 
     def _migrate_catalog_items(self) -> None:
         cur = self._conn.execute("PRAGMA table_info(catalog_items)")
@@ -231,7 +263,7 @@ class Storage:
                 ts,
             ),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
     def mark_page_seen(self, url: str) -> None:
         ts = self.now()
@@ -243,7 +275,7 @@ class Storage:
             """,
             (url, ts),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
     def export_files(self) -> list[dict]:
         cur = self._conn.execute(
@@ -290,6 +322,7 @@ class Storage:
         order_by: str = "id",
         only_changed: bool = False,
         extractor_version: str | None = None,
+        include_errors: bool = False,
     ) -> list[dict]:
         # Validate order_by to prevent SQL injection
         if order_by not in self._ALLOWED_ORDER_COLUMNS:
@@ -298,15 +331,15 @@ class Storage:
         filters: list[str] = []
         params: list[object] = []
         if require_local_path:
-            filters.append("local_path IS NOT NULL AND local_path != ''")
+            filters.append("f.local_path IS NOT NULL AND f.local_path != ''")
         if site_filter:
             tokens = [t.strip().lower() for t in site_filter.split(",") if t.strip()]
             if tokens:
                 like_parts = []
                 for t in tokens:
-                    like_parts.append("LOWER(source_site) LIKE ?")
+                    like_parts.append("LOWER(f.source_site) LIKE ?")
                     params.append(f"%{t}%")
-                    like_parts.append("LOWER(url) LIKE ?")
+                    like_parts.append("LOWER(f.url) LIKE ?")
                     params.append(f"%{t}%")
                 filters.append("(" + " OR ".join(like_parts) + ")")
         join = ""
@@ -314,12 +347,10 @@ class Storage:
             if not extractor_version:
                 raise ValueError("extractor_version is required when only_changed is True")
             join = "LEFT JOIN catalog_items c ON c.file_url = f.url"
-            filters.append(
-                "("
-                "c.file_url IS NULL OR c.sha256 != f.sha256 OR c.pipeline_version != ? "
-                "OR c.status IS NULL OR c.status != 'ok'"
-                ")"
-            )
+            clause = "c.file_url IS NULL OR c.sha256 != f.sha256 OR c.pipeline_version != ?"
+            if include_errors:
+                clause += " OR c.status IS NULL OR c.status != 'ok'"
+            filters.append(f"({clause})")
             params.append(extractor_version)
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         limit_clause = ""
@@ -328,9 +359,21 @@ class Storage:
             params.extend([limit, offset])
         cur = self._conn.execute(
             f"""
-            SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url, f.original_filename,
-                   f.local_path, f.bytes, f.content_type, f.last_modified, f.etag, f.published_time,
-                   f.first_seen, f.last_seen, f.crawl_time
+            SELECT f.url AS url,
+                   f.sha256 AS sha256,
+                   f.title AS title,
+                   f.source_site AS source_site,
+                   f.source_page_url AS source_page_url,
+                   f.original_filename AS original_filename,
+                   f.local_path AS local_path,
+                   f.bytes AS bytes,
+                   f.content_type AS content_type,
+                   f.last_modified AS last_modified,
+                   f.etag AS etag,
+                   f.published_time AS published_time,
+                   f.first_seen AS first_seen,
+                   f.last_seen AS last_seen,
+                   f.crawl_time AS crawl_time
             FROM files f
             {join}
             {where}
@@ -394,7 +437,7 @@ class Storage:
             """,
             (sha256, canonical_path, bytes_size, content_type, ts, ts),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
     def catalog_item_fresh(
         self,
@@ -456,7 +499,7 @@ class Storage:
                 updated_ts,
             ),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
     def write_last_run(self, output_path: str, items: Iterable[dict]) -> None:
         Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
