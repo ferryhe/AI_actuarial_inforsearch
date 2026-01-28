@@ -21,6 +21,11 @@ from .catalog import (
 from .catalog_incremental import run_incremental_catalog
 from .search import search_all
 from .storage import Storage
+from .collectors import CollectionConfig
+from .collectors.scheduled import ScheduledCollector
+from .collectors.adhoc import AdhocCollector
+from .collectors.url import URLCollector
+from .collectors.file import FileCollector
 
 
 def _load_dotenv(path: str) -> None:
@@ -342,7 +347,119 @@ def build_parser() -> argparse.ArgumentParser:
     p_catalog.add_argument("--append", action="store_true", help="[legacy] Append to existing outputs")
     p_catalog.set_defaults(func=cmd_catalog)
 
+    # Collection commands using new modular structure
+    p_collect = sub.add_parser("collect", help="Run specific collection workflow")
+    p_collect_sub = p_collect.add_subparsers(dest="collect_type", required=True)
+    
+    # URL collection
+    p_collect_url = p_collect_sub.add_parser("url", help="Collect from specific URLs")
+    p_collect_url.add_argument("urls", nargs="+", help="URLs to collect from")
+    p_collect_url.add_argument("--name", default="URL Collection", help="Collection name")
+    p_collect_url.add_argument("--no-db-check", action="store_true", help="Skip database duplicate check")
+    p_collect_url.set_defaults(func=cmd_collect_url)
+    
+    # File import
+    p_collect_file = p_collect_sub.add_parser("file", help="Import files from local filesystem")
+    p_collect_file.add_argument("files", nargs="+", help="File paths to import")
+    p_collect_file.add_argument("--name", default="File Import", help="Collection name")
+    p_collect_file.add_argument("--subdir", default="imported", help="Target subdirectory in data/files")
+    p_collect_file.add_argument("--no-db-check", action="store_true", help="Skip database duplicate check")
+    p_collect_file.set_defaults(func=cmd_collect_file)
+    
+    # Web interface
+    p_web = sub.add_parser("web", help="Start web interface for collection management")
+    p_web.add_argument("--host", default="127.0.0.1", help="Host to bind to")
+    p_web.add_argument("--port", type=int, default=5000, help="Port to bind to")
+    p_web.add_argument("--debug", action="store_true", help="Enable debug mode")
+    p_web.set_defaults(func=cmd_web)
+
     return p
+
+
+def cmd_collect_url(args: argparse.Namespace) -> int:
+    """Collect from specific URLs."""
+    cfg = _load_config(args.config)
+    storage = Storage(cfg["paths"]["db"])
+    crawler = Crawler(storage, cfg["paths"]["download_dir"], cfg["defaults"]["user_agent"])
+    
+    collector = URLCollector(storage, crawler)
+    
+    config = CollectionConfig(
+        name=args.name,
+        source_type="url",
+        check_database=not args.no_db_check,
+        keywords=cfg["defaults"].get("keywords", []),
+        file_exts=cfg["defaults"].get("file_exts", []),
+        metadata={"urls": args.urls},
+    )
+    
+    result = collector.collect(config)
+    
+    storage.close()
+    
+    print(f"\nURL Collection Results:")
+    print(f"  Found: {result.items_found}")
+    print(f"  Downloaded: {result.items_downloaded}")
+    print(f"  Skipped: {result.items_skipped}")
+    if result.errors:
+        print(f"  Errors: {len(result.errors)}")
+        for error in result.errors[:5]:  # Show first 5 errors
+            print(f"    - {error}")
+    
+    return 0 if result.success else 1
+
+
+def cmd_collect_file(args: argparse.Namespace) -> int:
+    """Import files from local filesystem."""
+    cfg = _load_config(args.config)
+    storage = Storage(cfg["paths"]["db"])
+    
+    collector = FileCollector(storage, cfg["paths"]["download_dir"])
+    
+    config = CollectionConfig(
+        name=args.name,
+        source_type="file",
+        check_database=not args.no_db_check,
+        metadata={
+            "file_paths": args.files,
+            "target_subdir": args.subdir,
+        },
+    )
+    
+    result = collector.collect(config)
+    
+    storage.close()
+    
+    print(f"\nFile Import Results:")
+    print(f"  Found: {result.items_found}")
+    print(f"  Imported: {result.items_downloaded}")
+    print(f"  Skipped: {result.items_skipped}")
+    if result.errors:
+        print(f"  Errors: {len(result.errors)}")
+        for error in result.errors[:5]:  # Show first 5 errors
+            print(f"    - {error}")
+    
+    return 0 if result.success else 1
+
+
+def cmd_web(args: argparse.Namespace) -> int:
+    """Start web interface."""
+    try:
+        from .web.app import run_server
+    except ImportError:
+        print("Flask is required for the web interface.")
+        print("Install it with: pip install flask")
+        return 1
+    
+    print(f"Starting web interface on {args.host}:{args.port}")
+    print("Press Ctrl+C to stop")
+    
+    try:
+        run_server(host=args.host, port=args.port, debug=args.debug)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    
+    return 0
 
 
 def main() -> int:

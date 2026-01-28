@@ -11,165 +11,176 @@ from pathlib import Path
 from typing import Iterable
 
 from .storage import Storage
+from .utils import load_category_config
 
 # ---------------------------------------------------------------------------
-# Catalog rules / keywords
+# Catalog rules / keywords - Load from config file
 # ---------------------------------------------------------------------------
 
-AI_TERMS = [
-    "artificial intelligence",
-    "machine learning",
-    "deep learning",
-    "neural",
-    "llm",
-    "large language model",
-    "generative",
-    "genai",
-    "chatgpt",
-    "openai",
-    "transformer",
-    "nlp",
-]
-
-AI_KEYWORDS = [
-    "artificial intelligence",
-    "machine learning",
-    "deep learning",
-    "large language model",
-    "generative ai",
-    "llm",
-    "genai",
-    "chatgpt",
-    "transformer",
-    "neural network",
-    "nlp",
-]
-
-CATEGORY_RULES: dict[str, list[str]] = {
-    "AI": [
+# Load category configuration
+try:
+    _category_config = load_category_config()
+    CATEGORY_RULES = _category_config.get("categories", {})
+    AI_TERMS = _category_config.get("ai_filter_keywords", [])
+    AI_KEYWORDS = _category_config.get("ai_keywords", [])
+except FileNotFoundError as e:
+    import logging
+    logging.warning("Category config file not found, using default values: %s", e)
+    # Fallback to hardcoded values if config load fails
+    AI_TERMS = [
+        "artificial intelligence",
+        "machine learning",
+        "deep learning",
+        "neural",
+        "llm",
+        "large language model",
+        "generative",
+        "genai",
+        "chatgpt",
+        "openai",
+        "transformer",
+        "nlp",
+    ]
+    
+    AI_KEYWORDS = [
         "artificial intelligence",
         "machine learning",
         "deep learning",
         "large language model",
-        "llm",
         "generative ai",
-        "neural network",
-        "transformer model",
-        "nlp",
+        "llm",
+        "genai",
         "chatgpt",
-    ],
-    "Regulation & Standards": [
-        "ifrs",
-        "solvency",
-        "asop",
-        "ias",
-        "gaap",
-        "naic",
-        "standard",
-        "compliance",
-        "regulation",
-    ],
-    "Risk & Capital": [
-        "erm",
-        "risk",
-        "capital",
-        "stress",
-        "scenario",
-        "catastrophe",
-        "reinsurance",
-    ],
-    "Pricing": [
-        "pricing",
-        "rate",
-        "rating",
-        "premium",
-        "tariff",
-    ],
-    "Underwriting & Claims": [
-        "underwriting",
-        "uw",
-        "risk selection",
-        "appetite",
-        "claim",
-        "claims",
-        "loss",
-        "settlement",
-    ],
-    "Reserving": [
-        "reserve",
-        "reserving",
-        "ibnr",
-    ],
-    "P&C": [
-        "property",
-        "casualty",
-        "p&c",
-        "auto",
-        "general insurance",
-    ],
-    "Life": [
-        "life",
-        "annuity",
-        "mortality",
-        "longevity",
-    ],
-    "Health": [
-        "health",
-        "medical",
-        "morbidity",
-    ],
-    "LTC / DI / CI": [
-        "long term care",
-        "ltc",
-        "disability income",
-        "di",
-        "critical illness",
-        "ci",
-    ],
-    "Data & Analytics": [
-        "data",
-        "analytics",
-        "model",
-        "modeling",
-        "statistics",
-        "forecast",
-        "predictive",
-        "regression",
-        "time series",
-        "governance",
-    ],
-    "Operations / Automation": [
-        "automation",
-        "workflow",
-        "process",
-        "rpa",
-        "system",
-        "implementation",
-        "tooling",
-    ],
-    "Education / Events": [
-        "webinar",
-        "seminar",
-        "conference",
-        "agenda",
-        "workshop",
-        "training",
-        "course",
-        "syllabus",
-        "lecture",
-        "slides",
-    ],
-    "Investment / ALM": [
-        "investment",
-        "asset",
-        "liability",
-        "alm",
-        "portfolio",
-        "interest rate",
-        "yield",
-        "duration",
-    ],
-}
+        "transformer",
+        "neural network",
+        "nlp",
+    ]
+    
+    CATEGORY_RULES: dict[str, list[str]] = {
+        "AI": [
+            "artificial intelligence",
+            "machine learning",
+            "deep learning",
+            "large language model",
+            "llm",
+            "generative ai",
+            "neural network",
+            "transformer model",
+            "nlp",
+            "chatgpt",
+        ],
+        "Regulation & Standards": [
+            "ifrs",
+            "solvency",
+            "asop",
+            "ias",
+            "gaap",
+            "naic",
+            "standard",
+            "compliance",
+            "regulation",
+        ],
+        "Risk & Capital": [
+            "erm",
+            "risk",
+            "capital",
+            "stress",
+            "scenario",
+            "catastrophe",
+            "reinsurance",
+        ],
+        "Pricing": [
+            "pricing",
+            "rate",
+            "rating",
+            "premium",
+            "tariff",
+        ],
+        "Underwriting & Claims": [
+            "underwriting",
+            "uw",
+            "risk selection",
+            "appetite",
+            "claim",
+            "claims",
+            "loss",
+            "settlement",
+        ],
+        "Reserving": [
+            "reserve",
+            "reserving",
+            "ibnr",
+        ],
+        "P&C": [
+            "property",
+            "casualty",
+            "p&c",
+            "auto",
+            "general insurance",
+        ],
+        "Life": [
+            "life",
+            "annuity",
+            "mortality",
+            "longevity",
+        ],
+        "Health": [
+            "health",
+            "medical",
+            "morbidity",
+        ],
+        "LTC / DI / CI": [
+            "long term care",
+            "ltc",
+            "disability income",
+            "di",
+            "critical illness",
+            "ci",
+        ],
+        "Data & Analytics": [
+            "data",
+            "analytics",
+            "model",
+            "modeling",
+            "statistics",
+            "forecast",
+            "predictive",
+            "regression",
+            "time series",
+            "governance",
+        ],
+        "Operations / Automation": [
+            "automation",
+            "workflow",
+            "process",
+            "rpa",
+            "system",
+            "implementation",
+            "tooling",
+        ],
+        "Education / Events": [
+            "webinar",
+            "seminar",
+            "conference",
+            "agenda",
+            "workshop",
+            "training",
+            "course",
+            "syllabus",
+            "lecture",
+            "slides",
+        ],
+        "Investment / ALM": [
+            "investment",
+            "asset",
+            "liability",
+            "alm",
+            "portfolio",
+            "interest rate",
+            "yield",
+            "duration",
+        ],
+    }
 
 _KEYBERT_MODEL = None
 CATALOG_VERSION = "v2-keybert"
