@@ -1,0 +1,158 @@
+# Category Configuration for Document Classification
+# Each category has a list of keywords that help identify documents belonging to that category
+
+categories:
+  AI:
+    - artificial intelligence
+    - machine learning
+    - deep learning
+    - large language model
+    - llm
+    - generative ai
+    - neural network
+    - transformer model
+    - nlp
+    - chatgpt
+    - openai
+
+  "Regulation & Standards":
+    - ifrs
+    - solvency
+    - asop
+    - ias
+    - gaap
+    - naic
+    - standard
+    - compliance
+    - regulation
+
+  "Risk & Capital":
+    - erm
+    - risk
+    - capital
+    - stress
+    - scenario
+    - catastrophe
+    - reinsurance
+
+  Pricing:
+    - pricing
+    - rate
+    - rating
+    - premium
+    - tariff
+
+  "Underwriting & Claims":
+    - underwriting
+    - uw
+    - risk selection
+    - appetite
+    - claim
+    - claims
+    - loss
+    - settlement
+
+  Reserving:
+    - reserve
+    - reserving
+    - ibnr
+
+  "P&C":
+    - property
+    - casualty
+    - p&c
+    - auto
+    - general insurance
+
+  Life:
+    - life
+    - annuity
+    - mortality
+    - longevity
+
+  Health:
+    - health
+    - medical
+    - morbidity
+
+  "LTC / DI / CI":
+    - long term care
+    - ltc
+    - disability income
+    - di
+    - critical illness
+    - ci
+
+  "Data & Analytics":
+    - data
+    - analytics
+    - model
+    - modeling
+    - statistics
+    - forecast
+    - predictive
+    - regression
+    - time series
+    - governance
+
+  "Operations / Automation":
+    - automation
+    - workflow
+    - process
+    - rpa
+    - system
+    - implementation
+    - tooling
+
+  "Education / Events":
+    - webinar
+    - seminar
+    - conference
+    - agenda
+    - workshop
+    - training
+    - course
+    - syllabus
+    - lecture
+    - slides
+
+  "Investment / ALM":
+    - investment
+    - asset
+    - liability
+    - alm
+    - portfolio
+    - interest rate
+    - yield
+    - duration
+
+# AI-specific filter keywords
+# These are used to identify AI-related documents
+ai_filter_keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - neural
+  - llm
+  - large language model
+  - generative
+  - genai
+  - chatgpt
+  - openai
+  - transformer
+  - nlp
+
+# AI-specific keywords for extraction
+# These are used for keyword extraction and tagging
+ai_keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - large language model
+  - generative ai
+  - llm
+  - genai
+  - chatgpt
+  - transformer
+  - neural network
+  - nlp
