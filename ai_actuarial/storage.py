@@ -116,42 +116,52 @@ class Storage:
         
         Handles:
         - Adding missing columns for new unified schema
-        - Renaming extractor_version to pipeline_version (keeping data)
-        - Renaming catalog_version to pipeline_version (keeping data)
-        - Renaming file_sha256 to sha256 (keeping data)
-        - Renaming keywords_json to keywords (keeping data)
+        - Renaming extractor_version to pipeline_version (in-place, preserving data)
+        - Renaming catalog_version to pipeline_version (in-place, preserving data)
+        - Renaming file_sha256 to sha256 (in-place, preserving data)
+        - Renaming keywords_json to keywords (in-place, preserving data)
+        
+        Note: Uses ALTER TABLE RENAME COLUMN for renames, which preserves data perfectly.
+        SQLite ALTER TABLE ADD COLUMN has limitations:
+        - Cannot add NOT NULL constraints to existing tables
+        - Cannot use non-constant defaults like CURRENT_TIMESTAMP
+        This means migrated databases may have slightly different constraints than
+        new databases, but the application logic ensures data integrity.
         """
         cur = self._conn.execute("PRAGMA table_info(catalog_items)")
         existing = {row[1]: row for row in cur.fetchall()}
         
-        # Handle column renames by copying data
-        # Priority: extractor_version > catalog_version for pipeline_version
+        # Handle column renames (priority: extractor_version > catalog_version)
         if "extractor_version" in existing and "pipeline_version" not in existing:
             # Rename extractor_version to pipeline_version
             self._conn.execute("ALTER TABLE catalog_items RENAME COLUMN extractor_version TO pipeline_version")
-            existing = {row[1]: row for row in self._conn.execute("PRAGMA table_info(catalog_items)").fetchall()}
+            # If catalog_version also exists, drop it since extractor_version takes precedence
+            if "catalog_version" in existing:
+                # SQLite doesn't support DROP COLUMN before version 3.35.0
+                # Leave it as-is; it won't cause issues (just unused)
+                pass
         elif "catalog_version" in existing and "pipeline_version" not in existing:
             # Rename catalog_version to pipeline_version
             self._conn.execute("ALTER TABLE catalog_items RENAME COLUMN catalog_version TO pipeline_version")
-            existing = {row[1]: row for row in self._conn.execute("PRAGMA table_info(catalog_items)").fetchall()}
         
         # Handle file_sha256 -> sha256 rename
         if "file_sha256" in existing and "sha256" not in existing:
             self._conn.execute("ALTER TABLE catalog_items RENAME COLUMN file_sha256 TO sha256")
-            existing = {row[1]: row for row in self._conn.execute("PRAGMA table_info(catalog_items)").fetchall()}
         
         # Handle keywords_json -> keywords rename
         if "keywords_json" in existing and "keywords" not in existing:
             self._conn.execute("ALTER TABLE catalog_items RENAME COLUMN keywords_json TO keywords")
-            existing = {row[1]: row for row in self._conn.execute("PRAGMA table_info(catalog_items)").fetchall()}
         
         # Refresh the existing columns after renames
         cur = self._conn.execute("PRAGMA table_info(catalog_items)")
         existing = {row[1]: row for row in cur.fetchall()}
         
         # Ensure all required columns exist with proper types
-        # Note: ALTER TABLE ADD COLUMN doesn't support constraints like NOT NULL on existing tables
-        # Also doesn't support non-constant defaults like CURRENT_TIMESTAMP
+        # Note: ALTER TABLE ADD COLUMN limitations in SQLite:
+        # - Cannot add NOT NULL constraints to existing tables (only works in CREATE TABLE)
+        # - Cannot use non-constant defaults like CURRENT_TIMESTAMP in ALTER TABLE
+        # This means migrated tables have slightly different constraints than new tables,
+        # but application logic in upsert_catalog_item() ensures data integrity.
         required_columns = {
             "sha256": "TEXT",
             "pipeline_version": "TEXT",
