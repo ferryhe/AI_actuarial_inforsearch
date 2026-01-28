@@ -65,18 +65,15 @@ class Storage:
             """
             CREATE TABLE IF NOT EXISTS catalog_items (
                 file_url TEXT PRIMARY KEY,
-                file_sha256 TEXT,
-                title TEXT,
-                source_site TEXT,
-                original_filename TEXT,
-                local_path TEXT,
-                keywords_json TEXT,
+                sha256 TEXT NOT NULL,
+                pipeline_version TEXT NOT NULL,
+                processed_at TEXT,
+                status TEXT NOT NULL DEFAULT 'ok',
+                error TEXT,
+                keywords TEXT,
                 summary TEXT,
                 category TEXT,
-                catalog_version TEXT,
-                processed_at TEXT,
-                status TEXT,
-                error TEXT
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -102,16 +99,18 @@ class Storage:
         self._ensure_columns(
             "catalog_items",
             {
-                "file_sha256": "TEXT",
-                "keywords_json": "TEXT",
+                "sha256": "TEXT",
+                "pipeline_version": "TEXT",
+                "processed_at": "TEXT",
+                "status": "TEXT DEFAULT 'ok'",
+                "error": "TEXT",
+                "keywords": "TEXT",
                 "summary": "TEXT",
                 "category": "TEXT",
-                "catalog_version": "TEXT",
-                "processed_at": "TEXT",
-                "status": "TEXT",
-                "error": "TEXT",
+                "updated_at": "TEXT",
             },
         )
+        self._migrate_catalog_items()
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         cur = self._conn.execute(f"PRAGMA table_info({table})")
@@ -121,6 +120,48 @@ class Storage:
                 self._conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"
                 )
+        self._conn.commit()
+
+    def _migrate_catalog_items(self) -> None:
+        cur = self._conn.execute("PRAGMA table_info(catalog_items)")
+        existing = {row[1] for row in cur.fetchall()}
+
+        # Map legacy columns into the unified schema without dropping data.
+        if "sha256" in existing and "file_sha256" in existing:
+            self._conn.execute(
+                """
+                UPDATE catalog_items
+                SET sha256 = file_sha256
+                WHERE (sha256 IS NULL OR sha256 = '') AND file_sha256 IS NOT NULL
+                """
+            )
+        if "pipeline_version" in existing:
+            if "extractor_version" in existing:
+                self._conn.execute(
+                    """
+                    UPDATE catalog_items
+                    SET pipeline_version = extractor_version
+                    WHERE (pipeline_version IS NULL OR pipeline_version = '')
+                      AND extractor_version IS NOT NULL
+                    """
+                )
+            if "catalog_version" in existing:
+                self._conn.execute(
+                    """
+                    UPDATE catalog_items
+                    SET pipeline_version = catalog_version
+                    WHERE (pipeline_version IS NULL OR pipeline_version = '')
+                      AND catalog_version IS NOT NULL
+                    """
+                )
+        if "keywords" in existing and "keywords_json" in existing:
+            self._conn.execute(
+                """
+                UPDATE catalog_items
+                SET keywords = keywords_json
+                WHERE (keywords IS NULL OR keywords = '') AND keywords_json IS NOT NULL
+                """
+            )
         self._conn.commit()
 
     def close(self) -> None:
@@ -274,7 +315,10 @@ class Storage:
                 raise ValueError("extractor_version is required when only_changed is True")
             join = "LEFT JOIN catalog_items c ON c.file_url = f.url"
             filters.append(
-                "(c.file_url IS NULL OR c.sha256 != f.sha256 OR c.extractor_version != ?)"
+                "("
+                "c.file_url IS NULL OR c.sha256 != f.sha256 OR c.pipeline_version != ? "
+                "OR c.status IS NULL OR c.status != 'ok'"
+                ")"
             )
             params.append(extractor_version)
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
@@ -352,32 +396,48 @@ class Storage:
         )
         self._conn.commit()
 
-    def catalog_item_fresh(self, url: str, sha256: str, extractor_version: str) -> bool:
+    def catalog_item_fresh(
+        self,
+        url: str,
+        sha256: str,
+        pipeline_version: str | None = None,
+        extractor_version: str | None = None,
+    ) -> bool:
+        effective_pipeline_version = pipeline_version or extractor_version or ""
         cur = self._conn.execute(
             """
             SELECT 1 FROM catalog_items
-            WHERE file_url = ? AND sha256 = ? AND extractor_version = ?
+            WHERE file_url = ? AND sha256 = ? AND pipeline_version = ? AND status = 'ok'
             """,
-            (url, sha256, extractor_version),
+            (url, sha256, effective_pipeline_version),
         )
         return cur.fetchone() is not None
 
-    def upsert_catalog_item(self, item: dict, extractor_version: str) -> None:
-        ts = self.now()
+    def upsert_catalog_item(
+        self,
+        item: dict,
+        pipeline_version: str | None = None,
+        status: str = "ok",
+        error: str | None = None,
+        processed_at: str | None = None,
+        extractor_version: str | None = None,
+    ) -> None:
+        processed_ts = processed_at or self.now()
+        updated_ts = self.now()
+        effective_pipeline_version = pipeline_version or extractor_version or ""
         self._conn.execute(
             """
             INSERT INTO catalog_items (
-                file_url, sha256, extractor_version, title, source_site,
-                original_filename, local_path, keywords, summary, category, updated_at
+                file_url, sha256, pipeline_version, processed_at, status, error,
+                keywords, summary, category, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(file_url) DO UPDATE SET
                 sha256=excluded.sha256,
-                extractor_version=excluded.extractor_version,
-                title=excluded.title,
-                source_site=excluded.source_site,
-                original_filename=excluded.original_filename,
-                local_path=excluded.local_path,
+                pipeline_version=excluded.pipeline_version,
+                processed_at=excluded.processed_at,
+                status=excluded.status,
+                error=excluded.error,
                 keywords=excluded.keywords,
                 summary=excluded.summary,
                 category=excluded.category,
@@ -386,15 +446,14 @@ class Storage:
             (
                 item.get("url"),
                 item.get("sha256"),
-                extractor_version,
-                item.get("title"),
-                item.get("source_site"),
-                item.get("original_filename"),
-                item.get("local_path"),
+                effective_pipeline_version,
+                processed_ts,
+                status,
+                error,
                 json.dumps(item.get("keywords") or [], ensure_ascii=False),
                 item.get("summary") or "",
                 item.get("category") or "",
-                ts,
+                updated_ts,
             ),
         )
         self._conn.commit()
