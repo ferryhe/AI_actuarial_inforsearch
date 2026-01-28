@@ -87,7 +87,13 @@ class FileCollector(BaseCollector):
                     
                     # Add to database
                     file_size = target_path.stat().st_size
-                    rel_path = str(target_path.relative_to(self.download_dir.parent))
+                    base_dir = self.download_dir.parent.resolve()
+                    target_resolved = target_path.resolve()
+                    try:
+                        rel_path = str(target_resolved.relative_to(base_dir))
+                    except ValueError:
+                        # Fallback to absolute path if relative path cannot be determined
+                        rel_path = str(target_resolved)
                     
                     self.storage.insert_file(
                         url=f"file://{source_path}",
