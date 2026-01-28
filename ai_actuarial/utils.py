@@ -163,5 +163,5 @@ def load_category_config(config_path: str = "config/categories.yaml") -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise yaml.YAMLError(f"Failed to parse category config: {e}") from e
+    except yaml.YAMLError:
+        raise
