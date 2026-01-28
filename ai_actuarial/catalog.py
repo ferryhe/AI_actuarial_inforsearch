@@ -30,15 +30,17 @@ AI_TERMS = [
 ]
 
 AI_KEYWORDS = [
-    "ai",
-    "ml",
-    "llm",
-    "genai",
     "artificial intelligence",
     "machine learning",
     "deep learning",
     "large language model",
     "generative ai",
+    "llm",
+    "genai",
+    "chatgpt",
+    "transformer",
+    "neural network",
+    "nlp",
 ]
 
 CATEGORY_RULES: dict[str, list[str]] = {
@@ -46,12 +48,13 @@ CATEGORY_RULES: dict[str, list[str]] = {
         "artificial intelligence",
         "machine learning",
         "deep learning",
-        "generative",
-        "llm",
         "large language model",
-        "neural",
+        "llm",
+        "generative ai",
+        "neural network",
+        "transformer model",
         "nlp",
-        "ai",
+        "chatgpt",
     ],
     "Regulation & Standards": [
         "ifrs",
@@ -472,11 +475,25 @@ def summarize(text: str, keywords: list[str], max_sentences: int = 4) -> str:
 
 
 def _ai_hit(title: str | None, keywords: list[str]) -> bool:
+    """Check if document has explicit AI/ML keywords - using word-boundary matching."""
     hay = (title or "") + " " + " ".join(keywords)
     hay = hay.lower()
-    for term in AI_KEYWORDS:
-        if term in hay:
-            return True
+    words = set(re.findall(r'\b\w+\b', hay))
+    
+    # Only match full words/phrases to avoid false positives
+    ai_terms = ["artificial intelligence", "machine learning", "deep learning", 
+                "large language model", "llm", "generative ai", "neural network", "nlp"]
+    
+    for term in ai_terms:
+        if " " in term:
+            # Multi-word: check phrase in hay
+            if term in hay:
+                return True
+        else:
+            # Single word: check in word set
+            if term in words:
+                return True
+    
     return False
 
 
@@ -567,20 +584,43 @@ def _light_keywords(text: str, title: str | None, top_n: int) -> list[str]:
 
 
 def categorize(title: str | None, text: str, keywords: list[str]) -> str:
+    """Categorize document using word-boundary matching for accuracy."""
     hay = (title or "") + " " + text + " " + " ".join(keywords)
     hay = hay.lower()
+    
+    # Tokenize to word list for word-boundary matching
+    words = re.findall(r'\b\w+\b', hay)
+    word_set = set(words)
+    
     matches: list[tuple[str, int]] = []
     for cat, terms in CATEGORY_RULES.items():
-        score = sum(1 for t in terms if t in hay)
+        score = 0
+        for t in terms:
+            # Use word-boundary matching: check if term matches complete words
+            term_words = t.split()
+            if len(term_words) == 1:
+                # Single word: exact match in word set
+                if t in word_set:
+                    score += 1
+            else:
+                # Multi-word term: check if sequence exists
+                pattern = r'\b' + r'\s+'.join(re.escape(w) for w in term_words) + r'\b'
+                if re.search(pattern, hay):
+                    score += 1
+        
         if score > 0:
             matches.append((cat, score))
+    
     if not matches:
         return "Other"
+    
     matches.sort(key=lambda x: x[1], reverse=True)
     cats = [c for c, _ in matches]
-    # Force AI if title/keywords contain AI/ML/LLM/GenAI terms
-    if _ai_hit(title, keywords) and "AI" not in cats:
-        cats = ["AI"] + cats
+    
+    # Only force AI to front if it was already in matches (don't artificially boost)
+    # if _ai_hit(title, keywords) and "AI" not in cats:
+    #     cats = ["AI"] + cats
+    
     return "; ".join(cats[:3])
 
 
