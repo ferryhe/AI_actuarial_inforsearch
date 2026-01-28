@@ -206,6 +206,105 @@ class Storage:
         cur = self._conn.execute("SELECT 1 FROM files WHERE url = ? LIMIT 1", (url,))
         return cur.fetchone() is not None
 
+    def get_file_by_url(self, url: str) -> dict | None:
+        """Get file record by URL.
+        
+        Args:
+            url: File URL
+            
+        Returns:
+            File record dict or None if not found
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM files WHERE url = ? LIMIT 1", (url,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+    
+    def get_file_by_sha256(self, sha256: str) -> dict | None:
+        """Get file record by SHA256 hash.
+        
+        Args:
+            sha256: File SHA256 hash
+            
+        Returns:
+            File record dict or None if not found
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM files WHERE sha256 = ? LIMIT 1", (sha256,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        
+        columns = [desc[0] for desc in cur.description]
+        return dict(zip(columns, row))
+    
+    def insert_file(
+        self,
+        url: str,
+        sha256: str,
+        title: str | None,
+        source_site: str,
+        source_page_url: str | None,
+        original_filename: str | None,
+        local_path: str,
+        bytes: int | None,
+        content_type: str | None,
+        last_modified: str | None = None,
+        etag: str | None = None,
+        published_time: str | None = None,
+    ) -> None:
+        """Insert a new file record (raises error if URL exists).
+        
+        Args:
+            url: File URL
+            sha256: SHA256 hash
+            title: File title
+            source_site: Source site name
+            source_page_url: URL of the page where file was found
+            original_filename: Original filename
+            local_path: Path to downloaded file
+            bytes: File size in bytes
+            content_type: Content type
+            last_modified: Last modified timestamp
+            etag: ETag header value
+            published_time: Published time
+        """
+        ts = self.now()
+        self._conn.execute(
+            """
+            INSERT INTO files (
+                url, sha256, title, source_site, source_page_url, original_filename,
+                local_path, bytes, content_type, last_modified, etag, published_time,
+                first_seen, last_seen, crawl_time
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                url,
+                sha256,
+                title,
+                source_site,
+                source_page_url,
+                original_filename,
+                local_path,
+                bytes,
+                content_type,
+                last_modified,
+                etag,
+                published_time,
+                ts,
+                ts,
+                ts,
+            ),
+        )
+        self._maybe_commit()
+
     def upsert_file(
         self,
         url: str,
