@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
@@ -10,6 +11,8 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 from .storage import Storage
 from .utils import (
@@ -42,6 +45,27 @@ class Crawler:
         self.storage = storage
         self.download_dir = download_dir
         self.user_agent = user_agent
+        self._cleanup_old_temp_files()
+
+    def _cleanup_old_temp_files(self, max_age_hours: int = 24) -> None:
+        """Clean up stale .part files from previous failed downloads."""
+        download_path = Path(self.download_dir)
+        if not download_path.exists():
+            return
+        cutoff = time.time() - (max_age_hours * 3600)
+        cleaned = 0
+        for tmp_dir in download_path.glob("*/_tmp"):
+            if not tmp_dir.is_dir():
+                continue
+            for part_file in tmp_dir.glob("*.part"):
+                try:
+                    if part_file.stat().st_mtime < cutoff:
+                        part_file.unlink()
+                        cleaned += 1
+                except Exception:
+                    pass
+        if cleaned > 0:
+            logger.info("Cleaned up %d stale temporary files", cleaned)
 
     def _request(self, url: str) -> tuple[bytes, dict[str, str], str]:
         req = urllib.request.Request(
@@ -64,18 +88,29 @@ class Crawler:
         tmp_path = tmp_dir / f"download_{time.time_ns()}.part"
         hasher = hashlib.sha256()
         size = 0
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            headers = {k.lower(): v for k, v in resp.headers.items()}
-            final_url = resp.geturl()
-            with open(tmp_path, "wb") as f:
-                while True:
-                    chunk = resp.read(1024 * 128)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    hasher.update(chunk)
-                    size += len(chunk)
-        return tmp_path, headers, final_url, hasher.hexdigest(), size
+        success = False
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                headers = {k.lower(): v for k, v in resp.headers.items()}
+                final_url = resp.geturl()
+                with open(tmp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(1024 * 128)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        hasher.update(chunk)
+                        size += len(chunk)
+            success = True
+            logger.debug("Downloaded %s (%d bytes)", url, size)
+            return tmp_path, headers, final_url, hasher.hexdigest(), size
+        finally:
+            if not success and tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                    logger.debug("Cleaned up failed download: %s", tmp_path)
+                except Exception:
+                    pass
 
     def _is_file_url(self, url: str, exts: set[str]) -> bool:
         path = urlparse(url).path.lower()
@@ -123,10 +158,12 @@ class Crawler:
         try:
             data, _, _ = self._request(sitemap_url)
         except Exception:
+            logger.debug("No sitemap found at %s", sitemap_url)
             return []
         try:
             root = ET.fromstring(data)
         except ET.ParseError:
+            logger.warning("Failed to parse sitemap at %s", sitemap_url)
             return []
 
         urls: list[str] = []
@@ -134,9 +171,12 @@ class Crawler:
         for loc in root.findall(".//ns:loc", ns):
             if loc.text:
                 urls.append(loc.text.strip())
+        logger.info("Loaded %d URLs from sitemap: %s", len(urls), sitemap_url)
         return urls
 
     def crawl_site(self, cfg: SiteConfig) -> list[dict]:
+        logger.info("Starting crawl of site: %s (max_pages=%d, max_depth=%d)", 
+                   cfg.name, cfg.max_pages, cfg.max_depth)
         keywords = [k.lower() for k in (cfg.keywords or [])]
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
@@ -270,6 +310,8 @@ class Crawler:
 
             sleep_with_jitter(cfg.delay_seconds)
 
+        logger.info("Crawl completed for %s: %d new files found, %d pages visited", 
+                   cfg.name, len(new_items), pages_fetched)
         return new_items
 
     def _handle_file(
@@ -351,6 +393,7 @@ class Crawler:
             etag=etag,
             published_time=published_time,
         )
+        logger.info("Saved file: %s (%d bytes) -> %s", original_filename or url, bytes_size, local_path)
         return {
             "url": url,
             "sha256": sha256,

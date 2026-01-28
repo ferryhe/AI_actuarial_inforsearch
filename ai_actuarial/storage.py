@@ -223,6 +223,12 @@ class Storage:
         ]
         return [dict(zip(keys, row)) for row in rows]
 
+    # Allowed columns for ORDER BY to prevent SQL injection
+    _ALLOWED_ORDER_COLUMNS = frozenset([
+        "id", "url", "sha256", "title", "source_site", "local_path",
+        "bytes", "first_seen", "last_seen", "crawl_time"
+    ])
+
     def iter_files(
         self,
         site_filter: str | None,
@@ -233,6 +239,10 @@ class Storage:
         only_changed: bool = False,
         extractor_version: str | None = None,
     ) -> list[dict]:
+        # Validate order_by to prevent SQL injection
+        if order_by not in self._ALLOWED_ORDER_COLUMNS:
+            raise ValueError(f"Invalid order_by column: {order_by}. Allowed: {self._ALLOWED_ORDER_COLUMNS}")
+        
         filters: list[str] = []
         params: list[object] = []
         if require_local_path:
