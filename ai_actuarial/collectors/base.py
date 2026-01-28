@@ -19,6 +19,11 @@ class CollectionConfig:
     file_exts: list[str] | None = None
     exclude_keywords: list[str] | None = None
     metadata: dict[str, Any] | None = None
+    
+    def __post_init__(self):
+        """Initialize empty dict for metadata if None."""
+        if self.metadata is None:
+            self.metadata = {}
 
 
 @dataclass

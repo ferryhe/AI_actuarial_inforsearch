@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import time
 from html.parser import HTMLParser
@@ -147,6 +146,10 @@ def load_category_config(config_path: str = "config/categories.yaml") -> dict:
         
     Returns:
         Dictionary with categories, ai_filter_keywords, and ai_keywords
+        
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        yaml.YAMLError: If YAML parsing fails
     """
     try:
         import yaml
@@ -157,5 +160,8 @@ def load_category_config(config_path: str = "config/categories.yaml") -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Category config not found: {config_path}")
     
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise yaml.YAMLError(f"Failed to parse category config: {e}") from e

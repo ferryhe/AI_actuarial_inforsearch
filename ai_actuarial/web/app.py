@@ -61,15 +61,29 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/api/collections/run", methods=["POST"])
     def run_collection():
         """Start a collection operation."""
-        data = request.get_json()
-        collection_type = data.get("type")
-        
-        # TODO: Implement collection execution
-        return jsonify({
-            "success": True,
-            "message": f"Collection {collection_type} started",
-            "job_id": "placeholder"
-        })
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Invalid JSON"}), 400
+            
+            collection_type = data.get("type")
+            
+            # Validate collection type
+            valid_types = ["scheduled", "adhoc", "url", "file"]
+            if not collection_type or collection_type not in valid_types:
+                return jsonify({
+                    "error": f"Invalid collection type. Must be one of: {', '.join(valid_types)}"
+                }), 400
+            
+            # TODO: Implement collection execution
+            return jsonify({
+                "success": True,
+                "message": f"Collection {collection_type} started",
+                "job_id": "placeholder"
+            })
+        except Exception as e:
+            logger.exception("Error starting collection")
+            return jsonify({"error": str(e)}), 500
     
     @app.route("/api/files", methods=["GET"])
     def list_files():
@@ -95,7 +109,8 @@ def run_server(host: str = "127.0.0.1", port: int = 5000, debug: bool = False) -
     """Run the web server.
     
     Args:
-        host: Host address to bind to
+        host: Host address to bind to. 
+              WARNING: Use '0.0.0.0' only in trusted networks or with authentication!
         port: Port number to bind to
         debug: Enable debug mode
     """

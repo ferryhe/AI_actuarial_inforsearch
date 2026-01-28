@@ -12,6 +12,10 @@ from ..storage import Storage
 
 logger = logging.getLogger(__name__)
 
+# Constants
+SHA256_CHUNK_SIZE = 128 * 1024  # 128KB chunks for hash calculation
+MAX_FILENAME_RETRIES = 1000  # Maximum attempts to find unique filename
+
 
 class FileCollector(BaseCollector):
     """Collector for local file system imports."""
@@ -166,7 +170,7 @@ class FileCollector(BaseCollector):
         hasher = hashlib.sha256()
         with open(file_path, "rb") as f:
             while True:
-                chunk = f.read(1024 * 128)
+                chunk = f.read(SHA256_CHUNK_SIZE)
                 if not chunk:
                     break
                 hasher.update(chunk)
@@ -181,6 +185,9 @@ class FileCollector(BaseCollector):
             
         Returns:
             Unique file path
+            
+        Raises:
+            RuntimeError: If max retries exceeded
         """
         target = directory / filename
         if not target.exists():
@@ -189,14 +196,18 @@ class FileCollector(BaseCollector):
         # Add numeric suffix
         stem = target.stem
         suffix = target.suffix
-        counter = 1
         
-        while True:
+        for counter in range(1, MAX_FILENAME_RETRIES + 1):
             new_name = f"{stem}_{counter}{suffix}"
             target = directory / new_name
             if not target.exists():
                 return target
-            counter += 1
+        
+        # If we get here, we've exceeded max retries
+        raise RuntimeError(
+            f"Failed to find unique filename after {MAX_FILENAME_RETRIES} attempts "
+            f"for {filename}"
+        )
     
     def _guess_content_type(self, suffix: str) -> str:
         """Guess content type from file extension.

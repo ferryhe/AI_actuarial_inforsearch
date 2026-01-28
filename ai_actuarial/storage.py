@@ -275,6 +275,8 @@ class Storage:
             etag: ETag header value
             published_time: Published time
         """
+        # Note: Parameter 'bytes' shadows built-in, but this is intentional
+        # to match the database column name 'bytes' for consistency
         ts = self.now()
         self._conn.execute(
             """
