@@ -102,28 +102,31 @@ python -m ai_actuarial export --format json --output data/files.json
 
 ### Catalog Generation
 
-Generate keyword and summary catalogs using **incremental processing** (default):
+Generate keyword and summary catalogs using incremental processing (storage-backed by default):
 
 ```bash
-# Incremental catalog (processes only new/changed files)
+# Default incremental pipeline (storage-backed)
 python -m ai_actuarial catalog
 
-# With batch size and site filter
-python -m ai_actuarial catalog --batch 200 --site "SOA,CAS"
+# Legacy incremental pipeline
+python -m ai_actuarial catalog --legacy-incremental
 
 # AI-only filtering
 python -m ai_actuarial catalog --ai-only
 
 # Force reprocessing by changing catalog version
-python -m ai_actuarial catalog --catalog-version catalog_v2
+python -m ai_actuarial catalog --version catalog_v2
+
+# Retry files that previously failed
+python -m ai_actuarial catalog --retry-errors
 
 # Use TF-IDF fallback (faster, no model download)
 KEYBERT_DISABLE=1 python -m ai_actuarial catalog
 ```
 
-**Incremental mode** (default):
+**Incremental mode**:
 - Tracks processed files in SQLite `catalog_items` table
-- Only processes new files or files with changed sha256/catalog_version
+- Only processes new files or files with changed sha256/version
 - Appends to output files (no full rewrites)
 - Outputs:
   - `data/catalog.jsonl` - JSON Lines format (one record per line, append-only)
@@ -138,6 +141,19 @@ python -m ai_actuarial catalog --legacy --limit 100
 python -m ai_actuarial catalog --legacy --limit 100 --append
 ```
 - Outputs: `data/catalog.json` (full JSON array, rewrites entire file)
+
+### Verification (Incremental Repeatability)
+
+Run incremental twice with the same version. The second run should process ~0 files
+when nothing has changed.
+
+```bash
+# First run (requires files already downloaded via update)
+python -m ai_actuarial catalog --version catalog_v2
+
+# Second run (should be near-zero processed)
+python -m ai_actuarial catalog --version catalog_v2
+```
 
 ## Web Search Integration
 
