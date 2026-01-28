@@ -7,6 +7,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MAX_FILE_SIZE_MB = 500  # Maximum file size in MB
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
 
 class DocumentCleaner:
     """Cleans and validates collected documents."""
@@ -72,8 +76,8 @@ class DocumentCleaner:
         if size == 0:
             return False, "Empty file"
         
-        if size > 500 * 1024 * 1024:  # 500 MB
-            return False, "File too large"
+        if size > MAX_FILE_SIZE_BYTES:
+            return False, f"File too large ({size / (1024*1024):.1f} MB > {MAX_FILE_SIZE_MB} MB)"
         
         # Check file extension
         ext = path.suffix.lower()
@@ -88,12 +92,13 @@ class DocumentCleaner:
                 if self.is_ai_related("", title, path.name):
                     return True, "AI-related (by metadata)"
                 
-                # For now, accept all files if metadata check passes
-                # Full content checking would require reading the file
-                return True, "Accepted (requires content check)"
-            except Exception as e:
+                # NOTE: Full content checking would require reading the file
+                # This is a placeholder that accepts files pending full content check
+                # In production, you may want to extract and check file content here
+                return True, "Accepted (full content check not implemented)"
+            except (OSError, IOError) as e:
                 logger.warning("Error checking AI relevance for %s: %s", file_path, e)
-                return True, "Accepted (check failed)"
+                return True, "Accepted (check failed - IO error)"
         
         return True, "Accepted"
     

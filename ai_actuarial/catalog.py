@@ -23,7 +23,9 @@ try:
     CATEGORY_RULES = _category_config.get("categories", {})
     AI_TERMS = _category_config.get("ai_filter_keywords", [])
     AI_KEYWORDS = _category_config.get("ai_keywords", [])
-except Exception:
+except FileNotFoundError as e:
+    import logging
+    logging.warning("Category config file not found, using default values: %s", e)
     # Fallback to hardcoded values if config load fails
     AI_TERMS = [
         "artificial intelligence",
