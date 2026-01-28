@@ -4,6 +4,8 @@ import os
 import re
 import json
 import hashlib
+import html as html_lib
+import string
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -196,6 +198,33 @@ class CatalogItem:
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?])\s+")
 
 
+def detect_kind(path: Path) -> str:
+    try:
+        with open(path, "rb") as f:
+            head = f.read(512)
+    except OSError:
+        return "unknown"
+
+    if head.startswith(b"%PDF"):
+        return "pdf"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+
+    stripped = head.lstrip()
+    lowered = stripped[:256].lower()
+    if lowered.startswith(b"<!doctype") or lowered.startswith(b"<html") or lowered.startswith(b"<!doc"):
+        return "html"
+
+    if head:
+        null_ratio = head.count(b"\x00") / max(len(head), 1)
+        if null_ratio <= 0.01:
+            return "txt"
+
+    return "unknown"
+
+
 def _trim_semantic(text: str, max_chars: int) -> str:
     """Trim without chopping in the middle of a sentence when possible."""
     if not text:
@@ -279,6 +308,11 @@ def _write_cache(key: str, text: str) -> None:
 
 def _read_pdf_fast(path: Path, max_chars: int, max_pages: int = 20) -> str:
     from pypdf import PdfReader
+    import logging
+
+    # Silence noisy parser warnings; errors are handled by caller.
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
+    logging.getLogger("PyPDF2").setLevel(logging.ERROR)
 
     reader = PdfReader(str(path))
     out: list[str] = []
@@ -434,17 +468,71 @@ def extract_text(path: Path, max_chars: int = 20000) -> str:
     """
     if not path.exists():
         return ""
-    suffix = path.suffix.lower()
-    try:
-        if suffix == ".pdf":
+    kind = detect_kind(path)
+    if kind == "pdf":
+        try:
             return _read_pdf(path, max_chars)
-        if suffix == ".docx":
-            return _read_docx(path, max_chars)
-        if suffix == ".pptx":
-            return _read_pptx(path, max_chars)
+        except Exception as e:
+            raise ValueError(
+                f"corrupt pdf ({kind}): {path} ({type(e).__name__}: {e})"
+            ) from e
+    if kind == "html":
+        return _read_html(path, max_chars)
+    if kind in {"jpeg", "png"}:
+        return _read_image_ocr(path, max_chars, kind)
+    if kind == "txt":
+        return _read_txt(path, max_chars)
+
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
+        return _read_docx(path, max_chars)
+    if suffix == ".pptx":
+        return _read_pptx(path, max_chars)
+    raise ValueError(f"unsupported file type ({kind}): {path}")
+
+
+def _read_html(path: Path, max_chars: int) -> str:
+    raw = path.read_text(encoding="utf-8", errors="ignore")
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+
+        soup = BeautifulSoup(raw, "html.parser")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ")
+        text = re.sub(r"\s+", " ", text).strip()
+        return _trim_semantic(text, max_chars)
     except Exception:
-        return ""
-    return ""
+        # Fallback: strip tags + unescape entities
+        text = re.sub(r"(?s)<(script|style).*?>.*?</\\1>", " ", raw, flags=re.I)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = html_lib.unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return _trim_semantic(text, max_chars)
+
+
+def _read_txt(path: Path, max_chars: int) -> str:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return _trim_semantic(text, max_chars)
+
+
+def _read_image_ocr(path: Path, max_chars: int, kind: str) -> str:
+    try:
+        import pytesseract  # type: ignore
+    except Exception as e:
+        raise ValueError(f"ocr unavailable for {kind}: install pytesseract") from e
+    try:
+        from PIL import Image  # type: ignore
+    except Exception as e:
+        raise ValueError(f"ocr unavailable for {kind}: install pillow") from e
+
+    img = Image.open(path)
+    try:
+        text = pytesseract.image_to_string(img)
+    except Exception as e:
+        raise ValueError(f"ocr failed for {kind}: {path} ({type(e).__name__}: {e})") from e
+    text = re.sub(r"\s+", " ", text).strip()
+    return _trim_semantic(text, max_chars)
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +760,10 @@ def build_catalog(
         path = row.get("local_path")
         if not path:
             continue
-        text = extract_text(Path(path))
+        try:
+            text = extract_text(Path(path))
+        except Exception:
+            continue
         if not text:
             continue
         title = row.get("title")
@@ -723,7 +814,10 @@ def build_catalog_batch(
         path = row.get("local_path")
         if not path:
             continue
-        text = extract_text(Path(path))
+        try:
+            text = extract_text(Path(path))
+        except Exception:
+            continue
         if not text:
             continue
         title = row.get("title")
@@ -760,48 +854,91 @@ def build_catalog_incremental(
     limit: int | None,
     offset: int = 0,
     ai_only: bool = False,
+    pipeline_version: str | None = None,
+    retry_errors: bool = False,
+    batch_size: int = 50,
 ) -> list[dict]:
+    effective_version = pipeline_version or CATALOG_VERSION
     rows = storage.iter_files(
         site_filter=site_filter,
         limit=limit,
         offset=offset,
         require_local_path=True,
         only_changed=True,
-        extractor_version=CATALOG_VERSION,
+        extractor_version=effective_version,
+        include_errors=retry_errors,
     )
     results: list[dict] = []
     filters: list[str] = []
+    processed = 0
+    skipped = 0
+    errors = 0
     if site_filter:
         filters = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
-    for row in rows:
-        site = row.get("source_site")
-        if filters:
-            if not site or not any(f in site.lower() for f in filters):
-                continue
-        path = row.get("local_path")
-        if not path:
-            continue
-        text = extract_text(Path(path))
-        if not text:
-            continue
-        title = row.get("title")
-        keywords = extract_keywords(text, title=title)
-        if ai_only and not is_ai_related(text, keywords, title=title):
-            continue
-        summary = summarize(text, keywords)
-        category = categorize(title, text, keywords)
-        item = {
-            "source_site": site,
-            "title": title,
-            "original_filename": row.get("original_filename"),
-            "url": row.get("url"),
-            "local_path": path,
-            "keywords": keywords,
-            "summary": summary,
-            "category": category,
-            "sha256": row.get("sha256"),
-        }
-        results.append(item)
+    if batch_size <= 0:
+        batch_size = len(rows) if rows else 1
+    for start in range(0, len(rows), batch_size):
+        batch = rows[start:start + batch_size]
+        with storage.transaction():
+            for row in batch:
+                site = row.get("source_site")
+                if filters:
+                    if not site or not any(f in site.lower() for f in filters):
+                        skipped += 1
+                        continue
+                path = row.get("local_path")
+                if not path:
+                    skipped += 1
+                    continue
+                try:
+                    text = extract_text(Path(path))
+                    if not text:
+                        # Keep existing skip behavior for empty extraction results.
+                        skipped += 1
+                        continue
+                    title = row.get("title")
+                    keywords = extract_keywords(text, title=title)
+                    if ai_only and not is_ai_related(text, keywords, title=title):
+                        skipped += 1
+                        continue
+                    summary = summarize(text, keywords)
+                    category = categorize(title, text, keywords)
+                    item = {
+                        "source_site": site,
+                        "title": title,
+                        "original_filename": row.get("original_filename"),
+                        "url": row.get("url"),
+                        "local_path": path,
+                        "keywords": keywords,
+                        "summary": summary,
+                        "category": category,
+                        "sha256": row.get("sha256"),
+                    }
+                    ts = storage.now()
+                    storage.upsert_catalog_item(
+                        item,
+                        pipeline_version=effective_version,
+                        status="ok",
+                        error=None,
+                        processed_at=ts,
+                    )
+                    results.append(item)
+                    processed += 1
+                except Exception as e:
+                    ts = storage.now()
+                    storage.upsert_catalog_item(
+                        {"url": row.get("url"), "sha256": row.get("sha256")},
+                        pipeline_version=effective_version,
+                        status="error",
+                        error=str(e),
+                        processed_at=ts,
+                    )
+                    errors += 1
+                    continue
+    if processed or skipped or errors:
+        print(
+            f"catalog_incremental: processed={processed} skipped={skipped} errors={errors}"
+        )
     return results
 
 

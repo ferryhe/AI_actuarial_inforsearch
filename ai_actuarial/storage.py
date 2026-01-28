@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -14,6 +15,7 @@ class Storage:
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
         self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._tx_depth = 0
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -65,18 +67,15 @@ class Storage:
             """
             CREATE TABLE IF NOT EXISTS catalog_items (
                 file_url TEXT PRIMARY KEY,
-                file_sha256 TEXT,
-                title TEXT,
-                source_site TEXT,
-                original_filename TEXT,
-                local_path TEXT,
-                keywords_json TEXT,
+                sha256 TEXT NOT NULL,
+                pipeline_version TEXT NOT NULL,
+                processed_at TEXT,
+                status TEXT NOT NULL DEFAULT 'ok',
+                error TEXT,
+                keywords TEXT,
                 summary TEXT,
                 category TEXT,
-                catalog_version TEXT,
-                processed_at TEXT,
-                status TEXT,
-                error TEXT
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -102,16 +101,18 @@ class Storage:
         self._ensure_columns(
             "catalog_items",
             {
-                "file_sha256": "TEXT",
-                "keywords_json": "TEXT",
+                "sha256": "TEXT",
+                "pipeline_version": "TEXT",
+                "processed_at": "TEXT",
+                "status": "TEXT DEFAULT 'ok'",
+                "error": "TEXT",
+                "keywords": "TEXT",
                 "summary": "TEXT",
                 "category": "TEXT",
-                "catalog_version": "TEXT",
-                "processed_at": "TEXT",
-                "status": "TEXT",
-                "error": "TEXT",
+                "updated_at": "TEXT",
             },
         )
+        self._migrate_catalog_items()
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         cur = self._conn.execute(f"PRAGMA table_info({table})")
@@ -121,6 +122,78 @@ class Storage:
                 self._conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"
                 )
+        self._conn.commit()
+
+    def _maybe_commit(self) -> None:
+        if self._tx_depth == 0:
+            self._conn.commit()
+
+    @contextmanager
+    def transaction(self):
+        sp_name = None
+        if self._tx_depth == 0:
+            self._conn.execute("BEGIN")
+        else:
+            sp_name = f"sp_{self._tx_depth}"
+            self._conn.execute(f"SAVEPOINT {sp_name}")
+        self._tx_depth += 1
+        try:
+            yield
+        except Exception:
+            self._tx_depth -= 1
+            if sp_name is None:
+                self._conn.rollback()
+            else:
+                self._conn.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                self._conn.execute(f"RELEASE SAVEPOINT {sp_name}")
+            raise
+        else:
+            self._tx_depth -= 1
+            if sp_name is None:
+                self._conn.commit()
+            else:
+                self._conn.execute(f"RELEASE SAVEPOINT {sp_name}")
+
+    def _migrate_catalog_items(self) -> None:
+        cur = self._conn.execute("PRAGMA table_info(catalog_items)")
+        existing = {row[1] for row in cur.fetchall()}
+
+        # Map legacy columns into the unified schema without dropping data.
+        if "sha256" in existing and "file_sha256" in existing:
+            self._conn.execute(
+                """
+                UPDATE catalog_items
+                SET sha256 = file_sha256
+                WHERE (sha256 IS NULL OR sha256 = '') AND file_sha256 IS NOT NULL
+                """
+            )
+        if "pipeline_version" in existing:
+            if "extractor_version" in existing:
+                self._conn.execute(
+                    """
+                    UPDATE catalog_items
+                    SET pipeline_version = extractor_version
+                    WHERE (pipeline_version IS NULL OR pipeline_version = '')
+                      AND extractor_version IS NOT NULL
+                    """
+                )
+            if "catalog_version" in existing:
+                self._conn.execute(
+                    """
+                    UPDATE catalog_items
+                    SET pipeline_version = catalog_version
+                    WHERE (pipeline_version IS NULL OR pipeline_version = '')
+                      AND catalog_version IS NOT NULL
+                    """
+                )
+        if "keywords" in existing and "keywords_json" in existing:
+            self._conn.execute(
+                """
+                UPDATE catalog_items
+                SET keywords = keywords_json
+                WHERE (keywords IS NULL OR keywords = '') AND keywords_json IS NOT NULL
+                """
+            )
         self._conn.commit()
 
     def close(self) -> None:
@@ -190,7 +263,7 @@ class Storage:
                 ts,
             ),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
     def mark_page_seen(self, url: str) -> None:
         ts = self.now()
@@ -202,7 +275,7 @@ class Storage:
             """,
             (url, ts),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
     def export_files(self) -> list[dict]:
         cur = self._conn.execute(
@@ -249,6 +322,7 @@ class Storage:
         order_by: str = "id",
         only_changed: bool = False,
         extractor_version: str | None = None,
+        include_errors: bool = False,
     ) -> list[dict]:
         # Validate order_by to prevent SQL injection
         if order_by not in self._ALLOWED_ORDER_COLUMNS:
@@ -257,15 +331,15 @@ class Storage:
         filters: list[str] = []
         params: list[object] = []
         if require_local_path:
-            filters.append("local_path IS NOT NULL AND local_path != ''")
+            filters.append("f.local_path IS NOT NULL AND f.local_path != ''")
         if site_filter:
             tokens = [t.strip().lower() for t in site_filter.split(",") if t.strip()]
             if tokens:
                 like_parts = []
                 for t in tokens:
-                    like_parts.append("LOWER(source_site) LIKE ?")
+                    like_parts.append("LOWER(f.source_site) LIKE ?")
                     params.append(f"%{t}%")
-                    like_parts.append("LOWER(url) LIKE ?")
+                    like_parts.append("LOWER(f.url) LIKE ?")
                     params.append(f"%{t}%")
                 filters.append("(" + " OR ".join(like_parts) + ")")
         join = ""
@@ -273,9 +347,10 @@ class Storage:
             if not extractor_version:
                 raise ValueError("extractor_version is required when only_changed is True")
             join = "LEFT JOIN catalog_items c ON c.file_url = f.url"
-            filters.append(
-                "(c.file_url IS NULL OR c.sha256 != f.sha256 OR c.extractor_version != ?)"
-            )
+            clause = "c.file_url IS NULL OR c.sha256 != f.sha256 OR c.pipeline_version != ?"
+            if include_errors:
+                clause += " OR c.status IS NULL OR c.status != 'ok'"
+            filters.append(f"({clause})")
             params.append(extractor_version)
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         limit_clause = ""
@@ -284,9 +359,21 @@ class Storage:
             params.extend([limit, offset])
         cur = self._conn.execute(
             f"""
-            SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url, f.original_filename,
-                   f.local_path, f.bytes, f.content_type, f.last_modified, f.etag, f.published_time,
-                   f.first_seen, f.last_seen, f.crawl_time
+            SELECT f.url AS url,
+                   f.sha256 AS sha256,
+                   f.title AS title,
+                   f.source_site AS source_site,
+                   f.source_page_url AS source_page_url,
+                   f.original_filename AS original_filename,
+                   f.local_path AS local_path,
+                   f.bytes AS bytes,
+                   f.content_type AS content_type,
+                   f.last_modified AS last_modified,
+                   f.etag AS etag,
+                   f.published_time AS published_time,
+                   f.first_seen AS first_seen,
+                   f.last_seen AS last_seen,
+                   f.crawl_time AS crawl_time
             FROM files f
             {join}
             {where}
@@ -350,34 +437,50 @@ class Storage:
             """,
             (sha256, canonical_path, bytes_size, content_type, ts, ts),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
-    def catalog_item_fresh(self, url: str, sha256: str, extractor_version: str) -> bool:
+    def catalog_item_fresh(
+        self,
+        url: str,
+        sha256: str,
+        pipeline_version: str | None = None,
+        extractor_version: str | None = None,
+    ) -> bool:
+        effective_pipeline_version = pipeline_version or extractor_version or ""
         cur = self._conn.execute(
             """
             SELECT 1 FROM catalog_items
-            WHERE file_url = ? AND sha256 = ? AND extractor_version = ?
+            WHERE file_url = ? AND sha256 = ? AND pipeline_version = ? AND status = 'ok'
             """,
-            (url, sha256, extractor_version),
+            (url, sha256, effective_pipeline_version),
         )
         return cur.fetchone() is not None
 
-    def upsert_catalog_item(self, item: dict, extractor_version: str) -> None:
-        ts = self.now()
+    def upsert_catalog_item(
+        self,
+        item: dict,
+        pipeline_version: str | None = None,
+        status: str = "ok",
+        error: str | None = None,
+        processed_at: str | None = None,
+        extractor_version: str | None = None,
+    ) -> None:
+        processed_ts = processed_at or self.now()
+        updated_ts = self.now()
+        effective_pipeline_version = pipeline_version or extractor_version or ""
         self._conn.execute(
             """
             INSERT INTO catalog_items (
-                file_url, sha256, extractor_version, title, source_site,
-                original_filename, local_path, keywords, summary, category, updated_at
+                file_url, sha256, pipeline_version, processed_at, status, error,
+                keywords, summary, category, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(file_url) DO UPDATE SET
                 sha256=excluded.sha256,
-                extractor_version=excluded.extractor_version,
-                title=excluded.title,
-                source_site=excluded.source_site,
-                original_filename=excluded.original_filename,
-                local_path=excluded.local_path,
+                pipeline_version=excluded.pipeline_version,
+                processed_at=excluded.processed_at,
+                status=excluded.status,
+                error=excluded.error,
                 keywords=excluded.keywords,
                 summary=excluded.summary,
                 category=excluded.category,
@@ -386,18 +489,17 @@ class Storage:
             (
                 item.get("url"),
                 item.get("sha256"),
-                extractor_version,
-                item.get("title"),
-                item.get("source_site"),
-                item.get("original_filename"),
-                item.get("local_path"),
+                effective_pipeline_version,
+                processed_ts,
+                status,
+                error,
                 json.dumps(item.get("keywords") or [], ensure_ascii=False),
                 item.get("summary") or "",
                 item.get("category") or "",
-                ts,
+                updated_ts,
             ),
         )
-        self._conn.commit()
+        self._maybe_commit()
 
     def write_last_run(self, output_path: str, items: Iterable[dict]) -> None:
         Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
