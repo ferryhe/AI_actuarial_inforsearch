@@ -1,493 +1,602 @@
 defaults:
-  user_agent: "AI-Actuarial-InfoSearch/0.1 (+contact: you@example.com)"
+  user_agent: 'AI-Actuarial-InfoSearch/0.1 (+contact: you@example.com)'
   max_pages: 200
   max_depth: 2
   delay_seconds: 0.5
   keywords:
-    - "artificial intelligence"
-    - "machine learning"
-    - "deep learning"
-    - "generative ai"
-    - "large language model"
-    - "llm"
-    - "data science"
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - llm
+  - data science
   file_exts:
-    - ".pdf"
-    - ".doc"
-    - ".docx"
-    - ".ppt"
-    - ".pptx"
-    - ".xls"
-    - ".xlsx"
-
+  - .pdf
+  - .doc
+  - .docx
+  - .ppt
+  - .pptx
+  - .xls
+  - .xlsx
 paths:
-  download_dir: "data/files"
-  db: "data/index.db"
-  last_run_new: "data/last_run_new.json"
-  updates_dir: "data/updates"
-
+  download_dir: data/files
+  db: data/index.db
+  last_run_new: data/last_run_new.json
+  updates_dir: data/updates
 search:
   enabled: true
   max_results: 5
   delay_seconds: 0.5
   languages:
-    - "en"
-    - "zh"
-  country: "us"
+  - en
+  - zh
+  country: us
   exclude_keywords:
-    - "election"
-    - "research funding"
-    - "volunteer"
-    - "about"
-    - "actuarial books"
-    - "brochure"
+  - about
+  - actuarial books
+  - brochure
+  - election
+  - news letter
+  - newsletter
+  - research funding
+  - volunteer
   queries:
-    - "actuary artificial intelligence report filetype:pdf"
-    - "actuarial machine learning report filetype:pdf"
-    - "artificial intelligence site:actuaries.org filetype:pdf"
-    - "machine learning site:soa.org filetype:pdf"
-    - "artificial intelligence site:casact.org filetype:pdf"
-    - "artificial intelligence site:actuary.org filetype:pdf"
-    - "人工智能 site:e-caa.org.cn filetype:pdf"
-    - "精算 人工智能 报告 filetype:pdf"
-
+  - actuary artificial intelligence report filetype:pdf
+  - actuarial machine learning report filetype:pdf
+  - artificial intelligence site:actuaries.org filetype:pdf
+  - machine learning site:soa.org filetype:pdf
+  - artificial intelligence site:casact.org filetype:pdf
+  - artificial intelligence site:actuary.org filetype:pdf
+  - 人工智能 site:e-caa.org.cn filetype:pdf
+  - 精算 人工智能 报告 filetype:pdf
 sites:
-  - name: "International Actuarial Association (IAA)"
-    url: "https://www.actuaries.org/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "International Association of Black Actuaries (IABA)"
-    url: "https://www.blackactuaries.org/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Society of Actuaries (SOA)"
-    url: "https://www.soa.org/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-    exclude_keywords:
-      - "exam"
-      - "solution"
-      - "solutions"
-      - "curriculum"
-      - "spring"
-      - "fall"
-      - "edu"
-    exclude_prefixes:
-      - "book"
-  - name: "SOA AI Topic Landing (Focused)"
-    url: "https://www.soa.org/research/topics/artificial-intelligence-topic-landing/"
-    max_pages: 100
-    max_depth: 3
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-    exclude_keywords:
-      - "exam"
-      - "solution"
-      - "solutions"
-      - "curriculum"
-      - "spring"
-      - "fall"
-      - "edu"
-    exclude_prefixes:
-      - "book"
-  - name: "SOA AI Bulletin (Focused)"
-    url: "https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/"
-    max_pages: 80
-    max_depth: 3
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-    exclude_keywords:
-      - "exam"
-      - "solution"
-      - "solutions"
-      - "curriculum"
-      - "spring"
-      - "fall"
-      - "edu"
-    exclude_prefixes:
-      - "book"
-  - name: "Casualty Actuarial Society (CAS)"
-    url: "https://www.casact.org/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-    exclude_keywords:
-      - "exam"
-      - "exams"
-      - "syllabus"
-      - "studytools"
-      - "passmarks"
-      - "examiner"
-      - "examiners"
-      - "admissions"
-      - "education"
-      - "community"
-      - "library"
-      - "faq"
-      - "curriculum"
-    exclude_prefixes:
-      - "admissions_"
-      - "community_"
-      - "education_"
-      - "library_"
-  - name: "American Academy of Actuaries (AAA)"
-    url: "https://www.actuary.org/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Canadian Institute of Actuaries (CIA / ICA)"
-    url: "https://www.cia-ica.ca/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Conference of Consulting Actuaries (CCA)"
-    url: "https://www.ccactuaries.org/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-    exclude_keywords:
-      - "outline"
-      - "agenda"
-      - "schedule"
-      - "course"
-      - "training"
-      - "workshop"
-      - "webinar"
-      - "seminar"
-      - "lecture"
-      - "education"
-      - "meeting"
-      - "conference"
-      - "slides"
-      - "instructor"
-      - "lecturer"
-      - "speaker"
-      - "課程"
-      - "講師"
-      - "課綱"
-      - "大綱"
-      - "議程"
-      - "簡章"
-      - "講義"
-      - "研討會"
-      - "课程"
-      - "讲师"
-      - "课纲"
-      - "大纲"
-      - "议程"
-      - "简章"
-      - "讲义"
-      - "研讨会"
-      - "講座"
-      - "セミナー"
-      - "研修"
-      - "교육"
-      - "강의"
-      - "강사"
-      - "세미나"
-  - name: "Actuarial Association of Europe (AAE)"
-    url: "https://actuary.eu/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-    exclude_keywords:
-      - "outline"
-      - "agenda"
-      - "schedule"
-      - "course"
-      - "training"
-      - "workshop"
-      - "webinar"
-      - "seminar"
-      - "lecture"
-      - "education"
-      - "meeting"
-      - "conference"
-      - "slides"
-      - "instructor"
-      - "lecturer"
-      - "speaker"
-      - "課程"
-      - "講師"
-      - "課綱"
-      - "大綱"
-      - "議程"
-      - "簡章"
-      - "講義"
-      - "研討會"
-      - "课程"
-      - "讲师"
-      - "课纲"
-      - "大纲"
-      - "议程"
-      - "简章"
-      - "讲义"
-      - "研讨会"
-      - "講座"
-      - "セミナー"
-      - "研修"
-      - "교육"
-      - "강의"
-      - "강사"
-      - "세미나"
-  - name: "European Actuarial Academy (EAA)"
-    url: "https://actuarial-academy.com/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Institute and Faculty of Actuaries (IFoA, UK)"
-    url: "https://www.actuaries.org.uk/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Institut des Actuaires (France)"
-    url: "https://www.institutdesactuaires.com/"
-    keywords:
-      - "intelligence artificielle"
-      - "apprentissage automatique"
-      - "apprentissage profond"
-      - "intelligence artificielle générative"
-      - "grand modèle de langage"
-  - name: "German Association of Actuaries (DAV)"
-    url: "https://www.aktuar.de/"
-    keywords:
-      - "künstliche intelligenz"
-      - "maschinelles lernen"
-      - "tiefes lernen"
-      - "generative ki"
-      - "großes sprachmodell"
-  - name: "Swiss Association of Actuaries"
-    url: "https://www.actuaries.ch/"
-    keywords:
-      - "künstliche intelligenz"
-      - "maschinelles lernen"
-      - "tiefes lernen"
-      - "generative ki"
-      - "großes sprachmodell"
-  - name: "Ordine Nazionale degli Attuari (Italy)"
-    url: "https://www.ordineattuari.it/"
-    keywords:
-      - "intelligenza artificiale"
-      - "apprendimento automatico"
-      - "apprendimento profondo"
-      - "intelligenza artificiale generativa"
-      - "modello linguistico di grandi dimensioni"
-  - name: "Istituto Italiano degli Attuari"
-    url: "http://www.italian-actuaries.org/"
-    keywords:
-      - "intelligenza artificiale"
-      - "apprendimento automatico"
-      - "apprendimento profondo"
-      - "intelligenza artificiale generativa"
-      - "modello linguistico di grandi dimensioni"
-  - name: "Instituto de Actuarios Españoles (Spain)"
-    url: "https://www.actuarios.org/"
-    keywords:
-      - "inteligencia artificial"
-      - "aprendizaje automático"
-      - "aprendizaje profundo"
-      - "inteligencia artificial generativa"
-      - "modelo de lenguaje grande"
-  - name: "Actuaries Institute (Australia)"
-    url: "https://www.actuaries.asn.au/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Institute of Actuaries of India (IAI)"
-    url: "https://actuariesindia.org/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Institute of Actuaries of Japan (IAJ)"
-    url: "https://www.actuaries.jp/english/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-  - name: "Institute of Actuaries of Korea"
-    url: "https://www.actuary.or.kr/"
-    keywords:
-      - "인공지능"
-      - "기계학습"
-      - "딥러닝"
-      - "생성형 인공지능"
-      - "대규모 언어 모델"
-  - name: "Actuarial Institute of Chinese Taipei (AICT)"
-    url: "https://en.airc.org.tw/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-    exclude_keywords:
-      - "outline"
-      - "agenda"
-      - "schedule"
-      - "course"
-      - "training"
-      - "workshop"
-      - "webinar"
-      - "seminar"
-      - "lecture"
-      - "education"
-      - "meeting"
-      - "conference"
-      - "slides"
-      - "instructor"
-      - "lecturer"
-      - "speaker"
-      - "課程"
-      - "講師"
-      - "課綱"
-      - "大綱"
-      - "議程"
-      - "簡章"
-      - "講義"
-      - "研討會"
-      - "课程"
-      - "讲师"
-      - "课纲"
-      - "大纲"
-      - "议程"
-      - "简章"
-      - "讲义"
-      - "研讨会"
-      - "講座"
-      - "セミナー"
-      - "研修"
-      - "교육"
-      - "강의"
-      - "강사"
-      - "세미나"
-  - name: "China Association of Actuaries (CAA)"
-    url: "https://www.e-caa.org.cn/"
-    keywords:
-      - "人工智能"
-      - "机器学习"
-      - "深度学习"
-      - "生成式人工智能"
-      - "大语言模型"
-  - name: "Actuarial Society of Hong Kong (ASHK)"
-    url: "https://www.actuaries.org.hk/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Actuarial Society of South Africa (ASSA)"
-    url: "https://www.actuarialsociety.org.za/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "The Actuarial Society of Kenya (TASK)"
-    url: "https://www.actuarieskenya.or.ke/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-      - "data science"
-  - name: "Moroccan Association of Actuaries (AMA)"
-    url: "https://www.ama.ma/en/"
-    keywords:
-      - "artificial intelligence"
-      - "machine learning"
-      - "deep learning"
-      - "generative ai"
-      - "large language model"
-  - name: "Instituto Brasileiro de Atuária (IBA, Brazil)"
-    url: "https://atuarios.org.br/"
-    keywords:
-      - "inteligência artificial"
-      - "aprendizado de máquina"
-      - "aprendizado profundo"
-      - "inteligência artificial generativa"
-      - "modelo de linguagem grande"
-  - name: "Asociación Colombiana de Actuarios (ACA, Colombia)"
-    url: "https://actuarios.org.co/"
-    keywords:
-      - "inteligencia artificial"
-      - "aprendizaje automático"
-      - "aprendizaje profundo"
-      - "inteligencia artificial generativa"
-      - "modelo de lenguaje grande"
-  - name: "Colegio Nacional de Actuarios (CONAC, Mexico)"
-    url: "https://www.conacmexico.org.mx/"
-    keywords:
-      - "inteligencia artificial"
-      - "aprendizaje automático"
-      - "aprendizaje profundo"
-      - "inteligencia artificial generativa"
-      - "modelo de lenguaje grande"
+- name: International Actuarial Association (IAA)
+  url: https://www.actuaries.org/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: International Association of Black Actuaries (IABA)
+  url: https://www.blackactuaries.org/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Society of Actuaries (SOA)
+  url: https://www.soa.org/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - curriculum
+  - edu
+  - exam
+  - fall
+  - news letter
+  - newsletter
+  - solution
+  - solutions
+  - spring
+  exclude_prefixes:
+  - book
+- name: SOA AI Topic Landing (Focused)
+  url: https://www.soa.org/research/topics/artificial-intelligence-topic-landing/
+  max_pages: 100
+  max_depth: 3
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - curriculum
+  - edu
+  - exam
+  - fall
+  - news letter
+  - newsletter
+  - solution
+  - solutions
+  - spring
+  exclude_prefixes:
+  - book
+- name: SOA AI Bulletin (Focused)
+  url: https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/
+  max_pages: 80
+  max_depth: 3
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - curriculum
+  - edu
+  - exam
+  - fall
+  - news letter
+  - newsletter
+  - solution
+  - solutions
+  - spring
+  exclude_prefixes:
+  - book
+- name: Casualty Actuarial Society (CAS)
+  url: https://www.casact.org/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - admissions
+  - community
+  - curriculum
+  - education
+  - exam
+  - examiner
+  - examiners
+  - exams
+  - faq
+  - library
+  - news letter
+  - newsletter
+  - passmarks
+  - studytools
+  - syllabus
+  exclude_prefixes:
+  - admissions_
+  - community_
+  - education_
+  - library_
+- name: American Academy of Actuaries (AAA)
+  url: https://www.actuary.org/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Canadian Institute of Actuaries (CIA / ICA)
+  url: https://www.cia-ica.ca/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+  - exam
+  - exams
+  - syllabus
+  exclude_prefixes:
+  - member
+- name: CIA Research & Publications
+  url: https://www.cia-ica.ca/publications
+  max_pages: 100
+  max_depth: 4
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+  - exam
+  - exams
+  - syllabus
+  exclude_prefixes:
+  - member
+- name: Conference of Consulting Actuaries (CCA)
+  url: https://www.ccactuaries.org/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - agenda
+  - conference
+  - course
+  - education
+  - instructor
+  - lecture
+  - lecturer
+  - meeting
+  - news letter
+  - newsletter
+  - outline
+  - schedule
+  - seminar
+  - slides
+  - speaker
+  - training
+  - webinar
+  - workshop
+  - セミナー
+  - 大綱
+  - 大纲
+  - 研修
+  - 研討會
+  - 研讨会
+  - 简章
+  - 簡章
+  - 課程
+  - 課綱
+  - 講師
+  - 講座
+  - 講義
+  - 議程
+  - 议程
+  - 讲义
+  - 讲师
+  - 课程
+  - 课纲
+  - 강사
+  - 강의
+  - 교육
+  - 세미나
+- name: Actuarial Association of Europe (AAE)
+  url: https://actuary.eu/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - agenda
+  - conference
+  - course
+  - education
+  - instructor
+  - lecture
+  - lecturer
+  - meeting
+  - news letter
+  - newsletter
+  - outline
+  - schedule
+  - seminar
+  - slides
+  - speaker
+  - training
+  - webinar
+  - workshop
+  - セミナー
+  - 大綱
+  - 大纲
+  - 研修
+  - 研討會
+  - 研讨会
+  - 简章
+  - 簡章
+  - 課程
+  - 課綱
+  - 講師
+  - 講座
+  - 講義
+  - 議程
+  - 议程
+  - 讲义
+  - 讲师
+  - 课程
+  - 课纲
+  - 강사
+  - 강의
+  - 교육
+  - 세미나
+- name: European Actuarial Academy (EAA)
+  url: https://actuarial-academy.com/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Institute and Faculty of Actuaries (IFoA, UK)
+  url: https://www.actuaries.org.uk/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Institut des Actuaires (France)
+  url: https://www.institutdesactuaires.com/
+  keywords:
+  - intelligence artificielle
+  - apprentissage automatique
+  - apprentissage profond
+  - intelligence artificielle générative
+  - grand modèle de langage
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: German Association of Actuaries (DAV)
+  url: https://www.aktuar.de/
+  keywords:
+  - künstliche intelligenz
+  - maschinelles lernen
+  - tiefes lernen
+  - generative ki
+  - großes sprachmodell
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Swiss Association of Actuaries
+  url: https://www.actuaries.ch/
+  keywords:
+  - künstliche intelligenz
+  - maschinelles lernen
+  - tiefes lernen
+  - generative ki
+  - großes sprachmodell
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Ordine Nazionale degli Attuari (Italy)
+  url: https://www.ordineattuari.it/
+  keywords:
+  - intelligenza artificiale
+  - apprendimento automatico
+  - apprendimento profondo
+  - intelligenza artificiale generativa
+  - modello linguistico di grandi dimensioni
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Istituto Italiano degli Attuari
+  url: http://www.italian-actuaries.org/
+  keywords:
+  - intelligenza artificiale
+  - apprendimento automatico
+  - apprendimento profondo
+  - intelligenza artificiale generativa
+  - modello linguistico di grandi dimensioni
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Instituto de Actuarios Españoles (Spain)
+  url: https://www.actuarios.org/
+  keywords:
+  - inteligencia artificial
+  - aprendizaje automático
+  - aprendizaje profundo
+  - inteligencia artificial generativa
+  - modelo de lenguaje grande
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Actuaries Institute (Australia)
+  url: https://www.actuaries.asn.au/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Institute of Actuaries of India (IAI)
+  url: https://actuariesindia.org/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Institute of Actuaries of Japan (IAJ)
+  url: https://www.actuaries.jp/english/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Institute of Actuaries of Korea
+  url: https://www.actuary.or.kr/
+  keywords:
+  - 인공지능
+  - 기계학습
+  - 딥러닝
+  - 생성형 인공지능
+  - 대규모 언어 모델
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Actuarial Institute of Chinese Taipei (AICT)
+  url: https://en.airc.org.tw/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - agenda
+  - conference
+  - course
+  - education
+  - instructor
+  - lecture
+  - lecturer
+  - meeting
+  - news letter
+  - newsletter
+  - outline
+  - schedule
+  - seminar
+  - slides
+  - speaker
+  - training
+  - webinar
+  - workshop
+  - セミナー
+  - 大綱
+  - 大纲
+  - 研修
+  - 研討會
+  - 研讨会
+  - 简章
+  - 簡章
+  - 課程
+  - 課綱
+  - 講師
+  - 講座
+  - 講義
+  - 議程
+  - 议程
+  - 讲义
+  - 讲师
+  - 课程
+  - 课纲
+  - 강사
+  - 강의
+  - 교육
+  - 세미나
+- name: China Association of Actuaries (CAA)
+  url: https://www.e-caa.org.cn/
+  keywords:
+  - 人工智能
+  - 机器学习
+  - 深度学习
+  - 生成式人工智能
+  - 大语言模型
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Actuarial Society of Hong Kong (ASHK)
+  url: https://www.actuaries.org.hk/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Actuarial Society of South Africa (ASSA)
+  url: https://www.actuarialsociety.org.za/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: The Actuarial Society of Kenya (TASK)
+  url: https://www.actuarieskenya.or.ke/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  - data science
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Moroccan Association of Actuaries (AMA)
+  url: https://www.ama.ma/en/
+  keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - generative ai
+  - large language model
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Instituto Brasileiro de Atuária (IBA, Brazil)
+  url: https://atuarios.org.br/
+  keywords:
+  - inteligência artificial
+  - aprendizado de máquina
+  - aprendizado profundo
+  - inteligência artificial generativa
+  - modelo de linguagem grande
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Asociación Colombiana de Actuarios (ACA, Colombia)
+  url: https://actuarios.org.co/
+  keywords:
+  - inteligencia artificial
+  - aprendizaje automático
+  - aprendizaje profundo
+  - inteligencia artificial generativa
+  - modelo de lenguaje grande
+  exclude_keywords:
+  - news letter
+  - newsletter
+- name: Colegio Nacional de Actuarios (CONAC, Mexico)
+  url: https://www.conacmexico.org.mx/
+  keywords:
+  - inteligencia artificial
+  - aprendizaje automático
+  - aprendizaje profundo
+  - inteligencia artificial generativa
+  - modelo de lenguaje grande
+  exclude_keywords:
+  - news letter
+  - newsletter
