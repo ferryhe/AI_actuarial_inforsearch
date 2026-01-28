@@ -60,9 +60,11 @@ AI_actuarial_inforsearch/
 ## Output
 
 - **Downloads**: `data/files/` - Downloaded files organized by domain
-- **Index database**: `data/index.db` - SQLite database with file metadata
+- **Index database**: `data/index.db` - SQLite database with file metadata and catalog state
 - **Last run**: `data/last_run_new.json` - New files from the most recent run
 - **Updates**: `data/updates/update_YYYYMMDD_HHMMSSZ.(json|md)` - Timestamped update logs
+- **Catalog**: `data/catalog.jsonl` - Incremental catalog (JSONL format, append-only)
+- **Catalog MD**: `data/catalog.md` - Markdown table with keywords and summaries
 - **Export**: Run `python -m ai_actuarial export --format md --output data/files.md`
 
 Downloaded files keep their original filenames. If a name conflicts, a suffix like `_1`, `_2` is appended.
@@ -100,25 +102,42 @@ python -m ai_actuarial export --format json --output data/files.json
 
 ### Catalog Generation
 
-Generate keyword and summary catalogs:
+Generate keyword and summary catalogs using **incremental processing** (default):
 
 ```bash
-# Basic catalog
-python -m ai_actuarial catalog --site "SOA,CAS" --limit 100
+# Incremental catalog (processes only new/changed files)
+python -m ai_actuarial catalog
+
+# With batch size and site filter
+python -m ai_actuarial catalog --batch 200 --site "SOA,CAS"
 
 # AI-only filtering
-python -m ai_actuarial catalog --ai-only --limit 100
+python -m ai_actuarial catalog --ai-only
+
+# Force reprocessing by changing catalog version
+python -m ai_actuarial catalog --catalog-version catalog_v2
 
 # Use TF-IDF fallback (faster, no model download)
-KEYBERT_DISABLE=1 python -m ai_actuarial catalog --limit 100
-
-# Resumable batch processing (for large datasets)
-python scripts/catalog_resume.py
+KEYBERT_DISABLE=1 python -m ai_actuarial catalog
 ```
 
-Outputs:
-- `data/catalog.md` - Markdown table with keywords and summaries
-- `data/catalog.json` - JSON format
+**Incremental mode** (default):
+- Tracks processed files in SQLite `catalog_items` table
+- Only processes new files or files with changed sha256/catalog_version
+- Appends to output files (no full rewrites)
+- Outputs:
+  - `data/catalog.jsonl` - JSON Lines format (one record per line, append-only)
+  - `data/catalog.md` - Markdown table (append-only)
+
+**Legacy mode** (for backward compatibility):
+```bash
+# Full rewrite to JSON format
+python -m ai_actuarial catalog --legacy --limit 100
+
+# With append
+python -m ai_actuarial catalog --legacy --limit 100 --append
+```
+- Outputs: `data/catalog.json` (full JSON array, rewrites entire file)
 
 ## Web Search Integration
 

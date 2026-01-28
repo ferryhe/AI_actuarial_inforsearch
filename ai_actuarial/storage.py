@@ -60,21 +60,29 @@ class Storage:
             )
             """
         )
+        # catalog_items: incremental catalog state tracking
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS catalog_items (
                 file_url TEXT PRIMARY KEY,
-                sha256 TEXT,
-                extractor_version TEXT,
+                file_sha256 TEXT,
                 title TEXT,
                 source_site TEXT,
                 original_filename TEXT,
                 local_path TEXT,
-                keywords TEXT,
+                keywords_json TEXT,
                 summary TEXT,
                 category TEXT,
-                updated_at TEXT
+                catalog_version TEXT,
+                processed_at TEXT,
+                status TEXT,
+                error TEXT
             )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_catalog_items_status ON catalog_items(status)
             """
         )
         self._conn.commit()
@@ -94,11 +102,14 @@ class Storage:
         self._ensure_columns(
             "catalog_items",
             {
-                "extractor_version": "TEXT",
-                "keywords": "TEXT",
+                "file_sha256": "TEXT",
+                "keywords_json": "TEXT",
                 "summary": "TEXT",
                 "category": "TEXT",
-                "updated_at": "TEXT",
+                "catalog_version": "TEXT",
+                "processed_at": "TEXT",
+                "status": "TEXT",
+                "error": "TEXT",
             },
         )
 

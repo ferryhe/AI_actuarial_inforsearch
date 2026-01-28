@@ -11,6 +11,7 @@ import yaml
 
 from .crawler import Crawler, SiteConfig
 from .catalog import build_catalog, write_catalog_md
+from .catalog_incremental import run_incremental_catalog
 from .search import search_all
 from .storage import Storage
 
@@ -164,29 +165,55 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 def cmd_catalog(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
-    storage = Storage(cfg["paths"]["db"])
-    items = build_catalog(
-        storage,
-        site_filter=args.site,
-        limit=args.limit,
-        offset=args.offset,
-        ai_only=args.ai_only,
-    )
-    storage.close()
+    db_path = cfg["paths"]["db"]
+    
+    if args.legacy:
+        # Legacy mode: full rewrite to JSON
+        storage = Storage(db_path)
+        items = build_catalog(
+            storage,
+            site_filter=args.site,
+            limit=args.limit,
+            offset=args.offset,
+            ai_only=args.ai_only,
+        )
+        storage.close()
 
+        out_md = Path(args.output_md)
+        out_json = Path(args.output_json)
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+        if args.append and out_json.exists():
+            with open(out_json, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        else:
+            existing = []
+        existing.extend([item.__dict__ for item in items])
+        with open(out_json, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        write_catalog_md(out_md, items, append=args.append)
+        print(f"[legacy] Catalog items: {len(items)}")
+        return 0
+    
+    # Incremental mode (default)
+    out_jsonl = Path(args.output_jsonl)
     out_md = Path(args.output_md)
-    out_json = Path(args.output_json)
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    if args.append and out_json.exists():
-        with open(out_json, "r", encoding="utf-8") as f:
-            existing = json.load(f)
-    else:
-        existing = []
-    existing.extend([item.__dict__ for item in items])
-    with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(existing, f, ensure_ascii=False, indent=2)
-    write_catalog_md(out_md, items, append=args.append)
-    print(f"Catalog items: {len(items)}")
+    
+    stats = run_incremental_catalog(
+        db_path=db_path,
+        out_jsonl=out_jsonl,
+        out_md=out_md,
+        batch=args.batch,
+        site_filter=args.site,
+        ai_only=args.ai_only,
+        catalog_version=args.catalog_version,
+        max_chars=args.max_chars,
+        retry_errors=args.retry_errors,
+    )
+    
+    print(
+        f"Catalog done: scanned={stats['scanned']} processed={stats['processed']} "
+        f"written={stats['written']} skipped_ai={stats['skipped_ai']} errors={stats['errors']}"
+    )
     return 0
 
 
@@ -231,12 +258,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_catalog = sub.add_parser("catalog", help="Generate catalog with keywords and summaries")
     p_catalog.add_argument("--site", default=None, help="Only include sites matching this text")
-    p_catalog.add_argument("--limit", type=int, default=100, help="Max files to process")
-    p_catalog.add_argument("--offset", type=int, default=0, help="Skip the first N files")
     p_catalog.add_argument("--ai-only", action="store_true", help="Only keep AI-related items")
-    p_catalog.add_argument("--output-md", default="data/catalog.md")
-    p_catalog.add_argument("--output-json", default="data/catalog.json")
-    p_catalog.add_argument("--append", action="store_true", help="Append to existing outputs")
+    p_catalog.add_argument("--output-md", default="data/catalog.md", help="Markdown output path")
+    # Incremental mode options (default)
+    p_catalog.add_argument(
+        "--batch", type=int, 
+        default=int(os.getenv("CATALOG_BATCH", "200")),
+        help="Batch size for incremental processing (default: 200)"
+    )
+    p_catalog.add_argument(
+        "--catalog-version",
+        default=os.getenv("CATALOG_VERSION", "catalog_v1"),
+        help="Version string for catalog (change to force reprocessing)"
+    )
+    p_catalog.add_argument(
+        "--max-chars", type=int,
+        default=int(os.getenv("CATALOG_MAX_CHARS", "20000")),
+        help="Max characters to extract per file (default: 20000)"
+    )
+    p_catalog.add_argument(
+        "--output-jsonl", default="data/catalog.jsonl",
+        help="JSONL output path for incremental mode"
+    )
+    p_catalog.add_argument(
+        "--retry-errors", action="store_true",
+        help="Retry files that previously failed (e.g., Excel, corrupt PDFs)"
+    )
+    # Legacy mode options
+    p_catalog.add_argument(
+        "--legacy", action="store_true",
+        help="Use legacy mode: full rewrite to JSON instead of incremental JSONL"
+    )
+    p_catalog.add_argument("--limit", type=int, default=100, help="[legacy] Max files to process")
+    p_catalog.add_argument("--offset", type=int, default=0, help="[legacy] Skip the first N files")
+    p_catalog.add_argument("--output-json", default="data/catalog.json", help="[legacy] JSON output path")
+    p_catalog.add_argument("--append", action="store_true", help="[legacy] Append to existing outputs")
     p_catalog.set_defaults(func=cmd_catalog)
 
     return p
