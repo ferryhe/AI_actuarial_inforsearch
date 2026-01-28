@@ -771,37 +771,68 @@ def build_catalog_incremental(
     )
     results: list[dict] = []
     filters: list[str] = []
+    processed = 0
+    skipped = 0
+    errors = 0
     if site_filter:
         filters = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
     for row in rows:
+        ts = storage.now()
         site = row.get("source_site")
         if filters:
             if not site or not any(f in site.lower() for f in filters):
+                skipped += 1
                 continue
         path = row.get("local_path")
         if not path:
+            skipped += 1
             continue
         text = extract_text(Path(path))
         if not text:
+            skipped += 1
             continue
         title = row.get("title")
         keywords = extract_keywords(text, title=title)
         if ai_only and not is_ai_related(text, keywords, title=title):
+            skipped += 1
             continue
-        summary = summarize(text, keywords)
-        category = categorize(title, text, keywords)
-        item = {
-            "source_site": site,
-            "title": title,
-            "original_filename": row.get("original_filename"),
-            "url": row.get("url"),
-            "local_path": path,
-            "keywords": keywords,
-            "summary": summary,
-            "category": category,
-            "sha256": row.get("sha256"),
-        }
-        results.append(item)
+        try:
+            summary = summarize(text, keywords)
+            category = categorize(title, text, keywords)
+            item = {
+                "source_site": site,
+                "title": title,
+                "original_filename": row.get("original_filename"),
+                "url": row.get("url"),
+                "local_path": path,
+                "keywords": keywords,
+                "summary": summary,
+                "category": category,
+                "sha256": row.get("sha256"),
+            }
+            storage.upsert_catalog_item(
+                item,
+                pipeline_version=CATALOG_VERSION,
+                status="ok",
+                error=None,
+                processed_at=ts,
+            )
+            results.append(item)
+            processed += 1
+        except Exception as e:
+            storage.upsert_catalog_item(
+                {"url": row.get("url"), "sha256": row.get("sha256")},
+                pipeline_version=CATALOG_VERSION,
+                status="error",
+                error=str(e),
+                processed_at=ts,
+            )
+            errors += 1
+            continue
+    if processed or skipped or errors:
+        print(
+            f"catalog_incremental: processed={processed} skipped={skipped} errors={errors}"
+        )
     return results
 
 
