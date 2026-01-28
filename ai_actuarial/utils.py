@@ -5,6 +5,7 @@ import json
 import re
 import time
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 
@@ -135,3 +136,32 @@ def sleep_with_jitter(seconds: float) -> None:
     if seconds <= 0:
         return
     time.sleep(seconds)
+
+
+def load_category_config(config_path: str = "config/categories.yaml") -> dict:
+    """Load category configuration from YAML file.
+    
+    Args:
+        config_path: Path to categories.yaml file
+        
+    Returns:
+        Dictionary with categories, ai_filter_keywords, and ai_keywords
+        
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        yaml.YAMLError: If YAML parsing fails
+    """
+    try:
+        import yaml
+    except ImportError:
+        raise ImportError("PyYAML is required to load category configuration")
+    
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Category config not found: {config_path}")
+    
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except yaml.YAMLError:
+        raise

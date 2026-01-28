@@ -39,19 +39,31 @@ python -m ai_actuarial update
 
 ```
 AI_actuarial_inforsearch/
-├── ai_actuarial/           # Main package
+├── ai_actuarial/              # Main package
 │   ├── __init__.py
-│   ├── __main__.py         # Entry point
-│   ├── cli.py              # Command-line interface
-│   ├── crawler.py          # Web crawler logic
-│   ├── search.py           # Web search API integration
-│   ├── storage.py          # SQLite database storage
-│   ├── catalog.py          # Keyword/summary extraction
-│   └── utils.py            # Utility functions
+│   ├── __main__.py            # Entry point
+│   ├── cli.py                 # Command-line interface
+│   ├── crawler.py             # Web crawler logic
+│   ├── search.py              # Web search API integration
+│   ├── storage.py             # SQLite database storage
+│   ├── catalog.py             # Keyword/summary extraction
+│   ├── utils.py               # Utility functions
+│   ├── collectors/            # Collection workflows (NEW)
+│   │   ├── base.py            # Base collector interface
+│   │   ├── scheduled.py       # Scheduled collection
+│   │   ├── adhoc.py           # Ad-hoc collection
+│   │   ├── url.py             # URL-based collection
+│   │   └── file.py            # File import
+│   ├── processors/            # Document processing (NEW)
+│   │   ├── cleaner.py         # Document cleaning/validation
+│   │   └── categorizer.py     # Document categorization
+│   └── web/                   # Web interface (NEW)
+│       └── app.py             # Flask application
 ├── config/
-│   └── sites.yaml          # Site configuration
+│   ├── sites.yaml             # Site configuration
+│   └── categories.yaml        # Category definitions (NEW)
 ├── scripts/
-│   └── catalog_resume.py   # Resumable catalog generation
+│   └── catalog_resume.py      # Resumable catalog generation
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
@@ -155,6 +167,71 @@ python -m ai_actuarial catalog --version catalog_v2
 python -m ai_actuarial catalog --version catalog_v2
 ```
 
+### Collection Workflows (NEW)
+
+The modular collection system supports different workflows:
+
+#### URL Collection
+
+Collect files from specific URLs:
+
+```bash
+# Single URL
+python -m ai_actuarial collect url https://www.soa.org/research/report.pdf
+
+# Multiple URLs
+python -m ai_actuarial collect url https://example.com/doc1.pdf https://example.com/doc2.pdf
+
+# With custom name
+python -m ai_actuarial collect url https://example.com/doc.pdf --name "My Collection"
+
+# Skip database duplicate check
+python -m ai_actuarial collect url https://example.com/doc.pdf --no-db-check
+```
+
+#### File Import
+
+Import files from local filesystem:
+
+```bash
+# Single file
+python -m ai_actuarial collect file /path/to/document.pdf
+
+# Multiple files
+python -m ai_actuarial collect file /path/to/doc1.pdf /path/to/doc2.docx
+
+# Custom subdirectory
+python -m ai_actuarial collect file /path/to/doc.pdf --subdir my_imports
+
+# Skip database duplicate check
+python -m ai_actuarial collect file /path/to/doc.pdf --no-db-check
+```
+
+**Features:**
+- Automatic duplicate detection (by URL and SHA256)
+- Metadata extraction and database integration
+- File copying to organized download directory
+- Support for all configured file types
+
+### Web Interface (NEW)
+
+Start a web interface for managing collections:
+
+```bash
+# Start with defaults (localhost:5000)
+python -m ai_actuarial web
+
+# Custom host and port
+python -m ai_actuarial web --host 0.0.0.0 --port 8080
+
+# Debug mode
+python -m ai_actuarial web --debug
+```
+
+Then open http://localhost:5000 in your browser.
+
+**Note:** Web interface requires Flask: `pip install flask`
+
 ## Web Search Integration
 
 Set API keys via environment variables or `.env`:
@@ -194,6 +271,50 @@ sites:
       - "exam"
       - "solution"
 ```
+
+### config/categories.yaml (NEW)
+
+Define categories for document classification:
+
+```yaml
+categories:
+  AI:
+    - artificial intelligence
+    - machine learning
+    - deep learning
+    - llm
+  
+  "Risk & Capital":
+    - risk
+    - capital
+    - stress
+    - scenario
+  
+  Pricing:
+    - pricing
+    - rate
+    - premium
+
+ai_filter_keywords:
+  - artificial intelligence
+  - machine learning
+  - deep learning
+  - neural
+  - llm
+
+ai_keywords:
+  - artificial intelligence
+  - machine learning
+  - large language model
+  - generative ai
+```
+
+**Category System Features:**
+- Centralized category definitions
+- Keyword-based classification
+- Used by catalog generation and document processors
+- Supports multi-language keywords
+- Easy to extend with new categories
 
 ### Keyword Filtering
 
