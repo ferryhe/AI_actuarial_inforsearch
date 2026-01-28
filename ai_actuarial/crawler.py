@@ -5,6 +5,7 @@ import re
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
+import hashlib
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +17,6 @@ from .utils import (
     html_to_text,
     normalize_url,
     same_domain,
-    sha256_bytes,
     sleep_with_jitter,
 )
 
@@ -53,6 +53,30 @@ class Crawler:
             headers = {k.lower(): v for k, v in resp.headers.items()}
             return data, headers, resp.geturl()
 
+    def _download_file(self, url: str, target_dir: Path) -> tuple[Path, dict[str, str], str, str, int]:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": self.user_agent},
+        )
+        target_dir.mkdir(parents=True, exist_ok=True)
+        tmp_dir = target_dir / "_tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = tmp_dir / f"download_{time.time_ns()}.part"
+        hasher = hashlib.sha256()
+        size = 0
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            headers = {k.lower(): v for k, v in resp.headers.items()}
+            final_url = resp.geturl()
+            with open(tmp_path, "wb") as f:
+                while True:
+                    chunk = resp.read(1024 * 128)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    hasher.update(chunk)
+                    size += len(chunk)
+        return tmp_path, headers, final_url, hasher.hexdigest(), size
+
     def _is_file_url(self, url: str, exts: set[str]) -> bool:
         path = urlparse(url).path.lower()
         return any(path.endswith(ext) for ext in exts)
@@ -65,14 +89,34 @@ class Crawler:
         name = name.lower()
         return any(name.startswith(p) for p in prefixes)
 
-    def _extract_links(self, base_url: str, html: str) -> list[str]:
+    def _extract_links(self, base_url: str, html: str) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for match in re.finditer(
+            r'<a[^>]+href=["\\\'](.*?)["\\\'][^>]*>(.*?)</a>',
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
+        ):
+            href = match.group(1)
+            text = re.sub(r"<[^>]+>", " ", match.group(2))
+            text = re.sub(r"\s+", " ", text).strip()
+            norm = normalize_url(base_url, href)
+            if norm:
+                out.append((norm, text))
+        if out:
+            return out
         links = re.findall(r'href=["\\\'](.*?)["\\\']', html, flags=re.IGNORECASE)
-        out: list[str] = []
         for link in links:
             norm = normalize_url(base_url, link)
             if norm:
-                out.append(norm)
+                out.append((norm, ""))
         return out
+
+    def _link_matches_keywords(self, url: str, text: str, keywords: list[str]) -> bool:
+        if not keywords:
+            return True
+        base = os.path.basename(url)
+        hay = f"{url} {base} {text}".lower()
+        return any(k in hay for k in keywords)
 
     def _load_sitemap(self, site_url: str) -> list[str]:
         sitemap_url = site_url.rstrip("/") + "/sitemap.xml"
@@ -136,7 +180,34 @@ class Crawler:
                 continue
 
             if self._is_file_url(final_url, exts):
-                item = self._handle_file(final_url, data, headers, cfg, source_page_url=None)
+                if self.storage.file_exists(final_url):
+                    sleep_with_jitter(cfg.delay_seconds)
+                    continue
+                parsed = urlparse(final_url)
+                domain = parsed.netloc.replace(":", "_")
+                target_dir = Path(self.download_dir) / domain
+                tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
+                    final_url, target_dir
+                )
+                if exclude and self._is_excluded(ffinal, exclude):
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                    sleep_with_jitter(cfg.delay_seconds)
+                    continue
+                if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                    sleep_with_jitter(cfg.delay_seconds)
+                    continue
+                item = self._handle_file(
+                    ffinal,
+                    tmp_path,
+                    fheaders,
+                    sha256,
+                    bytes_size,
+                    cfg,
+                    source_page_url=None,
+                )
                 if item:
                     new_items.append(item)
                 sleep_with_jitter(cfg.delay_seconds)
@@ -153,26 +224,39 @@ class Crawler:
             is_relevant = any(k in page_text for k in keywords) if keywords else True
 
             links = self._extract_links(final_url, html)
-            for link in links:
+            for link, link_text in links:
                 if exclude and self._is_excluded(link, exclude):
                     continue
                 if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
                     continue
                 if self._is_file_url(link, exts):
+                    if keywords and not (is_relevant or self._link_matches_keywords(link, link_text, keywords)):
+                        continue
                     if self.storage.file_exists(link):
                         continue
                     try:
-                        fdata, fheaders, ffinal = self._request(link)
+                        parsed = urlparse(link)
+                        domain = parsed.netloc.replace(":", "_")
+                        target_dir = Path(self.download_dir) / domain
+                        tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
+                            link, target_dir
+                        )
                     except Exception:
                         continue
                     if exclude and self._is_excluded(ffinal, exclude):
+                        if tmp_path.exists():
+                            tmp_path.unlink()
                         continue
                     if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
+                        if tmp_path.exists():
+                            tmp_path.unlink()
                         continue
                     item = self._handle_file(
                         ffinal,
-                        fdata,
+                        tmp_path,
                         fheaders,
+                        sha256,
+                        bytes_size,
                         cfg,
                         source_page_url=final_url,
                         page_title=page_title,
@@ -191,16 +275,19 @@ class Crawler:
     def _handle_file(
         self,
         url: str,
-        data: bytes,
+        tmp_path: Path,
         headers: dict[str, str],
+        sha256: str,
+        bytes_size: int,
         cfg: SiteConfig,
         source_page_url: str | None,
         page_title: str | None = None,
         published_time: str | None = None,
         source_site_override: str | None = None,
     ) -> dict | None:
-        sha256 = sha256_bytes(data)
-        if self.storage.file_exists(url, sha256):
+        if self.storage.file_exists(url):
+            if tmp_path.exists():
+                tmp_path.unlink()
             return None
 
         parsed = urlparse(url)
@@ -219,14 +306,36 @@ class Crawler:
         if not safe_name.lower().endswith(ext):
             safe_name = f"{safe_name}{ext}"
         path = self._resolve_conflict(target_dir, safe_name)
-        with open(path, "wb") as f:
-            f.write(data)
+
+        blob = self.storage.get_blob(sha256)
+        if blob and blob.get("canonical_path"):
+            canonical = Path(blob["canonical_path"])
+            if canonical.exists() and path != canonical:
+                try:
+                    os.link(canonical, path)
+                    local_path = str(path)
+                except Exception:
+                    local_path = str(canonical)
+            else:
+                local_path = str(canonical)
+            if tmp_path.exists():
+                tmp_path.unlink()
+        else:
+            if path.exists():
+                path = self._resolve_conflict(target_dir, safe_name)
+            tmp_path.replace(path)
+            local_path = str(path)
+            self.storage.upsert_blob(
+                sha256=sha256,
+                canonical_path=str(path),
+                bytes_size=bytes_size,
+                content_type=headers.get("content-type"),
+            )
 
         title = page_title or os.path.basename(parsed.path) or original_filename
         content_type = headers.get("content-type")
         last_modified = headers.get("last-modified")
         etag = headers.get("etag")
-        bytes_size = len(data)
         source_site = source_site_override or cfg.name
         self.storage.upsert_file(
             url=url,
@@ -235,7 +344,7 @@ class Crawler:
             source_site=source_site,
             source_page_url=source_page_url,
             original_filename=original_filename,
-            local_path=str(path),
+            local_path=local_path,
             bytes_size=bytes_size,
             content_type=content_type,
             last_modified=last_modified,
@@ -249,7 +358,7 @@ class Crawler:
             "source_site": source_site,
             "source_page_url": source_page_url,
             "original_filename": original_filename,
-            "local_path": str(path),
+            "local_path": local_path,
             "bytes": bytes_size,
             "content_type": content_type,
             "last_modified": last_modified,
@@ -293,10 +402,28 @@ class Crawler:
             return []
 
         if self._is_file_url(final_url, exts):
+            if self.storage.file_exists(final_url):
+                return []
+            parsed = urlparse(final_url)
+            domain = parsed.netloc.replace(":", "_")
+            target_dir = Path(self.download_dir) / domain
+            tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
+                final_url, target_dir
+            )
+            if exclude and self._is_excluded(ffinal, exclude):
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                return []
+            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                return []
             item = self._handle_file(
-                final_url,
-                data,
-                headers,
+                ffinal,
+                tmp_path,
+                fheaders,
+                sha256,
+                bytes_size,
                 cfg,
                 source_page_url=None,
                 source_site_override=source_site,
@@ -310,34 +437,46 @@ class Crawler:
 
         page_title, published_time = extract_metadata(html, final_url)
         page_text = html_to_text(html).lower()
-        if keywords and not any(k in page_text for k in keywords):
-            return []
+        page_relevant = any(k in page_text for k in keywords) if keywords else True
         if exclude and page_title and self._is_excluded(page_title, exclude):
             return []
 
         new_items: list[dict] = []
         links = self._extract_links(final_url, html)
-        for link in links:
+        for link, link_text in links:
             if not self._is_file_url(link, exts):
                 continue
             if exclude and self._is_excluded(link, exclude):
                 continue
             if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
                 continue
+            if keywords and not (page_relevant or self._link_matches_keywords(link, link_text, keywords)):
+                continue
             if self.storage.file_exists(link):
                 continue
             try:
-                fdata, fheaders, ffinal = self._request(link)
+                parsed = urlparse(link)
+                domain = parsed.netloc.replace(":", "_")
+                target_dir = Path(self.download_dir) / domain
+                tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
+                    link, target_dir
+                )
             except Exception:
                 continue
             if exclude and self._is_excluded(ffinal, exclude):
+                if tmp_path.exists():
+                    tmp_path.unlink()
                 continue
             if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
+                if tmp_path.exists():
+                    tmp_path.unlink()
                 continue
             item = self._handle_file(
                 ffinal,
-                fdata,
+                tmp_path,
                 fheaders,
+                sha256,
+                bytes_size,
                 cfg,
                 source_page_url=final_url,
                 page_title=page_title,

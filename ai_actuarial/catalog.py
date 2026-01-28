@@ -167,6 +167,7 @@ CATEGORY_RULES: dict[str, list[str]] = {
 }
 
 _KEYBERT_MODEL = None
+CATALOG_VERSION = "v2-keybert"
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -613,11 +614,12 @@ def build_catalog(
     ai_only: bool = False,
     offset: int = 0,
 ) -> list[CatalogItem]:
-    rows = storage.export_files()
-    if offset > 0:
-        rows = rows[offset:]
-    if limit is not None:
-        rows = rows[:limit]
+    rows = storage.iter_files(
+        site_filter=site_filter,
+        limit=limit,
+        offset=offset,
+        require_local_path=True,
+    )
     items: list[CatalogItem] = []
     filters: list[str] = []
     if site_filter:
@@ -663,11 +665,12 @@ def build_catalog_batch(
     ai_only: bool = False,
     offset: int = 0,
 ) -> tuple[list[CatalogItem], int]:
-    rows = storage.export_files()
-    if offset > 0:
-        rows = rows[offset:]
-    if row_limit is not None:
-        rows = rows[:row_limit]
+    rows = storage.iter_files(
+        site_filter=site_filter,
+        limit=row_limit,
+        offset=offset,
+        require_local_path=True,
+    )
     items: list[CatalogItem] = []
     filters: list[str] = []
     if site_filter:
@@ -702,6 +705,64 @@ def build_catalog_batch(
             )
         )
     return items, len(rows)
+
+
+def write_catalog_jsonl(path: Path, items: Iterable[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for item in items:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def build_catalog_incremental(
+    storage: Storage,
+    site_filter: str | None,
+    limit: int | None,
+    offset: int = 0,
+    ai_only: bool = False,
+) -> list[dict]:
+    rows = storage.iter_files(
+        site_filter=site_filter,
+        limit=limit,
+        offset=offset,
+        require_local_path=True,
+        only_changed=True,
+        extractor_version=CATALOG_VERSION,
+    )
+    results: list[dict] = []
+    filters: list[str] = []
+    if site_filter:
+        filters = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
+    for row in rows:
+        site = row.get("source_site")
+        if filters:
+            if not site or not any(f in site.lower() for f in filters):
+                continue
+        path = row.get("local_path")
+        if not path:
+            continue
+        text = extract_text(Path(path))
+        if not text:
+            continue
+        title = row.get("title")
+        keywords = extract_keywords(text, title=title)
+        if ai_only and not is_ai_related(text, keywords, title=title):
+            continue
+        summary = summarize(text, keywords)
+        category = categorize(title, text, keywords)
+        item = {
+            "source_site": site,
+            "title": title,
+            "original_filename": row.get("original_filename"),
+            "url": row.get("url"),
+            "local_path": path,
+            "keywords": keywords,
+            "summary": summary,
+            "category": category,
+            "sha256": row.get("sha256"),
+        }
+        results.append(item)
+    return results
 
 
 def write_catalog_md(path: Path, items: Iterable[CatalogItem], append: bool = False) -> None:
