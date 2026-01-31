@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="hero">
+        <h2>Welcome to AI Actuarial Info Search</h2>
+        <p>Discover, download, and catalog AI-related documents from actuarial organizations worldwide</p>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">📄</div>
+            <div class="stat-content">
+                <h3 id="total-files">-</h3>
+                <p>Total Files</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <h3 id="cataloged-files">-</h3>
+                <p>Cataloged Files</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🏢</div>
+            <div class="stat-content">
+                <h3 id="total-sources">-</h3>
+                <p>Sources</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔄</div>
+            <div class="stat-content">
+                <h3 id="active-tasks">-</h3>
+                <p>Active Tasks</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="quick-actions">
+        <h3>Quick Actions</h3>
+        <div class="action-grid">
+            <div class="action-card" onclick="location.href='/collection/url'">
+                <div class="action-icon">🔗</div>
+                <h4>Collect from URL</h4>
+                <p>Download files from specific URLs</p>
+            </div>
+            <div class="action-card" onclick="location.href='/collection/file'">
+                <div class="action-icon">📁</div>
+                <h4>Import Files</h4>
+                <p>Import files from local filesystem</p>
+            </div>
+            <div class="action-card" onclick="location.href='/collection/scheduled'">
+                <div class="action-icon">📅</div>
+                <h4>Run Scheduled Collection</h4>
+                <p>Execute scheduled crawl of configured sites</p>
+            </div>
+            <div class="action-card" onclick="location.href='/database'">
+                <div class="action-icon">🔍</div>
+                <h4>Browse Database</h4>
+                <p>Search and manage collected files</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="recent-activity">
+        <h3>Recent Files</h3>
+        <div id="recent-files-container">
+            <p class="loading">Loading...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Load dashboard statistics
+    fetch('/api/stats')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('total-files').textContent = data.total_files;
+            document.getElementById('cataloged-files').textContent = data.cataloged_files;
+            document.getElementById('total-sources').textContent = data.total_sources;
+            document.getElementById('active-tasks').textContent = data.active_tasks;
+        })
+        .catch(error => {
+            console.error('Error loading stats:', error);
+        });
+
+    // Load recent files
+    fetch('/api/files?limit=5&order_by=last_seen&order_dir=desc')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('recent-files-container');
+            if (data.files && data.files.length > 0) {
+                const table = document.createElement('table');
+                table.className = 'files-table';
+                table.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Title</th>
+                            <th>Source</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.files.map(file => `
+                            <tr onclick="window.location='/file/${encodeURIComponent(file.url)}'">
+                                <td>${escapeHtml(file.title || file.original_filename || 'Untitled')}</td>
+                                <td>${escapeHtml(file.source_site || 'Unknown')}</td>
+                                <td>${formatDate(file.last_seen)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                `;
+                container.innerHTML = '';
+                container.appendChild(table);
+            } else {
+                container.innerHTML = '<p>No files found</p>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading recent files:', error);
+            document.getElementById('recent-files-container').innerHTML = '<p class="error">Error loading files</p>';
+        });
+</script>
+{% endblock %}
