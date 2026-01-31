@@ -437,7 +437,9 @@ class StorageV2:
     
     def write_last_run(self, output_path: str, items: Iterable[dict]) -> None:
         """Write last run results to file."""
-        Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
+        dir_path = os.path.dirname(output_path)
+        if dir_path:
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(list(items), f, ensure_ascii=False, indent=2)
     

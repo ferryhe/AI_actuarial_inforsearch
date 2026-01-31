@@ -294,9 +294,11 @@ database:
   host: db.example.com
   port: 5432
   database: ai_actuarial_prod
-  username: ${DB_USER}  # Use environment variable
-  password: ${DB_PASSWORD}  # Use environment variable
+  username: your_db_username  # Set actual values or use get_database_config_from_env()
+  password: your_db_password  # For production, use environment variables via get_database_config_from_env()
 ```
+
+**Note**: To use environment variables for credentials, use the `get_database_config_from_env()` function instead of YAML configuration.
 
 ### Example 3: Docker Compose
 
