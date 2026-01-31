@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from ai_actuarial.storage import Storage
 from ai_actuarial.storage_v2 import StorageV2
-from ai_actuarial.storage_factory import create_storage_from_config, get_database_config_from_env
+from ai_actuarial.storage_factory import create_storage_from_config
 
 
 def test_legacy_storage():

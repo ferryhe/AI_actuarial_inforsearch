@@ -24,12 +24,12 @@ paths:
   db: data/index.db
   last_run_new: data/last_run_new.json
   updates_dir: data/updates
-# Database configuration (optional)
-# If not specified, uses the legacy SQLite path from paths.db
-# Supports SQLite (local dev) and PostgreSQL (production)
-#database:
-#  type: sqlite  # or 'postgresql'
-#  path: data/index.db  # for SQLite
+  # Database configuration (optional)
+  # If not specified, uses the legacy SQLite path from paths.db
+  # Supports SQLite (local dev) and PostgreSQL (production)
+  #database:
+  #  type: sqlite  # or 'postgresql'
+  #  path: data/index.db  # for SQLite
   # For PostgreSQL, use:
   #type: postgresql
   #host: localhost

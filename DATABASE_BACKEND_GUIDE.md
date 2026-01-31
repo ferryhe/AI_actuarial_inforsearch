@@ -154,15 +154,18 @@ storage.close()
 
 3. Import data (you may need to write a custom import script)
 
-### Option 2: Use SQLAlchemy Migration Tools
+### Option 2: Use SQLAlchemy Migration Tools (Advanced)
 
-For more complex migrations, consider using Alembic:
+For more complex migrations, consider using Alembic (requires separate installation):
 
 ```bash
-pip install alembic
+pip install alembic  # Optional tool for advanced migrations
 alembic init migrations
 # Configure alembic.ini and create migration scripts
 ```
+
+**Note**: Alembic is not included in requirements.txt as it's only needed for advanced
+database schema migrations. Most users won't need it.
 
 ## Configuration Reference
 
