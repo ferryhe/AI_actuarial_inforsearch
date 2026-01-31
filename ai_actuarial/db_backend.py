@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import os
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, Session
 
-from .db_models import Base, File, Page, Blob, CatalogItem, get_current_timestamp
+from .db_models import Base, get_current_timestamp
 
 
 class DatabaseBackend(ABC):
@@ -70,7 +69,10 @@ class DatabaseBackend(ABC):
         session = self.get_session()
         sp_name = None
         if self._tx_depth == 0:
-            session.begin()
+            # SQLAlchemy sessions auto-begin transactions, so we don't need to call begin()
+            # explicitly unless we're using legacy autocommit mode
+            if not session.in_transaction():
+                session.begin()
         else:
             sp_name = f"sp_{self._tx_depth}"
             session.begin_nested()
@@ -166,11 +168,13 @@ class SQLiteBackend(DatabaseBackend):
         if table not in allowed_tables:
             raise ValueError(f"Invalid table name: {table}")
         
+        # Use SQLAlchemy inspector instead of raw SQL
+        inspector = inspect(self.engine)
+        existing_columns = {col['name'] for col in inspector.get_columns(table)}
+        
         with self.engine.connect() as conn:
-            cur = conn.execute(text(f"PRAGMA table_info({table})"))
-            existing = {row[1] for row in cur.fetchall()}
             for name, col_type in columns.items():
-                if name not in existing:
+                if name not in existing_columns:
                     # Validate column name (alphanumeric and underscores only)
                     if not name.replace("_", "").isalnum():
                         raise ValueError(f"Invalid column name: {name}")
@@ -179,33 +183,34 @@ class SQLiteBackend(DatabaseBackend):
     
     def _migrate_catalog_items(self) -> None:
         """Migrate catalog items from legacy schema."""
+        # Use SQLAlchemy inspector instead of raw SQL
+        inspector = inspect(self.engine)
+        existing_columns = {col['name'] for col in inspector.get_columns('catalog_items')}
+        
         with self.engine.connect() as conn:
-            cur = conn.execute(text("PRAGMA table_info(catalog_items)"))
-            existing = {row[1] for row in cur.fetchall()}
-            
             # Map legacy columns into the unified schema
-            if "sha256" in existing and "file_sha256" in existing:
+            if "sha256" in existing_columns and "file_sha256" in existing_columns:
                 conn.execute(text("""
                     UPDATE catalog_items
                     SET sha256 = file_sha256
                     WHERE (sha256 IS NULL OR sha256 = '') AND file_sha256 IS NOT NULL
                 """))
-            if "pipeline_version" in existing:
-                if "extractor_version" in existing:
+            if "pipeline_version" in existing_columns:
+                if "extractor_version" in existing_columns:
                     conn.execute(text("""
                         UPDATE catalog_items
                         SET pipeline_version = extractor_version
                         WHERE (pipeline_version IS NULL OR pipeline_version = '')
                           AND extractor_version IS NOT NULL
                     """))
-                if "catalog_version" in existing:
+                if "catalog_version" in existing_columns:
                     conn.execute(text("""
                         UPDATE catalog_items
                         SET pipeline_version = catalog_version
                         WHERE (pipeline_version IS NULL OR pipeline_version = '')
                           AND catalog_version IS NOT NULL
                     """))
-            if "keywords" in existing and "keywords_json" in existing:
+            if "keywords" in existing_columns and "keywords_json" in existing_columns:
                 conn.execute(text("""
                     UPDATE catalog_items
                     SET keywords = keywords_json
@@ -280,17 +285,13 @@ class PostgreSQLBackend(DatabaseBackend):
         if table not in allowed_tables:
             raise ValueError(f"Invalid table name: {table}")
         
+        # Use SQLAlchemy inspector instead of raw SQL with string interpolation
+        inspector = inspect(self.engine)
+        existing_columns = {col['name'] for col in inspector.get_columns(table)}
+        
         with self.engine.connect() as conn:
-            # Get existing columns
-            cur = conn.execute(text(f"""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = '{table}'
-            """))
-            existing = {row[0] for row in cur.fetchall()}
-            
             for name, col_type in columns.items():
-                if name not in existing:
+                if name not in existing_columns:
                     # Validate column name (alphanumeric and underscores only)
                     if not name.replace("_", "").isalnum():
                         raise ValueError(f"Invalid column name: {name}")
@@ -304,38 +305,34 @@ class PostgreSQLBackend(DatabaseBackend):
     
     def _migrate_catalog_items(self) -> None:
         """Migrate catalog items from legacy schema."""
+        # Use SQLAlchemy inspector instead of raw SQL
+        inspector = inspect(self.engine)
+        existing_columns = {col['name'] for col in inspector.get_columns('catalog_items')}
+        
         with self.engine.connect() as conn:
-            # Get existing columns
-            cur = conn.execute(text("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'catalog_items'
-            """))
-            existing = {row[0] for row in cur.fetchall()}
-            
             # Map legacy columns into the unified schema
-            if "sha256" in existing and "file_sha256" in existing:
+            if "sha256" in existing_columns and "file_sha256" in existing_columns:
                 conn.execute(text("""
                     UPDATE catalog_items
                     SET sha256 = file_sha256
                     WHERE (sha256 IS NULL OR sha256 = '') AND file_sha256 IS NOT NULL
                 """))
-            if "pipeline_version" in existing:
-                if "extractor_version" in existing:
+            if "pipeline_version" in existing_columns:
+                if "extractor_version" in existing_columns:
                     conn.execute(text("""
                         UPDATE catalog_items
                         SET pipeline_version = extractor_version
                         WHERE (pipeline_version IS NULL OR pipeline_version = '')
                           AND extractor_version IS NOT NULL
                     """))
-                if "catalog_version" in existing:
+                if "catalog_version" in existing_columns:
                     conn.execute(text("""
                         UPDATE catalog_items
                         SET pipeline_version = catalog_version
                         WHERE (pipeline_version IS NULL OR pipeline_version = '')
                           AND catalog_version IS NOT NULL
                     """))
-            if "keywords" in existing and "keywords_json" in existing:
+            if "keywords" in existing_columns and "keywords_json" in existing_columns:
                 conn.execute(text("""
                     UPDATE catalog_items
                     SET keywords = keywords_json
