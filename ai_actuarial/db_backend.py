@@ -98,9 +98,11 @@ class SQLiteBackend(DatabaseBackend):
     
     def connect(self) -> None:
         """Connect to SQLite database and initialize schema."""
-        # Ensure directory exists
+        # Ensure directory exists (if a directory is specified)
         db_path = self.connection_string.replace("sqlite:///", "")
-        Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
+        dir_path = os.path.dirname(db_path)
+        if dir_path:
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
         
         # Create engine with SQLite-specific settings
         self.engine = create_engine(

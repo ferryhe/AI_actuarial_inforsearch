@@ -6,6 +6,7 @@ This script demonstrates how to use both SQLite and PostgreSQL backends.
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # Add parent directory to path
@@ -22,7 +23,10 @@ def test_legacy_storage():
     print("Testing Legacy Storage (SQLite)")
     print("=" * 60)
     
-    storage = Storage("/tmp/test_legacy.db")
+    # Use cross-platform temporary directory
+    temp_dir = tempfile.gettempdir()
+    db_path = os.path.join(temp_dir, "test_legacy.db")
+    storage = Storage(db_path)
     
     # Insert a test file
     storage.insert_file(
@@ -32,7 +36,7 @@ def test_legacy_storage():
         source_site="example.com",
         source_page_url="http://example.com/page",
         original_filename="legacy_test.pdf",
-        local_path="/tmp/legacy_test.pdf",
+        local_path=os.path.join(temp_dir, "legacy_test.pdf"),
         bytes=1024,
         content_type="application/pdf",
     )
@@ -54,9 +58,11 @@ def test_storagev2_sqlite():
     print("Testing StorageV2 with SQLite Backend")
     print("=" * 60)
     
+    # Use cross-platform temporary directory
+    temp_dir = tempfile.gettempdir()
     db_config = {
         "type": "sqlite",
-        "path": "/tmp/test_storagev2_sqlite.db"
+        "path": os.path.join(temp_dir, "test_storagev2_sqlite.db")
     }
     
     storage = StorageV2(db_config=db_config)
@@ -69,7 +75,7 @@ def test_storagev2_sqlite():
         source_site="example.com",
         source_page_url="http://example.com/page",
         original_filename="v2_test.pdf",
-        local_path="/tmp/v2_test.pdf",
+        local_path=os.path.join(temp_dir, "v2_test.pdf"),
         bytes=2048,
         content_type="application/pdf",
     )
@@ -89,7 +95,7 @@ def test_storagev2_sqlite():
         source_site="example.com",
         source_page_url="http://example.com/page",
         original_filename="v2_test_updated.pdf",
-        local_path="/tmp/v2_test_updated.pdf",
+        local_path=os.path.join(temp_dir, "v2_test_updated.pdf"),
         bytes_size=3072,
         content_type="application/pdf",
         last_modified=None,
@@ -139,7 +145,7 @@ def test_storagev2_postgresql():
             source_site="example.com",
             source_page_url="http://example.com/page",
             original_filename="v2_pg_test.pdf",
-            local_path="/tmp/v2_pg_test.pdf",
+            local_path=os.path.join(tempfile.gettempdir(), "v2_pg_test.pdf"),
             bytes=4096,
             content_type="application/pdf",
         )
@@ -164,14 +170,16 @@ def test_factory():
     print("Testing Storage Factory")
     print("=" * 60)
     
+    temp_dir = tempfile.gettempdir()
+    
     # Test legacy config
-    config1 = {"paths": {"db": "/tmp/test_factory_legacy.db"}}
+    config1 = {"paths": {"db": os.path.join(temp_dir, "test_factory_legacy.db")}}
     storage1 = create_storage_from_config(config1)
     print(f"✓ Legacy config created: {type(storage1).__name__}")
     storage1.close()
     
     # Test new SQLite config
-    config2 = {"database": {"type": "sqlite", "path": "/tmp/test_factory_new.db"}}
+    config2 = {"database": {"type": "sqlite", "path": os.path.join(temp_dir, "test_factory_new.db")}}
     storage2 = create_storage_from_config(config2)
     print(f"✓ New SQLite config created: {type(storage2).__name__}")
     storage2.close()
