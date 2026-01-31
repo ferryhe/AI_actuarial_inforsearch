@@ -11,11 +11,11 @@ import os
 from pathlib import Path
 from typing import Iterable, Any
 
-from sqlalchemy import select, update, and_, or_, func, text
+from sqlalchemy import or_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from .db_backend import DatabaseBackend, create_backend
+from .db_backend import create_backend
 from .db_models import File, Page, Blob, CatalogItem
 
 
@@ -249,12 +249,25 @@ class StorageV2:
             query = query.filter(File.local_path.isnot(None), File.local_path != "")
         
         if site_filter:
+            def _escape_like(token: str) -> str:
+                """Escape SQL LIKE wildcard characters so they are treated literally."""
+                return (
+                    token.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+            
             tokens = [t.strip().lower() for t in site_filter.split(",") if t.strip()]
             if tokens:
                 or_conditions = []
                 for t in tokens:
-                    or_conditions.append(func.lower(File.source_site).like(f"%{t}%"))
-                    or_conditions.append(func.lower(File.url).like(f"%{t}%"))
+                    escaped_token = _escape_like(t)
+                    or_conditions.append(
+                        func.lower(File.source_site).like(f"%{escaped_token}%", escape="\\")
+                    )
+                    or_conditions.append(
+                        func.lower(File.url).like(f"%{escaped_token}%", escape="\\")
+                    )
                 query = query.filter(or_(*or_conditions))
         
         if only_changed:

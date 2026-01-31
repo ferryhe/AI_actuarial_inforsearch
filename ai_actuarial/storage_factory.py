@@ -7,12 +7,15 @@ with support for both SQLite (local dev) and PostgreSQL (production).
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Union, TYPE_CHECKING
 
 from .storage import Storage
 
+if TYPE_CHECKING:
+    from .storage_v2 import StorageV2
 
-def create_storage_from_config(config: dict[str, Any]) -> Storage:
+
+def create_storage_from_config(config: dict[str, Any]) -> Union[Storage, "StorageV2"]:
     """Create a Storage instance from configuration.
     
     This factory function supports two modes:

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Text, DateTime, Index
+from sqlalchemy import Column, Integer, Text, Index
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.sql import func
 
 Base = declarative_base()
 
