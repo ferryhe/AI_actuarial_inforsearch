@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="scheduled-tasks-page">
+    <div class="page-header">
+        <h2>Scheduled Task Management</h2>
+        <p>Manage automated collection schedules</p>
+    </div>
+
+    <div class="schedule-info">
+        <div class="info-card">
+            <h4>ℹ️ About Scheduled Tasks</h4>
+            <p>Scheduled tasks run automatically based on configured sites in <code>config/sites.yaml</code>. 
+            Use this interface to trigger immediate runs or view configured sites.</p>
+        </div>
+    </div>
+
+    <div class="configured-sites">
+        <h3>Configured Sites</h3>
+        <div id="sites-container">
+            <p class="loading">Loading configured sites...</p>
+        </div>
+    </div>
+
+    <div class="manual-trigger">
+        <h3>Manual Trigger</h3>
+        <div class="trigger-form">
+            <div class="form-group">
+                <label for="site-select">Select Site:</label>
+                <select id="site-select">
+                    <option value="">All Sites</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="max-pages">Max Pages:</label>
+                <input type="number" id="max-pages" value="200" min="1" />
+            </div>
+            <div class="form-group">
+                <label for="max-depth">Max Depth:</label>
+                <input type="number" id="max-depth" value="2" min="1" />
+            </div>
+            <div class="form-group checkbox">
+                <label>
+                    <input type="checkbox" id="enable-search" checked />
+                    Enable Web Search Integration
+                </label>
+            </div>
+            <button onclick="startScheduledCollection()" class="btn btn-primary">Start Collection</button>
+        </div>
+    </div>
+
+    <div class="schedule-history">
+        <h3>Collection History</h3>
+        <div id="history-container">
+            <p class="loading">Loading history...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+// Load configured sites
+fetch('/api/config/sites')
+    .then(response => response.json())
+    .then(data => {
+        const container = document.getElementById('sites-container');
+        const select = document.getElementById('site-select');
+        
+        if (data.sites && data.sites.length > 0) {
+            const table = document.createElement('table');
+            table.className = 'sites-table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Site Name</th>
+                        <th>URL</th>
+                        <th>Max Pages</th>
+                        <th>Max Depth</th>
+                        <th>Keywords</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.sites.map(site => {
+                        // Add to dropdown
+                        const option = document.createElement('option');
+                        option.value = site.name;
+                        option.textContent = site.name;
+                        select.appendChild(option);
+                        
+                        return `
+                            <tr>
+                                <td><strong>${escapeHtml(site.name)}</strong></td>
+                                <td><a href="${escapeHtml(site.url)}" target="_blank">${escapeHtml(site.url)}</a></td>
+                                <td>${site.max_pages || '-'}</td>
+                                <td>${site.max_depth || '-'}</td>
+                                <td>${site.keywords ? site.keywords.length + ' keywords' : '-'}</td>
+                                <td>
+                                    <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">Run Now</button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            `;
+            container.innerHTML = '';
+            container.appendChild(table);
+        } else {
+            container.innerHTML = '<p>No sites configured</p>';
+        }
+    })
+    .catch(error => {
+        console.error('Error loading sites:', error);
+        document.getElementById('sites-container').innerHTML = '<p class="error">Error loading sites</p>';
+    });
+
+// Load collection history
+function loadHistory() {
+    fetch('/api/collections/history?limit=10')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('history-container');
+            if (data.history && data.history.length > 0) {
+                const table = document.createElement('table');
+                table.className = 'history-table';
+                table.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Type</th>
+                            <th>Files Found</th>
+                            <th>Files Downloaded</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.history.map(item => `
+                            <tr>
+                                <td>${formatDate(item.timestamp)}</td>
+                                <td>${escapeHtml(item.type)}</td>
+                                <td>${item.items_found || 0}</td>
+                                <td>${item.items_downloaded || 0}</td>
+                                <td><span class="status-badge status-${item.status}">${item.status}</span></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                `;
+                container.innerHTML = '';
+                container.appendChild(table);
+            } else {
+                container.innerHTML = '<p>No collection history</p>';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading history:', error);
+        });
+}
+
+function startScheduledCollection() {
+    const site = document.getElementById('site-select').value;
+    const maxPages = parseInt(document.getElementById('max-pages').value);
+    const maxDepth = parseInt(document.getElementById('max-depth').value);
+    const enableSearch = document.getElementById('enable-search').checked;
+
+    const payload = {
+        type: 'scheduled',
+        site: site || null,
+        max_pages: maxPages,
+        max_depth: maxDepth,
+        enable_search: enableSearch
+    };
+
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Collection started successfully! Task ID: ' + data.job_id);
+            window.location = '/tasks';
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error starting collection:', error);
+        alert('Error starting collection: ' + error.message);
+    });
+}
+
+function runSingleSite(siteName) {
+    document.getElementById('site-select').value = siteName;
+    startScheduledCollection();
+}
+
+loadHistory();
+</script>
+{% endblock %}
