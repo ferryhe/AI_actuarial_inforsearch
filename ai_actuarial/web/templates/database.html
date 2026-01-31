@@ -189,7 +189,19 @@ function viewFile(url) {
 }
 
 function downloadFile(url) {
-    window.location = `/api/download?url=${url}`;
+    // Normalize to a raw URL and ensure it is encoded exactly once in the query string.
+    let rawUrl = url;
+    try {
+        const decoded = decodeURIComponent(url);
+        // If decoding changes the value, assume the input was already encoded.
+        if (decoded !== url) {
+            rawUrl = decoded;
+        }
+    } catch (e) {
+        // If decoding fails, fall back to the original value.
+        rawUrl = url;
+    }
+    window.location = `/api/download?url=${encodeURIComponent(rawUrl)}`;
 }
 
 // Load initial results
