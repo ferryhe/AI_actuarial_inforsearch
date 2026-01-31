@@ -433,6 +433,318 @@ The default configuration includes major actuarial organizations:
 - The crawler uses `trafilatura` (if installed) to improve title/date extraction.
 - Files are deduplicated by URL and SHA256 hash.
 
+## Production Deployment
+
+### Deploying on AWS EC2 with Docker and PostgreSQL
+
+This guide shows how to deploy the application on an AWS EC2 instance (e.g., t3.medium) with Docker containers and PostgreSQL database.
+
+#### Prerequisites
+
+- AWS EC2 instance (Ubuntu/Amazon Linux)
+- Docker and Docker Compose installed
+- Caddy reverse proxy for HTTPS
+- PostgreSQL container for database
+
+#### 1. Prepare the Application
+
+Create a `Dockerfile` for the application:
+
+```dockerfile
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy application files
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Expose port for web interface
+EXPOSE 5000
+
+# Run the application
+CMD ["python", "-m", "ai_actuarial", "web", "--host", "0.0.0.0", "--port", "5000"]
+```
+
+#### 2. Configure PostgreSQL Connection
+
+Update `config/sites.yaml` to use PostgreSQL:
+
+```yaml
+# config/sites.yaml
+database:
+  type: postgresql
+  host: postgres-container-name  # Your PostgreSQL container name
+  port: 5432
+  database: ai_actuarial
+  username: ai_user
+  password: ${DB_PASSWORD}  # Set via environment variable
+
+# ... rest of configuration
+```
+
+Or use environment variables (recommended for production):
+
+```bash
+export DB_TYPE=postgresql
+export DB_HOST=postgres-container-name
+export DB_PORT=5432
+export DB_NAME=ai_actuarial
+export DB_USER=ai_user
+export DB_PASSWORD=your_secure_password
+```
+
+Then use `get_database_config_from_env()` in your application startup.
+
+#### 3. Docker Compose Setup
+
+Create `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  ai-actuarial:
+    build: .
+    container_name: ai-actuarial-app
+    ports:
+      - "5000:5000"
+    environment:
+      - DB_TYPE=postgresql
+      - DB_HOST=ai-actuarial-db
+      - DB_PORT=5432
+      - DB_NAME=ai_actuarial
+      - DB_USER=ai_user
+      - DB_PASSWORD=${DB_PASSWORD}
+      - BRAVE_API_KEY=${BRAVE_API_KEY}
+      - SERPAPI_API_KEY=${SERPAPI_API_KEY}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  db:
+    image: postgres:16-alpine
+    container_name: ai-actuarial-db
+    environment:
+      - POSTGRES_DB=ai_actuarial
+      - POSTGRES_USER=ai_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_user -d ai_actuarial"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
+```
+
+#### 4. Caddy Reverse Proxy Configuration
+
+Add to your Caddyfile (e.g., `/etc/caddy/Caddyfile`):
+
+```caddyfile
+# AI Actuarial Info Search
+actuarial.aixintelligence.com {
+    reverse_proxy ai-actuarial-app:5000
+    encode gzip
+    
+    # Optional: Add authentication
+    # basicauth {
+    #     admin $2a$14$...hashed_password...
+    # }
+}
+```
+
+Reload Caddy:
+```bash
+sudo systemctl reload caddy
+```
+
+#### 5. Deploy the Application
+
+```bash
+# On your EC2 instance
+cd /home/ec2-user/ai-actuarial-inforsearch
+
+# Set environment variables
+export DB_PASSWORD="your_secure_password"
+export BRAVE_API_KEY="your_brave_api_key"
+export SERPAPI_API_KEY="your_serpapi_key"
+
+# Build and start containers
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f ai-actuarial
+
+# Verify containers are running
+docker ps
+```
+
+#### 6. Initialize the Database
+
+The application will automatically create tables on first run. To manually initialize:
+
+```bash
+# Enter the container
+docker exec -it ai-actuarial-app bash
+
+# Run initial update
+python -m ai_actuarial update
+
+# Generate catalog
+python -m ai_actuarial catalog
+```
+
+#### 7. Set Up Scheduled Runs
+
+Create a cron job on the EC2 instance:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add weekly run at 3 AM on Mondays
+0 3 * * 1 cd /home/ec2-user/ai-actuarial-inforsearch && docker-compose exec -T ai-actuarial python -m ai_actuarial update && docker-compose exec -T ai-actuarial python -m ai_actuarial catalog
+```
+
+#### 8. Monitoring and Maintenance
+
+```bash
+# View logs
+docker-compose logs -f ai-actuarial
+
+# Restart application
+docker-compose restart ai-actuarial
+
+# Update application
+git pull
+docker-compose build
+docker-compose up -d
+
+# Backup PostgreSQL database
+docker exec ai-actuarial-db pg_dump -U ai_user ai_actuarial > backup_$(date +%Y%m%d).sql
+
+# Check disk usage
+du -sh data/
+```
+
+#### 9. Security Considerations
+
+1. **Use strong passwords** for PostgreSQL
+2. **Enable firewall** on EC2:
+   ```bash
+   # Only allow necessary ports
+   sudo ufw allow 22    # SSH
+   sudo ufw allow 80    # HTTP
+   sudo ufw allow 443   # HTTPS
+   sudo ufw enable
+   ```
+3. **Use AWS Security Groups** to restrict access
+4. **Keep secrets in environment variables** or AWS Secrets Manager
+5. **Enable SSL/TLS** for PostgreSQL connections (Caddy handles HTTPS automatically)
+6. **Regular backups** of both database and downloaded files
+
+#### 10. Example EC2 Setup
+
+Based on your current setup with Caddy managing multiple services:
+
+```bash
+# Your existing containers
+docker ps
+# meal_score-app (port 5000)
+# animal_talk-app (port 5000) 
+# stock-kanban-app (port 3000)
+# PostgreSQL (port 5432) - can be shared
+# Caddy (ports 80, 443)
+```
+
+The AI Actuarial app can:
+- **Share the PostgreSQL container** (create separate database)
+- **Use Caddy for routing** (add to existing Caddyfile)
+- **Run alongside existing apps** (different port/subdomain)
+
+Example Caddyfile addition:
+```caddyfile
+# Add to existing /etc/caddy/Caddyfile
+actuarial.aixintelligence.com {
+    reverse_proxy ai-actuarial-app:5000
+    encode gzip
+}
+
+# Or as a subpath
+aixintelligence.com {
+    # ... existing config ...
+    
+    @actuarial {
+        path /actuarial*
+    }
+    handle @actuarial {
+        reverse_proxy ai-actuarial-app:5000
+    }
+}
+```
+
+### Alternative Deployment Options
+
+#### Option 1: Standalone Server (No Docker)
+
+```bash
+# On EC2 instance
+cd /home/ec2-user
+git clone https://github.com/ferryhe/AI_actuarial_inforsearch.git
+cd AI_actuarial_inforsearch
+
+# Install dependencies
+pip3 install -r requirements.txt
+
+# Configure database
+export DB_TYPE=postgresql
+export DB_HOST=localhost
+export DB_NAME=ai_actuarial
+export DB_USER=ai_user
+export DB_PASSWORD=your_password
+
+# Run web interface
+python3 -m ai_actuarial web --host 0.0.0.0 --port 5000
+```
+
+#### Option 2: Background Worker (Scheduled Updates Only)
+
+If you don't need the web interface, run updates via cron:
+
+```bash
+# Crontab entry for weekly updates
+0 3 * * 1 cd /home/ec2-user/AI_actuarial_inforsearch && /usr/bin/python3 -m ai_actuarial update >> /var/log/ai-actuarial.log 2>&1
+```
+
 ## License
 
 MIT License
