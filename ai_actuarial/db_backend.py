@@ -180,6 +180,11 @@ class SQLiteBackend(DatabaseBackend):
                     # Validate column name (alphanumeric and underscores only)
                     if not name.replace("_", "").isalnum():
                         raise ValueError(f"Invalid column name: {name}")
+                    # Note: DDL statements (ALTER TABLE) cannot use parameterized queries for
+                    # identifiers (table/column names). String formatting is safe here because:
+                    # 1. Table name is validated against whitelist above
+                    # 2. Column name is validated to be alphanumeric + underscores
+                    # 3. Column type is from trusted source (migration code)
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"))
             conn.commit()
     
@@ -297,6 +302,11 @@ class PostgreSQLBackend(DatabaseBackend):
                     # Validate column name (alphanumeric and underscores only)
                     if not name.replace("_", "").isalnum():
                         raise ValueError(f"Invalid column name: {name}")
+                    # Note: DDL statements (ALTER TABLE) cannot use parameterized queries for
+                    # identifiers (table/column names). String formatting is safe here because:
+                    # 1. Table name is validated against whitelist above
+                    # 2. Column name is validated to be alphanumeric + underscores
+                    # 3. Column type is from trusted source (migration code)
                     # PostgreSQL uses different syntax for ALTER TABLE
                     col_def = col_type.replace("DEFAULT 'ok'", "")
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {col_def}"))
