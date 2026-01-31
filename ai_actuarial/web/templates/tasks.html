@@ -131,7 +131,10 @@ function loadTaskHistory() {
 }
 
 function viewTaskDetails(taskId) {
-    window.location = `/task/${taskId}`;
+    // Navigate to the current page, preserving the path and adding/updating the task_id query parameter
+    const url = new URL(window.location.href);
+    url.searchParams.set('task_id', taskId);
+    window.location = url.toString();
 }
 
 // Auto-refresh active tasks every 2 seconds
