@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="database-page">
+    <div class="page-header">
+        <h2>Database Management</h2>
+        <p>Search and manage collected files</p>
+    </div>
+
+    <div class="search-panel">
+        <div class="search-bar">
+            <input type="text" id="search-query" placeholder="Search by title, filename, or site..." />
+            <button onclick="searchFiles()" class="btn btn-primary">Search</button>
+        </div>
+        <div class="filter-options">
+            <select id="source-filter">
+                <option value="">All Sources</option>
+            </select>
+            <select id="category-filter">
+                <option value="">All Categories</option>
+            </select>
+            <button onclick="resetFilters()" class="btn btn-secondary">Reset</button>
+        </div>
+    </div>
+
+    <div class="results-panel">
+        <div class="results-header">
+            <h3>Files</h3>
+            <div class="results-controls">
+                <span id="results-count">0 files</span>
+                <select id="sort-by" onchange="searchFiles()">
+                    <option value="last_seen">Last Seen</option>
+                    <option value="title">Title</option>
+                    <option value="source_site">Source</option>
+                    <option value="bytes">Size</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="results-container">
+            <p class="loading">Loading files...</p>
+        </div>
+
+        <div class="pagination" id="pagination">
+        </div>
+    </div>
+</div>
+
+<script>
+let currentPage = 1;
+const pageSize = 20;
+
+// Load sources and categories for filters
+fetch('/api/sources')
+    .then(response => response.json())
+    .then(data => {
+        const select = document.getElementById('source-filter');
+        data.sources.forEach(source => {
+            const option = document.createElement('option');
+            option.value = source;
+            option.textContent = source;
+            select.appendChild(option);
+        });
+    });
+
+fetch('/api/categories')
+    .then(response => response.json())
+    .then(data => {
+        const select = document.getElementById('category-filter');
+        data.categories.forEach(cat => {
+            const option = document.createElement('option');
+            option.value = cat;
+            option.textContent = cat;
+            select.appendChild(option);
+        });
+    });
+
+function searchFiles(page = 1) {
+    currentPage = page;
+    const query = document.getElementById('search-query').value;
+    const source = document.getElementById('source-filter').value;
+    const category = document.getElementById('category-filter').value;
+    const sortBy = document.getElementById('sort-by').value;
+
+    const params = new URLSearchParams({
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        order_by: sortBy,
+        order_dir: 'desc'
+    });
+
+    if (query) params.append('query', query);
+    if (source) params.append('source', source);
+    if (category) params.append('category', category);
+
+    document.getElementById('results-container').innerHTML = '<p class="loading">Loading...</p>';
+
+    fetch(`/api/files?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            displayResults(data);
+        })
+        .catch(error => {
+            console.error('Error searching files:', error);
+            document.getElementById('results-container').innerHTML = '<p class="error">Error loading files</p>';
+        });
+}
+
+function displayResults(data) {
+    const container = document.getElementById('results-container');
+    document.getElementById('results-count').textContent = `${data.total} files`;
+
+    if (data.files && data.files.length > 0) {
+        const table = document.createElement('table');
+        table.className = 'files-table';
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Source</th>
+                    <th>Category</th>
+                    <th>Size</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.files.map(file => `
+                    <tr>
+                        <td>
+                            <div class="file-title">${escapeHtml(file.title || file.original_filename || 'Untitled')}</div>
+                            ${file.summary ? `<div class="file-summary">${escapeHtml(file.summary.substring(0, 100))}...</div>` : ''}
+                        </td>
+                        <td>${escapeHtml(file.source_site || 'Unknown')}</td>
+                        <td>${escapeHtml(file.category || '-')}</td>
+                        <td>${formatBytes(file.bytes)}</td>
+                        <td>${formatDate(file.last_seen)}</td>
+                        <td>
+                            <button onclick="viewFile('${encodeURIComponent(file.url)}')" class="btn-small">View</button>
+                            ${file.local_path ? `<button onclick="downloadFile('${encodeURIComponent(file.url)}')" class="btn-small">Download</button>` : ''}
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        `;
+        container.innerHTML = '';
+        container.appendChild(table);
+
+        // Update pagination
+        updatePagination(data.total);
+    } else {
+        container.innerHTML = '<p>No files found</p>';
+        document.getElementById('pagination').innerHTML = '';
+    }
+}
+
+function updatePagination(total) {
+    const totalPages = Math.ceil(total / pageSize);
+    const pagination = document.getElementById('pagination');
+    
+    if (totalPages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+    if (currentPage > 1) {
+        html += `<button onclick="searchFiles(${currentPage - 1})" class="btn-small">Previous</button>`;
+    }
+    
+    html += `<span class="page-info">Page ${currentPage} of ${totalPages}</span>`;
+    
+    if (currentPage < totalPages) {
+        html += `<button onclick="searchFiles(${currentPage + 1})" class="btn-small">Next</button>`;
+    }
+    
+    pagination.innerHTML = html;
+}
+
+function resetFilters() {
+    document.getElementById('search-query').value = '';
+    document.getElementById('source-filter').value = '';
+    document.getElementById('category-filter').value = '';
+    searchFiles(1);
+}
+
+function viewFile(url) {
+    window.location = `/file/${url}`;
+}
+
+function downloadFile(url) {
+    // Normalize to a raw URL and ensure it is encoded exactly once in the query string.
+    let rawUrl = url;
+    try {
+        const decoded = decodeURIComponent(url);
+        // If decoding changes the value, assume the input was already encoded.
+        if (decoded !== url) {
+            rawUrl = decoded;
+        }
+    } catch (e) {
+        // If decoding fails, fall back to the original value.
+        rawUrl = url;
+    }
+    window.location = `/api/download?url=${encodeURIComponent(rawUrl)}`;
+}
+
+// Load initial results
+searchFiles(1);
+</script>
+{% endblock %}

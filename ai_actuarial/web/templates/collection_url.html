@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="collection-page">
+    <div class="page-header">
+        <h2>🔗 URL Collection</h2>
+        <p>Download files from specific URLs</p>
+    </div>
+
+    <div class="collection-form">
+        <div class="form-group">
+            <label for="urls">URLs (one per line):</label>
+            <textarea id="urls" rows="10" placeholder="https://example.com/document.pdf&#10;https://example.com/report.docx"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="collection-name">Collection Name:</label>
+            <input type="text" id="collection-name" value="URL Collection" />
+        </div>
+        <div class="form-group checkbox">
+            <label>
+                <input type="checkbox" id="check-database" checked />
+                Check for duplicates in database
+            </label>
+        </div>
+        <div class="form-actions">
+            <button onclick="startCollection()" class="btn btn-primary">Start Collection</button>
+            <button onclick="history.back()" class="btn btn-secondary">Cancel</button>
+        </div>
+    </div>
+
+    <div id="progress-container" style="display: none;">
+        <h3>Collection Progress</h3>
+        <div class="progress-panel">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div id="progress-details"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+function startCollection() {
+    const urlsText = document.getElementById('urls').value;
+    const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u);
+    
+    if (urls.length === 0) {
+        alert('Please enter at least one URL');
+        return;
+    }
+
+    const payload = {
+        type: 'url',
+        urls: urls,
+        name: document.getElementById('collection-name').value,
+        check_database: document.getElementById('check-database').checked
+    };
+
+    document.getElementById('progress-container').style.display = 'block';
+
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Collection completed!\nFound: ' + data.items_found + '\nDownloaded: ' + data.items_downloaded);
+            window.location = '/database';
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error starting collection:', error);
+        alert('Error: ' + error.message);
+    });
+}
+</script>
+{% endblock %}
