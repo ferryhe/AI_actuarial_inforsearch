@@ -98,7 +98,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             
-            # Get total files
+            # Get total files - using direct SQL for now
+            # TODO: Consider adding get_file_count() method to Storage class
             cur = storage._conn.execute("SELECT COUNT(*) FROM files WHERE local_path IS NOT NULL AND local_path != ''")
             total_files = cur.fetchone()[0]
             
@@ -144,6 +145,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             allowed_order_by = ['id', 'url', 'title', 'source_site', 'bytes', 'last_seen', 'crawl_time']
             if order_by not in allowed_order_by:
                 order_by = 'last_seen'
+            
+            # Validate order_dir to prevent SQL injection
+            if order_dir.lower() not in ['asc', 'desc']:
+                order_dir = 'desc'
             
             # Build query
             filters = ["f.local_path IS NOT NULL AND f.local_path != ''"]
@@ -378,14 +383,19 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             history = []
             
             if os.path.exists(updates_dir):
+                import re
+                # Pattern to match update_YYYYMMDD_HHMMSSZ.json
+                timestamp_pattern = re.compile(r'update_(\d{8}_\d{6}Z)\.json$')
+                
                 for filename in sorted(os.listdir(updates_dir), reverse=True)[:10]:
-                    if filename.endswith('.json'):
+                    match = timestamp_pattern.match(filename)
+                    if match:
                         filepath = os.path.join(updates_dir, filename)
                         try:
                             with open(filepath, 'r', encoding='utf-8') as f:
                                 data = json.load(f)
-                                # Extract timestamp from filename (format: update_YYYYMMDD_HHMMSSZ.json)
-                                timestamp = filename.replace('update_', '').replace('.json', '')
+                                # Extract timestamp from regex match
+                                timestamp = match.group(1)
                                 history.append({
                                     'timestamp': timestamp,
                                     'type': 'scheduled',
