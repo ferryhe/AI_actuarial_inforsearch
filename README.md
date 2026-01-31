@@ -10,6 +10,7 @@ A Python tool for discovering, downloading, and cataloging AI-related documents 
 - **Web Search Integration**: Optional Brave and SerpAPI search for broader discovery
 - **Catalog Generation**: Extracts keywords, summaries, and categories from downloaded files
 - **Multi-language Support**: Supports keywords in English, Chinese, French, German, Italian, Spanish, Korean, and Japanese
+- **Database Flexibility**: Supports both SQLite (local development) and PostgreSQL (production) backends
 
 ## Requirements
 
@@ -35,6 +36,31 @@ pip install -r requirements.txt
 python -m ai_actuarial update
 ```
 
+## Database Configuration
+
+The application supports both SQLite (default) and PostgreSQL:
+
+### SQLite (Default - No Setup Required)
+```yaml
+# config/sites.yaml
+paths:
+  db: data/index.db
+```
+
+### PostgreSQL (Production)
+```yaml
+# config/sites.yaml
+database:
+  type: postgresql
+  host: localhost
+  port: 5432
+  database: ai_actuarial
+  username: postgres
+  password: your_password
+```
+
+For detailed database configuration options, see [DATABASE_BACKEND_GUIDE.md](DATABASE_BACKEND_GUIDE.md).
+
 ## Project Structure
 
 ```
@@ -45,27 +71,32 @@ AI_actuarial_inforsearch/
 │   ├── cli.py                 # Command-line interface
 │   ├── crawler.py             # Web crawler logic
 │   ├── search.py              # Web search API integration
-│   ├── storage.py             # SQLite database storage
+│   ├── storage.py             # SQLite database storage (legacy)
+│   ├── storage_v2.py          # SQLAlchemy-based storage (NEW)
+│   ├── storage_factory.py     # Database backend factory (NEW)
+│   ├── db_backend.py          # Database abstraction layer (NEW)
+│   ├── db_models.py           # SQLAlchemy ORM models (NEW)
 │   ├── catalog.py             # Keyword/summary extraction
 │   ├── utils.py               # Utility functions
-│   ├── collectors/            # Collection workflows (NEW)
+│   ├── collectors/            # Collection workflows
 │   │   ├── base.py            # Base collector interface
 │   │   ├── scheduled.py       # Scheduled collection
 │   │   ├── adhoc.py           # Ad-hoc collection
 │   │   ├── url.py             # URL-based collection
 │   │   └── file.py            # File import
-│   ├── processors/            # Document processing (NEW)
+│   ├── processors/            # Document processing
 │   │   ├── cleaner.py         # Document cleaning/validation
 │   │   └── categorizer.py     # Document categorization
-│   └── web/                   # Web interface (NEW)
+│   └── web/                   # Web interface
 │       └── app.py             # Flask application
 ├── config/
 │   ├── sites.yaml             # Site configuration
-│   └── categories.yaml        # Category definitions (NEW)
+│   └── categories.yaml        # Category definitions
 ├── scripts/
 │   └── catalog_resume.py      # Resumable catalog generation
 ├── requirements.txt
 ├── pyproject.toml
+├── DATABASE_BACKEND_GUIDE.md  # Database configuration guide (NEW)
 └── README.md
 ```
 
