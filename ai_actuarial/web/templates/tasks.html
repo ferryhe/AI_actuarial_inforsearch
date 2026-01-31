@@ -113,7 +113,7 @@ function loadTaskHistory() {
                                 <td>${task.completed_at ? formatDate(task.completed_at) : '-'}</td>
                                 <td>${task.items_processed || 0}</td>
                                 <td>
-                                    <button onclick="viewTaskDetails('${task.id}')" class="btn-small">Details</button>
+                                    <button data-task-id="${escapeHtml(task.id)}" onclick="viewTaskDetails(this.dataset.taskId)" class="btn-small">Details</button>
                                 </td>
                             </tr>
                         `).join('')}

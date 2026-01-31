@@ -95,7 +95,7 @@ fetch('/api/config/sites')
                                 <td>${site.max_depth || '-'}</td>
                                 <td>${site.keywords ? site.keywords.length + ' keywords' : '-'}</td>
                                 <td>
-                                    <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">Run Now</button>
+                                    <button data-site-name="${escapeHtml(site.name)}" onclick="runSingleSite(this.dataset.siteName)" class="btn-small">Run Now</button>
                                 </td>
                             </tr>
                         `;
