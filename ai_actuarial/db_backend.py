@@ -161,11 +161,19 @@ class SQLiteBackend(DatabaseBackend):
     
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         """Ensure columns exist in the table (for SQLite migrations)."""
+        # Validate table name to prevent SQL injection
+        allowed_tables = {"files", "pages", "blobs", "catalog_items"}
+        if table not in allowed_tables:
+            raise ValueError(f"Invalid table name: {table}")
+        
         with self.engine.connect() as conn:
             cur = conn.execute(text(f"PRAGMA table_info({table})"))
             existing = {row[1] for row in cur.fetchall()}
             for name, col_type in columns.items():
                 if name not in existing:
+                    # Validate column name (alphanumeric and underscores only)
+                    if not name.replace("_", "").isalnum():
+                        raise ValueError(f"Invalid column name: {name}")
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"))
             conn.commit()
     
@@ -267,6 +275,11 @@ class PostgreSQLBackend(DatabaseBackend):
     
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         """Ensure columns exist in the table (for PostgreSQL migrations)."""
+        # Validate table name to prevent SQL injection
+        allowed_tables = {"files", "pages", "blobs", "catalog_items"}
+        if table not in allowed_tables:
+            raise ValueError(f"Invalid table name: {table}")
+        
         with self.engine.connect() as conn:
             # Get existing columns
             cur = conn.execute(text(f"""
@@ -278,6 +291,9 @@ class PostgreSQLBackend(DatabaseBackend):
             
             for name, col_type in columns.items():
                 if name not in existing:
+                    # Validate column name (alphanumeric and underscores only)
+                    if not name.replace("_", "").isalnum():
+                        raise ValueError(f"Invalid column name: {name}")
                     # PostgreSQL uses different syntax for ALTER TABLE
                     col_def = col_type.replace("DEFAULT 'ok'", "")
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {col_def}"))
@@ -344,6 +360,8 @@ def create_backend(db_config: dict[str, Any]) -> DatabaseBackend:
     Returns:
         DatabaseBackend instance
     """
+    from urllib.parse import quote_plus
+    
     db_type = db_config.get("type", "sqlite").lower()
     
     if db_type == "sqlite":
@@ -358,7 +376,11 @@ def create_backend(db_config: dict[str, Any]) -> DatabaseBackend:
         username = db_config.get("username", "postgres")
         password = db_config.get("password", "")
         
-        connection_string = f"postgresql://{username}:{password}@{host}:{port}/{database}"
+        # URL-encode username and password to handle special characters
+        username_encoded = quote_plus(username)
+        password_encoded = quote_plus(password)
+        
+        connection_string = f"postgresql://{username_encoded}:{password_encoded}@{host}:{port}/{database}"
         return PostgreSQLBackend(connection_string)
     
     else:
