@@ -2,6 +2,11 @@
 .env
 __pycache__/
 *.pyc
+
+# Data directory - includes database and downloaded files
+# Note: Entire data/ directory is ignored except for .gitkeep
 data/
 !data/.gitkeep
+
+# Cache directory
 .cache/
