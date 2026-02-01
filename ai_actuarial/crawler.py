@@ -374,6 +374,16 @@ class Crawler:
                 content_type=headers.get("content-type"),
             )
 
+        # Store relative path for consistency with FileCollector
+        # Relative to parent of download_dir (typically the 'data' directory)
+        base_dir = Path(self.download_dir).parent.resolve()
+        local_path_resolved = Path(local_path).resolve()
+        try:
+            relative_path = str(local_path_resolved.relative_to(base_dir))
+        except ValueError:
+            # Fallback to absolute path if relative path cannot be determined
+            relative_path = str(local_path_resolved)
+
         title = page_title or os.path.basename(parsed.path) or original_filename
         content_type = headers.get("content-type")
         last_modified = headers.get("last-modified")
@@ -386,7 +396,7 @@ class Crawler:
             source_site=source_site,
             source_page_url=source_page_url,
             original_filename=original_filename,
-            local_path=local_path,
+            local_path=relative_path,
             bytes_size=bytes_size,
             content_type=content_type,
             last_modified=last_modified,

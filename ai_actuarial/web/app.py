@@ -59,7 +59,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     db_path = site_config.get('paths', {}).get('db', 'data/index.db')
     download_dir = site_config.get('paths', {}).get('download_dir', 'data/files')
     
-    # Convert to absolute paths to handle relative imports
+    # Convert to absolute paths to handle relative paths
     if not os.path.isabs(db_path):
         db_path = os.path.abspath(db_path)
     if not os.path.isabs(download_dir):
@@ -433,12 +433,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return jsonify({"error": "File not found"}), 404
             
             local_path = file_record['local_path']
-            # Resolve relative paths to absolute.
-            # Assumption: relative paths were created by FileCollector and are
-            # relative to the parent directory of download_dir.
+            # Resolve relative paths to absolute paths stored in the database
             if not os.path.isabs(local_path):
                 relative_path = Path(local_path)
-                # Primary base: parent of download_dir (matches FileCollector behaviour)
+                # Use the parent of download_dir as base to resolve relative paths from the database
                 base_dir = Path(download_dir).parent.resolve()
                 candidate = (base_dir / relative_path).resolve()
                 
@@ -461,6 +459,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             fallback_base,
                         )
                         return jsonify({"error": "File not found on disk (path resolution failed)"}), 404
+            
+            # Security: Validate that resolved path is within expected directory tree
+            resolved_path = Path(local_path).resolve()
+            data_dir = Path(download_dir).parent.resolve()
+            try:
+                resolved_path.relative_to(data_dir)
+            except ValueError:
+                logger.warning(
+                    "Security: Attempted to access file outside data directory. "
+                    "Path: '%s', Data dir: '%s'",
+                    resolved_path,
+                    data_dir
+                )
+                return jsonify({"error": "Invalid file path"}), 403
             
             if not os.path.exists(local_path):
                 return jsonify({"error": "File not found on disk"}), 404
