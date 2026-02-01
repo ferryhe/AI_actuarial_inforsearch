@@ -433,11 +433,34 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return jsonify({"error": "File not found"}), 404
             
             local_path = file_record['local_path']
-            # Convert relative paths to absolute using data directory as base
+            # Resolve relative paths to absolute.
+            # Assumption: relative paths were created by FileCollector and are
+            # relative to the parent directory of download_dir.
             if not os.path.isabs(local_path):
-                # Get the data directory (parent of download_dir which is data/files)
-                data_dir = os.path.dirname(download_dir)
-                local_path = os.path.join(data_dir, local_path)
+                relative_path = Path(local_path)
+                # Primary base: parent of download_dir (matches FileCollector behaviour)
+                base_dir = Path(download_dir).parent.resolve()
+                candidate = (base_dir / relative_path).resolve()
+                
+                if candidate.exists():
+                    local_path = str(candidate)
+                else:
+                    # Fallback: try resolving relative to download_dir itself
+                    fallback_base = Path(download_dir).resolve()
+                    fallback_candidate = (fallback_base / relative_path).resolve()
+                    if fallback_candidate.exists():
+                        local_path = str(fallback_candidate)
+                    else:
+                        logger.warning(
+                            "Failed to resolve local_path '%s' for URL '%s' using bases '%s' and '%s'. "
+                            "This may indicate that files were imported with a different download_dir "
+                            "configuration or working directory.",
+                            local_path,
+                            url,
+                            base_dir,
+                            fallback_base,
+                        )
+                        return jsonify({"error": "File not found on disk (path resolution failed)"}), 404
             
             if not os.path.exists(local_path):
                 return jsonify({"error": "File not found on disk"}), 404
