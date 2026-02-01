@@ -59,6 +59,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     db_path = site_config.get('paths', {}).get('db', 'data/index.db')
     download_dir = site_config.get('paths', {}).get('download_dir', 'data/files')
     
+    # Convert to absolute paths to handle relative paths
+    if not os.path.isabs(db_path):
+        db_path = os.path.abspath(db_path)
+    if not os.path.isabs(download_dir):
+        download_dir = os.path.abspath(download_dir)
+    
     # Import storage and collectors here to avoid circular imports
     from ..storage import Storage
     from ..crawler import Crawler
@@ -427,6 +433,47 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return jsonify({"error": "File not found"}), 404
             
             local_path = file_record['local_path']
+            # Resolve relative paths to absolute paths stored in the database
+            if not os.path.isabs(local_path):
+                relative_path = Path(local_path)
+                # Use the parent of download_dir as base to resolve relative paths from the database
+                base_dir = Path(download_dir).parent.resolve()
+                candidate = (base_dir / relative_path).resolve()
+                
+                if candidate.exists():
+                    local_path = str(candidate)
+                else:
+                    # Fallback: try resolving relative to download_dir itself
+                    fallback_base = Path(download_dir).resolve()
+                    fallback_candidate = (fallback_base / relative_path).resolve()
+                    if fallback_candidate.exists():
+                        local_path = str(fallback_candidate)
+                    else:
+                        logger.warning(
+                            "Failed to resolve local_path '%s' for URL '%s' using bases '%s' and '%s'. "
+                            "This may indicate that files were imported with a different download_dir "
+                            "configuration or working directory.",
+                            local_path,
+                            url,
+                            base_dir,
+                            fallback_base,
+                        )
+                        return jsonify({"error": "File not found on disk (path resolution failed)"}), 404
+            
+            # Security: Validate that resolved path is within expected directory tree
+            resolved_path = Path(local_path).resolve()
+            data_dir = Path(download_dir).parent.resolve()
+            try:
+                resolved_path.relative_to(data_dir)
+            except ValueError:
+                logger.warning(
+                    "Security: Attempted to access file outside data directory. "
+                    "Path: '%s', Data dir: '%s'",
+                    resolved_path,
+                    data_dir
+                )
+                return jsonify({"error": "Invalid file path"}), 403
+            
             if not os.path.exists(local_path):
                 return jsonify({"error": "File not found on disk"}), 404
             
