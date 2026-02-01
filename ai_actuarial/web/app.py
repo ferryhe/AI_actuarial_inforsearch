@@ -59,6 +59,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     db_path = site_config.get('paths', {}).get('db', 'data/index.db')
     download_dir = site_config.get('paths', {}).get('download_dir', 'data/files')
     
+    # Convert to absolute paths to handle relative imports
+    if not os.path.isabs(db_path):
+        db_path = os.path.abspath(db_path)
+    if not os.path.isabs(download_dir):
+        download_dir = os.path.abspath(download_dir)
+    
     # Import storage and collectors here to avoid circular imports
     from ..storage import Storage
     from ..crawler import Crawler
@@ -427,6 +433,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return jsonify({"error": "File not found"}), 404
             
             local_path = file_record['local_path']
+            # Convert relative paths to absolute using data directory as base
+            if not os.path.isabs(local_path):
+                # Get the data directory (parent of download_dir which is data/files)
+                data_dir = os.path.dirname(download_dir)
+                local_path = os.path.join(data_dir, local_path)
+            
             if not os.path.exists(local_path):
                 return jsonify({"error": "File not found on disk"}), 404
             
