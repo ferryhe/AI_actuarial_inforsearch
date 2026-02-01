@@ -2,6 +2,20 @@
 .env
 __pycache__/
 *.pyc
+
+# Data directory - includes database and downloaded files
 data/
 !data/.gitkeep
+
+# Downloaded files (explicit entries for clarity)
+data/files/
+data/index.db
+data/*.db
+data/updates/
+data/catalog.jsonl
+data/catalog.md
+data/catalog.json
+data/last_run_new.json
+
+# Cache directory
 .cache/
