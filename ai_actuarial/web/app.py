@@ -731,8 +731,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             d['keywords'] = ", ".join(keywords_list)
                         else:
                             d['keywords'] = str(keywords_list)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to parse keywords_json for catalog export: %r (%s)",
+                            raw_kws,
+                            e,
+                        )
                 
                 # Cleanup internal fields
                 if 'keywords_json' in d:
