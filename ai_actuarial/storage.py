@@ -765,10 +765,11 @@ class Storage:
             if category == '__uncategorized__':
                 filters.append("(c.category IS NULL OR c.category = '')")
             else:
-                # Precise matching for comma-separated categories
-                # Match exact string, OR start of CSV, OR end of CSV, OR middle of CSV
+                # Precise matching for semicolon-separated categories
+                # Category format: "AI; Risk & Capital; Pricing"
+                # Match exact string, OR start of list, OR end of list, OR middle of list
                 filters.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
-                params.extend([category, f"{category},%", f"%,{category}", f"%,{category},%"])
+                params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
         
         where_clause = " AND ".join(filters)
         
