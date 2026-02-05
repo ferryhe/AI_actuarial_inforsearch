@@ -413,6 +413,18 @@ class Storage:
         "id", "url", "sha256", "title", "source_site", "local_path",
         "bytes", "first_seen", "last_seen", "crawl_time"
     ])
+    
+    # Allowed column mapping for query_files_with_catalog ORDER BY
+    # Maps user-facing column names to actual SQL column references with table prefix
+    _QUERY_ORDER_COLUMN_MAP = {
+        'id': 'f.id',
+        'url': 'f.url',
+        'title': 'f.title',
+        'source_site': 'f.source_site',
+        'bytes': 'f.bytes',
+        'last_seen': 'f.last_seen',
+        'crawl_time': 'f.crawl_time',
+    }
 
     def iter_files(
         self,
@@ -697,22 +709,10 @@ class Storage:
         Returns:
             Tuple of (list of file dicts, total count)
         """
-        # Allowed column mapping to prevent SQL injection
-        # Maps user-facing column names to actual SQL column references
-        _ALLOWED_ORDER_COLUMNS = {
-            'id': 'f.id',
-            'url': 'f.url',
-            'title': 'f.title',
-            'source_site': 'f.source_site',
-            'bytes': 'f.bytes',
-            'last_seen': 'f.last_seen',
-            'crawl_time': 'f.crawl_time',
-        }
-        
-        # Validate and map order_by column
-        if order_by not in _ALLOWED_ORDER_COLUMNS:
+        # Validate and map order_by column using class-level mapping
+        if order_by not in self._QUERY_ORDER_COLUMN_MAP:
             order_by = 'last_seen'  # default
-        order_column = _ALLOWED_ORDER_COLUMNS[order_by]
+        order_column = self._QUERY_ORDER_COLUMN_MAP[order_by]
         
         # Validate order_dir to prevent SQL injection
         if order_dir.lower() not in ['asc', 'desc']:

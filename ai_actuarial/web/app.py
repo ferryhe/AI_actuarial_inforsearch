@@ -396,9 +396,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_delete_file():
         """Delete a file with backend confirmation.
         
-        This endpoint requires POST with confirmation and performs
-        authentication checks before allowing physical file deletion.
+        SECURITY WARNING: This endpoint is currently disabled by default.
+        Set ENABLE_FILE_DELETION=true in environment to enable.
+        Authentication should be implemented before enabling in production.
         """
+        # Feature flag to disable endpoint until authentication is implemented
+        if not os.getenv('ENABLE_FILE_DELETION', '').lower() in ('true', '1', 'yes'):
+            return jsonify({
+                "error": "File deletion endpoint is disabled. "
+                        "Set ENABLE_FILE_DELETION=true to enable."
+            }), 403
+        
         try:
             data = request.get_json()
             if not data:
@@ -413,8 +421,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if not confirm:
                 return jsonify({"error": "Confirmation required for file deletion"}), 400
             
-            # TODO: Add authentication check here
-            # if not is_authenticated(request):
+            # TODO: Add proper authentication check here before enabling by default
+            # Example:
+            # auth_token = request.headers.get('Authorization')
+            # if not verify_auth_token(auth_token):
             #     return jsonify({"error": "Authentication required"}), 401
             
             storage = Storage(db_path)
