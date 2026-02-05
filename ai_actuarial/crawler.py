@@ -315,40 +315,18 @@ class Crawler:
                         continue
                     
                     # Enhanced Exclusion Check:
-                    # 1. Check final URL (redirects resolved)
-                    if exclude and self._is_excluded(ffinal, exclude):
-                        logger.info("Excluding based on final URL: %s", ffinal)
+                    # Use consolidated helper to check both URL and filename against
+                    # exclude patterns and excluded prefixes.
+                    if self._should_exclude_url(ffinal, exclude, exclude_prefixes) or \
+                       self._should_exclude_url(tmp_path.name, exclude, exclude_prefixes):
+                        logger.info(
+                            "Excluding downloaded file based on exclude rules: url=%s, name=%s",
+                            ffinal,
+                            tmp_path.name,
+                        )
                         if tmp_path.exists():
                             tmp_path.unlink()
                         continue
-                    
-                    # 2. Check actual filename (content-disposition or url derived)
-                    if exclude and self._is_excluded(tmp_path.name, exclude):
-                        logger.info("Excluding based on filename: %s", tmp_path.name)
-                        if tmp_path.exists():
-                            tmp_path.unlink()
-                        continue
-
-                    # 3. Check prefixes on filename
-                    if exclude_prefixes:
-                        fname = tmp_path.name
-                        if self._has_excluded_prefix(fname, exclude_prefixes):
-                            logger.info("Excluding based on prefix: %s", fname)
-                            if tmp_path.exists():
-                                tmp_path.unlink()
-                            continue
-
-                    if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
-                        if tmp_path.exists():
-                            tmp_path.unlink()
-                        continue
-
-                    # 4. Check prefixes on URL base (legacy check, kept for safety)
-                    if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
-                         if tmp_path.exists():
-                            tmp_path.unlink()
-                         continue
-
                     item = self._handle_file(
                         ffinal,
                         tmp_path,
