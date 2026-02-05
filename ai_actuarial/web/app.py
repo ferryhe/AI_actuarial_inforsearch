@@ -383,16 +383,6 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             storage = Storage(db_path)
             
             # Use a JOIN to get file info + catalog info in one go
-            query = """
-                SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
-                       f.original_filename, f.local_path, f.bytes, f.content_type,
-                       f.last_modified, f.etag, f.published_time, f.first_seen,
-                       f.last_seen, f.crawl_time,
-                       c.category, c.summary, c.keywords, c.status
-                FROM files f
-                LEFT JOIN catalog_items c ON c.file_url = f.url
-                WHERE f.url = ?
-            """
             # Use abstraction method
             file_data = storage.get_file_with_catalog(file_url)
             storage.close()
