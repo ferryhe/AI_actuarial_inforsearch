@@ -697,10 +697,22 @@ class Storage:
         Returns:
             Tuple of (list of file dicts, total count)
         """
-        # Validate order_by
-        allowed_order_by = ['id', 'url', 'title', 'source_site', 'bytes', 'last_seen', 'crawl_time']
-        if order_by not in allowed_order_by:
-            order_by = 'last_seen'
+        # Allowed column mapping to prevent SQL injection
+        # Maps user-facing column names to actual SQL column references
+        _ALLOWED_ORDER_COLUMNS = {
+            'id': 'f.id',
+            'url': 'f.url',
+            'title': 'f.title',
+            'source_site': 'f.source_site',
+            'bytes': 'f.bytes',
+            'last_seen': 'f.last_seen',
+            'crawl_time': 'f.crawl_time',
+        }
+        
+        # Validate and map order_by column
+        if order_by not in _ALLOWED_ORDER_COLUMNS:
+            order_by = 'last_seen'  # default
+        order_column = _ALLOWED_ORDER_COLUMNS[order_by]
         
         # Validate order_dir to prevent SQL injection
         if order_dir.lower() not in ['asc', 'desc']:
@@ -740,8 +752,8 @@ class Storage:
         cur = self._conn.execute(count_query, tuple(params))
         total = cur.fetchone()[0]
         
-        # Get files with catalog data
-        order_clause = f"f.{order_by} {order_dir.upper()}"
+        # Get files with catalog data using validated column mapping
+        order_clause = f"{order_column} {order_dir.upper()}"
         query_sql = f"""
             SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
                    f.original_filename, f.local_path, f.bytes, f.content_type,

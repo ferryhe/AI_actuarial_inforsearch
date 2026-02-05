@@ -283,7 +283,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_tasks_history():
         """Get task history."""
         limit = int(request.args.get('limit', 10))
-        # Use lock to protect _task_history access
+        # Protect _task_history list access with lock to prevent race conditions
+        # when tasks are being added/removed concurrently by background threads
         with _task_lock:
             tasks = _task_history[-limit:]
         return jsonify({"tasks": tasks})
