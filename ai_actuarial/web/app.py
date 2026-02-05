@@ -22,9 +22,6 @@ import csv
 import io
 import yaml
 import schedule
-import time
-import schedule
-
 logger = logging.getLogger(__name__)
 
 # Global state for task tracking
