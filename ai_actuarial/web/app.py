@@ -73,6 +73,19 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     from ..collectors.file import FileCollector
     from ..collectors.scheduled import ScheduledCollector
     
+    # Load task history from disk
+    history_file = Path('data/job_history.jsonl')
+    if history_file.exists():
+        try:
+            with open(history_file, 'r', encoding='utf-8') as f:
+                global _task_history
+                _task_history = [json.loads(line) for line in f if line.strip()]
+                # Keep only last 100 entries in memory
+                if len(_task_history) > 100:
+                    _task_history = _task_history[-100:]
+        except Exception as e:
+            logger.error(f"Failed to load job history: {e}")
+
     # Register routes
     @app.route("/")
     def index():
@@ -182,9 +195,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 if category == '__uncategorized__':
                     filters.append("(c.category IS NULL OR c.category = '')")
                 else:
-                     # Use LIKE to support multiple categories stored as string
-                    filters.append("c.category LIKE ?")
-                    params.append(f"%{category}%")
+                    # Precise matching for comma-separated categories
+                    # Match exact string, OR start of CSV, OR end of CSV, OR middle of CSV
+                    filters.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
+                    params.extend([category, f"{category},%", f"%,{category}", f"%,{category},%"])
             
             where_clause = " AND ".join(filters)
             
@@ -517,6 +531,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                  _active_tasks[task_id]["status"] = "running"
                  _active_tasks[task_id]["started_at"] = datetime.now().isoformat()
 
+        # Stop check callback
+        def stop_check():
+            with _task_lock:
+                 return _active_tasks.get(task_id, {}).get("stop_requested", False)
+
         try:
             storage = Storage(db_path)
             result = None
@@ -524,7 +543,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if collection_type == "url":
                 urls = data.get("urls", [])
                 user_agent = site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1')
-                crawler = Crawler(storage, download_dir, user_agent)
+                # Pass stop_check to Crawler
+                crawler = Crawler(storage, download_dir, user_agent, stop_check=stop_check)
                 collector = URLCollector(storage, crawler)
                 
                 config_obj = CollectionConfig(
@@ -571,8 +591,57 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 )
                 result = collector.collect(config_obj)
 
+            elif collection_type == "search":
+                from ..search import brave_search
+                
+                query = data.get("query")
+                site = data.get("site")
+                engine = data.get("engine")
+                count = int(data.get("count", 20))
+                api_key = data.get("api_key")
+                
+                if site:
+                    query = f"site:{site} {query}"
+                
+                logger.info(f"Performing web search: {query} using {engine}")
+                urls = []
+                
+                if engine == "brave":
+                    if not api_key:
+                        api_key = os.getenv("BRAVE_API_KEY")
+                    if not api_key:
+                        raise ValueError("Brave API Key is missing")
+                        
+                    results = brave_search(query, count, api_key, site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'))
+                    urls = [r.url for r in results]
+                
+                # If Google, implement or fail
+                
+                logger.info(f"Search found {len(urls)} URLs")
+                
+                if urls:
+                    crawler = Crawler(
+                        storage, 
+                        download_dir, 
+                        site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        stop_check=stop_check
+                    )
+                    collector = URLCollector(storage, crawler)
+                    config_obj = CollectionConfig(
+                        name=f"Search: {query[:30]}...",
+                        source_type="url",
+                        check_database=True,
+                        metadata={"urls": urls}
+                    )
+                    result = collector.collect(config_obj)
+
             elif collection_type == "scheduled":
-                crawler = Crawler(storage, download_dir, site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'))
+                crawler = Crawler(
+                    storage, 
+                    download_dir, 
+                    site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                    stop_check=stop_check
+                )
                 collector = ScheduledCollector(storage, crawler)
                 
                 target_site_name = data.get("site")
@@ -625,7 +694,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "items_downloaded": result.items_downloaded if result else 0,
                         "errors": result.errors if result else []
                     })
+                    # Check if stopped
+                    if task_data.get("stop_requested"):
+                         task_data["status"] = "stopped"
+                         
                     _task_history.append(task_data)
+                    _append_history_to_disk(task_data)
                     
         except Exception as e:
             logger.exception(f"Task {task_id} failed")
@@ -639,6 +713,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "errors": [str(e)]
                     })
                     _task_history.append(task_data)
+                    _append_history_to_disk(task_data)
 
     @app.route("/api/collections/run", methods=["POST"])
     def run_collection():
@@ -649,7 +724,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return jsonify({"error": "Invalid JSON"}), 400
             
             collection_type = data.get("type")
-            valid_types = ["scheduled", "adhoc", "url", "file"]
+            valid_types = ["scheduled", "adhoc", "url", "file", "search"]
             if not collection_type or collection_type not in valid_types:
                 return jsonify({"error": f"Invalid collection type"}), 400
 
@@ -694,6 +769,26 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error starting collection")
             return jsonify({"error": str(e)}), 500
     
+    def _append_history_to_disk(task_data):
+        """Append a task record to the persistent history file."""
+        try:
+            p = Path('data/job_history.jsonl')
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(task_data) + "\n")
+        except Exception as e:
+            logger.error(f"Failed to save task history: {e}")
+
+    @app.route("/api/tasks/stop/<task_id>", methods=["POST"])
+    def api_tasks_stop(task_id):
+        """Request to stop a running task."""
+        with _task_lock:
+            if task_id in _active_tasks:
+                _active_tasks[task_id]["stop_requested"] = True
+                logger.info(f"Stop requested for task {task_id}")
+                return jsonify({"success": True, "message": "Stop signal sent"})
+            return jsonify({"error": "Task not found or not active"}), 404
+
     @app.route("/api/tasks/active")
     def api_tasks_active():
         """Get active tasks."""

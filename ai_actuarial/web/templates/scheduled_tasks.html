@@ -10,6 +10,7 @@
     <div class="tabs">
         <button class="tab-link active" onclick="openTab(event, 'configured-sites')">Configured Sites</button>
         <button class="tab-link" onclick="openTab(event, 'manual-trigger')">Manual Trigger</button>
+        <button class="tab-link" onclick="openTab(event, 'web-search')">Web Search</button>
         <button class="tab-link" onclick="openTab(event, 'history')">Collection History</button>
     </div>
 
@@ -22,6 +23,46 @@
         
         <div id="sites-container">
             <p class="loading">Loading configured sites...</p>
+        </div>
+    </div>
+
+    <!-- Tab Content: Web Search -->
+    <div id="web-search" class="tab-content">
+        <div class="trigger-form">
+            <h3>Web Search Discovery</h3>
+            <p class="help-text">Search for files across the web or specific sites using external APIs.</p>
+            
+            <div class="form-group">
+                <label>Search Query:</label>
+                <input type="text" id="ws-query" placeholder="e.g. 'actuarial artificial intelligence filetype:pdf'" />
+            </div>
+            
+            <div class="form-group">
+                <label>Limit to Site (Optional):</label>
+                <input type="text" id="ws-site" placeholder="e.g. actuaries.org" />
+            </div>
+
+            <div class="form-row" style="display: flex; gap: 20px;">
+                <div class="form-group" style="flex: 1;">
+                    <label>Search Engine:</label>
+                    <select id="ws-engine">
+                        <option value="brave">Brave Search API</option>
+                        <option value="google">Google (SerpAPI)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Max Results:</label>
+                    <input type="number" id="ws-count" value="20" min="1" max="100" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>API Key:</label>
+                <input type="password" id="ws-apikey" placeholder="Enter API Key" />
+                <small>Key is not stored on server. Enter for each session or configured in env.</small>
+            </div>
+
+            <button onclick="startWebSearch()" class="btn btn-primary">Search & Collect</button>
         </div>
     </div>
 
@@ -429,9 +470,49 @@ function startScheduledCollection() {
     .then(data => {
         if (data.success) {
             alert('Task started! ID: ' + data.job_id);
-            window.location.href = '/tasks';
+            // Switch to history tab
+            const historyTab = document.querySelector('.tab-link[onclick*="history"]');
+            if(historyTab) historyTab.click();
+            loadHistory();
         } else {
             alert('Error: ' + data.error);
+        }
+    })
+    .catch(e => alert(e));
+}
+
+function startWebSearch() {
+    const query = document.getElementById('ws-query').value.trim();
+    if (!query) return alert("Search query is required");
+    
+    const site = document.getElementById('ws-site').value.trim();
+    const engine = document.getElementById('ws-engine').value;
+    const count = parseInt(document.getElementById('ws-count').value);
+    const apiKey = document.getElementById('ws-apikey').value.trim();
+
+    const payload = {
+        type: 'search',
+        query: query,
+        site: site,
+        engine: engine,
+        count: count,
+        api_key: apiKey
+    };
+
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if(data.success) {
+            alert("Search task started! ID: " + data.job_id);
+            const historyTab = document.querySelector('.tab-link[onclick*="history"]');
+            if(historyTab) historyTab.click();
+            loadHistory();
+        } else {
+            alert("Error: " + data.error);
         }
     })
     .catch(e => alert(e));

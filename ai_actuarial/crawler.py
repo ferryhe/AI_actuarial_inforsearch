@@ -41,10 +41,11 @@ class SiteConfig:
 
 
 class Crawler:
-    def __init__(self, storage: Storage, download_dir: str, user_agent: str) -> None:
+    def __init__(self, storage: Storage, download_dir: str, user_agent: str, stop_check=None) -> None:
         self.storage = storage
         self.download_dir = download_dir
         self.user_agent = user_agent
+        self.stop_check = stop_check
         self._cleanup_old_temp_files()
 
     def _cleanup_old_temp_files(self, max_age_hours: int = 24) -> None:
@@ -175,6 +176,11 @@ class Crawler:
         return urls
 
     def crawl_site(self, cfg: SiteConfig) -> list[dict]:
+        # Check stop signal at start
+        if self.stop_check and self.stop_check():
+            logger.info("Crawl stopped by user signal.")
+            return []
+
         logger.info("Starting crawl of site: %s (max_pages=%d, max_depth=%d)", 
                    cfg.name, cfg.max_pages, cfg.max_depth)
         keywords = [k.lower() for k in (cfg.keywords or [])]
@@ -195,6 +201,11 @@ class Crawler:
         pages_fetched = 0
 
         while page_queue and pages_fetched < cfg.max_pages:
+            # Check stop signal in loop
+            if self.stop_check and self.stop_check():
+                logger.info("Crawl stopped by user signal.")
+                break
+
             url, depth = page_queue.popleft()
             if url in seen_pages:
                 continue

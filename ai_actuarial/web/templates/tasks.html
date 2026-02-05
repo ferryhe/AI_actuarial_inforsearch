@@ -43,8 +43,62 @@
     </div>
 </div>
 
+<!-- Task Detail Modal -->
+<div id="log-modal" class="modal">
+    <div class="modal-content large-modal">
+        <span class="close" onclick="closeLogModal()">&times;</span>
+        <h3>Task Details</h3>
+        <pre id="log-content" class="log-viewer">Loading...</pre>
+    </div>
+</div>
+
+<style>
+/* Modal */
+.modal {
+    display: none; 
+    position: fixed; 
+    z-index: 1000; 
+    left: 0;
+    top: 0;
+    width: 100%; 
+    height: 100%; 
+    overflow: auto; 
+    background-color: rgba(0,0,0,0.4); 
+}
+.modal-content {
+    background-color: #fefefe;
+    margin: 10% auto; 
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 800px;
+    border-radius: 5px;
+    position: relative;
+}
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.close:hover {
+    color: black;
+}
+.log-viewer {
+    background: #f4f4f4;
+    padding: 15px;
+    border: 1px solid #ddd;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-family: monospace;
+}
+</style>
+
 <script>
 let taskUpdateInterval;
+let historyTasks = [];
 
 function loadActiveTasks() {
     fetch('/api/tasks/active')
@@ -56,7 +110,12 @@ function loadActiveTasks() {
                     <div class="task-card active-task">
                         <div class="task-header">
                             <h4>${escapeHtml(task.name)}</h4>
-                            <span class="task-status status-${task.status}">${task.status}</span>
+                            <div>
+                                <span class="task-status status-${task.status}">${task.status}</span>
+                                ${task.status === 'running' ? 
+                                    `<button class="btn-small btn-danger" onclick="stopTask('${task.id}')" style="margin-left:10px;">Stop</button>` 
+                                    : ''}
+                            </div>
                         </div>
                         <div class="task-progress">
                             <div class="progress-bar">
@@ -85,12 +144,27 @@ function loadActiveTasks() {
         });
 }
 
+function stopTask(taskId) {
+    if (!confirm('Are you sure you want to stop this task?')) return;
+    fetch(`/api/tasks/stop/${taskId}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                alert('Stop signal sent.');
+                loadActiveTasks();
+            } else {
+                alert('Error: ' + data.error);
+            }
+        });
+}
+
 function loadTaskHistory() {
     fetch('/api/tasks/history?limit=10')
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('task-history-container');
             if (data.tasks && data.tasks.length > 0) {
+                historyTasks = data.tasks; // Store for modal lookup
                 const table = document.createElement('table');
                 table.className = 'tasks-table';
                 table.innerHTML = `
@@ -113,7 +187,7 @@ function loadTaskHistory() {
                                 <td>${task.completed_at ? formatDate(task.completed_at) : '-'}</td>
                                 <td>${task.items_processed || 0}</td>
                                 <td>
-                                    <button data-task-id="${escapeHtml(task.id)}" onclick="viewTaskDetails(this.dataset.taskId)" class="btn-small">Details</button>
+                                    <button onclick="viewTaskDetails('${task.id}')" class="btn-small">Details</button>
                                 </td>
                             </tr>
                         `).join('')}
@@ -131,14 +205,37 @@ function loadTaskHistory() {
 }
 
 function viewTaskDetails(taskId) {
-    // Navigate to the current page, preserving the path and adding/updating the task_id query parameter
-    const url = new URL(window.location.href);
-    url.searchParams.set('task_id', taskId);
-    window.location = url.toString();
+    const task = historyTasks.find(t => t.id === taskId);
+    if (!task) return;
+    
+    const logModal = document.getElementById('log-modal');
+    const logContent = document.getElementById('log-content');
+    
+    // Format details
+    const logText = [
+        `Task ID: ${task.id}`,
+        `Task: ${task.name}`,
+        `Type: ${task.type}`,
+        `Status: ${task.status}`,
+        `Started: ${task.started_at}`,
+        `Completed: ${task.completed_at}`,
+        `Items Processed: ${task.items_processed}`,
+        `Items Downloaded: ${task.items_downloaded}`,
+        '',
+        '--- Errors ---',
+        ...(task.errors || ['None'])
+    ].join('\n');
+    
+    logContent.textContent = logText;
+    logModal.style.display = 'block';
 }
 
-// Auto-refresh active tasks every 2 seconds
-taskUpdateInterval = setInterval(loadActiveTasks, 2000);
+function closeLogModal() {
+    document.getElementById('log-modal').style.display = 'none';
+}
+
+// Auto-refresh active tasks every 15 seconds (reduced load)
+taskUpdateInterval = setInterval(loadActiveTasks, 15000);
 
 // Load initial data
 loadActiveTasks();
