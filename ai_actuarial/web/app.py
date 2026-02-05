@@ -84,11 +84,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     if history_file.exists():
         try:
             with open(history_file, 'r', encoding='utf-8') as f:
-                global _task_history
-                _task_history = [json.loads(line) for line in f if line.strip()]
-                # Keep only last 100 entries in memory
-                if len(_task_history) > 100:
-                    _task_history = _task_history[-100:]
+                loaded_history = [json.loads(line) for line in f if line.strip()]
+            # Keep only last 100 entries in memory
+            if len(loaded_history) > 100:
+                loaded_history = loaded_history[-100:]
+            global _task_history
+            with _task_lock:
+                _task_history = loaded_history
         except Exception as e:
             logger.error(f"Failed to load job history: {e}")
 
