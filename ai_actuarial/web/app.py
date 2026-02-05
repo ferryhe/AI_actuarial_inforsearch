@@ -845,7 +845,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 f.last_modified,
                 c.category,
                 c.summary,
-                c.keywords_json,
+                c.keywords AS keywords_json,
                 c.status as catalog_status,
                 c.processed_at
             FROM files f
