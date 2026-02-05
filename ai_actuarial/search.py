@@ -60,26 +60,36 @@ def serpapi_search(
     user_agent: str,
     lang: str | None = None,
     country: str | None = None,
+    engine: str = "google",
 ) -> list[SearchResult]:
     params_dict = {
         "q": query,
-        "engine": "google_news",
+        "engine": engine,
         "num": max_results,
         "api_key": api_key,
         "hl": lang or "en",
         "lr": f"lang_{lang}" if lang else None,
         "gl": country or None,
-        "tbs": "sbd:1",
     }
+    # Google news specific params
+    if engine == "google_news":
+        params_dict["tbs"] = "sbd:1"
+        
     params = urllib.parse.urlencode(_filter_params(params_dict))
     url = f"https://serpapi.com/search.json?{params}"
     headers = {"User-Agent": user_agent, "Accept": "application/json"}
     data = _http_get_json(url, headers)
     results = []
-    for item in data.get("organic_results", []):
+    
+    # Handle different result keys based on engine
+    result_key = "organic_results"
+    if engine == "google_news":
+        result_key = "news_results"
+        
+    for item in data.get(result_key, []):
         link = item.get("link")
         if link:
-            results.append(SearchResult(url=link, source="Web Search (SerpAPI)"))
+            results.append(SearchResult(url=link, source=f"Web Search (SerpAPI {engine})"))
     return results
 
 

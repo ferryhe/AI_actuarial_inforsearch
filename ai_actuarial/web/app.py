@@ -6,18 +6,24 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from datetime import datetime
 
 # Flask will be an optional dependency for now
 try:
-    from flask import Flask, render_template, request, jsonify, send_file
+    from flask import Flask, render_template, request, jsonify, send_file, Response
     FLASK_AVAILABLE = True
 except ImportError:
     FLASK_AVAILABLE = False
 
+import csv
+import io
 import yaml
+import schedule
+import time
+import schedule
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +341,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     'max_depth': site.get('max_depth', site_defaults.get('max_depth')),
                     'keywords': site.get('keywords', site_defaults.get('keywords', [])),
                     'exclude_keywords': site.get('exclude_keywords', []),
-                    'exclude_prefixes': site.get('exclude_prefixes', [])
+                    'exclude_prefixes': site.get('exclude_prefixes', []),
+                    'schedule_interval': site.get('schedule_interval')
                 })
             return jsonify({"sites": sites})
         except Exception as e:
@@ -373,6 +380,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if data.get('keywords'): new_site['keywords'] = [k.strip() for k in data['keywords'].split(',')]
             if data.get('exclude_keywords'): new_site['exclude_keywords'] = [k.strip() for k in data['exclude_keywords'].split(',')]
             if data.get('exclude_prefixes'): new_site['exclude_prefixes'] = [k.strip() for k in data['exclude_prefixes'].split(',')]
+            if data.get('schedule_interval'): new_site['schedule_interval'] = data['schedule_interval'].strip()
             
             config_data['sites'].append(new_site)
             
@@ -424,6 +432,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     if data.get('exclude_prefixes'): 
                         s['exclude_prefixes'] = [k.strip() for k in data['exclude_prefixes'].split(',') if k.strip()]
                     elif 'exclude_prefixes' in s: del s['exclude_prefixes']
+
+                    if data.get('schedule_interval'): 
+                        s['schedule_interval'] = data.get('schedule_interval').strip()
+                    elif 'schedule_interval' in s: del s['schedule_interval']
 
                     found = True
                     break
@@ -535,6 +547,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         def stop_check():
             with _task_lock:
                  return _active_tasks.get(task_id, {}).get("stop_requested", False)
+        
+        # Progress callback
+        def progress_callback(current, total, message):
+            with _task_lock:
+                if task_id in _active_tasks:
+                    task = _active_tasks[task_id]
+                    task["current_activity"] = message
+                    if total and total > 0 and current is not None:
+                        # Ensure progress doesn't go backward from 100 or exceed 100 erroneously
+                        p = int((current / total) * 100)
+                        task["progress"] = min(max(p, 0), 99) # Cap at 99 until finished
+                        task["items_processed"] = current
+                        task["items_total"] = total
+                    
+                    # Log significant events to task logs if we had them
+                    # logger.debug(f"Task {task_id} progress: {message}")
 
         try:
             storage = Storage(db_path)
@@ -556,7 +584,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     exclude_keywords=site_config['defaults'].get('exclude_keywords', []),
                     metadata={"urls": urls}
                 )
-                result = collector.collect(config_obj)
+                result = collector.collect(config_obj, progress_callback=progress_callback)
                 
             elif collection_type == "file":
                 directory_path = data.get("directory_path")
@@ -589,16 +617,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     exclude_keywords=exclude_kws,
                     metadata={"file_paths": found_files}
                 )
-                result = collector.collect(config_obj)
+                result = collector.collect(config_obj, progress_callback=progress_callback)
 
             elif collection_type == "search":
-                from ..search import brave_search
+                from ..search import brave_search, serpapi_search
                 
                 query = data.get("query")
                 site = data.get("site")
                 engine = data.get("engine")
                 count = int(data.get("count", 20))
                 api_key = data.get("api_key")
+                
+                progress_callback(0, count, f"Searching {engine} for '{query}'...")
                 
                 if site:
                     query = f"site:{site} {query}"
@@ -615,9 +645,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     results = brave_search(query, count, api_key, site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'))
                     urls = [r.url for r in results]
                 
-                # If Google, implement or fail
+                elif engine == "google":
+                    if not api_key:
+                        api_key = os.getenv("SERPAPI_API_KEY")
+                    if not api_key:
+                        raise ValueError("Google SerpAPI Key is missing (SERPAPI_API_KEY not found)")
+                    
+                    results = serpapi_search(
+                        query, 
+                        count, 
+                        api_key, 
+                        site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        engine="google"
+                    )
+                    urls = [r.url for r in results]
                 
                 logger.info(f"Search found {len(urls)} URLs")
+                progress_callback(0, len(urls), f"Found {len(urls)} URLs. Starting processing...")
                 
                 if urls:
                     crawler = Crawler(
@@ -633,7 +677,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         check_database=True,
                         metadata={"urls": urls}
                     )
-                    result = collector.collect(config_obj)
+                    # Pass callback here too
+                    result = collector.collect(config_obj, progress_callback=progress_callback)
 
             elif collection_type == "scheduled":
                 crawler = Crawler(
@@ -677,7 +722,69 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     check_database=True,
                     metadata={"site_configs": sites_to_process}
                 )
-                result = collector.collect(config_obj)
+                result = collector.collect(config_obj, progress_callback=progress_callback)
+            
+            elif collection_type == "quick_check":
+                from ..collectors.adhoc import AdhocCollector
+                crawler = Crawler(
+                    storage, 
+                    download_dir, 
+                    site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                    stop_check=stop_check
+                )
+                collector = AdhocCollector(storage, crawler)
+                
+                # Create a temporary site config
+                site_name = data.get("name") or "Quick Check"
+                site_url = data.get("url")
+                
+                if not site_url:
+                    raise ValueError("URL is required for Quick Check")
+
+                sc = SiteConfig(
+                    name=site_name,
+                    url=site_url,
+                    max_pages=data.get("max_pages", 10), # Default to small number
+                    max_depth=data.get("max_depth", 1),  # Default to 1
+                    keywords=data.get("keywords", []),
+                    file_exts=site_config['defaults'].get('file_exts', []),
+                    exclude_keywords=site_config['defaults'].get('exclude_keywords', []),
+                    exclude_prefixes=site_config['defaults'].get('exclude_prefixes', [])
+                )
+                
+                config_obj = CollectionConfig(
+                    name=f"Quick Check: {site_name}",
+                    source_type="adhoc",
+                    check_database=data.get("check_database", False), # Usually distinct
+                    metadata={"site_configs": [sc]}
+                )
+                result = collector.collect(config_obj, progress_callback=progress_callback)
+            
+            elif collection_type == "catalog":
+                # New Catalog Task
+                from ..catalog_incremental import run_incremental_catalog
+                
+                progress_callback(0, 100, "Starting incremental cataloging...")
+                
+                # Wrapper to adapt catalog progress to our callback format if catalog supported it
+                # For now assume run_incremental_catalog is blocking and maybe prints logs
+                # We can't easily get progress unless we modify catalog_incremental.
+                # Let's just update status.
+                
+                stats = run_incremental_catalog(
+                    db_path=db_path,
+                    out_jsonl=Path("data/catalog.jsonl"),
+                    out_md=Path("data/catalog.md"),
+                    limit=int(data.get("max_items", 100)),
+                    retry_errors=data.get("retry_errors", False)
+                )
+                
+                # Mock result for catalog
+                class CatalogResult:
+                    def __init__(self, s): self.success = s; self.errors = []; self.items_found = stats.get('processed', 0); self.items_downloaded = stats.get('updated', 0)
+                
+                result = CatalogResult(True)
+                progress_callback(100, 100, f"Cataloging complete. Processed {stats.get('processed')} items.")
 
             storage.close()
             
@@ -690,8 +797,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "status": "completed" if result and result.success else "failed",
                         "completed_at": completed_at,
                         "progress": 100,
+                        "current_activity": "Finished",
                         "items_processed": result.items_found if result else 0,
                         "items_downloaded": result.items_downloaded if result else 0,
+                        "items_skipped": getattr(result, "items_skipped", 0),
                         "errors": result.errors if result else []
                     })
                     # Check if stopped
@@ -715,6 +824,86 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     _task_history.append(task_data)
                     _append_history_to_disk(task_data)
 
+    @app.route("/api/export")
+    def export_data():
+        """Export catalog data as CSV/JSON."""
+        format_type = request.args.get('format', 'csv')
+        
+        # Connect to DB
+        try:
+            storage = Storage(db_path)
+            # We need raw connection for custom query
+            # Accessing privare _conn is risky if class changes, but Storage likely has it
+            conn = storage._conn 
+            
+            sql = """
+            SELECT 
+                f.url,
+                f.title,
+                f.source_site,
+                f.local_path,
+                f.sha256,
+                f.last_modified,
+                c.category,
+                c.summary,
+                c.keywords_json,
+                c.status as catalog_status,
+                c.processed_at
+            FROM files f
+            LEFT JOIN catalog_items c ON f.url = c.file_url
+            WHERE f.local_path IS NOT NULL
+            ORDER BY f.source_site, f.title
+            """
+            
+            # Use execute directly on connection or cursor
+            cur = conn.execute(sql)
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+            
+            data = [dict(zip(columns, row)) for row in rows]
+            
+            # Format keywords
+            for d in data:
+                # Process keywords
+                raw_kws = d.get('keywords_json')
+                d['keywords'] = ""
+                if raw_kws:
+                    try:
+                        keywords_list = json.loads(raw_kws)
+                        if isinstance(keywords_list, list):
+                            d['keywords'] = ", ".join(keywords_list)
+                        else:
+                            d['keywords'] = str(keywords_list)
+                    except:
+                        pass
+                
+                # Cleanup internal fields
+                if 'keywords_json' in d:
+                    del d['keywords_json']
+
+            storage.close()
+
+            if format_type == 'json':
+                return jsonify(data)
+            
+            # CSV export
+            si = io.StringIO()
+            cw = csv.DictWriter(si, fieldnames=data[0].keys() if data else [])
+            cw.writeheader()
+            cw.writerows(data)
+            output = si.getvalue()
+            
+            # Use Latin-1 or UTF-8-SIG for Excel compatibility
+            return Response(
+                output.encode('utf-8-sig'),
+                mimetype="text/csv",
+                headers={"Content-disposition": "attachment; filename=catalog_export.csv"}
+            )
+            
+        except Exception as e:
+            logger.exception("Export failed")
+            return f"Export failed: {str(e)}", 500
+
     @app.route("/api/collections/run", methods=["POST"])
     def run_collection():
         """Start a collection operation."""
@@ -724,7 +913,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return jsonify({"error": "Invalid JSON"}), 400
             
             collection_type = data.get("type")
-            valid_types = ["scheduled", "adhoc", "url", "file", "search"]
+            valid_types = ["scheduled", "adhoc", "url", "file", "search", "catalog", "quick_check"]
             if not collection_type or collection_type not in valid_types:
                 return jsonify({"error": f"Invalid collection type"}), 400
 
@@ -801,7 +990,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """Get task history."""
         limit = int(request.args.get('limit', 10))
         with _task_lock:
-            tasks = _task_history[-limit:]
+            # Sort by started_at desc
+            tasks = sorted(_task_history, key=lambda x: x.get('started_at', ''), reverse=True)[:limit]
         return jsonify({"tasks": tasks})
     
     @app.route("/api/collections/history")
@@ -907,6 +1097,45 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error downloading file")
             return jsonify({"error": str(e)}), 500
     
+    @app.route("/api/files/delete", methods=["POST"])
+    def api_files_delete():
+        """Soft delete a file."""
+        try:
+            data = request.get_json()
+            url = data.get('url')
+            if not url:
+                return jsonify({"error": "No URL provided"}), 400
+            
+            storage = Storage(db_path)
+            # Mark as deleted
+            deleted_time = datetime.now().isoformat()
+            storage._conn.execute("UPDATE files SET deleted_at = ? WHERE url = ?", (deleted_time, url))
+            
+            # Also update catalog status if exists
+            storage._conn.execute("UPDATE catalog_items SET status = 'deleted' WHERE file_url = ?", (url,))
+            storage._conn.commit()
+            
+            # Optionally remove local file? User said "Delete stored file".
+            # Yes, "delete storage file".
+            file_record = storage.get_file_by_url(url)
+            if file_record and file_record.get('local_path'):
+                 local_path = file_record['local_path']
+                 if os.path.exists(local_path):
+                     try:
+                        os.remove(local_path)
+                        # Clear local path in DB to indicate it's gone
+                        storage._conn.execute("UPDATE files SET local_path = NULL WHERE url = ?", (url,))
+                        storage._conn.commit()
+                     except Exception as ex:
+                         logger.error(f"Failed to delete local file {local_path}: {ex}")
+            
+            storage.close()
+            return jsonify({"success": True})
+            
+        except Exception as e:
+            logger.exception("Error deleting file")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/logs/global")
     def api_logs_global():
         """Get global application logs."""
@@ -931,6 +1160,115 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"logs": "".join(lines)})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    # Scheduler Initialization
+    def init_scheduler():
+        try:
+            logger.info("Initializing scheduler...")
+            schedule.clear()
+            
+            # Check for global schedule in defaults or root
+            global_schedule = site_config.get('defaults', {}).get('schedule_interval') 
+            # Or dedicated key if user adds it
+            
+            # Helper to add job
+            def add_job(interval_str, job_func, job_id_suffix):
+                try:
+                    logger.info(f"Adding schedule: {interval_str}")
+                    if interval_str == "daily":
+                        # Default to 00:30 server time (approx "night")
+                        schedule.every().day.at("00:30").do(job_func)
+                    elif interval_str == "weekly":
+                        schedule.every().monday.at("00:30").do(job_func)
+                    elif interval_str.startswith("daily at "):
+                         t = interval_str.replace("daily at ", "").strip()
+                         schedule.every().day.at(t).do(job_func)
+                    elif interval_str.startswith("every "):
+                        parts = interval_str.split()
+                        if len(parts) >= 3:
+                            qty = int(parts[1])
+                            unit = parts[2]
+                            if "hour" in unit:
+                                schedule.every(qty).hours.do(job_func)
+                            elif "minute" in unit:
+                                schedule.every(qty).minutes.do(job_func)
+                except Exception as ex:
+                    logger.error(f"Failed to parse schedule '{interval_str}': {ex}")
+
+            # 1. Global Schedule (All Sites)
+            if global_schedule:
+                def global_run():
+                    logger.info("Triggering GLOBAL scheduled job")
+                    task_id = f"sched_global_{int(datetime.now().timestamp())}"
+                    with _task_lock:
+                        _active_tasks[task_id] = {
+                            "id": task_id,
+                            "name": f"Scheduled: All Sites",
+                            "type": "scheduled",
+                            "status": "pending",
+                            "progress": 0,
+                            "started_at": datetime.now().isoformat()
+                        }
+                    data = {
+                        "site": None, # Indicates ALL sites
+                        "name": "Scheduled Run (All)",
+                        "max_pages": site_config['defaults'].get('max_pages'),
+                        "max_depth": site_config['defaults'].get('max_depth')
+                    }
+                    threading.Thread(target=execute_collection_task, 
+                                     args=(task_id, "scheduled", data)).start()
+                
+                add_job(global_schedule, global_run, "global")
+
+            # 2. Per-site overrides (keep for backward compat or specific needs)
+            sites = site_config.get('sites', [])
+            for site in sites:
+                interval = site.get('schedule_interval')
+                if not interval:
+                    continue
+                # If global schedule exists, maybe warn or ignore? 
+                # Let's allow specific sites to run EXTRA times if they define their own.
+                
+                def job_wrapper(s=site):
+                    logger.info(f"Triggering scheduled job for {s['name']}")
+                    task_id = f"sched_{s['name']}_{int(datetime.now().timestamp())}"
+                    
+                    with _task_lock:
+                        _active_tasks[task_id] = {
+                            "id": task_id,
+                            "name": f"Scheduled: {s['name']}",
+                            "type": "scheduled",
+                            "status": "pending",
+                            "progress": 0,
+                            "started_at": datetime.now().isoformat()
+                        }
+                    
+                    data = {
+                        "site": s['name'],
+                        "name": f"Scheduled: {s['name']}",
+                        "max_pages": s.get('max_pages'),
+                        "max_depth": s.get('max_depth')
+                    }
+                    threading.Thread(target=execute_collection_task, 
+                                     args=(task_id, "scheduled", data)).start()
+
+                add_job(interval, job_wrapper, site['name'])
+
+            def scheduler_loop():
+                logger.info("Scheduler loop started")
+                while True:
+                    schedule.run_pending()
+                    time.sleep(60)
+            
+            st = threading.Thread(target=scheduler_loop, daemon=True)
+            st.start()
+
+        except Exception as e:
+            logger.error(f"Scheduler init failed: {e}")
+
+    # Only start scheduler if not in reloader or if main instance
+    if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        init_scheduler()
 
     return app
 

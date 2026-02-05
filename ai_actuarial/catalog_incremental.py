@@ -26,11 +26,16 @@ from .catalog import (
     write_catalog_md,
 )
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# DDL for catalog_items (same as storage.py, kept as fallback)
-# ---------------------------------------------------------------------------
+# Lock for DB writes since SQLite doesn't like concurrent writes from threads
+# even in WAL mode if using the same connection object, but here we share connection?
+# Ideally each thread gets its own connection or we write centrally.
+# To be safe and simple: process in parallel, write sequentially.
+_db_lock = threading.Lock()
 
 CATALOG_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS catalog_items (
@@ -114,6 +119,8 @@ def _fetch_candidates(
     else:
         status_cond = ""
 
+    # Sort newest first (descending ID) so we process recent content first.
+    # Deterministic order: files.id DESC.
     sql = f"""
     SELECT
         f.id,
@@ -140,7 +147,7 @@ def _fetch_candidates(
             {status_cond}
         )
         {where_extra}
-    ORDER BY f.id ASC
+    ORDER BY f.id DESC
     LIMIT ?
     """
     cur = conn.execute(sql, [catalog_version, batch] + params)
@@ -208,6 +215,103 @@ def _append_jsonl(out_jsonl: Path, items: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_path(path_str: str, base_dirs: list[Path] | None = None) -> Path:
+    """Resolve file path trying multiple base directories."""
+    p = Path(path_str)
+    if p.exists():
+        return p
+        
+    if base_dirs:
+        for base in base_dirs:
+            # Try combining
+            candidate = base / p
+            if candidate.exists():
+                return candidate
+            # Try relative to base if p is absolute or contains redundant parts?
+            # E.g. base=data, p=files/foo -> data/files/foo
+            
+    # Hardcoded fallback for common project structure issues
+    # If path starts with 'files' and 'data/files' exists
+    if str(p).startswith("files") or str(p).startswith("files\\"):
+        candidate = Path("data") / p
+        if candidate.exists():
+            return candidate
+            
+    return p
+
+
+def _process_single_row(
+    row_data: dict, 
+    ai_only: bool, 
+    max_chars: int
+) -> tuple[dict, CatalogItem, str]:
+    """Process a single row in a worker thread.
+    Returns: (row_data, result_item, status)
+    """
+    file_url = row_data["url"]
+    title = row_data["title"]
+    source_site = row_data["source_site"]
+    original_filename = row_data["original_filename"]
+    local_path = row_data["local_path"]
+    
+    try:
+        resolved_path = _resolve_path(local_path)
+        text = extract_text(resolved_path, max_chars=max_chars)
+        if not text.strip():
+            # If still empty check if exist
+            if not resolved_path.exists():
+                raise RuntimeError(f"File not found: {resolved_path} (orig: {local_path})")
+            raise RuntimeError("empty extracted text")
+            
+        keywords = extract_keywords(text, title=title)
+        
+        if ai_only and not is_ai_related(text, keywords, title=title):
+            # Skipped
+            item = CatalogItem(
+                source_site=source_site,
+                title=title,
+                original_filename=original_filename,
+                url=file_url,
+                local_path=local_path,
+                keywords=keywords,
+                summary="",
+                category="(filtered: non-AI)",
+            )
+            return (row_data, item, "skipped")
+            
+        summary = summarize(text, keywords)
+        category = categorize(title, text, keywords)
+        
+        item = CatalogItem(
+            source_site=source_site,
+            title=title,
+            original_filename=original_filename,
+            url=file_url,
+            local_path=local_path,
+            keywords=keywords,
+            summary=summary,
+            category=category,
+        )
+        return (row_data, item, "ok")
+        
+    except Exception as e:
+        # Return error item
+        item = CatalogItem(
+            source_site=source_site,
+            title=title,
+            original_filename=original_filename,
+            url=file_url,
+            local_path=local_path,
+            keywords=[],
+            summary="",
+            category="(error)",
+        )
+        # Store error in item temporarily or pass back? 
+        # We can attach it to the item wrapper or just use the status return
+        # Using status to pass exception string
+        return (row_data, item, f"error:{str(e)}")
+
+
 def run_incremental_catalog(
     db_path: str,
     out_jsonl: Path,
@@ -218,6 +322,8 @@ def run_incremental_catalog(
     catalog_version: str = "catalog_v1",
     max_chars: int = 20000,
     retry_errors: bool = False,
+    max_workers: int = 5,
+    limit: int = 0
 ) -> dict:
     """Run incremental catalog processing.
     
@@ -231,6 +337,8 @@ def run_incremental_catalog(
         catalog_version: Version string for tracking reprocessing
         max_chars: Max characters to extract from each file
         retry_errors: If True, retry files that previously failed
+        max_workers: Threads for parallel processing
+        limit: Max total items to process (0 for unlimited)
         
     Returns:
         dict with stats: {scanned, processed, written, skipped_ai, errors}
@@ -247,114 +355,102 @@ def run_incremental_catalog(
         "written": 0,
         "skipped_ai": 0,
         "errors": 0,
+        "missing_files": 0,
     }
     
+    seen_urls = set()
+
     while True:
+        # Check global limit
+        if limit > 0 and stats["processed"] >= limit:
+            logger.info(f"Reached limit of {limit} items")
+            break
+
+        current_batch_size = batch
+        # We generally want to fetch enough to make progress, even if we discard duplicates
+        # But we don't want to fetch too many.
+        
         rows = _fetch_candidates(
             conn,
-            batch=batch,
+            batch=current_batch_size,
             site_filter=site_filter,
             catalog_version=catalog_version,
             retry_errors=retry_errors,
         )
-        if not rows:
-            break
+        
+        # Filter already seen URLs to prevent infinite loops when retrying errors
+        new_rows = [r for r in rows if r["url"] not in seen_urls]
+        
+        if not new_rows:
+            if not rows:
+                # No more candidates at all
+                break
+            else:
+                # Candidates exist but we've seen them all in this run = loop detected
+                logger.info("Infinite loop detected (all duplicates), stopping")
+                break
             
-        stats["scanned"] += len(rows)
+        stats["scanned"] += len(new_rows)
         batch_items: list[CatalogItem] = []
         batch_jsonl: list[dict] = []
         
-        conn.execute("BEGIN")
-        for r in rows:
-            file_url = r["url"]
-            file_sha256 = r["sha256"] or ""
-            title = r["title"]
-            source_site = r["source_site"]
-            original_filename = r["original_filename"]
-            local_path = r["local_path"]
-            processed_at = datetime.now(timezone.utc).isoformat()
+        # Convert sqlite rows to dicts for thread safety (sqlite3.Row might bind to thread?)
+        row_dicts = [dict(r) for r in new_rows]
+        
+        # Mark as seen
+        for r in row_dicts:
+            seen_urls.add(r["url"])
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_url = {
+                executor.submit(_process_single_row, r, ai_only, max_chars): r['url'] 
+                for r in row_dicts
+            }
             
-            try:
-                text = extract_text(Path(local_path), max_chars=max_chars)
-                if not text.strip():
-                    raise RuntimeError("empty extracted text")
+            # We will batch writes at the end of the batch processing to keep DB logic simple
+            # Or writing as they complete? Batch write is safer for transaction.
+            
+            for future in as_completed(future_to_url):
+                try:
+                    r_data, item, status = future.result()
+                    processed_at = datetime.now(timezone.utc).isoformat()
+                    file_sha256 = r_data["sha256"] or ""
                     
-                keywords = extract_keywords(text, title=title)
-                
-                if ai_only and not is_ai_related(text, keywords, title=title):
-                    stats["skipped_ai"] += 1
-                    # Mark as ok to avoid repeated processing
-                    item = CatalogItem(
-                        source_site=source_site,
-                        title=title,
-                        original_filename=original_filename,
-                        url=file_url,
-                        local_path=local_path,
-                        keywords=keywords,
-                        summary="",
-                        category="(filtered: non-AI)",
-                    )
-                    _upsert_catalog_row(
-                        conn,
-                        item=item,
-                        file_sha256=file_sha256,
-                        catalog_version=catalog_version,
-                        status="ok",
-                        processed_at=processed_at,
-                    )
-                    stats["processed"] += 1
-                    continue
-                    
-                summary = summarize(text, keywords)
-                category = categorize(title, text, keywords)
-                
-                item = CatalogItem(
-                    source_site=source_site,
-                    title=title,
-                    original_filename=original_filename,
-                    url=file_url,
-                    local_path=local_path,
-                    keywords=keywords,
-                    summary=summary,
-                    category=category,
-                )
-                
-                _upsert_catalog_row(
-                    conn,
-                    item=item,
-                    file_sha256=file_sha256,
-                    catalog_version=catalog_version,
-                    status="ok",
-                    processed_at=processed_at,
-                )
-                
-                batch_items.append(item)
-                batch_jsonl.append(asdict(item))
-                stats["processed"] += 1
-                
-            except Exception as e:
-                stats["errors"] += 1
-                logger.warning("Error processing %s: %s", file_url, e)
-                item = CatalogItem(
-                    source_site=source_site,
-                    title=title,
-                    original_filename=original_filename,
-                    url=file_url,
-                    local_path=local_path,
-                    keywords=[],
-                    summary="",
-                    category="(error)",
-                )
-                _upsert_catalog_row(
-                    conn,
-                    item=item,
-                    file_sha256=file_sha256,
-                    catalog_version=catalog_version,
-                    status="error",
-                    processed_at=processed_at,
-                    error=str(e),
-                )
-                
+                    if status == "ok":
+                        stats["processed"] += 1
+                        batch_items.append(item)
+                        batch_jsonl.append(asdict(item))
+                        
+                        _upsert_catalog_row(
+                            conn,
+                            item=item,
+                            file_sha256=file_sha256,
+                            catalog_version=catalog_version,
+                            status="ok",
+                            processed_at=processed_at,
+                        )
+                        
+                    elif status.startswith("error:"):
+                        stats["errors"] += 1
+                        err_msg = status[6:]
+                        if "File not found" in err_msg:
+                            stats["missing_files"] += 1
+                            
+                        logger.warning("Error processing %s: %s", r_data["url"], err_msg)
+                        _upsert_catalog_row(
+                            conn,
+                            item=item,
+                            file_sha256=file_sha256,
+                            catalog_version=catalog_version,
+                            status="error",
+                            processed_at=processed_at,
+                            error=err_msg,
+                        )
+                        
+                except Exception as e:
+                    logger.exception("Worker thread crushed")
+                    stats["errors"] += 1
+        
         conn.commit()
         
         # Append outputs incrementally
@@ -364,15 +460,15 @@ def run_incremental_catalog(
             stats["written"] += len(batch_items)
             
         logger.info(
-            "Batch done: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d",
-            len(rows), stats["processed"], stats["written"], 
-            stats["skipped_ai"], stats["errors"]
+            "Batch done: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
+            len(new_rows), stats["processed"], stats["written"], 
+            stats["skipped_ai"], stats["errors"], stats["missing_files"]
         )
         
     conn.close()
     logger.info(
-        "Incremental catalog finished: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d",
+        "Incremental catalog finished: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
         stats["scanned"], stats["processed"], stats["written"],
-        stats["skipped_ai"], stats["errors"]
+        stats["skipped_ai"], stats["errors"], stats["missing_files"]
     )
     return stats

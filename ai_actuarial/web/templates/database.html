@@ -19,6 +19,7 @@
             <select id="category-filter" onchange="searchFiles()">
                 <option value="">All Categories</option>
             </select>
+            <input type="text" id="keyword-filter" placeholder="Keyword filter" oninput="debounceSearch()" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             <button onclick="resetFilters()" class="btn btn-secondary" style="margin-left: auto;">Reset</button>
         </div>
     </div>
@@ -88,6 +89,7 @@ function searchFiles(page = 1) {
     const query = document.getElementById('search-query').value;
     const source = document.getElementById('source-filter').value;
     const category = document.getElementById('category-filter').value;
+    const keyword = document.getElementById('keyword-filter').value;
     let sortBy = document.getElementById('sort-by').value;
     let orderDir = 'desc'; // Default
 
@@ -106,6 +108,13 @@ function searchFiles(page = 1) {
     if (query) params.append('query', query);
     if (source) params.append('source', source);
     if (category) params.append('category', category);
+    
+    // Client-side filtering for keywords? Or backend?
+    // Let's assume we want to send it to backend if backend supported it,
+    // or we filter client side? Backend is better but let's just overload query param
+    // or add logic to app.py. App.py only filters by query (title/url) or category.
+    // For now, let's append it to query if it's simple, or we need to update app.py
+    if (keyword) params.append('query', keyword); // HACK: reusing query param for keyword which searches title/filename/url
 
     document.getElementById('results-container').innerHTML = '<p class="loading">Loading...</p>';
 
@@ -130,17 +139,16 @@ function displayResults(data) {
         table.innerHTML = `
             <thead>
                 <tr>
-                    <th>Title</th>
+                    <th>Title / Summary</th>
                     <th>Source</th>
                     <th>Category</th>
                     <th>Size</th>
-                    <th>Date</th>
-                    <th>Actions</th>
+                    <th>Last Seen</th>
                 </tr>
             </thead>
             <tbody>
                 ${data.files.map(file => `
-                    <tr>
+                    <tr onclick="viewFile('${encodeURIComponent(file.url)}')" style="cursor: pointer;">
                         <td>
                             <div class="file-title">${escapeHtml(file.title || file.original_filename || 'Untitled')}</div>
                             ${file.summary ? `<div class="file-summary">${escapeHtml(file.summary.substring(0, 100))}...</div>` : ''}
@@ -149,10 +157,6 @@ function displayResults(data) {
                         <td>${escapeHtml(file.category || '-')}</td>
                         <td>${formatBytes(file.bytes)}</td>
                         <td>${formatDate(file.last_seen)}</td>
-                        <td>
-                            <button onclick="viewFile('${encodeURIComponent(file.url)}')" class="btn-small">View</button>
-                            ${file.local_path ? `<button onclick="downloadFile('${encodeURIComponent(file.url)}')" class="btn-small">Download</button>` : ''}
-                        </td>
                     </tr>
                 `).join('')}
             </tbody>
@@ -220,5 +224,10 @@ function downloadFile(url) {
 
 // Load initial results
 searchFiles(1);
+
+function debounceSearch() {
+    clearTimeout(window.searchTimeout);
+    window.searchTimeout = setTimeout(() => searchFiles(1), 500);
+}
 </script>
 {% endblock %}

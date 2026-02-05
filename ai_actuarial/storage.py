@@ -41,6 +41,12 @@ class Storage:
             )
             """
         )
+        # Migrate: Check if deleted_at exists, if not add it
+        try:
+            self._conn.execute("SELECT deleted_at FROM files LIMIT 1")
+        except sqlite3.OperationalError:
+             self._conn.execute("ALTER TABLE files ADD COLUMN deleted_at TEXT")
+
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS pages (

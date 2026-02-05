@@ -25,11 +25,12 @@ class ScheduledCollector(BaseCollector):
         self.storage = storage
         self.crawler = crawler
     
-    def collect(self, config: CollectionConfig) -> CollectionResult:
+    def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute scheduled collection from configured sites.
         
         Args:
             config: Collection configuration
+            progress_callback: Optional callback for progress updates
             
         Returns:
             CollectionResult with statistics
@@ -44,10 +45,25 @@ class ScheduledCollector(BaseCollector):
         try:
             # Get site configuration from metadata
             site_configs = config.metadata.get("site_configs", [])
+            total_sites = len(site_configs)
             
-            for site_config in site_configs:
+            if progress_callback:
+                progress_callback(0, total_sites, "Starting scheduled collection")
+            
+            for i, site_config in enumerate(site_configs):
+                
+                # Wrapper for site-level progress to include site info
+                def site_progress(c, t, m):
+                    if progress_callback:
+                        # We can either show per-site progress or overall
+                        # For now, let's show "Site X/Y: [Site Progress]"
+                        # and pass the site's local progress numbers.
+                        # The UI might fluctuate but at least it moves.
+                        prefix = f"[{i+1}/{total_sites}] {site_config.name}"
+                        progress_callback(c, t, f"{prefix}: {m}")
+                
                 try:
-                    new_items = self.crawler.crawl_site(site_config)
+                    new_items = self.crawler.crawl_site(site_config, progress_callback=site_progress)
                     items_found += len(new_items)
                     
                     # Count downloaded vs skipped
@@ -61,6 +77,9 @@ class ScheduledCollector(BaseCollector):
                     error_msg = f"Error crawling {site_config.name}: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
+            
+            if progress_callback:
+                progress_callback(total_sites, total_sites, "Completed")
             
             success = len(errors) == 0 or items_found > 0
             

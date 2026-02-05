@@ -234,7 +234,8 @@ def cmd_catalog(args: argparse.Namespace) -> int:
 
         print(
             f"Catalog done: scanned={stats['scanned']} processed={stats['processed']} "
-            f"written={stats['written']} skipped_ai={stats['skipped_ai']} errors={stats['errors']}"
+            f"written={stats['written']} skipped_ai={stats['skipped_ai']} "
+            f"errors={stats['errors']} (missing_files={stats.get('missing_files', 0)})"
         )
         return 0
 

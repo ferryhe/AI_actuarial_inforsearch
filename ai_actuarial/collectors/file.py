@@ -30,11 +30,12 @@ class FileCollector(BaseCollector):
         self.storage = storage
         self.download_dir = Path(download_dir)
     
-    def collect(self, config: CollectionConfig) -> CollectionResult:
+    def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute file-based collection from local paths.
         
         Args:
             config: Collection configuration with file_paths in metadata
+            progress_callback: Optional callback for progress updates
             
         Returns:
             CollectionResult with statistics
@@ -48,9 +49,16 @@ class FileCollector(BaseCollector):
         
         try:
             file_paths = config.metadata.get("file_paths", [])
+            total_files = len(file_paths)
             target_subdir = config.metadata.get("target_subdir", "imported")
             
-            for file_path in file_paths:
+            if progress_callback:
+                progress_callback(0, total_files, "Starting file collection")
+            
+            for i, file_path in enumerate(file_paths):
+                if progress_callback:
+                    progress_callback(i, total_files, f"Processing: {Path(file_path).name}")
+                
                 try:
                     source_path = Path(file_path)
                     

@@ -175,7 +175,7 @@ class Crawler:
         logger.info("Loaded %d URLs from sitemap: %s", len(urls), sitemap_url)
         return urls
 
-    def crawl_site(self, cfg: SiteConfig) -> list[dict]:
+    def crawl_site(self, cfg: SiteConfig, progress_callback=None) -> list[dict]:
         # Check stop signal at start
         if self.stop_check and self.stop_check():
             logger.info("Crawl stopped by user signal.")
@@ -183,6 +183,10 @@ class Crawler:
 
         logger.info("Starting crawl of site: %s (max_pages=%d, max_depth=%d)", 
                    cfg.name, cfg.max_pages, cfg.max_depth)
+        
+        if progress_callback:
+            progress_callback(0, cfg.max_pages, f"Starting crawl of {cfg.name}")
+
         keywords = [k.lower() for k in (cfg.keywords or [])]
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
@@ -217,12 +221,17 @@ class Crawler:
                 continue
 
             seen_pages.add(url)
+            
+            if progress_callback:
+                progress_callback(pages_fetched, cfg.max_pages, f"Crawling: {url}")
+
             try:
                 data, headers, final_url = self._request(url)
             except Exception:
                 continue
 
             pages_fetched += 1
+
             self.storage.mark_page_seen(final_url)
 
             if exclude and self._is_excluded(final_url, exclude):
@@ -499,8 +508,11 @@ class Crawler:
         return folder / f"{stem}_{int(time.time())}{suffix}"
 
     def scan_page_for_files(
-        self, url: str, cfg: SiteConfig, source_site: str
+        self, url: str, cfg: SiteConfig, source_site: str, progress_callback=None
     ) -> list[dict]:
+        if progress_callback:
+            progress_callback(None, None, f"Scanning: {url}")
+            
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         keywords = [k.lower() for k in (cfg.keywords or [])]
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
