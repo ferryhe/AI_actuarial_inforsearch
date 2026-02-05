@@ -16,11 +16,8 @@ Tests the following issues fixed:
 
 import os
 import tempfile
-import threading
-import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 from ai_actuarial.storage import Storage
 from ai_actuarial.catalog_incremental import _connect, _upsert_catalog_row
@@ -310,7 +307,8 @@ class TestSQLInjectionProtection(unittest.TestCase):
         malicious_category = "'; DROP TABLE files; --"
         
         # This should not cause an error or drop the table
-        self.storage.query_files_with_catalog(
+        # Intentionally ignore return values since we're testing for side effects
+        _ = self.storage.query_files_with_catalog(
             category=malicious_category,
         )
         
