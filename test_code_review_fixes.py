@@ -15,7 +15,6 @@ Tests the following issues fixed:
 """
 
 import os
-import sqlite3
 import tempfile
 import threading
 import time
