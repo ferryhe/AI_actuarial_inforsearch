@@ -117,12 +117,31 @@ class Crawler:
         return any(path.endswith(ext) for ext in exts)
 
     def _is_excluded(self, text: str, exclude: list[str]) -> bool:
+        """Check if text contains any excluded keyword."""
         text = text.lower()
         return any(k in text for k in exclude)
 
     def _has_excluded_prefix(self, name: str, prefixes: list[str]) -> bool:
+        """Check if name starts with any excluded prefix."""
         name = name.lower()
         return any(name.startswith(p) for p in prefixes)
+    
+    def _should_exclude_url(self, url: str, exclude: list[str] | None, exclude_prefixes: list[str] | None) -> bool:
+        """Consolidated check for URL exclusion based on keywords and prefixes.
+        
+        Args:
+            url: URL to check
+            exclude: List of excluded keywords
+            exclude_prefixes: List of excluded filename prefixes
+            
+        Returns:
+            True if URL should be excluded
+        """
+        if exclude and self._is_excluded(url, exclude):
+            return True
+        if exclude_prefixes and self._has_excluded_prefix(os.path.basename(url), exclude_prefixes):
+            return True
+        return False
 
     def _extract_links(self, base_url: str, html: str) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
@@ -200,9 +219,7 @@ class Crawler:
                 continue
             if not same_domain(cfg.url, url):
                 continue
-            if exclude and self._is_excluded(url, exclude):
-                continue
-            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(url), exclude_prefixes):
+            if self._should_exclude_url(url, exclude, exclude_prefixes):
                 continue
 
             seen_pages.add(url)
@@ -214,9 +231,7 @@ class Crawler:
             pages_fetched += 1
             self.storage.mark_page_seen(final_url)
 
-            if exclude and self._is_excluded(final_url, exclude):
-                continue
-            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(final_url), exclude_prefixes):
+            if self._should_exclude_url(final_url, exclude, exclude_prefixes):
                 continue
 
             if self._is_file_url(final_url, exts):
@@ -229,12 +244,7 @@ class Crawler:
                 tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
                     final_url, target_dir
                 )
-                if exclude and self._is_excluded(ffinal, exclude):
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-                    sleep_with_jitter(cfg.delay_seconds)
-                    continue
-                if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
+                if self._should_exclude_url(ffinal, exclude, exclude_prefixes):
                     if tmp_path.exists():
                         tmp_path.unlink()
                     sleep_with_jitter(cfg.delay_seconds)

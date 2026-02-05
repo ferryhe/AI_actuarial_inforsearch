@@ -140,6 +140,8 @@ def _fetch_candidates(
             {status_cond}
         )
         {where_extra}
+    -- ORDER BY f.id ASC ensures deterministic, incremental processing
+    -- (oldest files first). Alternative: DESC for newest files first.
     ORDER BY f.id ASC
     LIMIT ?
     """
@@ -264,7 +266,8 @@ def run_incremental_catalog(
         batch_items: list[CatalogItem] = []
         batch_jsonl: list[dict] = []
         
-        conn.execute("BEGIN")
+        # Use BEGIN IMMEDIATE to prevent concurrent write conflicts
+        conn.execute("BEGIN IMMEDIATE")
         for r in rows:
             file_url = r["url"]
             file_sha256 = r["sha256"] or ""
@@ -283,7 +286,7 @@ def run_incremental_catalog(
                 
                 if ai_only and not is_ai_related(text, keywords, title=title):
                     stats["skipped_ai"] += 1
-                    # Mark as ok to avoid repeated processing
+                    # Mark as skipped instead of ok to distinguish from successfully processed items
                     item = CatalogItem(
                         source_site=source_site,
                         title=title,
@@ -299,10 +302,10 @@ def run_incremental_catalog(
                         item=item,
                         file_sha256=file_sha256,
                         catalog_version=catalog_version,
-                        status="ok",
+                        status="skipped",
                         processed_at=processed_at,
                     )
-                    stats["processed"] += 1
+                    # Don't increment processed count for skipped items
                     continue
                     
                 summary = summarize(text, keywords)
