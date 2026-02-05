@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="file-view-page">
+    <div class="page-header">
+        <button onclick="history.back()" class="btn btn-secondary">&larr; Back</button>
+        <h2>File Details</h2>
+    </div>
+
+    <div class="file-details-card">
+        <h3>{{ file.title or file.original_filename or 'Untitled' }}</h3>
+        
+        <div class="details-section">
+            <table class="details-table">
+                <tr>
+                    <th>Source Site</th>
+                    <td>{{ file.source_site }}</td>
+                </tr>
+                {% if file.source_site != 'Local Import' and file.source_site != 'File Import' %}
+                <tr>
+                    <th>Original URL</th>
+                    <td><a href="{{ file.url }}" target="_blank">{{ file.url }}</a></td>
+                </tr>
+                {% endif %}
+                {% if file.source_page_url and file.source_site != 'Local Import' and file.source_site != 'File Import' %}
+                <tr>
+                    <th>Source Page</th>
+                    <td><a href="{{ file.source_page_url }}" target="_blank">{{ file.source_page_url }}</a></td>
+                </tr>
+                {% endif %}
+                <tr>
+                    <th>Content Type</th>
+                    <td>{{ file.content_type }}</td>
+                </tr>
+                <tr>
+                    <th>File Size</th>
+                    <td class="file-size" data-bytes="{{ file.bytes }}">{{ file.bytes }} bytes</td>
+                </tr>
+                <tr>
+                    <th>Local Path</th>
+                    <td>{{ file.local_path or 'Not stored locally' }}</td>
+                </tr>
+                <tr>
+                    <th>Collected Date</th>
+                    <td>{{ file.crawl_time or file.last_seen }}</td>
+                </tr>
+                <tr>
+                    <th>Category</th>
+                    <td>{{ file.category or 'Uncategorized' }}</td>
+                </tr>
+            </table>
+        </div>
+
+        {% if file.summary %}
+        <div class="summary-section">
+            <h4>Summary</h4>
+            <div class="summary-box">
+                {{ file.summary }}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if file.keywords %}
+        <div class="keywords-section">
+            <h4>Keywords</h4>
+            <div class="keywords-list">
+                {% for keyword in file.keywords %}
+                <span class="keyword-tag">{{ keyword }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="actions-section">
+            {% if file.local_path %}
+            <a href="/api/download?url={{ file.url }}" class="btn btn-primary">Download File</a>
+            {% else %}
+            <button class="btn btn-secondary" disabled>Download Unavailable</button>
+            {% endif %}
+            
+             <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function deleteFile(url) {
+        if (!confirm("Are you sure you want to delete this file? This action is irreversible.")) return;
+        
+        // Decode URL if it was jinja encoded (though {{url}} usually raw string unless autoescaped, checking needed)
+        // Usually safer to just pass it.
+        
+        fetch('/api/files/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: url})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                alert("File marked as deleted.");
+                window.location.href = '/database';
+            } else {
+                alert("Error: " + data.error);
+            }
+        })
+        .catch(err => alert("Error: " + err));
+    }
+
+    // Format file size
+    document.querySelectorAll('.file-size').forEach(el => {
+        const bytes = parseInt(el.dataset.bytes);
+        if (!isNaN(bytes)) {
+            el.textContent = formatBytes(bytes);
+        }
+    });
+
+    // Helper to format bytes (if not already in base.js/main.js)
+    function formatBytes(bytes, decimals = 2) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+</script>
+
+<style>
+    .file-details-card {
+        background: white;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-top: 1rem;
+    }
+    .details-table {
+        width: 100%;
+        margin-bottom: 2rem;
+        border-collapse: collapse;
+    }
+    .details-table th {
+        text-align: left;
+        padding: 0.5rem;
+        background: #f8f9fa;
+        width: 200px;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .details-table td {
+        padding: 0.5rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .summary-box {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 4px;
+        margin-bottom: 2rem;
+        line-height: 1.6;
+    }
+    .keyword-tag {
+        display: inline-block;
+        background: #0056b3; /* High contrast dark blue */
+        color: #ffffff;      /* White text */
+        padding: 0.25rem 0.75rem;
+        border-radius: 1rem;
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+    }
+    
+    /* Enhance Table Header Contrast */
+    .file-details-table th {
+        background-color: #f1f3f5; /* Light Gray Background */
+        color: #212529;            /* Dark Text */
+        font-weight: 600;
+        border-right: 1px solid #dee2e6;
+    }
+    .file-details-table td {
+        color: #333;
+    }
+
+    .actions-section {
+        margin-top: 2rem;
+        border-top: 1px solid #dee2e6;
+        padding-top: 1rem;
+    }
+</style>
+{% endblock %}

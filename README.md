@@ -11,6 +11,14 @@ A Python tool for discovering, downloading, and cataloging AI-related documents 
 - **Catalog Generation**: Extracts keywords, summaries, and categories from downloaded files
 - **Multi-language Support**: Supports keywords in English, Chinese, French, German, Italian, Spanish, Korean, and Japanese
 - **Database Flexibility**: Supports both SQLite (local development) and PostgreSQL (production) backends
+- **Enhanced Web Interface**:
+    - **Site Management**: Add/Edit/Search collection sites with advanced exclusion rules (keywords/prefixes).
+    - **Advanced Data Search**: Filter by Uncategorized, sort by Oldest/Newest, and auto-refresh results.
+    - **Web Search Discovery**: Search globally or within specific sites using Brave/Google APIs to find new documents.
+    - **Task Management**: Monitor active tasks, view execution history (persisted), and stop running collections.
+    - **Global Logs**: Monitor system activity and debugging information.
+    - **Smart Import**: "Browse Folder" support for easy local file ingestion.
+    - **Strict Deduplication**: SHA256-based content matching to prevent duplicate downloads.
 
 ## Requirements
 

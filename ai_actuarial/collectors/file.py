@@ -30,11 +30,12 @@ class FileCollector(BaseCollector):
         self.storage = storage
         self.download_dir = Path(download_dir)
     
-    def collect(self, config: CollectionConfig) -> CollectionResult:
+    def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute file-based collection from local paths.
         
         Args:
             config: Collection configuration with file_paths in metadata
+            progress_callback: Optional callback for progress updates
             
         Returns:
             CollectionResult with statistics
@@ -48,9 +49,16 @@ class FileCollector(BaseCollector):
         
         try:
             file_paths = config.metadata.get("file_paths", [])
+            total_files = len(file_paths)
             target_subdir = config.metadata.get("target_subdir", "imported")
             
-            for file_path in file_paths:
+            if progress_callback:
+                progress_callback(0, total_files, "Starting file collection")
+            
+            for i, file_path in enumerate(file_paths):
+                if progress_callback:
+                    progress_callback(i, total_files, f"Processing: {Path(file_path).name}")
+                
                 try:
                     source_path = Path(file_path)
                     
@@ -71,12 +79,25 @@ class FileCollector(BaseCollector):
                     # Calculate SHA256
                     sha256 = self._calculate_sha256(source_path)
                     
+                    # Check if hash already exists in DB
+                    if self.storage.file_exists_by_hash(sha256):
+                        logger.info("Skipping already imported file (hash match): %s", file_path)
+                        items_skipped += 1
+                        continue
+
                     # Check if should import
                     if config.check_database and not self.should_download(str(source_path), sha256):
                         logger.info("Skipping already imported file: %s", file_path)
                         items_skipped += 1
                         continue
                     
+                    # Exclude check based on filename
+                    if config.exclude_keywords:
+                        if any(k.lower() in source_path.name.lower() for k in config.exclude_keywords):
+                            logger.info("Skipping file (matched exclude keywords): %s", file_path)
+                            items_skipped += 1
+                            continue
+                            
                     # Copy file to download directory
                     target_dir = self.download_dir / target_subdir
                     target_dir.mkdir(parents=True, exist_ok=True)

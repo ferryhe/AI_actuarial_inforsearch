@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="collection-page">
+    <div class="page-header">
+        <h2>📁 File Import</h2>
+        <p>Import files from local filesystem</p>
+    </div>
+
+    <div class="collection-form">
+        <div class="form-group">
+            <label for="directory-path">Directory Path:</label>
+            <div style="display: flex; gap: 10px;">
+                <input type="text" id="directory-path" placeholder="C:\path\to\documents" style="flex: 1;" />
+                <button onclick="browseFolder()" class="btn btn-secondary" style="white-space: nowrap;">Browse...</button>
+            </div>
+            <p class="help-text">Select a folder from your computer to import files from.</p>
+        </div>
+        <div class="form-group">
+            <label for="extensions">File Extensions (comma separated, empty for all):</label>
+            <input type="text" id="extensions" placeholder="pdf, docx, xlsx" value="pdf, docx, txt, md" />
+        </div>
+        <div class="form-group">
+            <label for="collection-name">Collection Name:</label>
+            <input type="text" id="collection-name" value="File Import" />
+        </div>
+        <div class="form-group checkbox">
+            <label>
+                <input type="checkbox" id="recursive" checked />
+                Recursive Scan (include subdirectories)
+            </label>
+        </div>
+        <div class="form-actions">
+            <button onclick="startImport()" class="btn btn-primary">Start Import</button>
+            <button onclick="history.back()" class="btn btn-secondary">Back</button>
+        </div>
+    </div>
+</div>
+
+<!-- Better Designed Result Modal -->
+<div id="import-result-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modal-title">Importing Files...</h3>
+        </div>
+        <div class="modal-body">
+            <div id="import-spinner" class="spinner"></div>
+            <p id="import-status-text">Scanning directory...</p>
+            
+            <div id="import-stats" style="display: none; margin-top: 1rem;">
+                <div class="stat-row">
+                    <span class="stat-label">Files Found:</span>
+                    <span class="stat-value" id="res-found">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Successfully Cataloged:</span>
+                    <span class="stat-value success" id="res-cataloged">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Duplicates Skipped:</span>
+                    <span class="stat-value warning" id="res-skipped">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Failures:</span>
+                    <span class="stat-value error" id="res-failed">0</span>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button id="modal-ok-btn" onclick="closeImportModal()" class="btn btn-primary" style="display: none;">OK</button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Modal Styles */
+.modal {
+    display: none; 
+    position: fixed; 
+    z-index: 1000; 
+    left: 0;
+    top: 0;
+    width: 100%; 
+    height: 100%; 
+    background-color: rgba(0,0,0,0.5); 
+    backdrop-filter: blur(2px);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background-color: #fff;
+    margin: 15% auto; /* Fallback */
+    margin: 0;
+    padding: 0;
+    border-radius: 8px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    animation: slideDown 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes slideDown {
+    from { transform: translateY(-30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #eee;
+    background-color: #f8f9fa;
+    border-radius: 8px 8px 0 0;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: #333;
+    font-size: 1.2rem;
+}
+
+.modal-body {
+    padding: 20px;
+    text-align: center;
+}
+
+.modal-footer {
+    padding: 15px 20px;
+    border-top: 1px solid #eee;
+    text-align: right;
+    background-color: #f8f9fa;
+    border-radius: 0 0 8px 8px;
+}
+
+/* Stats */
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.stat-row:last-child {
+    border-bottom: none;
+}
+.stat-label { color: #666; }
+.stat-value { font-weight: bold; }
+.stat-value.success { color: #28a745; }
+.stat-value.warning { color: #ffc107; }
+.stat-value.error { color: #dc3545; }
+
+/* Spinner */
+.spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 15px auto;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+function browseFolder() {
+    fetch('/api/utils/browse-folder')
+        .then(response => response.json())
+        .then(data => {
+            if (data.path) {
+                document.getElementById('directory-path').value = data.path;
+            } else if (data.error) {
+                alert(data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error browsing folder:', error);
+            alert('Could not open folder dialog. Please verify the server is running locally.');
+        });
+}
+
+let activeJobId = null;
+let pollInterval = null;
+
+function startImport() {
+    const directoryPath = document.getElementById('directory-path').value.trim();
+    if (!directoryPath) {
+        alert('Please enter a directory path');
+        return;
+    }
+
+    const extensionsText = document.getElementById('extensions').value;
+    const extensions = extensionsText.split(',').map(e => e.trim()).filter(e => e);
+
+    const payload = {
+        type: 'file',
+        directory_path: directoryPath,
+        extensions: extensions,
+        name: document.getElementById('collection-name').value,
+        recursive: document.getElementById('recursive').checked
+    };
+
+    // Show Modal
+    const modal = document.getElementById('import-result-modal');
+    modal.style.display = "flex";
+    document.getElementById('import-spinner').style.display = 'block';
+    document.getElementById('import-status-text').textContent = "Starting import...";
+    document.getElementById('import-stats').style.display = 'none';
+    document.getElementById('modal-ok-btn').style.display = 'none';
+
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success && data.job_id) {
+            activeJobId = data.job_id;
+            pollInterval = setInterval(pollJobStatus, 2000);
+        } else {
+            showResultError(data.error || 'Failed to start import');
+        }
+    })
+    .catch(error => {
+        showResultError(error.message);
+    });
+}
+
+function pollJobStatus() {
+    if (!activeJobId) return;
+    
+    // Check active
+    fetch('/api/tasks/active')
+        .then(r => r.json())
+        .then(data => {
+            const task = data.tasks.find(t => t.id === activeJobId);
+            if (task) {
+                document.getElementById('import-status-text').textContent = `Processing... ${task.items_processed} items found`;
+                return;
+            }
+            
+            // If not active, check history for result
+            fetchHistoryResult();
+        })
+        .catch(e => console.error(e));
+}
+
+function fetchHistoryResult() {
+    fetch('/api/tasks/history')
+        .then(r => r.json())
+        .then(data => {
+            clearInterval(pollInterval);
+            const task = data.tasks.find(t => t.id === activeJobId);
+            if (task) {
+                showFinalResults(task);
+            } else {
+                showResultError("Task history not found. Check logs.");
+            }
+        });
+}
+
+function showFinalResults(task) {
+    document.getElementById('import-spinner').style.display = 'none';
+    document.getElementById('modal-title').textContent = "Import Completed";
+    document.getElementById('import-status-text').textContent = task.status === 'completed' ? "Files processed successfully." : "Import finished with errors.";
+    
+    // items_processed = found (usually)
+    // items_downloaded = cataloged/saved
+    // items_skipped/duplicates = calculate?
+    // The backend app.py updates: items_processed=result.items_found, items_downloaded=result.items_downloaded
+    // errors=result.errors
+    
+    const found = task.items_processed || 0;
+    const cataloged = task.items_downloaded || 0;
+    const errors = (task.errors || []).length;
+    // Assuming duplicates are tracking in 'items_skipped' but mapped to ?? 
+    // Wait, storage logic might not expose skips to task object directly in app.py unless we change it.
+    // Based on app.py: items_processed=found, items_downloaded=downloaded.
+    // Usually found = cataloged + duplicates + errors.
+    const duplicates = found - cataloged - errors;
+    
+    document.getElementById('res-found').textContent = found;
+    document.getElementById('res-cataloged').textContent = cataloged;
+    document.getElementById('res-skipped').textContent = duplicates >= 0 ? duplicates : 0;
+    document.getElementById('res-failed').textContent = errors;
+    
+    document.getElementById('import-stats').style.display = 'block';
+    document.getElementById('modal-ok-btn').style.display = 'inline-block';
+}
+
+function showResultError(msg) {
+    clearInterval(pollInterval);
+    document.getElementById('import-spinner').style.display = 'none';
+    document.getElementById('import-status-text').textContent = "Error: " + msg;
+    document.getElementById('modal-ok-btn').style.display = 'inline-block';
+}
+
+function closeImportModal() {
+    document.getElementById('import-result-modal').style.display = "none";
+}
+</script>
+{% endblock %}

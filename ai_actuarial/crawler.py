@@ -41,10 +41,11 @@ class SiteConfig:
 
 
 class Crawler:
-    def __init__(self, storage: Storage, download_dir: str, user_agent: str) -> None:
+    def __init__(self, storage: Storage, download_dir: str, user_agent: str, stop_check=None) -> None:
         self.storage = storage
         self.download_dir = download_dir
         self.user_agent = user_agent
+        self.stop_check = stop_check
         self._cleanup_old_temp_files()
 
     def _cleanup_old_temp_files(self, max_age_hours: int = 24) -> None:
@@ -193,9 +194,18 @@ class Crawler:
         logger.info("Loaded %d URLs from sitemap: %s", len(urls), sitemap_url)
         return urls
 
-    def crawl_site(self, cfg: SiteConfig) -> list[dict]:
+    def crawl_site(self, cfg: SiteConfig, progress_callback=None) -> list[dict]:
+        # Check stop signal at start
+        if self.stop_check and self.stop_check():
+            logger.info("Crawl stopped by user signal.")
+            return []
+
         logger.info("Starting crawl of site: %s (max_pages=%d, max_depth=%d)", 
                    cfg.name, cfg.max_pages, cfg.max_depth)
+        
+        if progress_callback:
+            progress_callback(0, cfg.max_pages, f"Starting crawl of {cfg.name}")
+
         keywords = [k.lower() for k in (cfg.keywords or [])]
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
@@ -214,6 +224,11 @@ class Crawler:
         pages_fetched = 0
 
         while page_queue and pages_fetched < cfg.max_pages:
+            # Check stop signal in loop
+            if self.stop_check and self.stop_check():
+                logger.info("Crawl stopped by user signal.")
+                break
+
             url, depth = page_queue.popleft()
             if url in seen_pages:
                 continue
@@ -223,12 +238,17 @@ class Crawler:
                 continue
 
             seen_pages.add(url)
+            
+            if progress_callback:
+                progress_callback(pages_fetched, cfg.max_pages, f"Crawling: {url}")
+
             try:
                 data, headers, final_url = self._request(url)
             except Exception:
                 continue
 
             pages_fetched += 1
+
             self.storage.mark_page_seen(final_url)
 
             if self._should_exclude_url(final_url, exclude, exclude_prefixes):
@@ -293,14 +313,42 @@ class Crawler:
                         )
                     except Exception:
                         continue
+                    
+                    # Enhanced Exclusion Check:
+                    # 1. Check final URL (redirects resolved)
                     if exclude and self._is_excluded(ffinal, exclude):
+                        logger.info("Excluding based on final URL: %s", ffinal)
                         if tmp_path.exists():
                             tmp_path.unlink()
                         continue
+                    
+                    # 2. Check actual filename (content-disposition or url derived)
+                    if exclude and self._is_excluded(tmp_path.name, exclude):
+                        logger.info("Excluding based on filename: %s", tmp_path.name)
+                        if tmp_path.exists():
+                            tmp_path.unlink()
+                        continue
+
+                    # 3. Check prefixes on filename
+                    if exclude_prefixes:
+                        fname = tmp_path.name
+                        if self._has_excluded_prefix(fname, exclude_prefixes):
+                            logger.info("Excluding based on prefix: %s", fname)
+                            if tmp_path.exists():
+                                tmp_path.unlink()
+                            continue
+
                     if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
                         if tmp_path.exists():
                             tmp_path.unlink()
                         continue
+
+                    # 4. Check prefixes on URL base (legacy check, kept for safety)
+                    if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
+                         if tmp_path.exists():
+                            tmp_path.unlink()
+                         continue
+
                     item = self._handle_file(
                         ffinal,
                         tmp_path,
@@ -354,10 +402,28 @@ class Crawler:
             original_filename = filename_match.group(1).strip()
         if not original_filename:
             original_filename = os.path.basename(parsed.path) or None
+        
+        # Security check: Ensure filename doesn't contain excluded keywords
+        # This is a second line of defense after URL checking
+        if cfg.exclude_keywords:
+            raw_name = original_filename or ""
+            if self._is_excluded(raw_name, [k.lower() for k in cfg.exclude_keywords]):
+                logger.info("Dropping file %s (matched exclude keywords in filename)", raw_name)
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                return None
+        
         safe_name = self._sanitize_filename(original_filename or f"{sha256}{ext}")
         if not safe_name.lower().endswith(ext):
             safe_name = f"{safe_name}{ext}"
         path = self._resolve_conflict(target_dir, safe_name)
+
+        # Check if hash already exists in DB (Global Deduplication)
+        if self.storage.file_exists_by_hash(sha256):
+            logger.info("Dropping file %s (SHA256 %s already exists in DB)", url, sha256)
+            if tmp_path.exists():
+                tmp_path.unlink()
+            return None
 
         blob = self.storage.get_blob(sha256)
         if blob and blob.get("canonical_path"):
@@ -448,8 +514,11 @@ class Crawler:
         return folder / f"{stem}_{int(time.time())}{suffix}"
 
     def scan_page_for_files(
-        self, url: str, cfg: SiteConfig, source_site: str
+        self, url: str, cfg: SiteConfig, source_site: str, progress_callback=None
     ) -> list[dict]:
+        if progress_callback:
+            progress_callback(None, None, f"Scanning: {url}")
+            
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         keywords = [k.lower() for k in (cfg.keywords or [])]
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]

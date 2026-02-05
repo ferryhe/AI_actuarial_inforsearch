@@ -4,27 +4,72 @@
 <div class="scheduled-tasks-page">
     <div class="page-header">
         <h2>Scheduled Task Management</h2>
-        <p>Manage automated collection schedules</p>
     </div>
 
-    <div class="schedule-info">
-        <div class="info-card">
-            <h4>ℹ️ About Scheduled Tasks</h4>
-            <p>Scheduled tasks run automatically based on configured sites in <code>config/sites.yaml</code>. 
-            Use this interface to trigger immediate runs or view configured sites.</p>
+    <!-- Tabs Navigation -->
+    <div class="tabs">
+        <button class="tab-link active" onclick="openTab(event, 'configured-sites')">Configured Sites</button>
+        <button class="tab-link" onclick="openTab(event, 'manual-trigger')">Manual Trigger</button>
+        <button class="tab-link" onclick="openTab(event, 'web-search')">Web Search</button>
+        <button class="tab-link" onclick="openTab(event, 'history')">Collection History</button>
+    </div>
+
+    <!-- Tab Content: Configured Sites -->
+    <div id="configured-sites" class="tab-content" style="display: block;">
+        <div class="toolbar">
+            <input type="text" id="site-search" placeholder="Search sites..." onkeyup="filterSites()" />
+            <button onclick="openAddSiteModal()" class="btn btn-primary">+ Add Site</button>
         </div>
-    </div>
-
-    <div class="configured-sites">
-        <h3>Configured Sites</h3>
+        
         <div id="sites-container">
             <p class="loading">Loading configured sites...</p>
         </div>
     </div>
 
-    <div class="manual-trigger">
-        <h3>Manual Trigger</h3>
+    <!-- Tab Content: Web Search -->
+    <div id="web-search" class="tab-content">
         <div class="trigger-form">
+            <h3>Web Search Discovery</h3>
+            <p class="help-text">Search for files across the web or specific sites using external APIs.</p>
+            
+            <div class="form-group">
+                <label>Search Query:</label>
+                <input type="text" id="ws-query" placeholder="e.g. 'actuarial artificial intelligence filetype:pdf'" />
+            </div>
+            
+            <div class="form-group">
+                <label>Limit to Site (Optional):</label>
+                <input type="text" id="ws-site" placeholder="e.g. actuaries.org" />
+            </div>
+
+            <div class="form-row" style="display: flex; gap: 20px;">
+                <div class="form-group" style="flex: 1;">
+                    <label>Search Engine:</label>
+                    <select id="ws-engine">
+                        <option value="brave">Brave Search API</option>
+                        <option value="google">Google (SerpAPI)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Max Results:</label>
+                    <input type="number" id="ws-count" value="20" min="1" max="100" />
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>API Key:</label>
+                <input type="password" id="ws-apikey" placeholder="Enter API Key" />
+                <small>Key is not stored on server. Enter for each session or configured in env.</small>
+            </div>
+
+            <button onclick="startWebSearch()" class="btn btn-primary">Search & Collect</button>
+        </div>
+    </div>
+
+    <!-- Tab Content: Manual Trigger -->
+    <div id="manual-trigger" class="tab-content">
+        <div class="trigger-form">
+            <h3>Run Collection Immediately</h3>
             <div class="form-group">
                 <label for="site-select">Select Site:</label>
                 <select id="site-select">
@@ -32,114 +77,495 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="max-pages">Max Pages:</label>
+                <label for="max-pages">Max Pages <i class="tooltip-icon" onclick="toggleTooltip('tt-manual-pages', 'max-pages')">(i)</i>:</label>
                 <input type="number" id="max-pages" value="200" min="1" />
+                <div id="tt-manual-pages" class="tooltip-text"></div>
             </div>
             <div class="form-group">
-                <label for="max-depth">Max Depth:</label>
+                <label for="max-depth">Max Depth <i class="tooltip-icon" onclick="toggleTooltip('tt-manual-depth', 'max-depth')">(i)</i>:</label>
                 <input type="number" id="max-depth" value="2" min="1" />
-            </div>
-            <div class="form-group checkbox">
-                <label>
-                    <input type="checkbox" id="enable-search" checked />
-                    Enable Web Search Integration
-                </label>
+                <div id="tt-manual-depth" class="tooltip-text"></div>
             </div>
             <button onclick="startScheduledCollection()" class="btn btn-primary">Start Collection</button>
         </div>
     </div>
 
-    <div class="schedule-history">
-        <h3>Collection History</h3>
+    <!-- Tab Content: History -->
+    <div id="history" class="tab-content">
+        <div class="toolbar" style="justify-content: flex-end; margin-bottom: 10px;">
+             <button onclick="viewGlobalLog()" class="btn">View Global Application Log</button>
+        </div>
         <div id="history-container">
             <p class="loading">Loading history...</p>
         </div>
     </div>
 </div>
 
+<!-- Add/Edit Site Modal -->
+<div id="site-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal()">&times;</span>
+        <h3 id="modal-title">Add New Site</h3>
+        <input type="hidden" id="original-site-name" />
+        <div class="form-group">
+            <label>Site Name:</label>
+            <input type="text" id="modal-name" required />
+        </div>
+        <div class="form-group">
+            <label>URL:</label>
+            <input type="text" id="modal-url" required />
+        </div>
+        <div class="form-group">
+            <label>Max Pages (optional) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-pages', 'max-pages')">(i)</i>:</label>
+            <input type="number" id="modal-pages" />
+            <div id="tt-modal-pages" class="tooltip-text"></div>
+        </div>
+        <div class="form-group">
+            <label>Max Depth (optional) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-depth', 'max-depth')">(i)</i>:</label>
+            <input type="number" id="modal-depth" />
+             <div id="tt-modal-depth" class="tooltip-text"></div>
+        </div>
+        <div class="form-group">
+            <label>Keywords (comma separated) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-keywords', 'keywords')">(i)</i>:</label>
+            <input type="text" id="modal-keywords" />
+             <div id="tt-modal-keywords" class="tooltip-text"></div>
+        </div>
+        <div class="form-group">
+            <label>Exclude Keywords (comma separated) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-excl-kw', 'exclude-keywords')">(i)</i>:</label>
+            <input type="text" id="modal-exclude-keywords" />
+             <div id="tt-modal-excl-kw" class="tooltip-text"></div>
+        </div>
+        <div class="form-group">
+            <label>Exclude Prefixes (comma separated) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-excl-pfx', 'exclude-prefixes')">(i)</i>:</label>
+            <input type="text" id="modal-exclude-prefixes" />
+             <div id="tt-modal-excl-pfx" class="tooltip-text"></div>
+        </div>
+        <button onclick="saveSite()" class="btn btn-primary">Save Site</button>
+    </div>
+</div>
+
+<!-- Log View Modal -->
+<div id="log-modal" class="modal">
+    <div class="modal-content large-modal">
+        <span class="close" onclick="closeLogModal()">&times;</span>
+        <h3>Task Log</h3>
+        <pre id="log-content" class="log-viewer">Loading...</pre>
+    </div>
+</div>
+
+<style>
+/* Tab Styles */
+.tabs {
+    overflow: hidden;
+    border-bottom: 1px solid #ccc;
+    margin-bottom: 20px;
+}
+.tab-link {
+    background-color: inherit;
+    float: left;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    padding: 14px 16px;
+    transition: 0.3s;
+    font-size: 16px;
+    border-bottom: 3px solid transparent;
+}
+.tab-link:hover {
+    background-color: #f1f1f1;
+}
+.tab-link.active {
+    border-bottom: 3px solid #007bff;
+    font-weight: bold;
+}
+.tab-content {
+    display: none;
+    padding: 20px 0;
+    animation: fadeEffect 0.5s;
+}
+@keyframes fadeEffect {
+    from {opacity: 0;}
+    to {opacity: 1;}
+}
+
+/* Toolbar & Modal */
+.toolbar {
+    margin-bottom: 15px;
+    display: flex;
+    justify-content: space-between;
+}
+#site-search {
+    padding: 8px;
+    width: 300px;
+}
+.modal {
+    display: none; 
+    position: fixed; 
+    z-index: 1000; 
+    left: 0;
+    top: 0;
+    width: 100%; 
+    height: 100%; 
+    overflow: auto; 
+    background-color: rgba(0,0,0,0.4); 
+}
+.modal-content {
+    background-color: #fefefe;
+    margin: 10% auto; 
+    padding: 20px;
+    border: 1px solid #888;
+    width: 500px;
+    border-radius: 5px;
+    position: relative;
+}
+.large-modal {
+    width: 80%;
+    max-width: 800px;
+}
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.close:hover {
+    color: black;
+}
+.log-viewer {
+    background: #f4f4f4;
+    padding: 15px;
+    border: 1px solid #ddd;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-family: monospace;
+}
+/* Tooltip Styles */
+.tooltip-icon {
+    cursor: pointer;
+    color: #17a2b8;
+    margin-left: 5px;
+    font-weight: bold;
+    font-style: normal;
+}
+.tooltip-text {
+    display: none;
+    background-color: #f9f9f9;
+    color: #333;
+    border: 1px solid #ccc;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-top: 5px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+</style>
+
 <script>
-// Load configured sites
-fetch('/api/config/sites')
+let allSites = [];
+
+const TOOLTIPS = {
+    'max-pages': "Maximum number of pages to crawl per execution. Prevents infinite loops on large sites.",
+    'max-depth': "How deep to crawl links. 1 = Seed page only. 2 = Seed + Links on seed. 3 = Links on those links...",
+    'keywords': "Relevant topics. If set, only pages/files containing at least one of these are kept.",
+    'exclude-keywords': "Blacklist words. If a URL or Filename contains ANY of these, it is strictly skipped.",
+    'exclude-prefixes': "Blacklist prefixes. If a Filename starts with these (e.g. 'exam'), it is skipped."
+};
+
+function toggleTooltip(domId, contentKey) {
+    const el = document.getElementById(domId);
+    if (!el) return;
+    if (el.style.display === 'block') {
+        el.style.display = 'none';
+    } else {
+        el.style.display = 'block';
+        el.innerText = TOOLTIPS[contentKey] || "No description.";
+    }
+}
+
+// Tab Logic
+function openTab(evt, tabName) {
+    var i, tabcontent, tablinks;
+    tabcontent = document.getElementsByClassName("tab-content");
+    for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+    }
+    tablinks = document.getElementsByClassName("tab-link");
+    for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+    }
+    document.getElementById(tabName).style.display = "block";
+    evt.currentTarget.className += " active";
+}
+
+// Load Sites
+function loadSites() {
+    fetch('/api/config/sites')
+        .then(response => response.json())
+        .then(data => {
+            allSites = data.sites;
+            renderSites(allSites);
+            updateSelectOptions(allSites);
+        })
+        .catch(error => {
+            console.error('Error loading sites:', error);
+            document.getElementById('sites-container').innerHTML = '<p class="error">Error loading sites</p>';
+        });
+}
+
+function renderSites(sites) {
+    const container = document.getElementById('sites-container');
+    if (sites && sites.length > 0) {
+        const table = document.createElement('table');
+        table.className = 'sites-table';
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Site Name</th>
+                    <th>URL</th>
+                    <th>Config</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${sites.map(site => `
+                    <tr>
+                        <td><strong>${escapeHtml(site.name)}</strong></td>
+                        <td><a href="${escapeHtml(site.url)}" target="_blank">${escapeHtml(site.url)}</a></td>
+                        <td>
+                            <small>Max Pages: ${site.max_pages}</small><br>
+                            <small>Depth: ${site.max_depth}</small>
+                            ${site.exclude_keywords && site.exclude_keywords.length ? `<br><small style="color:#d9534f" title="${site.exclude_keywords.join(', ')}">Excl KW: ${site.exclude_keywords.length} items</small>` : ''}
+                            ${site.exclude_prefixes && site.exclude_prefixes.length ? `<br><small style="color:#d9534f" title="${site.exclude_prefixes.join(', ')}">Excl Pfx: ${site.exclude_prefixes.length} items</small>` : ''}
+                        </td>
+                        <td>
+                            <button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">Edit</button>
+                            <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">Run</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        `;
+        container.innerHTML = '';
+        container.appendChild(table);
+    } else {
+        container.innerHTML = '<p>No sites configured</p>';
+    }
+}
+
+function updateSelectOptions(sites) {
+    const select = document.getElementById('site-select');
+    select.innerHTML = '<option value="">All Sites</option>';
+    sites.forEach(site => {
+        const option = document.createElement('option');
+        option.value = site.name;
+        option.textContent = site.name;
+        select.appendChild(option);
+    });
+}
+
+function filterSites() {
+    const query = document.getElementById('site-search').value.toLowerCase();
+    const filtered = allSites.filter(site => 
+        site.name.toLowerCase().includes(query) || 
+        site.url.toLowerCase().includes(query)
+    );
+    renderSites(filtered);
+}
+
+// Modal Logic
+function openAddSiteModal() {
+    document.getElementById('modal-title').innerText = 'Add New Site';
+    document.getElementById('original-site-name').value = '';
+    document.getElementById('modal-name').value = '';
+    document.getElementById('modal-url').value = '';
+    document.getElementById('modal-pages').value = '';
+    document.getElementById('modal-depth').value = '';
+    document.getElementById('modal-keywords').value = '';
+    document.getElementById('modal-exclude-keywords').value = '';
+    document.getElementById('modal-exclude-prefixes').value = '';
+    document.getElementById('site-modal').style.display = "block";
+}
+
+function editSite(name) {
+    const site = allSites.find(s => s.name === name);
+    if (!site) return;
+
+    document.getElementById('modal-title').innerText = 'Edit Site';
+    document.getElementById('original-site-name').value = site.name;
+    document.getElementById('modal-name').value = site.name;
+    document.getElementById('modal-url').value = site.url;
+    document.getElementById('modal-pages').value = site.max_pages;
+    document.getElementById('modal-depth').value = site.max_depth;
+    document.getElementById('modal-keywords').value = (site.keywords || []).join(', ');
+    document.getElementById('modal-exclude-keywords').value = (site.exclude_keywords || []).join(', ');
+    document.getElementById('modal-exclude-prefixes').value = (site.exclude_prefixes || []).join(', ');
+    document.getElementById('site-modal').style.display = "block";
+}
+
+function closeModal() {
+    document.getElementById('site-modal').style.display = "none";
+}
+
+function saveSite() {
+    const originalName = document.getElementById('original-site-name').value;
+    const isEdit = !!originalName;
+    
+    const payload = {
+        name: document.getElementById('modal-name').value,
+        url: document.getElementById('modal-url').value,
+        max_pages: document.getElementById('modal-pages').value,
+        max_depth: document.getElementById('modal-depth').value,
+        keywords: document.getElementById('modal-keywords').value,
+        exclude_keywords: document.getElementById('modal-exclude-keywords').value,
+        exclude_prefixes: document.getElementById('modal-exclude-prefixes').value
+    };
+    
+    if (isEdit) {
+        payload.original_name = originalName;
+    }
+
+    const endpoint = isEdit ? '/api/config/sites/update' : '/api/config/sites/add';
+
+    fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
     .then(response => response.json())
     .then(data => {
-        const container = document.getElementById('sites-container');
-        const select = document.getElementById('site-select');
-        
-        if (data.sites && data.sites.length > 0) {
-            const table = document.createElement('table');
-            table.className = 'sites-table';
-            table.innerHTML = `
-                <thead>
-                    <tr>
-                        <th>Site Name</th>
-                        <th>URL</th>
-                        <th>Max Pages</th>
-                        <th>Max Depth</th>
-                        <th>Keywords</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${data.sites.map(site => {
-                        // Add to dropdown
-                        const option = document.createElement('option');
-                        option.value = site.name;
-                        option.textContent = site.name;
-                        select.appendChild(option);
-                        
-                        return `
-                            <tr>
-                                <td><strong>${escapeHtml(site.name)}</strong></td>
-                                <td><a href="${escapeHtml(site.url)}" target="_blank">${escapeHtml(site.url)}</a></td>
-                                <td>${site.max_pages || '-'}</td>
-                                <td>${site.max_depth || '-'}</td>
-                                <td>${site.keywords ? site.keywords.length + ' keywords' : '-'}</td>
-                                <td>
-                                    <button data-site-name="${escapeHtml(site.name)}" onclick="runSingleSite(this.dataset.siteName)" class="btn-small">Run Now</button>
-                                </td>
-                            </tr>
-                        `;
-                    }).join('')}
-                </tbody>
-            `;
-            container.innerHTML = '';
-            container.appendChild(table);
+        if (data.success) {
+            closeModal();
+            loadSites();
+            alert('Site saved successfully!');
         } else {
-            container.innerHTML = '<p>No sites configured</p>';
+            alert('Error: ' + data.error);
         }
     })
     .catch(error => {
-        console.error('Error loading sites:', error);
-        document.getElementById('sites-container').innerHTML = '<p class="error">Error loading sites</p>';
+        alert('Error saving site: ' + error);
     });
+}
 
-// Load collection history
+// Manual Trigger
+function startScheduledCollection() {
+    const site = document.getElementById('site-select').value;
+    const maxPages = parseInt(document.getElementById('max-pages').value);
+    const maxDepth = parseInt(document.getElementById('max-depth').value);
+
+    const payload = {
+        type: 'scheduled',
+        site: site || null,
+        max_pages: maxPages,
+        max_depth: maxDepth
+    };
+
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Task started! ID: ' + data.job_id);
+            // Switch to history tab
+            const historyTab = document.querySelector('.tab-link[onclick*="history"]');
+            if(historyTab) historyTab.click();
+            loadHistory();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(e => alert(e));
+}
+
+function startWebSearch() {
+    const query = document.getElementById('ws-query').value.trim();
+    if (!query) return alert("Search query is required");
+    
+    const site = document.getElementById('ws-site').value.trim();
+    const engine = document.getElementById('ws-engine').value;
+    const count = parseInt(document.getElementById('ws-count').value);
+    const apiKey = document.getElementById('ws-apikey').value.trim();
+
+    const payload = {
+        type: 'search',
+        query: query,
+        site: site,
+        engine: engine,
+        count: count,
+        api_key: apiKey
+    };
+
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if(data.success) {
+            alert("Search task started! ID: " + data.job_id);
+            const historyTab = document.querySelector('.tab-link[onclick*="history"]');
+            if(historyTab) historyTab.click();
+            loadHistory();
+        } else {
+            alert("Error: " + data.error);
+        }
+    })
+    .catch(e => alert(e));
+}
+
+function runSingleSite(name) {
+    if (!confirm(`Run collection for ${name} now?`)) return;
+    
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            type: 'scheduled',
+            site: name
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+         if (data.success) {
+            alert('Task started! Check Tasks tab.');
+        } else {
+            alert('Error: ' + data.error);
+        }
+    });
+}
+
+// History & Logs
 function loadHistory() {
-    fetch('/api/collections/history?limit=10')
+    fetch('/api/tasks/history?limit=20') 
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('history-container');
-            if (data.history && data.history.length > 0) {
+            if (data.tasks && data.tasks.length > 0) {
                 const table = document.createElement('table');
                 table.className = 'history-table';
                 table.innerHTML = `
                     <thead>
                         <tr>
                             <th>Date</th>
-                            <th>Type</th>
-                            <th>Files Found</th>
-                            <th>Files Downloaded</th>
+                            <th>Name</th>
                             <th>Status</th>
+                            <th>Items</th>
+                            <th>Log</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${data.history.map(item => `
+                        ${data.tasks.map(task => `
                             <tr>
-                                <td>${formatDate(item.timestamp)}</td>
-                                <td>${escapeHtml(item.type)}</td>
-                                <td>${item.items_found || 0}</td>
-                                <td>${item.items_downloaded || 0}</td>
-                                <td><span class="status-badge status-${item.status}">${item.status}</span></td>
+                                <td>${formatDate(task.started_at)}</td>
+                                <td>${escapeHtml(task.name)}</td>
+                                <td><span class="status-badge status-${task.status}">${task.status}</span></td>
+                                <td>${task.items_processed || 0}</td>
+                                <td><button class="btn-small" onclick='viewLog(${JSON.stringify(task).replace(/'/g, "&#39;")})'>View Log</button></td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -147,55 +573,72 @@ function loadHistory() {
                 container.innerHTML = '';
                 container.appendChild(table);
             } else {
-                container.innerHTML = '<p>No collection history</p>';
+                container.innerHTML = '<p>No history available</p>';
             }
-        })
-        .catch(error => {
-            console.error('Error loading history:', error);
         });
 }
 
-function startScheduledCollection() {
-    const site = document.getElementById('site-select').value;
-    const maxPages = parseInt(document.getElementById('max-pages').value);
-    const maxDepth = parseInt(document.getElementById('max-depth').value);
-    const enableSearch = document.getElementById('enable-search').checked;
-
-    const payload = {
-        type: 'scheduled',
-        site: site || null,
-        max_pages: maxPages,
-        max_depth: maxDepth,
-        enable_search: enableSearch
-    };
-
-    fetch('/api/collections/run', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert('Collection started successfully! Task ID: ' + data.job_id);
-            window.location = '/tasks';
-        } else {
-            alert('Error: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(error => {
-        console.error('Error starting collection:', error);
-        alert('Error starting collection: ' + error.message);
-    });
+function viewLog(task) {
+    const logContent = document.getElementById('log-content');
+    let content = `Task: ${task.name}\nID: ${task.id}\nStatus: ${task.status}\nStarted: ${formatDate(task.started_at)}\nCompleted: ${formatDate(task.completed_at)}\n\n`;
+    
+    if (task.errors && task.errors.length > 0) {
+        content += "--- ERRORS ---\n";
+        content += task.errors.join('\n') + "\n\n";
+    }
+    
+    if (task.metadata) {
+         content += "--- METADATA ---\n";
+         content += JSON.stringify(task.metadata, null, 2) + "\n\n";
+    }
+    
+    content += "--- SUMMARY ---\n";
+    content += `Items Found: ${task.items_processed || 0}\n`;
+    content += `Items Downloaded: ${task.items_downloaded || 0}\n`;
+    
+    logContent.innerText = content;
+    document.getElementById('log-modal').style.display = "block";
 }
 
-function runSingleSite(siteName) {
-    document.getElementById('site-select').value = siteName;
-    startScheduledCollection();
+function closeLogModal() {
+    document.getElementById('log-modal').style.display = "none";
 }
 
+function viewGlobalLog() {
+    fetch('/api/logs/global')
+        .then(response => response.json())
+        .then(data => {
+            const logContent = document.getElementById('log-content');
+            if (data.logs) {
+                logContent.innerText = data.logs;
+            } else if (data.error) {
+                 logContent.innerText = "Error reading logs: " + data.error;
+            } else {
+                 logContent.innerText = "No logs available.";
+            }
+            document.getElementById('log-modal').style.display = "block";
+        })
+        .catch(err => alert("Error: " + err));
+}
+
+// Helper
+function escapeHtml(text) {
+    if (!text) return text;
+    return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function formatDate(dateStr) {
+    if(!dateStr) return '-';
+    return new Date(dateStr).toLocaleString();
+}
+
+// Init
+loadSites();
 loadHistory();
 </script>
 {% endblock %}

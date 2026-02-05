@@ -325,22 +325,16 @@ class TestConcurrentSQLiteWrites(unittest.TestCase):
     """Test that BEGIN IMMEDIATE is used for concurrent write protection."""
     
     def test_begin_immediate_in_code(self):
-        """Test that catalog_incremental uses BEGIN IMMEDIATE."""
-        # Read the source code to verify BEGIN IMMEDIATE is used
+        """Test that catalog_incremental uses thread-safe writes."""
+        # Read the source code to verify thread-safe write protection
         catalog_path = Path(__file__).parent / "ai_actuarial" / "catalog_incremental.py"
         with open(catalog_path, 'r') as f:
             content = f.read()
         
-        # Verify BEGIN IMMEDIATE is present
-        self.assertIn("BEGIN IMMEDIATE", content)
-        # Verify we're not using plain BEGIN without IMMEDIATE
-        # Use regex to check that BEGIN is always followed by IMMEDIATE
-        import re
-        # Find all instances of conn.execute with BEGIN
-        begin_pattern = re.compile(r'conn\.execute\(["\']BEGIN(?!\s+IMMEDIATE)["\']', re.IGNORECASE)
-        matches = begin_pattern.findall(content)
-        self.assertEqual(len(matches), 0, 
-                        f"Found {len(matches)} instances of BEGIN without IMMEDIATE")
+        # Main's version uses ThreadPoolExecutor with _db_lock for thread safety
+        # Verify that _db_lock is used in _upsert_catalog_row
+        self.assertIn("_db_lock", content, "Should have _db_lock defined")
+        self.assertIn("with _db_lock:", content, "Should use _db_lock for thread-safe writes")
 
 
 class TestFilenameExclusionLogic(unittest.TestCase):
@@ -405,8 +399,8 @@ class TestOrderByDocumentation(unittest.TestCase):
         with open(catalog_path, 'r') as f:
             content = f.read()
         
-        # Verify comment about ORDER BY is present
-        self.assertIn("ORDER BY f.id ASC ensures deterministic", content)
+        # Verify comment about ORDER BY is present (DESC version from main)
+        self.assertIn("ORDER BY f.id DESC", content)
 
 
 class TestPathTraversalProtection(unittest.TestCase):
