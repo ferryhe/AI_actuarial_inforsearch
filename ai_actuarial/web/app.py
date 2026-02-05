@@ -707,35 +707,27 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         # Connect to DB
         try:
             storage = Storage(db_path)
-            # NOTE: Direct _conn access is used here for CSV export custom query
-            # This is an acceptable exception as the query is complex and read-only
-            conn = storage._conn 
-            
-            sql = """
-            SELECT 
-                f.url,
-                f.title,
-                f.source_site,
-                f.local_path,
-                f.sha256,
-                f.last_modified,
-                c.category,
-                c.summary,
-                c.keywords AS keywords_json,
-                c.status as catalog_status,
-                c.processed_at
-            FROM files f
-            LEFT JOIN catalog_items c ON f.url = c.file_url
-            WHERE f.local_path IS NOT NULL
-            ORDER BY f.source_site, f.title
-            """
-            
-            # Use execute directly on connection or cursor
-            cur = conn.execute(sql)
-            rows = cur.fetchall()
-            columns = [desc[0] for desc in cur.description]
-            
-            data = [dict(zip(columns, row)) for row in rows]
+
+            # Use Storage abstraction to query files with catalog information
+            rows = storage.query_files_with_catalog()
+
+            # Normalize rows to a list of dictionaries
+            data = []
+            for row in rows:
+                if isinstance(row, dict):
+                    data.append(dict(row))
+                else:
+                    # Fallback for row objects with keys() / mapping interface
+                    try:
+                        data.append({k: row[k] for k in row.keys()})  # type: ignore[attr-defined]
+                    except Exception:
+                        # As a last resort, attempt to use _mapping (e.g., sqlite Row)
+                        mapping = getattr(row, "_mapping", None)
+                        if mapping is not None:
+                            data.append(dict(mapping))
+                        else:
+                            # If we cannot interpret the row, skip it
+                            continue
             
             # Format keywords
             for d in data:
