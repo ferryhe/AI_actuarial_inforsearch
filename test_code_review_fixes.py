@@ -312,7 +312,7 @@ class TestSQLInjectionProtection(unittest.TestCase):
         malicious_category = "'; DROP TABLE files; --"
         
         # This should not cause an error or drop the table
-        files, total = self.storage.query_files_with_catalog(
+        self.storage.query_files_with_catalog(
             category=malicious_category,
         )
         
