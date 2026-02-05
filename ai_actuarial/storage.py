@@ -606,3 +606,179 @@ class Storage:
         Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(list(items), f, ensure_ascii=False, indent=2)
+    
+    def get_file_count(self, require_local: bool = True) -> int:
+        """Get count of files in the database.
+        
+        Args:
+            require_local: Only count files with local_path set
+            
+        Returns:
+            Number of files
+        """
+        if require_local:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) FROM files WHERE local_path IS NOT NULL AND local_path != ''"
+            )
+        else:
+            cur = self._conn.execute("SELECT COUNT(*) FROM files")
+        return cur.fetchone()[0]
+    
+    def get_cataloged_count(self) -> int:
+        """Get count of successfully cataloged items.
+        
+        Returns:
+            Number of cataloged items with status='ok'
+        """
+        cur = self._conn.execute(
+            "SELECT COUNT(*) FROM catalog_items WHERE status = 'ok'"
+        )
+        return cur.fetchone()[0]
+    
+    def get_sources_count(self) -> int:
+        """Get count of unique source sites.
+        
+        Returns:
+            Number of unique sources
+        """
+        cur = self._conn.execute("SELECT COUNT(DISTINCT source_site) FROM files")
+        return cur.fetchone()[0]
+    
+    def get_unique_sources(self) -> list[str]:
+        """Get list of unique source sites.
+        
+        Returns:
+            List of source site names
+        """
+        cur = self._conn.execute("""
+            SELECT DISTINCT source_site 
+            FROM files 
+            WHERE source_site IS NOT NULL 
+            ORDER BY source_site
+        """)
+        return [row[0] for row in cur.fetchall()]
+    
+    def get_unique_categories(self) -> list[str]:
+        """Get list of unique categories from catalog.
+        
+        Returns:
+            List of category names
+        """
+        cur = self._conn.execute("""
+            SELECT DISTINCT category 
+            FROM catalog_items 
+            WHERE category IS NOT NULL AND category != ''
+            ORDER BY category
+        """)
+        return [row[0] for row in cur.fetchall()]
+    
+    def query_files_with_catalog(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        order_by: str = 'last_seen',
+        order_dir: str = 'desc',
+        query: str = '',
+        source: str = '',
+        category: str = '',
+    ) -> tuple[list[dict], int]:
+        """Query files with catalog information, filtering and pagination.
+        
+        Args:
+            limit: Maximum number of results
+            offset: Offset for pagination
+            order_by: Column to order by
+            order_dir: Order direction ('asc' or 'desc')
+            query: Search term for title/filename/url
+            source: Source site filter
+            category: Category filter
+            
+        Returns:
+            Tuple of (list of file dicts, total count)
+        """
+        # Validate order_by
+        allowed_order_by = ['id', 'url', 'title', 'source_site', 'bytes', 'last_seen', 'crawl_time']
+        if order_by not in allowed_order_by:
+            order_by = 'last_seen'
+        
+        # Validate order_dir to prevent SQL injection
+        if order_dir.lower() not in ['asc', 'desc']:
+            order_dir = 'desc'
+        
+        # Build query
+        filters = ["f.local_path IS NOT NULL AND f.local_path != ''"]
+        params = []
+        
+        if query:
+            filters.append("(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(f.url) LIKE ?)")
+            search_term = f"%{query.lower()}%"
+            params.extend([search_term, search_term, search_term])
+        
+        if source:
+            filters.append("LOWER(f.source_site) LIKE ?")
+            params.append(f"%{source.lower()}%")
+        
+        if category:
+            filters.append("c.category = ?")
+            params.append(category)
+        
+        where_clause = " AND ".join(filters)
+        
+        # Join with catalog_items if filtering by category
+        join_clause = ""
+        if category:
+            join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+        
+        # Get total count
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM files f
+            {join_clause}
+            WHERE {where_clause}
+        """
+        cur = self._conn.execute(count_query, tuple(params))
+        total = cur.fetchone()[0]
+        
+        # Get files with catalog data
+        order_clause = f"f.{order_by} {order_dir.upper()}"
+        query_sql = f"""
+            SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
+                   f.original_filename, f.local_path, f.bytes, f.content_type,
+                   f.last_modified, f.etag, f.published_time, f.first_seen,
+                   f.last_seen, f.crawl_time,
+                   c.category, c.summary, c.keywords
+            FROM files f
+            LEFT JOIN catalog_items c ON c.file_url = f.url
+            WHERE {where_clause}
+            ORDER BY {order_clause}
+            LIMIT ? OFFSET ?
+        """
+        params.extend([limit, offset])
+        cur = self._conn.execute(query_sql, tuple(params))
+        
+        files = []
+        for row in cur.fetchall():
+            file_dict = {
+                "url": row[0],
+                "sha256": row[1],
+                "title": row[2],
+                "source_site": row[3],
+                "source_page_url": row[4],
+                "original_filename": row[5],
+                "local_path": row[6],
+                "bytes": row[7],
+                "content_type": row[8],
+                "last_modified": row[9],
+                "etag": row[10],
+                "published_time": row[11],
+                "first_seen": row[12],
+                "last_seen": row[13],
+                "crawl_time": row[14],
+                "category": row[15],
+                "summary": row[16],
+                "keywords": json.loads(row[17]) if row[17] else []
+            }
+            files.append(file_dict)
+        
+        return files, total
