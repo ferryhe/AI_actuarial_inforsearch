@@ -461,7 +461,7 @@ def run_incremental_catalog(
                         )
                         
                 except Exception as e:
-                    logger.exception("Worker thread crushed")
+                    logger.exception("Worker thread crashed")
                     stats["errors"] += 1
         
         conn.commit()
