@@ -199,6 +199,27 @@ class Storage:
     def close(self) -> None:
         self._conn.close()
 
+    def file_exists_by_hash(self, sha256: str) -> bool:
+        """Check if a file with the given hash already exists in the database.
+        
+        Args:
+            sha256: The SHA256 hash of the file content.
+            
+        Returns:
+            True if a file with this hash exists, False otherwise.
+        """
+        cur = self._conn.execute(
+            "SELECT 1 FROM blobs WHERE sha256 = ?", (sha256,)
+        )
+        if cur.fetchone():
+            return True
+            
+        # Also check files table as fallback
+        cur = self._conn.execute(
+            "SELECT 1 FROM files WHERE sha256 = ?", (sha256,)
+        )
+        return cur.fetchone() is not None
+
     def now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 

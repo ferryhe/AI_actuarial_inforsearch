@@ -67,10 +67,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     
     # Import storage and collectors here to avoid circular imports
     from ..storage import Storage
-    from ..crawler import Crawler
+    from ..crawler import Crawler, SiteConfig
     from ..collectors import CollectionConfig
     from ..collectors.url import URLCollector
     from ..collectors.file import FileCollector
+    from ..collectors.scheduled import ScheduledCollector
     
     # Register routes
     @app.route("/")
@@ -97,6 +98,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def collection_url():
         """URL collection form."""
         return render_template("collection_url.html")
+
+    @app.route("/collection/file")
+    def collection_file():
+        """File import form."""
+        return render_template("collection_file.html")
     
     @app.route("/api/stats")
     def api_stats():
@@ -169,18 +175,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 filters.append("LOWER(f.source_site) LIKE ?")
                 params.append(f"%{source.lower()}%")
             
-            if category:
-                filters.append("c.category = ?")
-                params.append(category)
-            
-            where_clause = " AND ".join(filters)
-            
-            # Join with catalog_items if filtering by category
+            # Join with catalog_items if filtering by category (or checking uncategorized)
             join_clause = ""
             if category:
                 join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+                if category == '__uncategorized__':
+                    filters.append("(c.category IS NULL OR c.category = '')")
+                else:
+                     # Use LIKE to support multiple categories stored as string
+                    filters.append("c.category LIKE ?")
+                    params.append(f"%{category}%")
             
-            # Get total count
+            where_clause = " AND ".join(filters)
+            
+            # Get total count (using same joins/where)
             count_query = f"""
                 SELECT COUNT(*)
                 FROM files f
@@ -191,6 +199,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             total = cur.fetchone()[0]
             
             # Get files with catalog data
+            # Use LEFT JOIN always for the main query to ensure we get category data even if not filtering
+            # Optimization: If we already filtered by category, we have the JOIN.
+            # If not, we still need JOIN to return category columns.
+            if not join_clause:
+                join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+            
             order_clause = f"f.{order_by} {order_dir.upper()}"
             query_sql = f"""
                 SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
@@ -199,7 +213,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                        f.last_seen, f.crawl_time,
                        c.category, c.summary, c.keywords
                 FROM files f
-                LEFT JOIN catalog_items c ON c.file_url = f.url
+                {join_clause}
                 WHERE {where_clause}
                 ORDER BY {order_clause}
                 LIMIT ? OFFSET ?
@@ -292,44 +306,223 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_config_sites():
         """Get configured sites."""
         try:
+            # Re-load config to ensure fresh data
+            config_path = os.getenv('CONFIG_PATH', 'config/sites.yaml')
+            with open(config_path, 'r', encoding='utf-8') as f:
+                current_config = yaml.safe_load(f)
+            
             sites = []
-            for site in site_config.get('sites', []):
+            site_defaults = current_config.get('defaults', {})
+            for site in current_config.get('sites', []):
                 sites.append({
                     'name': site['name'],
                     'url': site['url'],
-                    'max_pages': site.get('max_pages', site_config['defaults'].get('max_pages')),
-                    'max_depth': site.get('max_depth', site_config['defaults'].get('max_depth')),
-                    'keywords': site.get('keywords', site_config['defaults'].get('keywords', []))
+                    'max_pages': site.get('max_pages', site_defaults.get('max_pages')),
+                    'max_depth': site.get('max_depth', site_defaults.get('max_depth')),
+                    'keywords': site.get('keywords', site_defaults.get('keywords', [])),
+                    'exclude_keywords': site.get('exclude_keywords', []),
+                    'exclude_prefixes': site.get('exclude_prefixes', [])
                 })
             return jsonify({"sites": sites})
         except Exception as e:
             logger.exception("Error getting sites config")
             return jsonify({"error": str(e)}), 500
-    
-    @app.route("/api/collections/run", methods=["POST"])
-    def run_collection():
-        """Start a collection operation."""
+
+    @app.route("/api/config/sites/add", methods=["POST"])
+    def api_config_sites_add():
+        """Add a new site to configuration."""
         try:
             data = request.get_json()
-            if not data:
-                return jsonify({"error": "Invalid JSON"}), 400
+            if not data or not data.get('name') or not data.get('url'):
+                return jsonify({"error": "Name and URL are required"}), 400
             
-            collection_type = data.get("type")
+            config_path = os.getenv('CONFIG_PATH', 'config/sites.yaml')
             
-            # Validate collection type
-            valid_types = ["scheduled", "adhoc", "url", "file"]
-            if not collection_type or collection_type not in valid_types:
-                return jsonify({
-                    "error": f"Invalid collection type. Must be one of: {', '.join(valid_types)}"
-                }), 400
+            # Read current config
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
             
-            # Handle URL collection
+            if 'sites' not in config_data:
+                config_data['sites'] = []
+            
+            # Check duplicates
+            for s in config_data['sites']:
+                if s['name'] == data['name']:
+                    return jsonify({"error": "Site name already exists"}), 400
+            
+            new_site = {
+                'name': data['name'],
+                'url': data['url']
+            }
+            if data.get('max_pages'): new_site['max_pages'] = int(data['max_pages'])
+            if data.get('max_depth'): new_site['max_depth'] = int(data['max_depth'])
+            if data.get('keywords'): new_site['keywords'] = [k.strip() for k in data['keywords'].split(',')]
+            if data.get('exclude_keywords'): new_site['exclude_keywords'] = [k.strip() for k in data['exclude_keywords'].split(',')]
+            if data.get('exclude_prefixes'): new_site['exclude_prefixes'] = [k.strip() for k in data['exclude_prefixes'].split(',')]
+            
+            config_data['sites'].append(new_site)
+            
+            # Save back
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+            
+            # Update global config copy
+            global site_config
+            site_config = config_data
+            
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error adding site")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/sites/update", methods=["POST"])
+    def api_config_sites_update():
+        """Update an existing site in configuration."""
+        try:
+            data = request.get_json()
+            if not data or not data.get('original_name') or not data.get('name'):
+                return jsonify({"error": "Original name and new name are required"}), 400
+            
+            config_path = os.getenv('CONFIG_PATH', 'config/sites.yaml')
+            
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+            
+            found = False
+            for s in config_data.get('sites', []):
+                if s['name'] == data['original_name']:
+                    s['name'] = data['name']
+                    s['url'] = data['url']
+                    if data.get('max_pages'): s['max_pages'] = int(data['max_pages'])
+                    elif 'max_pages' in s: del s['max_pages']
+                    
+                    if data.get('max_depth'): s['max_depth'] = int(data['max_depth'])
+                    elif 'max_depth' in s: del s['max_depth']
+                    
+                    if data.get('keywords'): 
+                        s['keywords'] = [k.strip() for k in data['keywords'].split(',') if k.strip()]
+                    elif 'keywords' in s: del s['keywords']
+                    
+                    if data.get('exclude_keywords'): 
+                        s['exclude_keywords'] = [k.strip() for k in data['exclude_keywords'].split(',') if k.strip()]
+                    elif 'exclude_keywords' in s: del s['exclude_keywords']
+
+                    if data.get('exclude_prefixes'): 
+                        s['exclude_prefixes'] = [k.strip() for k in data['exclude_prefixes'].split(',') if k.strip()]
+                    elif 'exclude_prefixes' in s: del s['exclude_prefixes']
+
+                    found = True
+                    break
+            
+            if not found:
+                return jsonify({"error": "Site not found"}), 404
+                
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+                
+            global site_config
+            site_config = config_data
+            
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error updating site")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/utils/browse-folder")
+    def api_browse_folder():
+        """Open system dialog to select a folder (Local usage only)."""
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            
+            # Create a hidden root window
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)  # Make it appear on top
+            
+            folder_path = filedialog.askdirectory(title="Select Folder to Import")
+            root.destroy()
+            
+            if folder_path:
+                return jsonify({"path": folder_path.replace('/', os.sep)})
+            return jsonify({"path": ""})
+        except Exception as e:
+            logger.error(f"Error opening file dialog: {e}")
+            return jsonify({"error": "Failed to open dialog. Please enter path manually."}), 500
+
+    @app.route("/file/<path:file_url>")
+    def file_view(file_url):
+        """File details page."""
+        try:
+            # Flask's path converter unquotes the URL, but we might need to be careful
+            # The database stores the full URL
+            
+            storage = Storage(db_path)
+            
+            # Use a JOIN to get file info + catalog info in one go
+            query = """
+                SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
+                       f.original_filename, f.local_path, f.bytes, f.content_type,
+                       f.last_modified, f.etag, f.published_time, f.first_seen,
+                       f.last_seen, f.crawl_time,
+                       c.category, c.summary, c.keywords, c.status
+                FROM files f
+                LEFT JOIN catalog_items c ON c.file_url = f.url
+                WHERE f.url = ?
+            """
+            cur = storage._conn.execute(query, (file_url,))
+            row = cur.fetchone()
+            storage.close()
+            
+            if not row:
+                # Try simple matching if exact match failed (e.g. trailing slash issues)
+                # or maybe the URL in DB is http but request is https or vice versa if proxied?
+                # For now, just return 404
+                return f"File not found: {file_url}", 404
+            
+            file_data = {
+                "url": row[0],
+                "sha256": row[1],
+                "title": row[2],
+                "source_site": row[3],
+                "source_page_url": row[4],
+                "original_filename": row[5],
+                "local_path": row[6],
+                "bytes": row[7],
+                "content_type": row[8],
+                "last_modified": row[9],
+                "etag": row[10],
+                "published_time": row[11],
+                "first_seen": row[12],
+                "last_seen": row[13],
+                "crawl_time": row[14],
+                "category": row[15],
+                "summary": row[16],
+                "keywords": json.loads(row[17]) if row[17] else [],
+                "catalog_status": row[18]
+            }
+            
+            return render_template("file_view.html", file=file_data)
+            
+        except Exception as e:
+            logger.exception("Error viewing file")
+            return f"Error: {str(e)}", 500
+    
+    def execute_collection_task(task_id, collection_type, data):
+        """Background task execution logic."""
+        logger.info(f"Starting background task {task_id} type={collection_type}")
+        
+        with _task_lock:
+             if task_id in _active_tasks:
+                 _active_tasks[task_id]["status"] = "running"
+                 _active_tasks[task_id]["started_at"] = datetime.now().isoformat()
+
+        try:
+            storage = Storage(db_path)
+            result = None
+            
             if collection_type == "url":
                 urls = data.get("urls", [])
-                if not urls:
-                    return jsonify({"error": "No URLs provided"}), 400
-                
-                storage = Storage(db_path)
                 user_agent = site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1')
                 crawler = Crawler(storage, download_dir, user_agent)
                 collector = URLCollector(storage, crawler)
@@ -340,27 +533,163 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     check_database=data.get("check_database", True),
                     keywords=site_config['defaults'].get('keywords', []),
                     file_exts=site_config['defaults'].get('file_exts', []),
+                    exclude_keywords=site_config['defaults'].get('exclude_keywords', []),
                     metadata={"urls": urls}
                 )
-                
                 result = collector.collect(config_obj)
-                storage.close()
                 
-                return jsonify({
-                    "success": result.success,
-                    "message": f"Collection completed",
-                    "items_found": result.items_found,
-                    "items_downloaded": result.items_downloaded,
-                    "items_skipped": result.items_skipped,
-                    "errors": result.errors[:5] if result.errors else []
-                })
+            elif collection_type == "file":
+                directory_path = data.get("directory_path")
+                extensions = data.get("extensions", [])
+                recursive = data.get("recursive", True)
+                
+                found_files = []
+                base_path = Path(directory_path)
+                exts = {e.strip().lstrip('.').lower() for e in extensions if e.strip()}
+                exclude_kws = site_config['defaults'].get('exclude_keywords', [])
+                
+                if recursive:
+                    iterator = base_path.rglob("*")
+                else:
+                    iterator = base_path.glob("*")
+                    
+                for path in iterator:
+                    if path.is_file():
+                        # Pre-check exclusion to avoid adding unwanted files
+                        if exclude_kws and any(k.lower() in path.name.lower() for k in exclude_kws):
+                            continue
+                        if not exts or path.suffix.lstrip('.').lower() in exts:
+                            found_files.append(str(path))
+                
+                collector = FileCollector(storage, download_dir)
+                config_obj = CollectionConfig(
+                    name=data.get("name", "File Import"),
+                    source_type="file",
+                    check_database=True,
+                    exclude_keywords=exclude_kws,
+                    metadata={"file_paths": found_files}
+                )
+                result = collector.collect(config_obj)
+
+            elif collection_type == "scheduled":
+                crawler = Crawler(storage, download_dir, site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'))
+                collector = ScheduledCollector(storage, crawler)
+                
+                target_site_name = data.get("site")
+                sites_to_process = []
+                default_max_pages = data.get("max_pages") or site_config['defaults'].get('max_pages', 200)
+                default_max_depth = data.get("max_depth") or site_config['defaults'].get('max_depth', 2)
+                
+                for s in site_config.get('sites', []):
+                    if target_site_name and s['name'] != target_site_name:
+                        continue
+                    
+                    # Merge defaults and site-specific exclusions
+                    def merge_lists(key):
+                        defaults = site_config['defaults'].get(key) or []
+                        site_vals = s.get(key) or []
+                        return list(set(defaults + site_vals))
+
+                    sc = SiteConfig(
+                        name=s['name'],
+                        url=s['url'],
+                        max_pages=data.get("max_pages") or s.get('max_pages') or default_max_pages,
+                        max_depth=data.get("max_depth") or s.get('max_depth') or default_max_depth,
+                        keywords=s.get('keywords') or site_config['defaults'].get('keywords'),
+                        file_exts=site_config['defaults'].get('file_exts'),
+                        exclude_keywords=merge_lists('exclude_keywords'),
+                        exclude_prefixes=merge_lists('exclude_prefixes')
+                    )
+                    sites_to_process.append(sc)
+                
+                config_obj = CollectionConfig(
+                    name=data.get("name", "Scheduled Collection"),
+                    source_type="scheduled",
+                    check_database=True,
+                    metadata={"site_configs": sites_to_process}
+                )
+                result = collector.collect(config_obj)
+
+            storage.close()
             
-            # For other types, return placeholder response
+            # Update status
+            completed_at = datetime.now().isoformat()
+            with _task_lock:
+                if task_id in _active_tasks:
+                    task_data = _active_tasks.pop(task_id)
+                    task_data.update({
+                        "status": "completed" if result and result.success else "failed",
+                        "completed_at": completed_at,
+                        "progress": 100,
+                        "items_processed": result.items_found if result else 0,
+                        "items_downloaded": result.items_downloaded if result else 0,
+                        "errors": result.errors if result else []
+                    })
+                    _task_history.append(task_data)
+                    
+        except Exception as e:
+            logger.exception(f"Task {task_id} failed")
+            with _task_lock:
+                if task_id in _active_tasks:
+                    task_data = _active_tasks.pop(task_id)
+                    task_data.update({
+                        "status": "error",
+                        "completed_at": datetime.now().isoformat(),
+                        "progress": 100,
+                        "errors": [str(e)]
+                    })
+                    _task_history.append(task_data)
+
+    @app.route("/api/collections/run", methods=["POST"])
+    def run_collection():
+        """Start a collection operation."""
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "Invalid JSON"}), 400
+            
+            collection_type = data.get("type")
+            valid_types = ["scheduled", "adhoc", "url", "file"]
+            if not collection_type or collection_type not in valid_types:
+                return jsonify({"error": f"Invalid collection type"}), 400
+
+            # Quick validation before starting background task
+            if collection_type == "url" and not data.get("urls"):
+                 return jsonify({"error": "No URLs provided"}), 400
+            if collection_type == "file":
+                 path = data.get("directory_path")
+                 if not path or not os.path.exists(path):
+                     return jsonify({"error": "Invalid directory path"}), 400
+
+            task_id = f"task_{int(datetime.now().timestamp())}"
+            task_name = data.get("name", f"{collection_type.capitalize()} Collection")
+            
+            with _task_lock:
+                _active_tasks[task_id] = {
+                    "id": task_id,
+                    "name": task_name,
+                    "type": collection_type,
+                    "status": "pending",
+                    "progress": 0,
+                    "started_at": datetime.now().isoformat(),
+                    "items_processed": 0,
+                    "items_total": 0 
+                }
+            
+            # Start background thread
+            thread = threading.Thread(
+                target=execute_collection_task,
+                args=(task_id, collection_type, data)
+            )
+            thread.daemon = True
+            thread.start()
+            
             return jsonify({
-                "success": True,
-                "message": f"Collection {collection_type} started",
-                "job_id": f"task_{datetime.now().timestamp()}"
+                "success": True, 
+                "message": "Task started in background",
+                "job_id": task_id
             })
+
         except Exception as e:
             logger.exception("Error starting collection")
             return jsonify({"error": str(e)}), 500
@@ -483,6 +812,31 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error downloading file")
             return jsonify({"error": str(e)}), 500
     
+    @app.route("/api/logs/global")
+    def api_logs_global():
+        """Get global application logs."""
+        try:
+            log_dir = Path("data")
+            log_file = log_dir / "app.log"
+            
+            if not log_file.exists():
+                return jsonify({"logs": "No logs found."})
+            
+            # Read last 500 lines efficiently
+            lines = []
+            
+            # Simple approach for reasonable log sizes
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                # Seek to end and read backwards if needed, or just read all and slice
+                # For simplicity, read all lines (assuming log isn't massive yet)
+                # In production, use file seeking
+                all_lines = f.readlines()
+                lines = all_lines[-500:]
+                
+            return jsonify({"logs": "".join(lines)})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     return app
 
 
@@ -500,6 +854,22 @@ def run_server(host: str = "127.0.0.1", port: int = 5000, debug: bool = False) -
             "Flask is required for the web interface. "
             "Install it with: pip install flask"
         )
+    
+    # Configure logging
+    log_dir = Path("data")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "app.log"
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()
+        ],
+        force=True  # Force reconfiguration
+    )
     
     app = create_app()
     logger.info("Starting web server on %s:%d", host, port)

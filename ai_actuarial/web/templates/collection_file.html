@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="collection-page">
+    <div class="page-header">
+        <h2>📁 File Import</h2>
+        <p>Import files from local filesystem</p>
+    </div>
+
+    <div class="collection-form">
+        <div class="form-group">
+            <label for="directory-path">Directory Path:</label>
+            <div style="display: flex; gap: 10px;">
+                <input type="text" id="directory-path" placeholder="C:\path\to\documents" style="flex: 1;" />
+                <button onclick="browseFolder()" class="btn btn-secondary" style="white-space: nowrap;">Browse...</button>
+            </div>
+            <p class="help-text">Select a folder from your computer to import files from.</p>
+        </div>
+        <div class="form-group">
+            <label for="extensions">File Extensions (comma separated, empty for all):</label>
+            <input type="text" id="extensions" placeholder="pdf, docx, xlsx" value="pdf, docx, txt, md" />
+        </div>
+        <div class="form-group">
+            <label for="collection-name">Collection Name:</label>
+            <input type="text" id="collection-name" value="File Import" />
+        </div>
+        <div class="form-group checkbox">
+            <label>
+                <input type="checkbox" id="recursive" checked />
+                Recursive Scan (include subdirectories)
+            </label>
+        </div>
+        <div class="form-actions">
+            <button onclick="startImport()" class="btn btn-primary">Start Import</button>
+            <button onclick="history.back()" class="btn btn-secondary">Cancel</button>
+        </div>
+    </div>
+
+    <div id="progress-container" style="display: none;">
+        <h3>Import Progress</h3>
+        <div class="progress-panel">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div id="progress-details"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+function browseFolder() {
+    fetch('/api/utils/browse-folder')
+        .then(response => response.json())
+        .then(data => {
+            if (data.path) {
+                document.getElementById('directory-path').value = data.path;
+            } else if (data.error) {
+                // If backend dialog failed, fallback could be implemented here or just alert
+                alert(data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error browsing folder:', error);
+            alert('Could not open folder dialog. Please verify the server is running locally.');
+        });
+}
+
+function startImport() {
+    const directoryPath = document.getElementById('directory-path').value.trim();
+    if (!directoryPath) {
+        alert('Please enter a directory path');
+        return;
+    }
+
+    const extensionsText = document.getElementById('extensions').value;
+    const extensions = extensionsText.split(',').map(e => e.trim()).filter(e => e);
+
+    const payload = {
+        type: 'file',
+        directory_path: directoryPath,
+        extensions: extensions,
+        name: document.getElementById('collection-name').value,
+        recursive: document.getElementById('recursive').checked
+    };
+
+    document.getElementById('progress-container').style.display = 'block';
+
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Import completed!\nFiles found: ' + data.items_found + '\nFiles cataloged: ' + data.items_downloaded);
+            window.location = '/database';
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error starting import:', error);
+        alert('Error: ' + error.message);
+    });
+}
+</script>
+{% endblock %}

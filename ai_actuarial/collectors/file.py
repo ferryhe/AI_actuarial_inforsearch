@@ -71,12 +71,25 @@ class FileCollector(BaseCollector):
                     # Calculate SHA256
                     sha256 = self._calculate_sha256(source_path)
                     
+                    # Check if hash already exists in DB
+                    if self.storage.file_exists_by_hash(sha256):
+                        logger.info("Skipping already imported file (hash match): %s", file_path)
+                        items_skipped += 1
+                        continue
+
                     # Check if should import
                     if config.check_database and not self.should_download(str(source_path), sha256):
                         logger.info("Skipping already imported file: %s", file_path)
                         items_skipped += 1
                         continue
                     
+                    # Exclude check based on filename
+                    if config.exclude_keywords:
+                        if any(k.lower() in source_path.name.lower() for k in config.exclude_keywords):
+                            logger.info("Skipping file (matched exclude keywords): %s", file_path)
+                            items_skipped += 1
+                            continue
+                            
                     # Copy file to download directory
                     target_dir = self.download_dir / target_subdir
                     target_dir.mkdir(parents=True, exist_ok=True)

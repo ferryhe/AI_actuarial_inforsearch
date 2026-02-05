@@ -53,18 +53,28 @@ def _load_config(path: str) -> dict:
 
 def _site_configs(cfg: dict) -> list[SiteConfig]:
     sites = []
+    defaults = cfg.get("defaults", {})
+    
+    # Pre-calculated merged defaults for efficiency
+    def_excl_kw = defaults.get("exclude_keywords", [])
+    def_excl_pfx = defaults.get("exclude_prefixes", [])
+
     for s in cfg.get("sites", []):
+        # Merge exclusions
+        excl_kw = list(set(def_excl_kw + s.get("exclude_keywords", [])))
+        excl_pfx = list(set(def_excl_pfx + s.get("exclude_prefixes", [])))
+
         sites.append(
             SiteConfig(
                 name=s["name"],
                 url=s["url"],
-                max_pages=s.get("max_pages", cfg["defaults"].get("max_pages", 200)),
-                max_depth=s.get("max_depth", cfg["defaults"].get("max_depth", 2)),
-                delay_seconds=s.get("delay_seconds", cfg["defaults"].get("delay_seconds", 0.5)),
-                keywords=s.get("keywords", cfg["defaults"].get("keywords", [])),
-                file_exts=s.get("file_exts", cfg["defaults"].get("file_exts", [])),
-                exclude_keywords=s.get("exclude_keywords", []),
-                exclude_prefixes=s.get("exclude_prefixes", []),
+                max_pages=s.get("max_pages", defaults.get("max_pages", 200)),
+                max_depth=s.get("max_depth", defaults.get("max_depth", 2)),
+                delay_seconds=s.get("delay_seconds", defaults.get("delay_seconds", 0.5)),
+                keywords=s.get("keywords", defaults.get("keywords", [])),
+                file_exts=s.get("file_exts", defaults.get("file_exts", [])),
+                exclude_keywords=excl_kw,
+                exclude_prefixes=excl_pfx,
             )
         )
     return sites

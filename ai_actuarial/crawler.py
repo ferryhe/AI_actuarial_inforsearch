@@ -283,14 +283,42 @@ class Crawler:
                         )
                     except Exception:
                         continue
+                    
+                    # Enhanced Exclusion Check:
+                    # 1. Check final URL (redirects resolved)
                     if exclude and self._is_excluded(ffinal, exclude):
+                        logger.info("Excluding based on final URL: %s", ffinal)
                         if tmp_path.exists():
                             tmp_path.unlink()
                         continue
+                    
+                    # 2. Check actual filename (content-disposition or url derived)
+                    if exclude and self._is_excluded(tmp_path.name, exclude):
+                        logger.info("Excluding based on filename: %s", tmp_path.name)
+                        if tmp_path.exists():
+                            tmp_path.unlink()
+                        continue
+
+                    # 3. Check prefixes on filename
+                    if exclude_prefixes:
+                        fname = tmp_path.name
+                        if self._has_excluded_prefix(fname, exclude_prefixes):
+                            logger.info("Excluding based on prefix: %s", fname)
+                            if tmp_path.exists():
+                                tmp_path.unlink()
+                            continue
+
                     if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
                         if tmp_path.exists():
                             tmp_path.unlink()
                         continue
+
+                    # 4. Check prefixes on URL base (legacy check, kept for safety)
+                    if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
+                         if tmp_path.exists():
+                            tmp_path.unlink()
+                         continue
+
                     item = self._handle_file(
                         ffinal,
                         tmp_path,
@@ -344,10 +372,32 @@ class Crawler:
             original_filename = filename_match.group(1).strip()
         if not original_filename:
             original_filename = os.path.basename(parsed.path) or None
+        
+        # Security check: Ensure filename doesn't contain excluded keywords
+        # This is a second line of defense after URL checking
+        if cfg.exclude_keywords:
+            raw_name = original_filename or ""
+            if self._is_excluded(raw_name, [k.lower() for k in cfg.exclude_keywords]):
+                logger.info("Dropping file %s (matched exclude keywords in filename)", raw_name)
+                if tmp_path.exists():
+                    tmp_path.unlink()
+                return None
+        
         safe_name = self._sanitize_filename(original_filename or f"{sha256}{ext}")
         if not safe_name.lower().endswith(ext):
             safe_name = f"{safe_name}{ext}"
         path = self._resolve_conflict(target_dir, safe_name)
+
+        # Check if hash already exists in DB (Global Deduplication)
+        if self.storage.file_exists_by_hash(sha256):
+             logger.info("Dropping file %s (SHA256 %s already exists in DB)", url, sha256)
+             if tmp_path.exists():
+                 tmp_path.unlink()
+             # We might want to link this URL to the existing blob in future, 
+             # but for now we treat it as "already collected" and skip to avoid duplicates.
+             # Or we can proceed to update the 'files' table but reuse the 'blob'.
+             # Let's proceed to reuse the blob logic below.
+             pass
 
         blob = self.storage.get_blob(sha256)
         if blob and blob.get("canonical_path"):
