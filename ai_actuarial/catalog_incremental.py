@@ -430,6 +430,19 @@ def run_incremental_catalog(
                             processed_at=processed_at,
                         )
                         
+                    elif status == "skipped":
+                        # Non-AI (or otherwise skipped) items are treated as fully processed.
+                        # Persist this status so they are not retried on subsequent runs.
+                        stats["skipped_ai"] += 1
+                        _upsert_catalog_row(
+                            conn,
+                            item=item,
+                            file_sha256=file_sha256,
+                            catalog_version=catalog_version,
+                            status="skipped",
+                            processed_at=processed_at,
+                        )
+                        
                     elif status.startswith("error:"):
                         stats["errors"] += 1
                         err_msg = status[6:]
