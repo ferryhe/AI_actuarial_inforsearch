@@ -472,8 +472,6 @@ def run_incremental_catalog(
                     logger.exception("Worker thread crashed")
                     stats["errors"] += 1
         
-        conn.commit()
-        
         # Append outputs incrementally
         if batch_items:
             _append_jsonl(out_jsonl, batch_jsonl)
