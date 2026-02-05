@@ -873,7 +873,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             d['keywords'] = ", ".join(keywords_list)
                         else:
                             d['keywords'] = str(keywords_list)
-                    except:
+                    except Exception:
                         pass
                 
                 # Cleanup internal fields
