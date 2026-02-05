@@ -78,7 +78,7 @@
             <button class="btn btn-secondary" disabled>Download Unavailable</button>
             {% endif %}
             
-             <button onclick="deleteFile('{{ file.url }}')" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+             <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
         </div>
     </div>
 </div>
