@@ -410,14 +410,10 @@ class Crawler:
 
         # Check if hash already exists in DB (Global Deduplication)
         if self.storage.file_exists_by_hash(sha256):
-             logger.info("Dropping file %s (SHA256 %s already exists in DB)", url, sha256)
-             if tmp_path.exists():
-                 tmp_path.unlink()
-             # We might want to link this URL to the existing blob in future, 
-             # but for now we treat it as "already collected" and skip to avoid duplicates.
-             # Or we can proceed to update the 'files' table but reuse the 'blob'.
-             # Let's proceed to reuse the blob logic below.
-             pass
+            logger.info("Dropping file %s (SHA256 %s already exists in DB)", url, sha256)
+            if tmp_path.exists():
+                tmp_path.unlink()
+            return None
 
         blob = self.storage.get_blob(sha256)
         if blob and blob.get("canonical_path"):
