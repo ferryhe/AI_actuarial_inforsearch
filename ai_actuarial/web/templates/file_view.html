@@ -73,7 +73,7 @@
 
         <div class="actions-section">
             {% if file.local_path %}
-            <a href="/api/download?url={{ file.url }}" class="btn btn-primary">Download File</a>
+            <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
             {% else %}
             <button class="btn btn-secondary" disabled>Download Unavailable</button>
             {% endif %}
