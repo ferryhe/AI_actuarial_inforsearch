@@ -440,12 +440,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 crawler = Crawler(storage, download_dir, user_agent, stop_check=stop_check)
                 collector = URLCollector(storage, crawler)
                 
+                # 获取前端传来的格式，如果为None或空列表则使用默认值
+                user_formats = data.get("file_exts")
+                if user_formats:  # 确保不是None也不是空列表
+                    file_exts = user_formats
+                else:
+                    file_exts = site_config['defaults'].get('file_exts', [])
+                
+                # 额外校验：确保file_exts不为空
+                if not file_exts:
+                    file_exts = ['.pdf', '.docx']  # 最小默认值
+                
                 config_obj = CollectionConfig(
                     name=data.get("name", "URL Collection"),
                     source_type="url",
                     check_database=data.get("check_database", True),
                     keywords=site_config['defaults'].get('keywords', []),
-                    file_exts=site_config['defaults'].get('file_exts', []),
+                    file_exts=file_exts,  # 使用用户选择或默认值
                     exclude_keywords=site_config['defaults'].get('exclude_keywords', []),
                     metadata={"urls": urls}
                 )
@@ -453,7 +464,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
             elif collection_type == "file":
                 directory_path = data.get("directory_path")
-                extensions = data.get("extensions", [])
+                # 支持新旧两种字段名：extensions (旧) 和 file_exts (新)
+                extensions = data.get("extensions") or data.get("file_exts") or []
                 recursive = data.get("recursive", True)
                 
                 found_files = []
@@ -536,10 +548,25 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         stop_check=stop_check
                     )
                     collector = URLCollector(storage, crawler)
+                    
+                    # 获取前端传来的格式，如果为None或空列表则使用默认值
+                    user_formats = data.get("file_exts")
+                    if user_formats:
+                        file_exts = user_formats
+                    else:
+                        file_exts = site_config['defaults'].get('file_exts', [])
+                    
+                    # 额外校验：确保file_exts不为空
+                    if not file_exts:
+                        file_exts = ['.pdf', '.docx']
+                    
                     config_obj = CollectionConfig(
                         name=f"Search: {query[:30]}...",
                         source_type="url",
                         check_database=True,
+                        file_exts=file_exts,  # 添加文件格式参数
+                        keywords=site_config['defaults'].get('keywords', []),
+                        exclude_keywords=site_config['defaults'].get('exclude_keywords', []),
                         metadata={"urls": urls}
                     )
                     # Pass callback here too
@@ -606,13 +633,24 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 if not site_url:
                     raise ValueError("URL is required for Quick Check")
 
+                # 获取前端传来的格式，如果为None或空列表则使用默认值
+                user_formats = data.get("file_exts")
+                if user_formats:
+                    file_exts = user_formats
+                else:
+                    file_exts = site_config['defaults'].get('file_exts', [])
+                
+                # 额外校验：确保file_exts不为空
+                if not file_exts:
+                    file_exts = ['.pdf', '.docx']
+
                 sc = SiteConfig(
                     name=site_name,
                     url=site_url,
                     max_pages=data.get("max_pages", 10), # Default to small number
                     max_depth=data.get("max_depth", 1),  # Default to 1
                     keywords=data.get("keywords", []),
-                    file_exts=site_config['defaults'].get('file_exts', []),
+                    file_exts=file_exts,  # 使用用户选择或默认值
                     exclude_keywords=site_config['defaults'].get('exclude_keywords', []),
                     exclude_prefixes=site_config['defaults'].get('exclude_prefixes', [])
                 )

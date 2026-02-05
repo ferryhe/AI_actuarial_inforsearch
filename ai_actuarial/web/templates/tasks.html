@@ -12,7 +12,7 @@
     <!-- Task Launch Grid -->
     <div class="task-launch-grid">
         <!-- Card 1: URL Collection -->
-        <div class="task-card-launch" onclick="location.href='/collection/url'">
+        <div class="task-card-launch" onclick="openUrlCollectionModal()">
             <div class="launch-icon"></div>
             <div class="launch-content">
                 <h4>URL Collection</h4>
@@ -21,7 +21,7 @@
         </div>
 
         <!-- Card 2: File Import -->
-        <div class="task-card-launch" onclick="location.href='/collection/file'">
+        <div class="task-card-launch" onclick="openFileImportModal()">
             <div class="launch-icon"></div>
             <div class="launch-content">
                 <h4>File Import</h4>
@@ -108,6 +108,44 @@
                 <label>Site Filter (Optional)</label>
                 <input type="text" name="site" placeholder="e.g. actuaries.org">
             </div>
+            <div class="form-group">
+                <label>File Formats:</label>
+                <div class="format-checkboxes">
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pdf" checked>
+                        <span class="format-label">PDF</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="doc">
+                        <span class="format-label">DOC</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="docx" checked>
+                        <span class="format-label">DOCX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="ppt">
+                        <span class="format-label">PPT</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pptx">
+                        <span class="format-label">PPTX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xls">
+                        <span class="format-label">XLS</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xlsx">
+                        <span class="format-label">XLSX</span>
+                    </label>
+                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                        <input type="checkbox" name="formats" value="html">
+                        <span class="format-label">HTML ⚠️</span>
+                    </label>
+                </div>
+                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+            </div>
             <button type="submit" class="btn btn-primary">Start Search Task</button>
         </form>
     </div>
@@ -138,6 +176,44 @@
                     <input type="number" name="max_depth" value="1" max="3">
                 </div>
             </div>
+            <div class="form-group">
+                <label>File Formats:</label>
+                <div class="format-checkboxes">
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pdf" checked>
+                        <span class="format-label">PDF</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="doc">
+                        <span class="format-label">DOC</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="docx" checked>
+                        <span class="format-label">DOCX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="ppt">
+                        <span class="format-label">PPT</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pptx">
+                        <span class="format-label">PPTX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xls">
+                        <span class="format-label">XLS</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xlsx">
+                        <span class="format-label">XLSX</span>
+                    </label>
+                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                        <input type="checkbox" name="formats" value="html">
+                        <span class="format-label">HTML ⚠️</span>
+                    </label>
+                </div>
+                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+            </div>
             <button type="submit" class="btn btn-primary">Start Quick Scan</button>
         </form>
     </div>
@@ -167,6 +243,124 @@
                 </select>
             </div>
             <button type="submit" class="btn btn-primary">Start Cataloging</button>
+        </form>
+    </div>
+</div>
+
+<!-- URL Collection Modal -->
+<div id="url-collection-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('url-collection-modal')">&times;</span>
+        <h3>URL Collection</h3>
+        <p class="hint">Crawl and download files from specific URLs.</p>
+        <form id="url-collection-form" onsubmit="startUrlCollection(event)">
+            <div class="form-group">
+                <label>URLs (one per line)</label>
+                <textarea name="urls" rows="5" required placeholder="https://example.com/file1.pdf&#10;https://example.com/page.html"></textarea>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="check_database" checked> Check Database (skip existing files)
+                </label>
+            </div>
+            <div class="form-group">
+                <label>File Formats:</label>
+                <div class="format-checkboxes">
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pdf" checked>
+                        <span class="format-label">PDF</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="doc">
+                        <span class="format-label">DOC</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="docx" checked>
+                        <span class="format-label">DOCX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="ppt">
+                        <span class="format-label">PPT</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pptx">
+                        <span class="format-label">PPTX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xls">
+                        <span class="format-label">XLS</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xlsx">
+                        <span class="format-label">XLSX</span>
+                    </label>
+                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                        <input type="checkbox" name="formats" value="html">
+                        <span class="format-label">HTML ⚠️</span>
+                    </label>
+                </div>
+                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Start URL Collection</button>
+        </form>
+    </div>
+</div>
+
+<!-- File Import Modal -->
+<div id="file-import-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('file-import-modal')">&times;</span>
+        <h3>File Import</h3>
+        <p class="hint">Import files from local directory into the system.</p>
+        <form id="file-import-form" onsubmit="startFileImport(event)">
+            <div class="form-group">
+                <label>Directory Path</label>
+                <input type="text" name="directory_path" required placeholder="C:\Documents\ActuarialFiles">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="recursive" checked> Recursive (include subdirectories)
+                </label>
+            </div>
+            <div class="form-group">
+                <label>File Formats:</label>
+                <div class="format-checkboxes">
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pdf" checked>
+                        <span class="format-label">PDF</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="doc">
+                        <span class="format-label">DOC</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="docx" checked>
+                        <span class="format-label">DOCX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="ppt">
+                        <span class="format-label">PPT</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="pptx">
+                        <span class="format-label">PPTX</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xls">
+                        <span class="format-label">XLS</span>
+                    </label>
+                    <label class="format-option">
+                        <input type="checkbox" name="formats" value="xlsx">
+                        <span class="format-label">XLSX</span>
+                    </label>
+                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                        <input type="checkbox" name="formats" value="html">
+                        <span class="format-label">HTML ⚠️</span>
+                    </label>
+                </div>
+                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Start File Import</button>
         </form>
     </div>
 </div>
@@ -313,6 +507,7 @@
 
 .form-group input[type="text"],
 .form-group input[type="number"],
+.form-group textarea,
 .form-group select {
     width: 100%;
     padding: 10px 12px;
@@ -322,7 +517,13 @@
     transition: border-color 0.3s, box-shadow 0.3s;
 }
 
+.form-group textarea {
+    resize: vertical;
+    font-family: inherit;
+}
+
 .form-group input:focus,
+.form-group textarea:focus,
 .form-group select:focus {
     outline: none;
     border-color: #3498db;
@@ -355,13 +556,77 @@
 .form-row { display: flex; gap: 15px; }
 .form-group.half { flex: 1; }
 
+/* File Format Selector Styles */
+.format-checkboxes {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.format-option {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 5px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.format-option:hover {
+    background: #f0f0f0;
+    border-color: #3498db;
+}
+
+.format-option input[type="checkbox"] {
+    margin-right: 5px;
+    cursor: pointer;
+}
+
+.format-label {
+    font-size: 0.9em;
+    font-weight: 500;
+}
+
+.format-hint {
+    display: block;
+    margin-top: 8px;
+    color: #e74c3c;
+    font-size: 0.85em;
+    font-style: italic;
+}
+
 </style>
 
 <script>
+// --- File Format Selector Helper Functions ---
+// 获取选中的文件格式（带校验）
+function getSelectedFormats(formElement) {
+    const checkboxes = formElement.querySelectorAll('input[name="formats"]:checked');
+    if (checkboxes.length === 0) {
+        // 如果用户没选任何格式，返回 null 让后端使用默认值
+        return null;
+    }
+    return Array.from(checkboxes).map(cb => '.' + cb.value);
+}
+
+// 重置格式选择器为默认状态（PDF和DOCX）
+function resetFormatSelector(modalId) {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    
+    const checkboxes = modal.querySelectorAll('input[name="formats"]');
+    checkboxes.forEach(cb => {
+        cb.checked = (cb.value === 'pdf' || cb.value === 'docx');
+    });
+}
+
 // --- Modal Management ---
 function openModal(id) { document.getElementById(id).style.display = 'block'; }
 function closeModal(id) { 
-    document.getElementById(id).style.display = 'none'; 
+    document.getElementById(id).style.display = 'none';
+    resetFormatSelector(id);  // 关闭时重置格式选择器
 }
 
 // Refresh page data after task submission
@@ -369,22 +634,29 @@ function refreshTasksPage() {
     loadActiveTasks();
     loadTaskHistory();
 }
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
 function openWebSearchModal() { openModal('web-search-modal'); }
 function openQuickCheckModal() { openModal('quick-check-modal'); }
 function openCatalogModal() { openModal('catalog-modal'); }
+function openUrlCollectionModal() { openModal('url-collection-modal'); }
+function openFileImportModal() { openModal('file-import-modal'); }
 
 window.onclick = function(event) {
     if (event.target.classList.contains('modal')) {
         event.target.style.display = "none";
+        resetFormatSelector(event.target.id);  // 点击背景关闭时也重置
     }
 }
 
 // --- Task Starters ---
 function startWebSearch(e) {
     e.preventDefault();
-    const formData = new FormData(e.target);
+    const form = e.target;
+    const formData = new FormData(form);
     const data = Object.fromEntries(formData.entries());
+    
+    // 获取选中的文件格式
+    const formats = getSelectedFormats(form);
     
     startTask('search', {
         type: 'search',
@@ -392,6 +664,7 @@ function startWebSearch(e) {
         engine: data.engine,
         count: data.count,
         site: data.site,
+        file_exts: formats,  // 添加文件格式参数
         name: `Web Search: ${data.query}`
     });
     closeModal('web-search-modal');
@@ -399,13 +672,17 @@ function startWebSearch(e) {
 
 function startQuickCheck(e) {
     e.preventDefault();
-    const formData = new FormData(e.target);
+    const form = e.target;
+    const formData = new FormData(form);
     let url = formData.get('url');
     
     // Auto-fix URL protocol
     if (url && !url.match(/^https?:\/\//i)) {
         url = 'https://' + url;
     }
+
+    // 获取选中的文件格式
+    const formats = getSelectedFormats(form);
 
     // Convert comma strings to arrays
     const data = {
@@ -414,6 +691,7 @@ function startQuickCheck(e) {
         max_pages: parseInt(formData.get('max_pages')),
         max_depth: parseInt(formData.get('max_depth')),
         keywords: formData.get('keywords') ? formData.get('keywords').split(',').map(s=>s.trim()) : [],
+        file_exts: formats,  // 添加文件格式参数
         name: url
     };
     
@@ -433,6 +711,60 @@ function startCatalog(e) {
         name: "Incremental Cataloging"
     });
     closeModal('catalog-modal');
+}
+
+function startUrlCollection(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    
+    // 解析URL列表（一行一个）
+    const urlsText = formData.get('urls');
+    const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+    
+    if (urls.length === 0) {
+        alert('Please enter at least one URL');
+        return;
+    }
+    
+    // 获取选中的文件格式
+    const formats = getSelectedFormats(form);
+    
+    startTask('url', {
+        type: 'url',
+        urls: urls,
+        check_database: formData.get('check_database') === 'on',
+        file_exts: formats,  // 添加文件格式参数
+        name: `URL Collection (${urls.length} URLs)`
+    });
+    closeModal('url-collection-modal');
+}
+
+function startFileImport(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    
+    const directoryPath = formData.get('directory_path');
+    if (!directoryPath) {
+        alert('Please enter a directory path');
+        return;
+    }
+    
+    // 获取选中的文件格式
+    const formats = getSelectedFormats(form);
+    
+    // 将格式转换为不带点的扩展名（后端File Import使用extensions字段）
+    const extensions = formats ? formats.map(f => f.replace('.', '')) : null;
+    
+    startTask('file', {
+        type: 'file',
+        directory_path: directoryPath,
+        recursive: formData.get('recursive') === 'on',
+        extensions: extensions,  // File Import使用extensions字段
+        name: `File Import: ${directoryPath}`
+    });
+    closeModal('file-import-modal');
 }
 
 function startTask(type, payload) {
