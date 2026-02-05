@@ -974,34 +974,96 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     
     @app.route("/api/files/delete", methods=["POST"])
     def api_files_delete():
-        """Soft delete a file."""
+        """Soft delete a file and optionally delete its stored copy.
+        
+        Security controls:
+        - Feature flag: ENABLE_FILE_DELETION=true must be set in the environment.
+        - Optional authentication: if FILE_DELETION_AUTH_TOKEN is configured in
+          app.config or the environment, requests must supply a matching
+          X-Auth-Token header.
+        - Explicit confirmation: request JSON must include {"confirm": "DELETE"}.
+        - Path validation: only delete files within the configured download_dir.
+        """
         try:
-            data = request.get_json()
-            url = data.get('url')
+            # Feature flag check
+            if os.getenv("ENABLE_FILE_DELETION") != "true":
+                return jsonify({"error": "File deletion is disabled"}), 403
+
+            # Optional authentication check
+            expected_token = app.config.get("FILE_DELETION_AUTH_TOKEN") or os.getenv(
+                "FILE_DELETION_AUTH_TOKEN"
+            )
+            if expected_token:
+                provided_token = request.headers.get("X-Auth-Token")
+                if not provided_token or provided_token != expected_token:
+                    return jsonify({"error": "Forbidden"}), 403
+
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"error": "Invalid or missing JSON body"}), 400
+
+            url = data.get("url")
             if not url:
                 return jsonify({"error": "No URL provided"}), 400
-            
+
+            # Require explicit confirmation to reduce accidental deletions
+            confirmation = data.get("confirm")
+            if confirmation != "DELETE":
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                "Explicit confirmation required. "
+                                'Include {"confirm": "DELETE"} in the request body.'
+                            )
+                        }
+                    ),
+                    400,
+                )
+
             storage = Storage(db_path)
-            # Mark as deleted using abstraction method
-            deleted_time = datetime.now().isoformat()
-            storage.mark_file_deleted(url, deleted_time)
-            
-            # Optionally remove local file? User said "Delete stored file".
-            # Yes, "delete storage file".
-            file_record = storage.get_file_by_url(url)
-            if file_record and file_record.get('local_path'):
-                 local_path = file_record['local_path']
-                 if os.path.exists(local_path):
-                     try:
-                        os.remove(local_path)
-                        # Clear local path in DB to indicate it's gone
-                        storage.clear_local_path(url)
-                     except Exception as ex:
-                         logger.error(f"Failed to delete local file {local_path}: {ex}")
-            
-            storage.close()
+            try:
+                # Mark as deleted using abstraction method
+                deleted_time = datetime.now().isoformat()
+                storage.mark_file_deleted(url, deleted_time)
+
+                # Optionally remove local file? User said "Delete stored file".
+                # Yes, "delete storage file".
+                file_record = storage.get_file_by_url(url)
+                if file_record and file_record.get("local_path"):
+                    local_path = file_record["local_path"]
+                    try:
+                        # Path traversal protection: only delete within download_dir
+                        base_dir = Path(download_dir).resolve()
+                        candidate_path = Path(local_path).resolve()
+
+                        # Ensure candidate_path is within base_dir
+                        try:
+                            # Python 3.9+ has is_relative_to; fall back otherwise
+                            is_within = candidate_path.is_relative_to(base_dir)  # type: ignore[attr-defined]
+                        except AttributeError:
+                            is_within = os.path.commonpath(
+                                [str(base_dir), str(candidate_path)]
+                            ) == str(base_dir)
+
+                        if not is_within:
+                            logger.error(
+                                "Refusing to delete file outside download_dir: %s",
+                                candidate_path,
+                            )
+                        elif candidate_path.exists():
+                            os.remove(candidate_path)
+                            # Clear local path in DB to indicate it's gone
+                            storage.clear_local_path(url)
+                    except Exception as ex:
+                        logger.error(
+                            "Failed to delete local file %s: %s", local_path, ex
+                        )
+
+            finally:
+                storage.close()
+
             return jsonify({"success": True})
-            
         except Exception as e:
             logger.exception("Error deleting file")
             return jsonify({"error": str(e)}), 500
