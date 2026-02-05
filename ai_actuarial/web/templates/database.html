@@ -19,7 +19,6 @@
             <select id="category-filter" onchange="searchFiles()">
                 <option value="">All Categories</option>
             </select>
-            <input type="text" id="keyword-filter" placeholder="Keyword filter" oninput="debounceSearch()" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
             <button onclick="resetFilters()" class="btn btn-secondary" style="margin-left: auto;">Reset</button>
         </div>
     </div>
@@ -89,7 +88,6 @@ function searchFiles(page = 1) {
     const query = document.getElementById('search-query').value;
     const source = document.getElementById('source-filter').value;
     const category = document.getElementById('category-filter').value;
-    const keyword = document.getElementById('keyword-filter').value;
     let sortBy = document.getElementById('sort-by').value;
     let orderDir = 'desc'; // Default
 
@@ -108,13 +106,6 @@ function searchFiles(page = 1) {
     if (query) params.append('query', query);
     if (source) params.append('source', source);
     if (category) params.append('category', category);
-    
-    // Client-side filtering for keywords? Or backend?
-    // Let's assume we want to send it to backend if backend supported it,
-    // or we filter client side? Backend is better but let's just overload query param
-    // or add logic to app.py. App.py only filters by query (title/url) or category.
-    // For now, let's append it to query if it's simple, or we need to update app.py
-    if (keyword) params.append('query', keyword); // HACK: reusing query param for keyword which searches title/filename/url
 
     document.getElementById('results-container').innerHTML = '<p class="loading">Loading...</p>';
 

@@ -42,7 +42,7 @@
         <div class="task-card-launch" onclick="openQuickCheckModal()">
             <div class="launch-icon"></div>
             <div class="launch-content">
-                <h4>Quick Check</h4>
+                <h4>Quick Site Check</h4>
                 <p>Ad-hoc Site Scan</p>
             </div>
         </div>
@@ -217,7 +217,7 @@
     font-size: 0.9em;
 }
 
-/* Modal Styles override/addition */
+/* Modal Styles - Enhanced */
 .modal {
     display: none; 
     position: fixed; 
@@ -226,29 +226,131 @@
     top: 0;
     width: 100%; 
     height: 100%; 
-    background-color: rgba(0,0,0,0.5); 
+    background-color: rgba(0,0,0,0.6); 
+    backdrop-filter: blur(2px);
+    animation: fadeIn 0.2s ease;
 }
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
 .modal-content {
-    background-color: #fefefe;
-    margin: 10% auto; 
-    padding: 25px;
-    border-radius: 8px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    margin: 8% auto; 
+    padding: 30px;
+    border-radius: 12px;
     width: 90%;
-    max-width: 500px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-    position: relative; 
+    max-width: 550px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    position: relative;
+    animation: slideDown 0.3s ease;
 }
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-content h3 {
+    color: #2c3e50;
+    margin-bottom: 8px;
+    font-size: 1.5em;
+    padding-left: 30px;
+}
+
+.modal-content h3::before {
+    content: "⚡";
+    position: absolute;
+    left: 30px;
+    font-size: 1.2em;
+}
+
 .close {
     position: absolute;
     right: 20px;
     top: 15px;
-    font-size: 24px;
+    font-size: 28px;
     font-weight: bold;
     cursor: pointer;
     color: #999;
+    transition: color 0.2s, transform 0.2s;
 }
-.close:hover { color: #333; }
-.hint { color: #666; font-size: 0.9em; margin-bottom: 15px; font-style: italic; }
+
+.close:hover {
+    color: #e74c3c;
+    transform: rotate(90deg);
+}
+
+.hint {
+    color: #7f8c8d;
+    font-size: 0.9em;
+    margin: 10px 0 20px 0;
+    font-style: italic;
+    padding: 8px 12px;
+    background: #ecf0f1;
+    border-left: 3px solid #3498db;
+    border-radius: 4px;
+}
+
+.form-group {
+    margin-bottom: 18px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    color: #34495e;
+    font-weight: 500;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    color: white;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    transition: transform 0.2s, box-shadow 0.2s;
+    margin-top: 10px;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
 
 .form-row { display: flex; gap: 15px; }
 .form-group.half { flex: 1; }
@@ -258,6 +360,15 @@
 <script>
 // --- Modal Management ---
 function openModal(id) { document.getElementById(id).style.display = 'block'; }
+function closeModal(id) { 
+    document.getElementById(id).style.display = 'none'; 
+}
+
+// Refresh page data after task submission
+function refreshTasksPage() {
+    loadActiveTasks();
+    loadTaskHistory();
+}
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 function openWebSearchModal() { openModal('web-search-modal'); }
 function openQuickCheckModal() { openModal('quick-check-modal'); }
@@ -334,7 +445,8 @@ function startTask(type, payload) {
     .then(data => {
         if(data.success) {
             alert('Task started! Monitoring progress...');
-            loadActiveTasks();
+            // Refresh page data to show new active task
+            refreshTasksPage();
         } else {
             alert('Error: ' + data.error);
         }
