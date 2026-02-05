@@ -782,3 +782,15 @@ class Storage:
             files.append(file_dict)
         
         return files, total
+    
+    def clear_local_path(self, url: str) -> None:
+        """Clear the local_path for a file (for deletion tracking).
+        
+        Args:
+            url: File URL
+        """
+        self._conn.execute(
+            "UPDATE files SET local_path = NULL WHERE url = ?",
+            (url,)
+        )
+        self._maybe_commit()
