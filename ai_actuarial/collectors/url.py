@@ -25,11 +25,12 @@ class URLCollector(BaseCollector):
         self.storage = storage
         self.crawler = crawler
     
-    def collect(self, config: CollectionConfig) -> CollectionResult:
+    def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute URL-based collection.
         
         Args:
             config: Collection configuration with URLs in metadata
+            progress_callback: Optional callback for progress updates
             
         Returns:
             CollectionResult with statistics
@@ -43,8 +44,15 @@ class URLCollector(BaseCollector):
         
         try:
             urls = config.metadata.get("urls", [])
+            total_urls = len(urls)
             
-            for url in urls:
+            if progress_callback:
+                progress_callback(0, total_urls, "Starting URL collection")
+            
+            for i, url in enumerate(urls):
+                if progress_callback:
+                    progress_callback(i, total_urls, f"Processing: {url}")
+                    
                 try:
                     # Check if should download
                     if config.check_database and not self.should_download(url):
@@ -65,7 +73,7 @@ class URLCollector(BaseCollector):
                     )
                     
                     new_items = self.crawler.scan_page_for_files(
-                        url, site_config, source_site=config.name
+                        url, site_config, source_site=config.name, progress_callback=lambda c, t, m: None
                     )
                     
                     items_found += len(new_items)
@@ -80,6 +88,9 @@ class URLCollector(BaseCollector):
                     error_msg = f"Error collecting from URL {url}: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
+            
+            if progress_callback:
+                progress_callback(total_urls, total_urls, "Completed")
             
             success = len(errors) == 0 or items_found > 0
             

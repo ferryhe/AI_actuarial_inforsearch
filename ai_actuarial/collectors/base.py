@@ -42,11 +42,12 @@ class BaseCollector(ABC):
     """Base class for all collectors."""
     
     @abstractmethod
-    def collect(self, config: CollectionConfig) -> CollectionResult:
+    def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute the collection operation.
         
         Args:
             config: Configuration for this collection
+            progress_callback: Optional callback(current, total, status_message)
             
         Returns:
             CollectionResult with operation statistics

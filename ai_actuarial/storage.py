@@ -41,6 +41,12 @@ class Storage:
             )
             """
         )
+        # Migrate: Check if deleted_at exists, if not add it
+        try:
+            self._conn.execute("SELECT deleted_at FROM files LIMIT 1")
+        except sqlite3.OperationalError:
+             self._conn.execute("ALTER TABLE files ADD COLUMN deleted_at TEXT")
+
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS pages (
@@ -198,6 +204,27 @@ class Storage:
 
     def close(self) -> None:
         self._conn.close()
+
+    def file_exists_by_hash(self, sha256: str) -> bool:
+        """Check if a file with the given hash already exists in the database.
+        
+        Args:
+            sha256: The SHA256 hash of the file content.
+            
+        Returns:
+            True if a file with this hash exists, False otherwise.
+        """
+        cur = self._conn.execute(
+            "SELECT 1 FROM blobs WHERE sha256 = ?", (sha256,)
+        )
+        if cur.fetchone():
+            return True
+            
+        # Also check files table as fallback
+        cur = self._conn.execute(
+            "SELECT 1 FROM files WHERE sha256 = ?", (sha256,)
+        )
+        return cur.fetchone() is not None
 
     def now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -731,16 +758,19 @@ class Storage:
             filters.append("LOWER(f.source_site) LIKE ?")
             params.append(f"%{source.lower()}%")
         
-        if category:
-            filters.append("c.category = ?")
-            params.append(category)
-        
-        where_clause = " AND ".join(filters)
-        
-        # Join with catalog_items if filtering by category
+        # Join with catalog_items if filtering by category (or always for data)
         join_clause = ""
         if category:
             join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+            if category == '__uncategorized__':
+                filters.append("(c.category IS NULL OR c.category = '')")
+            else:
+                # Precise matching for comma-separated categories
+                # Match exact string, OR start of CSV, OR end of CSV, OR middle of CSV
+                filters.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
+                params.extend([category, f"{category},%", f"%,{category}", f"%,{category},%"])
+        
+        where_clause = " AND ".join(filters)
         
         # Get total count
         count_query = f"""
@@ -753,6 +783,10 @@ class Storage:
         total = cur.fetchone()[0]
         
         # Get files with catalog data using validated column mapping
+        # Always use LEFT JOIN to return category columns even if not filtering
+        if not join_clause:
+            join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+        
         order_clause = f"{order_column} {order_dir.upper()}"
         query_sql = f"""
             SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
@@ -761,7 +795,7 @@ class Storage:
                    f.last_seen, f.crawl_time,
                    c.category, c.summary, c.keywords
             FROM files f
-            LEFT JOIN catalog_items c ON c.file_url = f.url
+            {join_clause}
             WHERE {where_clause}
             ORDER BY {order_clause}
             LIMIT ? OFFSET ?
@@ -794,6 +828,70 @@ class Storage:
             files.append(file_dict)
         
         return files, total
+    
+    def mark_file_deleted(self, url: str, deleted_time: str) -> None:
+        """Mark a file and its catalog item as deleted.
+        
+        Args:
+            url: File URL
+            deleted_time: ISO timestamp for deletion
+        """
+        self._conn.execute(
+            "UPDATE files SET deleted_at = ? WHERE url = ?",
+            (deleted_time, url)
+        )
+        self._conn.execute(
+            "UPDATE catalog_items SET status = 'deleted' WHERE file_url = ?",
+            (url,)
+        )
+        self._maybe_commit()
+    
+    def get_file_with_catalog(self, url: str) -> dict | None:
+        """Get file details with catalog information.
+        
+        Args:
+            url: File URL
+            
+        Returns:
+            Combined file and catalog dict or None if not found
+        """
+        query = """
+            SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
+                   f.original_filename, f.local_path, f.bytes, f.content_type,
+                   f.last_modified, f.etag, f.published_time, f.first_seen,
+                   f.last_seen, f.crawl_time,
+                   c.category, c.summary, c.keywords, c.status
+            FROM files f
+            LEFT JOIN catalog_items c ON c.file_url = f.url
+            WHERE f.url = ?
+        """
+        cur = self._conn.execute(query, (url,))
+        row = cur.fetchone()
+        
+        if not row:
+            return None
+        
+        return {
+            "url": row[0],
+            "sha256": row[1],
+            "title": row[2],
+            "source_site": row[3],
+            "source_page_url": row[4],
+            "original_filename": row[5],
+            "local_path": row[6],
+            "bytes": row[7],
+            "content_type": row[8],
+            "last_modified": row[9],
+            "etag": row[10],
+            "published_time": row[11],
+            "first_seen": row[12],
+            "last_seen": row[13],
+            "crawl_time": row[14],
+            "category": row[15],
+            "summary": row[16],
+            "keywords": json.loads(row[17]) if row[17] else [],
+            "catalog_status": row[18],
+        }
     
     def clear_local_path(self, url: str) -> None:
         """Clear the local_path for a file (for deletion tracking).

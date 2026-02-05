@@ -25,11 +25,12 @@ class AdhocCollector(BaseCollector):
         self.storage = storage
         self.crawler = crawler
     
-    def collect(self, config: CollectionConfig) -> CollectionResult:
+    def collect(self, config: CollectionConfig, progress_callback=None) -> CollectionResult:
         """Execute ad-hoc collection.
         
         Args:
             config: Collection configuration
+            progress_callback: Optional callback for progress updates
             
         Returns:
             CollectionResult with statistics
@@ -44,11 +45,20 @@ class AdhocCollector(BaseCollector):
         try:
             # Get site configuration from metadata
             site_configs = config.metadata.get("site_configs", [])
+            total_sites = len(site_configs)
             
-            for site_config in site_configs:
+            if progress_callback:
+                progress_callback(0, total_sites, "Starting ad-hoc collection")
+            
+            for i, site_config in enumerate(site_configs):
+                
+                def site_progress(c, t, m):
+                    if progress_callback:
+                        progress_callback(c, t, f"[{site_config.name}]: {m}")
+
                 try:
                     # Ad-hoc collections typically have lower limits
-                    new_items = self.crawler.crawl_site(site_config)
+                    new_items = self.crawler.crawl_site(site_config, progress_callback=site_progress)
                     items_found += len(new_items)
                     
                     for item in new_items:
@@ -61,6 +71,9 @@ class AdhocCollector(BaseCollector):
                     error_msg = f"Error in ad-hoc crawl of {site_config.name}: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
+            
+            if progress_callback:
+                progress_callback(total_sites, total_sites, "Completed")
             
             success = len(errors) == 0 or items_found > 0
             

@@ -1,51 +1,353 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 
 {% block content %}
 <div class="tasks-page">
     <div class="page-header">
-        <h2>Task Progress</h2>
-        <p>Monitor real-time progress of collection tasks</p>
+        <h2>Task Center</h2>
+        <div class="header-actions">
+             <button class="btn btn-secondary" onclick="exportData()">Export Results</button>
+        </div>
     </div>
 
-    <div class="active-tasks">
+    <!-- Task Launch Grid -->
+    <div class="task-launch-grid">
+        <!-- Card 1: URL Collection -->
+        <div class="task-card-launch" onclick="location.href='/collection/url'">
+            <div class="launch-icon"></div>
+            <div class="launch-content">
+                <h4>URL Collection</h4>
+                <p>Crawl specific URLs</p>
+            </div>
+        </div>
+
+        <!-- Card 2: File Import -->
+        <div class="task-card-launch" onclick="location.href='/collection/file'">
+            <div class="launch-icon"></div>
+            <div class="launch-content">
+                <h4>File Import</h4>
+                <p>Import local files</p>
+            </div>
+        </div>
+
+        <!-- Card 3: Web Search -->
+        <div class="task-card-launch" onclick="openWebSearchModal()">
+            <div class="launch-icon"></div>
+            <div class="launch-content">
+                <h4>Web Search</h4>
+                <p>Search & Collect</p>
+            </div>
+        </div>
+
+        <!-- Card 4: Quick Site Check -->
+        <div class="task-card-launch" onclick="openQuickCheckModal()">
+            <div class="launch-icon"></div>
+            <div class="launch-content">
+                <h4>Quick Check</h4>
+                <p>Ad-hoc Site Scan</p>
+            </div>
+        </div>
+
+        <!-- Card 5: Catalog Incremental -->
+        <div class="task-card-launch" onclick="openCatalogModal()">
+            <div class="launch-icon"></div>
+            <div class="launch-content">
+                <h4>Cataloging</h4>
+                <p>AI Categorization</p>
+            </div>
+        </div>
+        
+         <!-- Card 6: Scheduled (Manage) -->
+        <div class="task-card-launch" onclick="location.href='/scheduled_tasks'">
+            <div class="launch-icon"></div>
+            <div class="launch-content">
+                <h4>Scheduled</h4>
+                <p>Manage Schedules</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Tasks Monitoring -->
+    <div class="active-tasks-section">
         <h3>Active Tasks</h3>
         <div id="active-tasks-container">
             <p class="loading">Loading active tasks...</p>
         </div>
     </div>
 
-    <div class="task-history">
-        <h3>Recent Task History</h3>
+    <!-- Task History -->
+    <div class="task-history-section">
+        <h3>Task History</h3>
         <div id="task-history-container">
             <p class="loading">Loading task history...</p>
         </div>
     </div>
+</div>
 
-    <div class="new-task">
-        <h3>Start New Collection</h3>
-        <div class="collection-types">
-            <div class="collection-card" onclick="location.href='/collection/url'">
-                <div class="card-icon">🔗</div>
-                <h4>URL Collection</h4>
-                <p>Collect from specific URLs</p>
+<!-- Web Search Modal -->
+<div id="web-search-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('web-search-modal')">&times;</span>
+        <h3>Web Search & Collect</h3>
+        <form id="web-search-form" onsubmit="startWebSearch(event)">
+            <div class="form-group">
+                <label>Search Query</label>
+                <input type="text" name="query" required placeholder="e.g. 'IFRS 17 actuarial papers'">
             </div>
-            <div class="collection-card" onclick="location.href='/collection/file'">
-                <div class="card-icon">📁</div>
-                <h4>File Import</h4>
-                <p>Import local files</p>
+            <div class="form-group">
+                <label>Search Engine</label>
+                <select name="engine">
+                    <option value="brave">Brave Search</option>
+                    <option value="google">Google</option>
+                </select>
             </div>
-            <div class="collection-card" onclick="location.href='/collection/scheduled'">
-                <div class="card-icon">📅</div>
-                <h4>Scheduled Collection</h4>
-                <p>Run configured crawl</p>
+            <div class="form-group">
+                <label>Max Results</label>
+                <input type="number" name="count" value="10" min="1" max="50">
             </div>
-        </div>
+            <div class="form-group">
+                <label>Site Filter (Optional)</label>
+                <input type="text" name="site" placeholder="e.g. actuaries.org">
+            </div>
+            <button type="submit" class="btn btn-primary">Start Search Task</button>
+        </form>
     </div>
 </div>
 
-<script>
-let taskUpdateInterval;
+<!-- Quick Check Modal -->
+<div id="quick-check-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('quick-check-modal')">&times;</span>
+        <h3>Quick Site Check</h3>
+        <p class="hint">Scan a site temporarily without saving configuration.</p>
+        <form id="quick-check-form" onsubmit="startQuickCheck(event)">
+            <div class="form-group">
+                <label>Site URL</label>
+                <input type="text" name="url" required placeholder="https://example.com">
+            </div>
+            <div class="form-group">
+                <label>Keywords (Optional, comma separated)</label>
+                <input type="text" name="keywords" placeholder="insurance, risk">
+            </div>
+            <div class="form-row">
+                <div class="form-group half">
+                    <label>Max Pages</label>
+                    <input type="number" name="max_pages" value="10" max="50">
+                </div>
+                <div class="form-group half">
+                    <label>Depth</label>
+                    <input type="number" name="max_depth" value="1" max="3">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Start Quick Scan</button>
+        </form>
+    </div>
+</div>
 
+<!-- Catalog Modal -->
+<div id="catalog-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('catalog-modal')">&times;</span>
+        <h3>Run Incremental Cataloging</h3>
+        <p class="hint">Use AI to categorize new files.</p>
+        <form id="catalog-form" onsubmit="startCatalog(event)">
+            <div class="form-group">
+                <label>Max Items to Process</label>
+                <input type="number" name="max_items" value="50">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="retry_errors"> Retry Failed Items
+                </label>
+            </div>
+            <div class="form-group">
+                <label>AI Provider</label>
+                <select name="provider">
+                    <option value="openai">OpenAI (Default)</option>
+                    <option value="anthropic" disabled>Anthropic (Coming Soon)</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Start Cataloging</button>
+        </form>
+    </div>
+</div>
+
+<style>
+/* Grid Layout */
+.task-launch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 40px;
+}
+
+.task-card-launch {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    text-align: center;
+    border: 1px solid #eee;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.task-card-launch:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    border-color: #3498db;
+}
+
+.launch-icon {
+    font-size: 2.5em;
+    margin-bottom: 10px;
+}
+
+.launch-content h4 {
+    margin: 0 0 5px 0;
+    color: #2c3e50;
+}
+
+.launch-content p {
+    margin: 0;
+    color: #7f8c8d;
+    font-size: 0.9em;
+}
+
+/* Modal Styles override/addition */
+.modal {
+    display: none; 
+    position: fixed; 
+    z-index: 2000; 
+    left: 0;
+    top: 0;
+    width: 100%; 
+    height: 100%; 
+    background-color: rgba(0,0,0,0.5); 
+}
+.modal-content {
+    background-color: #fefefe;
+    margin: 10% auto; 
+    padding: 25px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    position: relative; 
+}
+.close {
+    position: absolute;
+    right: 20px;
+    top: 15px;
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #999;
+}
+.close:hover { color: #333; }
+.hint { color: #666; font-size: 0.9em; margin-bottom: 15px; font-style: italic; }
+
+.form-row { display: flex; gap: 15px; }
+.form-group.half { flex: 1; }
+
+</style>
+
+<script>
+// --- Modal Management ---
+function openModal(id) { document.getElementById(id).style.display = 'block'; }
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+function openWebSearchModal() { openModal('web-search-modal'); }
+function openQuickCheckModal() { openModal('quick-check-modal'); }
+function openCatalogModal() { openModal('catalog-modal'); }
+
+window.onclick = function(event) {
+    if (event.target.classList.contains('modal')) {
+        event.target.style.display = "none";
+    }
+}
+
+// --- Task Starters ---
+function startWebSearch(e) {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+    
+    startTask('search', {
+        type: 'search',
+        query: data.query,
+        engine: data.engine,
+        count: data.count,
+        site: data.site,
+        name: `Web Search: ${data.query}`
+    });
+    closeModal('web-search-modal');
+}
+
+function startQuickCheck(e) {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    let url = formData.get('url');
+    
+    // Auto-fix URL protocol
+    if (url && !url.match(/^https?:\/\//i)) {
+        url = 'https://' + url;
+    }
+
+    // Convert comma strings to arrays
+    const data = {
+        type: 'quick_check',
+        url: url,
+        max_pages: parseInt(formData.get('max_pages')),
+        max_depth: parseInt(formData.get('max_depth')),
+        keywords: formData.get('keywords') ? formData.get('keywords').split(',').map(s=>s.trim()) : [],
+        name: url
+    };
+    
+    startTask('quick_check', data);
+    closeModal('quick-check-modal');
+}
+
+function startCatalog(e) {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    
+    startTask('catalog', {
+        type: 'catalog',
+        max_items: parseInt(formData.get('max_items')),
+        retry_errors: formData.get('retry_errors') === 'on',
+        provider: formData.get('provider'),
+        name: "Incremental Cataloging"
+    });
+    closeModal('catalog-modal');
+}
+
+function startTask(type, payload) {
+    fetch('/api/collections/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if(data.success) {
+            alert('Task started! Monitoring progress...');
+            loadActiveTasks();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(console.error);
+}
+
+function exportData() {
+    // Basic CSV export trigger
+    window.location.href = '/api/export?format=csv';
+}
+
+// --- Monitoring (Existing Logic Adapted) ---
 function loadActiveTasks() {
     fetch('/api/tasks/active')
         .then(response => response.json())
@@ -55,34 +357,41 @@ function loadActiveTasks() {
                 container.innerHTML = data.tasks.map(task => `
                     <div class="task-card active-task">
                         <div class="task-header">
-                            <h4>${escapeHtml(task.name)}</h4>
-                            <span class="task-status status-${task.status}">${task.status}</span>
-                        </div>
-                        <div class="task-progress">
-                            <div class="progress-bar">
-                                <div class="progress-fill" style="width: ${task.progress}%"></div>
+                            <div>
+                                <h4>${escapeHtml(task.name)}</h4>
+                                <small class="text-muted">${task.type}</small>
                             </div>
-                            <span class="progress-text">${task.progress}%</span>
-                        </div>
-                        <div class="task-details">
-                            <p>Started: ${formatDate(task.started_at)}</p>
-                            <p>Items: ${task.items_processed || 0} / ${task.items_total || '?'}</p>
-                            ${task.current_item ? `<p class="current-item">Processing: ${escapeHtml(task.current_item)}</p>` : ''}
-                        </div>
-                        ${task.errors && task.errors.length > 0 ? `
-                            <div class="task-errors">
-                                <p class="error-count">${task.errors.length} error(s)</p>
+                            <div>
+                                <span class="task-status status-${task.status}">${task.status}</span>
+                                ${task.status === 'running' || task.status === 'pending' ? 
+                                    `<button class="btn-small btn-danger" onclick="stopTask('${task.id}')" style="margin-left:5px;">Stop</button>` 
+                                    : ''}
                             </div>
-                        ` : ''}
+                        </div>
+                        
+                        <div class="task-progress-section">
+                             <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${task.progress || 0}%"></div>
+                            </div>
+                            <div class="progress-labels">
+                                <span>${task.progress || 0}%</span>
+                                <span>${task.items_processed || 0} items</span>
+                            </div>
+                        </div>
+
+                        ${task.current_activity ? 
+                            `<div class="current-activity-line">
+                                <span class="activity-spinner"></span> 
+                                <span class="activity-text">${escapeHtml(task.current_activity)}</span>
+                             </div>` 
+                        : ''}
                     </div>
                 `).join('');
             } else {
-                container.innerHTML = '<p>No active tasks</p>';
+                container.innerHTML = '<p class="no-data">No active tasks currently running.</p>';
             }
         })
-        .catch(error => {
-            console.error('Error loading active tasks:', error);
-        });
+        .catch(console.error);
 }
 
 function loadTaskHistory() {
@@ -91,64 +400,121 @@ function loadTaskHistory() {
         .then(data => {
             const container = document.getElementById('task-history-container');
             if (data.tasks && data.tasks.length > 0) {
-                const table = document.createElement('table');
-                table.className = 'tasks-table';
-                table.innerHTML = `
+                 const tasks = data.tasks; 
+                 container.innerHTML = `
+                <table class="data-table">
                     <thead>
                         <tr>
                             <th>Task</th>
+                            <th>Type</th>
                             <th>Status</th>
-                            <th>Started</th>
-                            <th>Completed</th>
                             <th>Items</th>
-                            <th>Actions</th>
+                            <th>Time</th>
+                            <th>Completed</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${data.tasks.map(task => `
-                            <tr class="task-row status-${task.status}">
+                        ${tasks.map(task => `
+                            <tr>
                                 <td>${escapeHtml(task.name)}</td>
-                                <td><span class="task-status status-${task.status}">${task.status}</span></td>
-                                <td>${formatDate(task.started_at)}</td>
-                                <td>${task.completed_at ? formatDate(task.completed_at) : '-'}</td>
-                                <td>${task.items_processed || 0}</td>
+                                <td>${task.type}</td>
+                                <td><span class="status-badge status-${task.status}">${task.status}</span></td>
                                 <td>
-                                    <button data-task-id="${escapeHtml(task.id)}" onclick="viewTaskDetails(this.dataset.taskId)" class="btn-small">Details</button>
+                                    ${task.items_processed || 0} processed
+                                    <br><small>
+                                        ${task.items_downloaded || 0} new / 
+                                        ${task.items_skipped || 0} skip /
+                                        ${task.errors ? task.errors.length : 0} err
+                                    </small>
+                                </td>
+                                <td>${formatDate(task.started_at)}</td>
+                                <td>
+                                    <button onclick='showLog(${JSON.stringify(task)})' class="btn-small">View Log</button>
                                 </td>
                             </tr>
                         `).join('')}
                     </tbody>
-                `;
-                container.innerHTML = '';
-                container.appendChild(table);
+                </table>`;
             } else {
-                container.innerHTML = '<p>No task history</p>';
+                container.innerHTML = '<p class="no-data">No history available.</p>';
             }
-        })
-        .catch(error => {
-            console.error('Error loading task history:', error);
         });
 }
 
-function viewTaskDetails(taskId) {
-    // Navigate to the current page, preserving the path and adding/updating the task_id query parameter
-    const url = new URL(window.location.href);
-    url.searchParams.set('task_id', taskId);
-    window.location = url.toString();
+function showLog(task) {
+    const content = `
+        <div style="padding: 10px;">
+            <h4>Task Log: ${escapeHtml(task.name)}</h4>
+            <ul style="list-style: none; padding: 0;">
+                <li><strong>Status:</strong> ${task.status}</li>
+                <li><strong>Started:</strong> ${formatDate(task.started_at)}</li>
+                <li><strong>Completed:</strong> ${formatDate(task.completed_at || '')}</li>
+                <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
+                <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
+                <li><strong>Skipped (Duplicates):</strong> ${task.items_skipped || 0}</li>
+                <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+            </ul>
+            <div style="max-height: 200px; overflow-y: auto; background: #f5f5f5; padding: 10px; border: 1px solid #ddd;">
+                <h5>Error Details:</h5>
+                ${(task.errors && task.errors.length > 0) ? 
+                    task.errors.map(e => `<div class="error-item" style="color:red; margin-bottom:5px;">• ${escapeHtml(e)}</div>`).join('') 
+                    : 'No detailed errors logged.'}
+            </div>
+            ${task.message ? `<p><strong>Message:</strong> ${escapeHtml(task.message)}</p>` : ''}
+        </div>
+    `;
+    // Reuse a modal or create one. For simplicity let's use a simple alert if no generic modal, 
+    // but better to inject into the DOM. We have existing modals.
+    // Let's create a dynamic modal div
+    let modal = document.getElementById('log-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'log-modal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <span class="close" onclick="document.getElementById('log-modal').style.display='none'">&times;</span>
+                <div id="log-modal-body"></div>
+            </div>`;
+        document.body.appendChild(modal);
+    }
+    document.getElementById('log-modal-body').innerHTML = content;
+    modal.style.display = 'block';
 }
 
-// Auto-refresh active tasks every 2 seconds
-taskUpdateInterval = setInterval(loadActiveTasks, 2000);
+function stopTask(taskId) {
+    if (!confirm('Stop this task?')) return;
+    fetch(`/api/tasks/stop/${taskId}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if(d.success) loadActiveTasks();
+            else alert(d.error);
+        });
+}
 
-// Load initial data
+// Utilities
+function escapeHtml(text) {
+    if (!text) return '';
+    return text.toString()
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function formatDate(isoStr) {
+    if (!isoStr) return '';
+    try {
+        const d = new Date(isoStr);
+        return d.toLocaleTimeString() + ' ' + d.toLocaleDateString();
+    } catch(e) { return isoStr; }
+}
+
+// Auto-refresh
+setInterval(loadActiveTasks, 2000);
 loadActiveTasks();
 loadTaskHistory();
 
-// Cleanup on page unload
-window.addEventListener('beforeunload', () => {
-    if (taskUpdateInterval) {
-        clearInterval(taskUpdateInterval);
-    }
-});
 </script>
 {% endblock %}
