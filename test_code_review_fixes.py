@@ -14,7 +14,6 @@ Tests the following issues fixed:
 10. Filename exclusion logic
 """
 
-import json
 import os
 import sqlite3
 import tempfile
