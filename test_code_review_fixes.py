@@ -76,6 +76,14 @@ class TestSkippedItemsStatus(unittest.TestCase):
         )
         result = cur.fetchone()
         self.assertEqual(result[0], "skipped")
+        
+        # Verify category indicates it was filtered
+        cur = conn.execute(
+            "SELECT category FROM catalog_items WHERE file_url = ?",
+            (item.url,)
+        )
+        result = cur.fetchone()
+        self.assertIn("filtered", result[0].lower())
         conn.close()
 
 
@@ -325,8 +333,14 @@ class TestConcurrentSQLiteWrites(unittest.TestCase):
         
         # Verify BEGIN IMMEDIATE is present
         self.assertIn("BEGIN IMMEDIATE", content)
-        # Verify we're not using just BEGIN
-        self.assertNotIn('conn.execute("BEGIN")\n', content)
+        # Verify we're not using plain BEGIN without IMMEDIATE
+        # Use regex to check that BEGIN is always followed by IMMEDIATE
+        import re
+        # Find all instances of conn.execute with BEGIN
+        begin_pattern = re.compile(r'conn\.execute\(["\']BEGIN(?!\s+IMMEDIATE)["\']', re.IGNORECASE)
+        matches = begin_pattern.findall(content)
+        self.assertEqual(len(matches), 0, 
+                        f"Found {len(matches)} instances of BEGIN without IMMEDIATE")
 
 
 class TestFilenameExclusionLogic(unittest.TestCase):
