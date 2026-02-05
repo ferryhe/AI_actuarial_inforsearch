@@ -462,13 +462,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 os.unlink(local_path)
                 logger.info("Deleted file: %s", local_path)
             
-            # Update database record to clear local_path
-            # (keeping URL record for history)
-            with storage.transaction():
-                storage._conn.execute(
-                    "UPDATE files SET local_path = NULL WHERE url = ?",
-                    (url,)
-                )
+            # Update database record to clear local_path using abstraction method
+            storage.clear_local_path(url)
             
             storage.close()
             
