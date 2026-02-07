@@ -21,11 +21,35 @@
                     <th>Original URL</th>
                     <td><a href="{{ file.url }}" target="_blank">{{ file.url }}</a></td>
                 </tr>
+                {% elif file.source_site == 'Local Import' or file.source_site == 'File Import' %}
+                <tr>
+                    <th>Original URL</th>
+                    <td>
+                        {% if file.url.startswith('file://') %}
+                            {# Extract just the filename from file:// URLs #}
+                            Local Import: {{ file.url.split('/')[-1] }}
+                        {% else %}
+                            Local Import
+                        {% endif %}
+                    </td>
+                </tr>
                 {% endif %}
                 {% if file.source_page_url and file.source_site != 'Local Import' and file.source_site != 'File Import' %}
                 <tr>
                     <th>Source Page</th>
                     <td><a href="{{ file.source_page_url }}" target="_blank">{{ file.source_page_url }}</a></td>
+                </tr>
+                {% elif (file.source_site == 'Local Import' or file.source_site == 'File Import') and file.source_page_url %}
+                <tr>
+                    <th>Source Page</th>
+                    <td>
+                        {% if file.source_page_url.startswith('file://') %}
+                            {# Extract just the last directory name #}
+                            Local Import/{{ file.source_page_url.rstrip('/').split('/')[-1] }}
+                        {% else %}
+                            Local Import
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endif %}
                 <tr>
@@ -38,7 +62,14 @@
                 </tr>
                 <tr>
                     <th>Local Path</th>
-                    <td>{{ file.local_path or 'Not stored locally' }}</td>
+                    <td>
+                        {% if file.source_site == 'Local Import' or file.source_site == 'File Import' %}
+                            {# For privacy, only show filename for local imports #}
+                            {{ file.original_filename or file.local_path.split('/')[-1] if file.local_path else 'Not stored locally' }}
+                        {% else %}
+                            {{ file.local_path or 'Not stored locally' }}
+                        {% endif %}
+                    </td>
                 </tr>
                 <tr>
                     <th>Collected Date</th>
