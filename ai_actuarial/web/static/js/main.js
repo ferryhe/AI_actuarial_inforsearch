@@ -283,9 +283,11 @@ class DataTable {
             selectable: options.selectable || false,
             resizable: options.resizable || false,
             exportable: options.exportable !== false,
+            deleteable: options.deleteable || false,
             exportFilename: options.exportFilename || 'data_export',
             onRowClick: options.onRowClick || null,
-            onSelectionChange: options.onSelectionChange || null
+            onSelectionChange: options.onSelectionChange || null,
+            onBulkDelete: options.onBulkDelete || null
         };
         
         this.sortColumn = null;
@@ -338,6 +340,23 @@ class DataTable {
         const right = document.createElement('div');
         right.className = 'table-toolbar-right';
         
+        // Add bulk delete button
+        if (this.options.deleteable && this.options.selectable) {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn-delete';
+            deleteBtn.innerHTML = `
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+                Bulk Delete
+            `;
+            deleteBtn.addEventListener('click', () => this.bulkDelete());
+            right.appendChild(deleteBtn);
+        }
+        
         if (this.options.exportable) {
             const exportBtn = document.createElement('button');
             exportBtn.className = 'btn-export';
@@ -347,7 +366,7 @@ class DataTable {
                     <polyline points="7 10 12 15 17 10"></polyline>
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                 </svg>
-                Export CSV
+                Export Filelist
             `;
             exportBtn.addEventListener('click', () => this.exportToCSV(this.options.exportFilename));
             right.appendChild(exportBtn);
@@ -432,7 +451,16 @@ class DataTable {
             // Add click handler
             if (this.options.onRowClick) {
                 tr.style.cursor = 'pointer';
-                tr.addEventListener('click', () => this.options.onRowClick(row, index));
+                tr.addEventListener('click', (e) => {
+                    // Don't trigger row click if clicking on checkbox or its cell
+                    if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') {
+                        return;
+                    }
+                    if (e.target.closest('.row-select')) {
+                        return;
+                    }
+                    this.options.onRowClick(row, index);
+                });
             }
             
             tbody.appendChild(tr);
@@ -590,6 +618,79 @@ class DataTable {
         document.body.removeChild(link);
         
         Toast.success('Data exported successfully');
+    }
+    
+    async bulkDelete() {
+        if (this.selectedRows.size === 0) {
+            Toast.warning('No rows selected');
+            return;
+        }
+        
+        // Create a custom modal for text confirmation
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.style.display = 'flex';
+        modal.innerHTML = `
+            <div class="modal-content confirm-dialog">
+                <h3>Confirm Bulk Delete</h3>
+                <p>You are about to delete ${this.selectedRows.size} file(s). This action cannot be undone.</p>
+                <p>Type <strong>confirm delete</strong> to proceed:</p>
+                <input type="text" id="delete-confirm-input" class="form-control" placeholder="confirm delete" style="margin: 1rem 0; padding: 0.5rem; width: 100%; border: 1px solid var(--border-color); border-radius: 4px;">
+                <div class="confirm-buttons">
+                    <button class="btn btn-secondary" id="cancel-delete">Cancel</button>
+                    <button class="btn btn-danger" id="confirm-delete">Delete</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        document.body.classList.add('modal-open');
+        
+        const input = modal.querySelector('#delete-confirm-input');
+        const confirmBtn = modal.querySelector('#confirm-delete');
+        const cancelBtn = modal.querySelector('#cancel-delete');
+        
+        // Focus the input
+        setTimeout(() => input.focus(), 100);
+        
+        const closeModal = () => {
+            modal.remove();
+            document.body.classList.remove('modal-open');
+        };
+        
+        return new Promise((resolve) => {
+            confirmBtn.addEventListener('click', async () => {
+                const inputValue = input.value.trim().toLowerCase();
+                if (inputValue === 'confirm delete') {
+                    closeModal();
+                    
+                    // Get selected data
+                    const selectedData = Array.from(this.selectedRows).map(i => this.options.data[i]);
+                    
+                    // Call the callback if provided
+                    if (this.options.onBulkDelete) {
+                        await this.options.onBulkDelete(selectedData);
+                    }
+                    
+                    resolve(true);
+                } else {
+                    Toast.error('Please type "confirm delete" exactly to proceed');
+                    input.focus();
+                }
+            });
+            
+            cancelBtn.addEventListener('click', () => {
+                closeModal();
+                resolve(false);
+            });
+            
+            // Allow Enter key to submit
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    confirmBtn.click();
+                }
+            });
+        });
     }
 }
 

@@ -167,6 +167,7 @@ function displayResults(data) {
             sortable: true,
             selectable: true,
             exportable: true,
+            deleteable: true,
             exportFilename: 'database_files',
             onRowClick: (row) => {
                 // URLs are validated and sanitized server-side before storage
@@ -175,6 +176,42 @@ function displayResults(data) {
             },
             onSelectionChange: (selectedFiles) => {
                 console.log(`Selected ${selectedFiles.length} files`);
+            },
+            onBulkDelete: async (selectedFiles) => {
+                // Bulk delete selected files
+                let successCount = 0;
+                let failCount = 0;
+                
+                for (const file of selectedFiles) {
+                    try {
+                        const response = await fetch('/api/files/delete', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({url: file.url, confirm: 'DELETE'})
+                        });
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            successCount++;
+                        } else {
+                            failCount++;
+                        }
+                    } catch (err) {
+                        failCount++;
+                    }
+                }
+                
+                if (successCount > 0) {
+                    Toast.success(`Successfully deleted ${successCount} file(s)`);
+                    // Refresh the page after a short delay
+                    setTimeout(() => {
+                        searchFiles(currentPage);
+                    }, 1000);
+                }
+                
+                if (failCount > 0) {
+                    Toast.error(`Failed to delete ${failCount} file(s)`);
+                }
             }
         });
 

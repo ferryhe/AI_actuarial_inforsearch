@@ -1522,6 +1522,34 @@ html {
     background: var(--gray-600);
 }
 
+/* Delete button */
+.btn-delete {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--error-500);
+    color: white;
+    border: 1px solid var(--error-600);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-delete:hover {
+    background: var(--error-600);
+    transform: translateY(-1px);
+}
+
+[data-theme="dark"] .btn-delete {
+    background: var(--error-600);
+    border-color: var(--error-500);
+}
+
+[data-theme="dark"] .btn-delete:hover {
+    background: var(--error-500);
+}
+
 /* Column resizer */
 .column-resizer {
     position: absolute;
