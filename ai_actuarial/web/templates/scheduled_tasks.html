@@ -10,7 +10,7 @@
     <div class="tabs">
         <button class="tab-link active" onclick="openTab(event, 'configured-sites')">Configured Sites</button>
         <button class="tab-link" onclick="openTab(event, 'manual-trigger')">Manual Trigger</button>
-        <button class="tab-link" onclick="openTab(event, 'history')">Collection History</button>
+        <button class="tab-link" onclick="openTab(event, 'history')">Task History</button>
     </div>
 
     <!-- Tab Content: Configured Sites -->
@@ -464,8 +464,12 @@ function startScheduledCollection() {
     .catch(e => showNotification('Error: ' + e, 'error'));
 }
 
-function runSingleSite(name) {
-    if (!confirm(`Are you sure you want to run collection for ${name} now?`)) return;
+async function runSingleSite(name) {
+    const confirmed = await customConfirm(
+        `Are you sure you want to run collection for ${name} now?`,
+        'Run Collection'
+    );
+    if (!confirmed) return;
     
     fetch('/api/collections/run', {
         method: 'POST',
