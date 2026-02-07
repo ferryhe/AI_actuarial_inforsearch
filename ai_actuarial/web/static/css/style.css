@@ -930,3 +930,37 @@ body {
     background-color: var(--card-bg);
     color: var(--text-primary);
 }
+
+/* Custom confirm dialog - compact and auto-sizing */
+.confirm-dialog {
+    max-width: 400px;
+    min-width: 320px;
+    width: auto;
+    padding: 1.5rem !important;
+}
+
+.confirm-dialog h3 {
+    margin: 0 0 0.75rem 0 !important;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.confirm-dialog p {
+    margin: 0 0 1.25rem 0 !important;
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+    line-height: 1.5;
+}
+
+.confirm-buttons {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin: 0;
+}
+
+.confirm-buttons .btn {
+    min-width: 80px;
+    padding: 0.5rem 1rem;
+}
