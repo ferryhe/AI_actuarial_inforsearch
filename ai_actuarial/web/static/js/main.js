@@ -46,57 +46,128 @@ function formatBytes(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
-// Show notification
-function showNotification(message, type = 'info') {
-    const notification = document.createElement('div');
-    notification.className = `notification notification-${type}`;
-    notification.textContent = message;
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 1rem 1.5rem;
-        background-color: ${type === 'error' ? '#ef4444' : type === 'success' ? '#10b981' : '#2563eb'};
-        color: white;
-        border-radius: 6px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        z-index: 1000;
-        animation: slideIn 0.3s ease-out;
-    `;
-    
-    document.body.appendChild(notification);
-    
-    setTimeout(() => {
-        notification.style.animation = 'slideOut 0.3s ease-out';
-        setTimeout(() => notification.remove(), 300);
-    }, 3000);
+// ===================================
+// PHASE 2: Toast Notification System
+// ===================================
+
+// Create toast container if it doesn't exist
+function getToastContainer() {
+    let container = document.querySelector('.toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+    return container;
 }
 
-// Add CSS for animations
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            transform: translateX(100%);
-            opacity: 0;
+// Toast notification class
+class Toast {
+    static show(message, type = 'info', duration = 5000) {
+        const container = getToastContainer();
+        
+        // Create toast element
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        
+        // Icon based on type
+        const icons = {
+            success: '✓',
+            error: '✕',
+            warning: '⚠',
+            info: 'ℹ'
+        };
+        
+        toast.innerHTML = `
+            <div class="toast-icon">${icons[type] || icons.info}</div>
+            <div class="toast-message">${escapeHtml(message)}</div>
+            <button class="toast-close" aria-label="Close">&times;</button>
+        `;
+        
+        container.appendChild(toast);
+        
+        // Show toast with animation
+        setTimeout(() => toast.classList.add('show'), 10);
+        
+        // Close button handler
+        const closeBtn = toast.querySelector('.toast-close');
+        closeBtn.addEventListener('click', () => this.hide(toast));
+        
+        // Auto-hide after duration
+        if (duration > 0) {
+            setTimeout(() => this.hide(toast), duration);
         }
-        to {
-            transform: translateX(0);
-            opacity: 1;
-        }
+        
+        return toast;
     }
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
+    
+    static hide(toast) {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
     }
-`;
-document.head.appendChild(style);
+    
+    static success(message, duration) {
+        return this.show(message, 'success', duration);
+    }
+    
+    static error(message, duration) {
+        return this.show(message, 'error', duration);
+    }
+    
+    static warning(message, duration) {
+        return this.show(message, 'warning', duration);
+    }
+    
+    static info(message, duration) {
+        return this.show(message, 'info', duration);
+    }
+}
+
+// Backward compatibility - keep old showNotification function
+function showNotification(message, type = 'info') {
+    Toast.show(message, type);
+}
+
+// ===================================
+// PHASE 2: Loading Skeleton System
+// ===================================
+
+// Show loading skeleton for a container
+function showSkeleton(container, type = 'table') {
+    if (!container) return;
+    
+    const skeletons = {
+        table: `
+            <div class="skeleton-table">
+                ${Array(5).fill().map(() => `
+                    <div class="skeleton-row">
+                        <div class="skeleton-cell"></div>
+                        <div class="skeleton-cell"></div>
+                        <div class="skeleton-cell"></div>
+                        <div class="skeleton-cell"></div>
+                    </div>
+                `).join('')}
+            </div>
+        `,
+        card: `
+            <div class="skeleton-card">
+                <div class="skeleton skeleton-title"></div>
+                <div class="skeleton skeleton-text"></div>
+                <div class="skeleton skeleton-text"></div>
+                <div class="skeleton skeleton-text"></div>
+            </div>
+        `,
+        text: `<div class="skeleton skeleton-text"></div>`
+    };
+    
+    container.innerHTML = skeletons[type] || skeletons.text;
+}
+
+// Hide skeleton and show content
+function hideSkeleton(container, content) {
+    if (!container) return;
+    container.innerHTML = content;
+}
 
 // Highlight active nav link
 document.addEventListener('DOMContentLoaded', () => {
@@ -141,6 +212,9 @@ window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
 window.formatBytes = formatBytes;
 window.showNotification = showNotification;
+window.Toast = Toast;
+window.showSkeleton = showSkeleton;
+window.hideSkeleton = hideSkeleton;
 window.API = API;
 
 // Modal state helper (locks background scroll when any modal is open)
