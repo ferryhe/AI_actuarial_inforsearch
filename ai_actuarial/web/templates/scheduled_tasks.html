@@ -369,6 +369,7 @@ function openAddSiteModal() {
     document.getElementById('modal-exclude-keywords').value = '';
     document.getElementById('modal-exclude-prefixes').value = '';
     document.getElementById('site-modal').style.display = "block";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function editSite(name) {
@@ -385,10 +386,12 @@ function editSite(name) {
     document.getElementById('modal-exclude-keywords').value = (site.exclude_keywords || []).join(', ');
     document.getElementById('modal-exclude-prefixes').value = (site.exclude_prefixes || []).join(', ');
     document.getElementById('site-modal').style.display = "block";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function closeModal() {
     document.getElementById('site-modal').style.display = "none";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function saveSite() {
@@ -549,10 +552,12 @@ function viewLog(task) {
     
     logContent.innerText = content;
     document.getElementById('log-modal').style.display = "block";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function closeLogModal() {
     document.getElementById('log-modal').style.display = "none";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function viewGlobalLog() {
@@ -568,6 +573,7 @@ function viewGlobalLog() {
                  logContent.innerText = "No logs available.";
             }
             document.getElementById('log-modal').style.display = "block";
+            if (window.syncModalState) window.syncModalState();
         })
         .catch(err => showNotification("Error: " + err, 'error'));
 }

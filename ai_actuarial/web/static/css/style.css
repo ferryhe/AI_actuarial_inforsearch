@@ -73,6 +73,16 @@ body {
     line-height: 1.6;
 }
 
+/* Prevent background scroll when a modal is open */
+body.modal-open {
+    overflow: hidden;
+}
+
+.modal {
+    align-items: center;
+    justify-content: center;
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
@@ -932,22 +942,27 @@ body {
 }
 
 /* Custom confirm dialog - compact and auto-sizing */
-.confirm-dialog {
-    max-width: 400px;
-    min-width: 320px;
-    width: auto;
-    padding: 1.5rem !important;
+.modal-content.confirm-dialog {
+    width: clamp(280px, 90vw, 420px);
+    padding: 1.25rem 1.5rem !important;
+    margin: 0;
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-self: center;
 }
 
 .confirm-dialog h3 {
-    margin: 0 0 0.75rem 0 !important;
+    margin: 0 !important;
     font-size: 1.125rem;
     font-weight: 600;
     color: var(--text-primary);
 }
 
 .confirm-dialog p {
-    margin: 0 0 1.25rem 0 !important;
+    margin: 0 !important;
     color: var(--text-secondary);
     font-size: 0.9375rem;
     line-height: 1.5;
@@ -957,7 +972,7 @@ body {
     display: flex;
     gap: 0.5rem;
     justify-content: flex-end;
-    margin: 0;
+    margin-top: 0.25rem;
 }
 
 .confirm-buttons .btn {

@@ -477,6 +477,7 @@
     top: 0;
     width: 100%; 
     height: 100%; 
+    overflow: auto;
     background-color: rgba(0,0,0,0.6); 
     backdrop-filter: blur(2px);
     animation: fadeIn 0.2s ease;
@@ -712,10 +713,18 @@ function resetFormatSelector(modalId) {
 }
 
 // --- Modal Management ---
-function openModal(id) { document.getElementById(id).style.display = 'block'; }
+function openModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.style.display = 'block';
+    if (window.syncModalState) window.syncModalState();
+}
+
 function closeModal(id) { 
-    document.getElementById(id).style.display = 'none';
+    const modal = document.getElementById(id);
+    if (modal) modal.style.display = 'none';
     resetFormatSelector(id);  // 关闭时重置格式选择器
+    if (window.syncModalState) window.syncModalState();
 }
 
 // Refresh page data after task submission
@@ -734,6 +743,7 @@ window.onclick = function(event) {
     if (event.target.classList.contains('modal')) {
         event.target.style.display = "none";
         resetFormatSelector(event.target.id);  // 点击背景关闭时也重置
+        if (window.syncModalState) window.syncModalState();
     }
 }
 
@@ -1008,13 +1018,13 @@ function showLog(task) {
         modal.className = 'modal';
         modal.innerHTML = `
             <div class="modal-content">
-                <span class="close" onclick="document.getElementById('log-modal').style.display='none'">&times;</span>
+                <span class="close" onclick="closeModal('log-modal')">&times;</span>
                 <div id="log-modal-body"></div>
             </div>`;
         document.body.appendChild(modal);
     }
     document.getElementById('log-modal-body').innerHTML = content;
-    modal.style.display = 'block';
+    openModal('log-modal');
 }
 
 async function stopTask(taskId) {
