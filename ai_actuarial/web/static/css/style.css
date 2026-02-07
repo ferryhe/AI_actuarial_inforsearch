@@ -1351,3 +1351,599 @@ html {
         transition-duration: 0.01ms !important;
     }
 }
+
+/* ===================================
+   PHASE 3: Component Upgrades
+   =================================== */
+
+/* 3.1 Advanced Tables */
+/* Enhanced table with sorting, selection, and export */
+.data-table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    background: var(--card-bg);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.data-table thead {
+    background: var(--gray-100);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+[data-theme="dark"] .data-table thead {
+    background: var(--gray-700);
+}
+
+.data-table th {
+    padding: 1rem;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--border-color);
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    white-space: nowrap;
+}
+
+.data-table th:hover {
+    background: var(--gray-200);
+}
+
+[data-theme="dark"] .data-table th:hover {
+    background: var(--gray-600);
+}
+
+/* Sortable column indicator */
+.data-table th.sortable::after {
+    content: '';
+    display: inline-block;
+    width: 0;
+    height: 0;
+    margin-left: 0.5rem;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid var(--gray-400);
+    opacity: 0.3;
+}
+
+.data-table th.sortable:hover::after {
+    opacity: 0.6;
+}
+
+.data-table th.sort-asc::after {
+    border-top: none;
+    border-bottom: 4px solid var(--primary-color);
+    opacity: 1;
+}
+
+.data-table th.sort-desc::after {
+    border-top: 4px solid var(--primary-color);
+    opacity: 1;
+}
+
+.data-table tbody tr {
+    border-bottom: 1px solid var(--border-color);
+    transition: background-color 0.15s ease;
+}
+
+.data-table tbody tr:hover {
+    background: var(--gray-50);
+}
+
+[data-theme="dark"] .data-table tbody tr:hover {
+    background: var(--gray-700);
+}
+
+.data-table tbody tr.selected {
+    background: rgba(37, 99, 235, 0.1);
+}
+
+[data-theme="dark"] .data-table tbody tr.selected {
+    background: rgba(59, 130, 246, 0.15);
+}
+
+.data-table td {
+    padding: 1rem;
+    color: var(--text-secondary);
+}
+
+/* Row selection checkbox */
+.data-table .row-select {
+    width: 40px;
+    text-align: center;
+}
+
+.data-table .row-select input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--primary-color);
+}
+
+/* Table toolbar */
+.table-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    gap: 1rem;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 8px 8px 0 0;
+}
+
+.table-toolbar-left,
+.table-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.table-toolbar .selected-count {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+/* Export button */
+.btn-export {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--gray-100);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-export:hover {
+    background: var(--gray-200);
+    transform: translateY(-1px);
+}
+
+[data-theme="dark"] .btn-export {
+    background: var(--gray-700);
+    border-color: var(--gray-600);
+}
+
+[data-theme="dark"] .btn-export:hover {
+    background: var(--gray-600);
+}
+
+/* Column resizer */
+.column-resizer {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: col-resize;
+    user-select: none;
+}
+
+.column-resizer:hover {
+    background: var(--primary-color);
+}
+
+/* 3.2 Enhanced Modal System */
+/* Modal size variants */
+.modal-content.modal-sm {
+    max-width: 400px;
+}
+
+.modal-content.modal-md {
+    max-width: 600px;
+}
+
+.modal-content.modal-lg {
+    max-width: 900px;
+}
+
+.modal-content.modal-xl {
+    max-width: 1200px;
+}
+
+.modal-content.modal-fullscreen {
+    max-width: 95vw;
+    max-height: 95vh;
+    width: 95vw;
+    height: 95vh;
+}
+
+/* Enhanced modal backdrop with blur */
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    z-index: 999;
+    display: none;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.modal-backdrop.show {
+    display: block;
+}
+
+/* Modal header */
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+}
+
+.modal-header h3 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Modal footer */
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    margin-top: 1rem;
+}
+
+/* Enhanced modal close button */
+.modal .close {
+    background: var(--gray-100);
+    border-radius: 6px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.modal .close:hover {
+    background: var(--gray-200);
+    transform: scale(1.1);
+}
+
+[data-theme="dark"] .modal .close {
+    background: var(--gray-700);
+}
+
+[data-theme="dark"] .modal .close:hover {
+    background: var(--gray-600);
+}
+
+/* 3.3 Advanced Search Enhancement */
+/* Search autocomplete container */
+.search-autocomplete {
+    position: relative;
+    width: 100%;
+}
+
+.search-autocomplete input {
+    width: 100%;
+    padding-right: 2.5rem;
+}
+
+.search-clear {
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.25rem;
+    font-size: 1.25rem;
+    line-height: 1;
+    opacity: 0.5;
+    transition: opacity 0.2s ease;
+}
+
+.search-clear:hover {
+    opacity: 1;
+}
+
+/* Autocomplete dropdown */
+.autocomplete-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 0.5rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 100;
+    display: none;
+}
+
+.autocomplete-dropdown.show {
+    display: block;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.autocomplete-item {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    transition: background-color 0.15s ease;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.active {
+    background: var(--gray-50);
+}
+
+[data-theme="dark"] .autocomplete-item:hover,
+[data-theme="dark"] .autocomplete-item.active {
+    background: var(--gray-700);
+}
+
+.autocomplete-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--text-secondary);
+}
+
+.autocomplete-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.autocomplete-main {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.autocomplete-sub {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+/* Search history section */
+.search-history {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.search-history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.search-history-title {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.search-history-clear {
+    background: none;
+    border: none;
+    color: var(--primary-color);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0;
+}
+
+.search-history-clear:hover {
+    text-decoration: underline;
+}
+
+/* Advanced search filters panel */
+.search-filters-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+    display: none;
+}
+
+.search-filters-panel.show {
+    display: block;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.search-filters-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.search-filters-header h4 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.filters-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.filter-group label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+/* Filter tags */
+.filter-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.filter-tag {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.75rem;
+    background: var(--primary-100);
+    color: var(--primary-700);
+    border-radius: 16px;
+    font-size: 0.875rem;
+}
+
+[data-theme="dark"] .filter-tag {
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--primary-400);
+}
+
+.filter-tag-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    font-size: 1.125rem;
+    line-height: 1;
+    opacity: 0.7;
+}
+
+.filter-tag-remove:hover {
+    opacity: 1;
+}
+
+/* Search suggestions */
+.search-suggestions {
+    padding: 0.75rem 1rem;
+}
+
+.search-suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.search-suggestion-item:hover {
+    background: var(--gray-50);
+}
+
+[data-theme="dark"] .search-suggestion-item:hover {
+    background: var(--gray-700);
+}
+
+.search-suggestion-icon {
+    width: 16px;
+    height: 16px;
+    color: var(--text-secondary);
+}
+
+/* Keyboard navigation hint */
+.keyboard-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--gray-50);
+    border-top: 1px solid var(--border-color);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .keyboard-hint {
+    background: var(--gray-800);
+}
+
+.kbd {
+    display: inline-block;
+    padding: 0.125rem 0.375rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* Loading indicator for search */
+.search-loading {
+    position: absolute;
+    right: 2.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.search-loading .spinner {
+    width: 20px;
+    height: 20px;
+    border-width: 2px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .data-table-wrapper {
+        border-radius: 0;
+    }
+    
+    .table-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .table-toolbar-left,
+    .table-toolbar-right {
+        justify-content: space-between;
+    }
+    
+    .modal-content.modal-lg,
+    .modal-content.modal-xl {
+        max-width: 95vw;
+    }
+    
+    .filters-grid {
+        grid-template-columns: 1fr;
+    }
+}
