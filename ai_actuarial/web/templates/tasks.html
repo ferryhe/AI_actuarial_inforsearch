@@ -111,7 +111,12 @@
 <div id="web-search-modal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal('web-search-modal')">&times;</span>
-        <h3>Web Search & Collect</h3>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-globe"></use>
+            </svg>
+            Web Search & Collect
+        </h3>
         <form id="web-search-form" onsubmit="startWebSearch(event)">
             <div class="form-group">
                 <label>Search Query</label>
@@ -179,7 +184,12 @@
 <div id="quick-check-modal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal('quick-check-modal')">&times;</span>
-        <h3>Quick Site Check</h3>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-eye"></use>
+            </svg>
+            Quick Site Check
+        </h3>
         <p class="hint">Scan a site temporarily without saving configuration.</p>
         <form id="quick-check-form" onsubmit="startQuickCheck(event)">
             <div class="form-group">
@@ -247,7 +257,12 @@
 <div id="catalog-modal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal('catalog-modal')">&times;</span>
-        <h3>Run Incremental Cataloging</h3>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-tag"></use>
+            </svg>
+            Run Incremental Cataloging
+        </h3>
         <p class="hint">Use AI to categorize new files.</p>
         <form id="catalog-form" onsubmit="startCatalog(event)">
             <div class="form-group">
@@ -275,7 +290,12 @@
 <div id="url-collection-modal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal('url-collection-modal')">&times;</span>
-        <h3>URL Collection</h3>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-link"></use>
+            </svg>
+            URL Collection
+        </h3>
         <p class="hint">Crawl and download files from specific URLs.</p>
         <form id="url-collection-form" onsubmit="startUrlCollection(event)">
             <div class="form-group">
@@ -334,12 +354,25 @@
 <div id="file-import-modal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal('file-import-modal')">&times;</span>
-        <h3>File Import</h3>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-upload"></use>
+            </svg>
+            File Import
+        </h3>
         <p class="hint">Import files from local directory into the system.</p>
         <form id="file-import-form" onsubmit="startFileImport(event)">
             <div class="form-group">
                 <label>Directory Path</label>
-                <input type="text" name="directory_path" required placeholder="C:\Documents\ActuarialFiles">
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="directory-path-input" name="directory_path" required placeholder="C:\Documents\ActuarialFiles" style="flex: 1;">
+                    <button type="button" class="btn btn-secondary" onclick="browseFolder()" style="flex-shrink: 0;">
+                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width: 16px; height: 16px;">
+                            <use xlink:href="#icon-folder"></use>
+                        </svg>
+                        Browse
+                    </button>
+                </div>
             </div>
             <div class="form-group">
                 <label>
@@ -489,14 +522,16 @@
     color: var(--text-primary);
     margin-bottom: 8px;
     font-size: 1.5em;
-    padding-left: 30px;
+    padding-left: 0px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
-.modal-content h3::before {
-    content: "⚡";
-    position: absolute;
-    left: 30px;
-    font-size: 1.2em;
+.modal-content h3 svg {
+    width: 24px;
+    height: 24px;
+    color: var(--primary-500);
 }
 
 .close {
@@ -631,6 +666,31 @@
     color: #e74c3c;
     font-size: 0.85em;
     font-style: italic;
+}
+
+/* Error details box */
+.error-details-box {
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--gray-100);
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-top: 1rem;
+}
+
+[data-theme="dark"] .error-details-box {
+    background: var(--gray-800);
+}
+
+.error-details-box h5 {
+    margin: 0 0 0.5rem 0;
+    color: var(--text-primary);
+}
+
+.error-item {
+    color: var(--error-500);
+    margin-bottom: 5px;
 }
 
 </style>
@@ -776,6 +836,17 @@ function startUrlCollection(e) {
     closeModal('url-collection-modal');
 }
 
+function browseFolder() {
+    // Note: Web browsers cannot directly access the file system for security reasons
+    // This button provides a visual cue, but users need to manually type or paste the path
+    // In a desktop application, this could use electron or similar to open a folder dialog
+    const input = document.getElementById('directory-path-input');
+    const userPath = prompt('Enter the full path to your directory:', input.value || '');
+    if (userPath !== null && userPath.trim() !== '') {
+        input.value = userPath.trim();
+    }
+}
+
 function startFileImport(e) {
     e.preventDefault();
     const form = e.target;
@@ -783,7 +854,7 @@ function startFileImport(e) {
     
     const directoryPath = formData.get('directory_path');
     if (!directoryPath) {
-        alert('Please enter a directory path');
+        showNotification('Please enter a directory path', 'error');
         return;
     }
     
@@ -812,14 +883,14 @@ function startTask(type, payload) {
     .then(r => r.json())
     .then(data => {
         if(data.success) {
-            alert('Task started! Monitoring progress...');
+            showNotification('Task started! Monitoring progress...', 'success');
             // Refresh page data to show new active task
             refreshTasksPage();
         } else {
-            alert('Error: ' + data.error);
+            showNotification('Error: ' + data.error, 'error');
         }
     })
-    .catch(console.error);
+    .catch(err => showNotification('Error: ' + err, 'error'));
 }
 
 function exportData() {
@@ -934,10 +1005,10 @@ function showLog(task) {
                 <li><strong>Skipped (Duplicates):</strong> ${task.items_skipped || 0}</li>
                 <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
             </ul>
-            <div style="max-height: 200px; overflow-y: auto; background: #f5f5f5; padding: 10px; border: 1px solid #ddd;">
+            <div class="error-details-box">
                 <h5>Error Details:</h5>
                 ${(task.errors && task.errors.length > 0) ? 
-                    task.errors.map(e => `<div class="error-item" style="color:red; margin-bottom:5px;">• ${escapeHtml(e)}</div>`).join('') 
+                    task.errors.map(e => `<div class="error-item">• ${escapeHtml(e)}</div>`).join('') 
                     : 'No detailed errors logged.'}
             </div>
             ${task.message ? `<p><strong>Message:</strong> ${escapeHtml(task.message)}</p>` : ''}
@@ -963,13 +1034,18 @@ function showLog(task) {
 }
 
 function stopTask(taskId) {
-    if (!confirm('Stop this task?')) return;
+    if (!confirm('Are you sure you want to stop this task?')) return;
     fetch(`/api/tasks/stop/${taskId}`, { method: 'POST' })
         .then(r => r.json())
         .then(d => {
-            if(d.success) loadActiveTasks();
-            else alert(d.error);
-        });
+            if(d.success) {
+                showNotification('Task stopped successfully', 'success');
+                loadActiveTasks();
+            } else {
+                showNotification('Error: ' + d.error, 'error');
+            }
+        })
+        .catch(err => showNotification('Error: ' + err, 'error'));
 }
 
 // Utilities

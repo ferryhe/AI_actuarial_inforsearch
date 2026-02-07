@@ -421,13 +421,13 @@ function saveSite() {
         if (data.success) {
             closeModal();
             loadSites();
-            alert('Site saved successfully!');
+            showNotification('Site saved successfully!', 'success');
         } else {
-            alert('Error: ' + data.error);
+            showNotification('Error: ' + data.error, 'error');
         }
     })
     .catch(error => {
-        alert('Error saving site: ' + error);
+        showNotification('Error saving site: ' + error, 'error');
     });
 }
 
@@ -452,20 +452,20 @@ function startScheduledCollection() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            alert('Task started! ID: ' + data.job_id);
+            showNotification('Task started! ID: ' + data.job_id, 'success');
             // Switch to history tab
             const historyTab = document.querySelector('.tab-link[onclick*="history"]');
             if(historyTab) historyTab.click();
             loadHistory();
         } else {
-            alert('Error: ' + data.error);
+            showNotification('Error: ' + data.error, 'error');
         }
     })
-    .catch(e => alert(e));
+    .catch(e => showNotification('Error: ' + e, 'error'));
 }
 
 function runSingleSite(name) {
-    if (!confirm(`Run collection for ${name} now?`)) return;
+    if (!confirm(`Are you sure you want to run collection for ${name} now?`)) return;
     
     fetch('/api/collections/run', {
         method: 'POST',
@@ -478,11 +478,12 @@ function runSingleSite(name) {
     .then(response => response.json())
     .then(data => {
          if (data.success) {
-            alert('Task started! Check Tasks tab.');
+            showNotification('Task started! Check Tasks tab.', 'success');
         } else {
-            alert('Error: ' + data.error);
+            showNotification('Error: ' + data.error, 'error');
         }
-    });
+    })
+    .catch(err => showNotification('Error: ' + err, 'error'));
 }
 
 // History & Logs
@@ -564,7 +565,7 @@ function viewGlobalLog() {
             }
             document.getElementById('log-modal').style.display = "block";
         })
-        .catch(err => alert("Error: " + err));
+        .catch(err => showNotification("Error: " + err, 'error'));
 }
 
 // Helper
