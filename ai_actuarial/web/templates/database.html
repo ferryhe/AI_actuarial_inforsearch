@@ -167,7 +167,10 @@ function displayResults(data) {
             sortable: true,
             selectable: true,
             exportable: true,
+            exportFilename: 'database_files',
             onRowClick: (row) => {
+                // URLs are validated and sanitized server-side before storage
+                // viewFile function performs additional URI encoding
                 viewFile(row.url);
             },
             onSelectionChange: (selectedFiles) => {

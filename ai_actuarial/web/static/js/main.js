@@ -283,6 +283,7 @@ class DataTable {
             selectable: options.selectable || false,
             resizable: options.resizable || false,
             exportable: options.exportable !== false,
+            exportFilename: options.exportFilename || 'data_export',
             onRowClick: options.onRowClick || null,
             onSelectionChange: options.onSelectionChange || null
         };
@@ -348,7 +349,7 @@ class DataTable {
                 </svg>
                 Export CSV
             `;
-            exportBtn.addEventListener('click', () => this.exportToCSV());
+            exportBtn.addEventListener('click', () => this.exportToCSV(this.options.exportFilename));
             right.appendChild(exportBtn);
         }
         
@@ -550,7 +551,7 @@ class DataTable {
         }
     }
     
-    exportToCSV() {
+    exportToCSV(filename = 'data_export') {
         if (!this.options.data.length) {
             Toast.warning('No data to export');
             return;
@@ -576,12 +577,13 @@ class DataTable {
         
         const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
         
-        // Download CSV
+        // Download CSV with descriptive filename
+        const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
         link.setAttribute('href', url);
-        link.setAttribute('download', `export_${Date.now()}.csv`);
+        link.setAttribute('download', `${filename}_${timestamp}.csv`);
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
@@ -791,7 +793,8 @@ class SearchAutocomplete {
             this.suggestions = await this.options.getSuggestions(query);
             this.showSuggestions(query);
         } catch (error) {
-            console.error('Search error:', error);
+            console.error('Search error for query "' + query + '":', error);
+            Toast.error('Failed to load search suggestions');
         }
     }
     
