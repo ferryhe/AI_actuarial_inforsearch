@@ -125,35 +125,55 @@ function displayResults(data) {
     document.getElementById('results-count').textContent = `${data.total} files`;
 
     if (data.files && data.files.length > 0) {
-        const table = document.createElement('table');
-        table.className = 'files-table';
-        table.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Title / Summary</th>
-                    <th>Source</th>
-                    <th>Category</th>
-                    <th>Size</th>
-                    <th>Last Seen</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.files.map(file => `
-                    <tr onclick="viewFile('${encodeURIComponent(file.url)}')" style="cursor: pointer;">
-                        <td>
-                            <div class="file-title">${escapeHtml(file.title || file.original_filename || 'Untitled')}</div>
-                            ${file.summary ? `<div class="file-summary">${escapeHtml(file.summary.substring(0, 100))}...</div>` : ''}
-                        </td>
-                        <td>${escapeHtml(file.source_site || 'Unknown')}</td>
-                        <td>${escapeHtml(file.category || '-')}</td>
-                        <td>${formatBytes(file.bytes)}</td>
-                        <td>${formatDate(file.last_seen)}</td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        `;
-        container.innerHTML = '';
-        container.appendChild(table);
+        // Use Phase 3 DataTable component
+        new DataTable(container, {
+            data: data.files,
+            columns: [
+                {
+                    key: 'title',
+                    label: 'Title / Summary',
+                    sortable: true,
+                    render: (value, row) => {
+                        const title = escapeHtml(row.title || row.original_filename || 'Untitled');
+                        const summary = row.summary ? `<div class="file-summary">${escapeHtml(row.summary.substring(0, 100))}...</div>` : '';
+                        return `<div class="file-title">${title}</div>${summary}`;
+                    }
+                },
+                {
+                    key: 'source_site',
+                    label: 'Source',
+                    sortable: true,
+                    render: (value) => escapeHtml(value || 'Unknown')
+                },
+                {
+                    key: 'category',
+                    label: 'Category',
+                    sortable: true,
+                    render: (value) => escapeHtml(value || '-')
+                },
+                {
+                    key: 'bytes',
+                    label: 'Size',
+                    sortable: true,
+                    render: (value) => formatBytes(value)
+                },
+                {
+                    key: 'last_seen',
+                    label: 'Last Seen',
+                    sortable: true,
+                    render: (value) => formatDate(value)
+                }
+            ],
+            sortable: true,
+            selectable: true,
+            exportable: true,
+            onRowClick: (row) => {
+                viewFile(row.url);
+            },
+            onSelectionChange: (selectedFiles) => {
+                console.log(`Selected ${selectedFiles.length} files`);
+            }
+        });
 
         // Update pagination
         updatePagination(data.total);
@@ -220,5 +240,43 @@ function debounceSearch() {
     clearTimeout(window.searchTimeout);
     window.searchTimeout = setTimeout(() => searchFiles(1), 500);
 }
+
+// Initialize Phase 3 Search Autocomplete
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('search-query');
+    
+    if (searchInput && typeof SearchAutocomplete !== 'undefined') {
+        new SearchAutocomplete(searchInput, {
+            onSearch: (query) => {
+                searchFiles(1);
+            },
+            onSelect: (value) => {
+                searchFiles(1);
+            },
+            getSuggestions: async (query) => {
+                // Return search suggestions (could be enhanced with API call)
+                const suggestions = [];
+                
+                // Add common search terms
+                const commonTerms = ['PDF', 'IFRS', 'actuarial', 'insurance', 'risk'];
+                commonTerms.forEach(term => {
+                    if (term.toLowerCase().includes(query.toLowerCase())) {
+                        suggestions.push({
+                            text: term,
+                            subtitle: 'Common search term'
+                        });
+                    }
+                });
+                
+                return suggestions;
+            },
+            minLength: 2,
+            debounceDelay: 300,
+            showHistory: true,
+            maxHistory: 5
+        });
+    }
+});
+
 </script>
 {% endblock %}
