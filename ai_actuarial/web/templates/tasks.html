@@ -13,7 +13,11 @@
     <div class="task-launch-grid">
         <!-- Card 1: URL Collection -->
         <div class="task-card-launch" onclick="openUrlCollectionModal()">
-            <div class="launch-icon"></div>
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-link"></use>
+                </svg>
+            </div>
             <div class="launch-content">
                 <h4>URL Collection</h4>
                 <p>Crawl specific URLs</p>
@@ -22,7 +26,11 @@
 
         <!-- Card 2: File Import -->
         <div class="task-card-launch" onclick="openFileImportModal()">
-            <div class="launch-icon"></div>
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-upload"></use>
+                </svg>
+            </div>
             <div class="launch-content">
                 <h4>File Import</h4>
                 <p>Import local files</p>
@@ -31,7 +39,11 @@
 
         <!-- Card 3: Web Search -->
         <div class="task-card-launch" onclick="openWebSearchModal()">
-            <div class="launch-icon"></div>
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-globe"></use>
+                </svg>
+            </div>
             <div class="launch-content">
                 <h4>Web Search</h4>
                 <p>Search & Collect</p>
@@ -40,7 +52,11 @@
 
         <!-- Card 4: Quick Site Check -->
         <div class="task-card-launch" onclick="openQuickCheckModal()">
-            <div class="launch-icon"></div>
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-eye"></use>
+                </svg>
+            </div>
             <div class="launch-content">
                 <h4>Quick Site Check</h4>
                 <p>Ad-hoc Site Scan</p>
@@ -49,7 +65,11 @@
 
         <!-- Card 5: Catalog Incremental -->
         <div class="task-card-launch" onclick="openCatalogModal()">
-            <div class="launch-icon"></div>
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-tag"></use>
+                </svg>
+            </div>
             <div class="launch-content">
                 <h4>Cataloging</h4>
                 <p>AI Categorization</p>
@@ -58,7 +78,11 @@
         
          <!-- Card 6: Scheduled (Manage) -->
         <div class="task-card-launch" onclick="location.href='/scheduled_tasks'">
-            <div class="launch-icon"></div>
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-clock"></use>
+                </svg>
+            </div>
             <div class="launch-content">
                 <h4>Scheduled</h4>
                 <p>Manage Schedules</p>
@@ -375,14 +399,14 @@
 }
 
 .task-card-launch {
-    background: white;
+    background: var(--card-bg);
     padding: 20px;
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow);
     cursor: pointer;
     transition: transform 0.2s, box-shadow 0.2s;
     text-align: center;
-    border: 1px solid #eee;
+    border: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -391,23 +415,30 @@
 
 .task-card-launch:hover {
     transform: translateY(-5px);
-    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-    border-color: #3498db;
+    box-shadow: var(--shadow-lg);
+    border-color: var(--primary-color);
 }
 
 .launch-icon {
-    font-size: 2.5em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     margin-bottom: 10px;
+    color: var(--primary-600);
+}
+
+[data-theme="dark"] .launch-icon {
+    color: var(--primary-400);
 }
 
 .launch-content h4 {
     margin: 0 0 5px 0;
-    color: #2c3e50;
+    color: var(--text-primary);
 }
 
 .launch-content p {
     margin: 0;
-    color: #7f8c8d;
+    color: var(--text-secondary);
     font-size: 0.9em;
 }
 
@@ -431,15 +462,16 @@
 }
 
 .modal-content {
-    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    background: var(--card-bg);
     margin: 8% auto; 
     padding: 30px;
     border-radius: 12px;
     width: 90%;
     max-width: 550px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    box-shadow: var(--shadow-lg);
     position: relative;
     animation: slideDown 0.3s ease;
+    color: var(--text-primary);
 }
 
 @keyframes slideDown {
@@ -454,7 +486,7 @@
 }
 
 .modal-content h3 {
-    color: #2c3e50;
+    color: var(--text-primary);
     margin-bottom: 8px;
     font-size: 1.5em;
     padding-left: 30px;
@@ -474,24 +506,28 @@
     font-size: 28px;
     font-weight: bold;
     cursor: pointer;
-    color: #999;
+    color: var(--text-secondary);
     transition: color 0.2s, transform 0.2s;
 }
 
 .close:hover {
-    color: #e74c3c;
+    color: var(--error-500);
     transform: rotate(90deg);
 }
 
 .hint {
-    color: #7f8c8d;
+    color: var(--text-secondary);
     font-size: 0.9em;
     margin: 10px 0 20px 0;
     font-style: italic;
     padding: 8px 12px;
-    background: #ecf0f1;
-    border-left: 3px solid #3498db;
+    background: var(--gray-100);
+    border-left: 3px solid var(--primary-color);
     border-radius: 4px;
+}
+
+[data-theme="dark"] .hint {
+    background: var(--gray-800);
 }
 
 .form-group {

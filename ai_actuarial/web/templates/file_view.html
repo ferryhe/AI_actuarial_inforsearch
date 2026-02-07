@@ -128,10 +128,10 @@
 
 <style>
     .file-details-card {
-        background: white;
+        background: var(--card-bg);
         padding: 2rem;
         border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: var(--shadow);
         margin-top: 1rem;
     }
     .details-table {
@@ -142,25 +142,38 @@
     .details-table th {
         text-align: left;
         padding: 0.5rem;
-        background: #f8f9fa;
+        background: var(--gray-100);
         width: 200px;
-        border-bottom: 1px solid #dee2e6;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-primary);
     }
+    
+    [data-theme="dark"] .details-table th {
+        background: var(--gray-800);
+    }
+    
     .details-table td {
         padding: 0.5rem;
-        border-bottom: 1px solid #dee2e6;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--text-primary);
     }
     .summary-box {
-        background: #f8f9fa;
+        background: var(--gray-100);
         padding: 1rem;
         border-radius: 4px;
         margin-bottom: 2rem;
         line-height: 1.6;
+        color: var(--text-primary);
     }
+    
+    [data-theme="dark"] .summary-box {
+        background: var(--gray-800);
+    }
+    
     .keyword-tag {
         display: inline-block;
-        background: #0056b3; /* High contrast dark blue */
-        color: #ffffff;      /* White text */
+        background: var(--primary-600);
+        color: #ffffff;
         padding: 0.25rem 0.75rem;
         border-radius: 1rem;
         margin-right: 0.5rem;
@@ -168,20 +181,29 @@
         font-size: 0.9rem;
     }
     
+    [data-theme="dark"] .keyword-tag {
+        background: var(--primary-500);
+    }
+    
     /* Enhance Table Header Contrast */
     .file-details-table th {
-        background-color: #f1f3f5; /* Light Gray Background */
-        color: #212529;            /* Dark Text */
+        background-color: var(--gray-100);
+        color: var(--text-primary);
         font-weight: 600;
-        border-right: 1px solid #dee2e6;
+        border-right: 1px solid var(--border-color);
     }
+    
+    [data-theme="dark"] .file-details-table th {
+        background-color: var(--gray-800);
+    }
+    
     .file-details-table td {
-        color: #333;
+        color: var(--text-primary);
     }
 
     .actions-section {
         margin-top: 2rem;
-        border-top: 1px solid #dee2e6;
+        border-top: 1px solid var(--border-color);
         padding-top: 1rem;
     }
 </style>
