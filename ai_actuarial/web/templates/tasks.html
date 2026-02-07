@@ -364,15 +364,8 @@
         <form id="file-import-form" onsubmit="startFileImport(event)">
             <div class="form-group">
                 <label>Directory Path</label>
-                <div style="display: flex; gap: 0.5rem;">
-                    <input type="text" id="directory-path-input" name="directory_path" required placeholder="C:\Documents\ActuarialFiles" style="flex: 1;">
-                    <button type="button" class="btn btn-secondary" onclick="browseFolder()" style="flex-shrink: 0;">
-                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width: 16px; height: 16px;">
-                            <use xlink:href="#icon-folder"></use>
-                        </svg>
-                        Browse
-                    </button>
-                </div>
+                <input type="text" id="directory-path-input" name="directory_path" required placeholder="C:\Documents\ActuarialFiles or /home/user/documents">
+                <small class="form-hint">Enter the full path to your local directory</small>
             </div>
             <div class="form-group">
                 <label>
@@ -819,7 +812,7 @@ function startUrlCollection(e) {
     const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u.length > 0);
     
     if (urls.length === 0) {
-        alert('Please enter at least one URL');
+        showNotification('Please enter at least one URL', 'error');
         return;
     }
     
@@ -834,17 +827,6 @@ function startUrlCollection(e) {
         name: `URL Collection (${urls.length} URLs)`
     });
     closeModal('url-collection-modal');
-}
-
-function browseFolder() {
-    // Note: Web browsers cannot directly access the file system for security reasons
-    // This button provides a visual cue, but users need to manually type or paste the path
-    // In a desktop application, this could use electron or similar to open a folder dialog
-    const input = document.getElementById('directory-path-input');
-    const userPath = prompt('Enter the full path to your directory:', input.value || '');
-    if (userPath !== null && userPath.trim() !== '') {
-        input.value = userPath.trim();
-    }
 }
 
 function startFileImport(e) {
@@ -884,8 +866,10 @@ function startTask(type, payload) {
     .then(data => {
         if(data.success) {
             showNotification('Task started! Monitoring progress...', 'success');
-            // Refresh page data to show new active task
-            refreshTasksPage();
+            // Refresh page data to show new active task after a short delay
+            setTimeout(() => {
+                refreshTasksPage();
+            }, 500);
         } else {
             showNotification('Error: ' + data.error, 'error');
         }
@@ -1033,8 +1017,13 @@ function showLog(task) {
     modal.style.display = 'block';
 }
 
-function stopTask(taskId) {
-    if (!confirm('Are you sure you want to stop this task?')) return;
+async function stopTask(taskId) {
+    const confirmed = await customConfirm(
+        'Are you sure you want to stop this task?',
+        'Stop Task'
+    );
+    if (!confirmed) return;
+    
     fetch(`/api/tasks/stop/${taskId}`, { method: 'POST' })
         .then(r => r.json())
         .then(d => {

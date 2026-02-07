@@ -482,6 +482,14 @@ tr:last-child td {
     margin-top: 2rem;
 }
 
+.form-hint {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
 /* Search Panel */
 .search-panel {
     background-color: var(--card-bg);

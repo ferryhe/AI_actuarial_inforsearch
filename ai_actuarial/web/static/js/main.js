@@ -142,3 +142,48 @@ window.formatDate = formatDate;
 window.formatBytes = formatBytes;
 window.showNotification = showNotification;
 window.API = API;
+
+// Custom confirm dialog
+function customConfirm(message, title = 'Confirm Action') {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('confirm-modal');
+        const titleEl = document.getElementById('confirm-title');
+        const messageEl = document.getElementById('confirm-message');
+        const okBtn = document.getElementById('confirm-ok');
+        const cancelBtn = document.getElementById('confirm-cancel');
+        
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        modal.style.display = 'flex';
+        
+        const handleOk = () => {
+            modal.style.display = 'none';
+            cleanup();
+            resolve(true);
+        };
+        
+        const handleCancel = () => {
+            modal.style.display = 'none';
+            cleanup();
+            resolve(false);
+        };
+        
+        const cleanup = () => {
+            okBtn.removeEventListener('click', handleOk);
+            cancelBtn.removeEventListener('click', handleCancel);
+            modal.removeEventListener('click', handleModalClick);
+        };
+        
+        const handleModalClick = (e) => {
+            if (e.target === modal) {
+                handleCancel();
+            }
+        };
+        
+        okBtn.addEventListener('click', handleOk);
+        cancelBtn.addEventListener('click', handleCancel);
+        modal.addEventListener('click', handleModalClick);
+    });
+}
+
+window.customConfirm = customConfirm;
