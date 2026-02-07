@@ -936,8 +936,6 @@ body {
     max-width: 400px;
     min-width: 320px;
     width: auto;
-    max-height: 85vh;
-    overflow-y: auto;
     padding: 1.5rem !important;
 }
 
