@@ -10,7 +10,7 @@
     <div class="tabs">
         <button class="tab-link active" onclick="openTab(event, 'configured-sites')">Configured Sites</button>
         <button class="tab-link" onclick="openTab(event, 'manual-trigger')">Manual Trigger</button>
-        <button class="tab-link" onclick="openTab(event, 'history')">Collection History</button>
+        <button class="tab-link" onclick="openTab(event, 'history')">Task History</button>
     </div>
 
     <!-- Tab Content: Configured Sites -->
@@ -118,7 +118,7 @@
 /* Tab Styles */
 .tabs {
     overflow: hidden;
-    border-bottom: 1px solid #ccc;
+    border-bottom: 1px solid var(--border-color);
     margin-bottom: 20px;
 }
 .tab-link {
@@ -131,13 +131,20 @@
     transition: 0.3s;
     font-size: 16px;
     border-bottom: 3px solid transparent;
+    color: var(--text-secondary);
 }
 .tab-link:hover {
-    background-color: #f1f1f1;
+    background-color: var(--gray-100);
 }
+
+[data-theme="dark"] .tab-link:hover {
+    background-color: var(--gray-700);
+}
+
 .tab-link.active {
-    border-bottom: 3px solid #007bff;
+    border-bottom: 3px solid var(--primary-color);
     font-weight: bold;
+    color: var(--text-primary);
 }
 .tab-content {
     display: none;
@@ -158,6 +165,10 @@
 #site-search {
     padding: 8px;
     width: 300px;
+    background-color: var(--card-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
 }
 .modal {
     display: none; 
@@ -171,55 +182,66 @@
     background-color: rgba(0,0,0,0.4); 
 }
 .modal-content {
-    background-color: #fefefe;
+    background-color: var(--card-bg);
     margin: 10% auto; 
     padding: 20px;
-    border: 1px solid #888;
+    border: 1px solid var(--border-color);
     width: 500px;
     border-radius: 5px;
     position: relative;
+    color: var(--text-primary);
 }
 .large-modal {
     width: 80%;
     max-width: 800px;
 }
 .close {
-    color: #aaa;
+    color: var(--text-secondary);
     float: right;
     font-size: 28px;
     font-weight: bold;
     cursor: pointer;
 }
 .close:hover {
-    color: black;
+    color: var(--text-primary);
 }
 .log-viewer {
-    background: #f4f4f4;
+    background: var(--gray-100);
     padding: 15px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--border-color);
     max-height: 400px;
     overflow-y: auto;
     white-space: pre-wrap;
     font-family: monospace;
+    color: var(--text-primary);
 }
+
+[data-theme="dark"] .log-viewer {
+    background: var(--gray-900);
+}
+
 /* Tooltip Styles */
 .tooltip-icon {
     cursor: pointer;
-    color: #17a2b8;
+    color: var(--primary-500);
     margin-left: 5px;
     font-weight: bold;
     font-style: normal;
 }
 .tooltip-text {
     display: none;
-    background-color: #f9f9f9;
-    color: #333;
-    border: 1px solid #ccc;
+    background-color: var(--gray-100);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
     padding: 8px;
     border-radius: 4px;
     font-size: 0.9em;
     margin-top: 5px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow);
+}
+
+[data-theme="dark"] .tooltip-text {
+    background-color: var(--gray-700);
 }
 </style>
 
@@ -347,6 +369,7 @@ function openAddSiteModal() {
     document.getElementById('modal-exclude-keywords').value = '';
     document.getElementById('modal-exclude-prefixes').value = '';
     document.getElementById('site-modal').style.display = "block";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function editSite(name) {
@@ -363,10 +386,12 @@ function editSite(name) {
     document.getElementById('modal-exclude-keywords').value = (site.exclude_keywords || []).join(', ');
     document.getElementById('modal-exclude-prefixes').value = (site.exclude_prefixes || []).join(', ');
     document.getElementById('site-modal').style.display = "block";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function closeModal() {
     document.getElementById('site-modal').style.display = "none";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function saveSite() {
@@ -399,13 +424,13 @@ function saveSite() {
         if (data.success) {
             closeModal();
             loadSites();
-            alert('Site saved successfully!');
+            showNotification('Site saved successfully!', 'success');
         } else {
-            alert('Error: ' + data.error);
+            showNotification('Error: ' + data.error, 'error');
         }
     })
     .catch(error => {
-        alert('Error saving site: ' + error);
+        showNotification('Error saving site: ' + error, 'error');
     });
 }
 
@@ -430,20 +455,24 @@ function startScheduledCollection() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            alert('Task started! ID: ' + data.job_id);
+            showNotification('Task started! ID: ' + data.job_id, 'success');
             // Switch to history tab
             const historyTab = document.querySelector('.tab-link[onclick*="history"]');
             if(historyTab) historyTab.click();
             loadHistory();
         } else {
-            alert('Error: ' + data.error);
+            showNotification('Error: ' + data.error, 'error');
         }
     })
-    .catch(e => alert(e));
+    .catch(e => showNotification('Error: ' + e, 'error'));
 }
 
-function runSingleSite(name) {
-    if (!confirm(`Run collection for ${name} now?`)) return;
+async function runSingleSite(name) {
+    const confirmed = await customConfirm(
+        `Are you sure you want to run collection for ${name} now?`,
+        'Run Collection'
+    );
+    if (!confirmed) return;
     
     fetch('/api/collections/run', {
         method: 'POST',
@@ -456,11 +485,12 @@ function runSingleSite(name) {
     .then(response => response.json())
     .then(data => {
          if (data.success) {
-            alert('Task started! Check Tasks tab.');
+            showNotification('Task started! Check Tasks tab.', 'success');
         } else {
-            alert('Error: ' + data.error);
+            showNotification('Error: ' + data.error, 'error');
         }
-    });
+    })
+    .catch(err => showNotification('Error: ' + err, 'error'));
 }
 
 // History & Logs
@@ -522,10 +552,12 @@ function viewLog(task) {
     
     logContent.innerText = content;
     document.getElementById('log-modal').style.display = "block";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function closeLogModal() {
     document.getElementById('log-modal').style.display = "none";
+    if (window.syncModalState) window.syncModalState();
 }
 
 function viewGlobalLog() {
@@ -541,8 +573,9 @@ function viewGlobalLog() {
                  logContent.innerText = "No logs available.";
             }
             document.getElementById('log-modal').style.display = "block";
+            if (window.syncModalState) window.syncModalState();
         })
-        .catch(err => alert("Error: " + err));
+        .catch(err => showNotification("Error: " + err, 'error'));
 }
 
 // Helper

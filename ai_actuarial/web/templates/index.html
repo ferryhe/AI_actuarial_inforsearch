@@ -9,28 +9,44 @@
 
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-icon">📄</div>
+            <div class="stat-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-document"></use>
+                </svg>
+            </div>
             <div class="stat-content">
                 <h3 id="total-files">-</h3>
                 <p>Total Files</p>
             </div>
         </div>
         <div class="stat-card">
-            <div class="stat-icon">📊</div>
+            <div class="stat-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-chart"></use>
+                </svg>
+            </div>
             <div class="stat-content">
                 <h3 id="cataloged-files">-</h3>
                 <p>Cataloged Files</p>
             </div>
         </div>
         <div class="stat-card">
-            <div class="stat-icon">🏢</div>
+            <div class="stat-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-building"></use>
+                </svg>
+            </div>
             <div class="stat-content">
                 <h3 id="total-sources">-</h3>
                 <p>Sources</p>
             </div>
         </div>
         <div class="stat-card">
-            <div class="stat-icon">🔄</div>
+            <div class="stat-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-refresh"></use>
+                </svg>
+            </div>
             <div class="stat-content">
                 <h3 id="active-tasks">-</h3>
                 <p>Active Tasks</p>
@@ -41,23 +57,30 @@
     <div class="quick-actions">
         <h3>Quick Actions</h3>
         <div class="action-grid">
-            <div class="action-card" onclick="location.href='/collection/url'">
-                <div class="action-icon">🔗</div>
-                <h4>Collect from URL</h4>
-                <p>Download files from specific URLs</p>
-            </div>
-            <div class="action-card" onclick="location.href='/collection/file'">
-                <div class="action-icon">📁</div>
-                <h4>Import Files</h4>
-                <p>Import files from local filesystem</p>
+            <div class="action-card" onclick="location.href='/tasks'">
+                <div class="action-icon">
+                    <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                        <use xlink:href="#icon-refresh"></use>
+                    </svg>
+                </div>
+                <h4>Task Center</h4>
+                <p>Run collections and manage tasks</p>
             </div>
             <div class="action-card" onclick="location.href='/scheduled_tasks'">
-                <div class="action-icon">📅</div>
-                <h4>Run Scheduled Collection</h4>
-                <p>Execute scheduled crawl of configured sites</p>
+                <div class="action-icon">
+                    <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                        <use xlink:href="#icon-calendar"></use>
+                    </svg>
+                </div>
+                <h4>Scheduled Tasks</h4>
+                <p>Manage scheduled collections</p>
             </div>
             <div class="action-card" onclick="location.href='/database'">
-                <div class="action-icon">🔍</div>
+                <div class="action-icon">
+                    <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                        <use xlink:href="#icon-search"></use>
+                    </svg>
+                </div>
                 <h4>Browse Database</h4>
                 <p>Search and manage collected files</p>
             </div>

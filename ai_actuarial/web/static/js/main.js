@@ -1,5 +1,20 @@
 // Main JavaScript for AI Actuarial Info Search
 
+// Theme toggle functionality
+document.addEventListener('DOMContentLoaded', () => {
+    const themeToggle = document.getElementById('theme-toggle-btn');
+    
+    if (themeToggle) {
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+            
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+        });
+    }
+});
+
 // Utility function to escape HTML
 function escapeHtml(text) {
     if (!text) return '';
@@ -127,3 +142,54 @@ window.formatDate = formatDate;
 window.formatBytes = formatBytes;
 window.showNotification = showNotification;
 window.API = API;
+
+// Modal state helper (locks background scroll when any modal is open)
+function syncModalState() {
+    const modals = document.querySelectorAll('.modal');
+    const anyOpen = Array.from(modals).some((modal) => {
+        return getComputedStyle(modal).display !== 'none';
+    });
+    document.body.classList.toggle('modal-open', anyOpen);
+}
+
+window.syncModalState = syncModalState;
+
+// Custom confirm dialog
+function customConfirm(message, title = 'Confirm Action') {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('confirm-modal');
+        const titleEl = document.getElementById('confirm-title');
+        const messageEl = document.getElementById('confirm-message');
+        const okBtn = document.getElementById('confirm-ok');
+        const cancelBtn = document.getElementById('confirm-cancel');
+        
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        modal.style.display = 'flex';
+        syncModalState();
+        
+        const handleOk = () => {
+            modal.style.display = 'none';
+            syncModalState();
+            cleanup();
+            resolve(true);
+        };
+        
+        const handleCancel = () => {
+            modal.style.display = 'none';
+            syncModalState();
+            cleanup();
+            resolve(false);
+        };
+        
+        const cleanup = () => {
+            okBtn.removeEventListener('click', handleOk);
+            cancelBtn.removeEventListener('click', handleCancel);
+        };
+        
+        okBtn.addEventListener('click', handleOk);
+        cancelBtn.addEventListener('click', handleCancel);
+    });
+}
+
+window.customConfirm = customConfirm;
