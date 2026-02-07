@@ -185,18 +185,10 @@ function customConfirm(message, title = 'Confirm Action') {
         const cleanup = () => {
             okBtn.removeEventListener('click', handleOk);
             cancelBtn.removeEventListener('click', handleCancel);
-            modal.removeEventListener('click', handleModalClick);
-        };
-        
-        const handleModalClick = (e) => {
-            if (e.target === modal) {
-                handleCancel();
-            }
         };
         
         okBtn.addEventListener('click', handleOk);
         cancelBtn.addEventListener('click', handleCancel);
-        modal.addEventListener('click', handleModalClick);
     });
 }
 
