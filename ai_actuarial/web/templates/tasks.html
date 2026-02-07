@@ -364,7 +364,10 @@
         <form id="file-import-form" onsubmit="startFileImport(event)">
             <div class="form-group">
                 <label>Directory Path</label>
-                <input type="text" id="directory-path-input" name="directory_path" required placeholder="C:\Documents\ActuarialFiles or /home/user/documents">
+                <div class="input-row">
+                    <input type="text" id="directory-path-input" name="directory_path" required placeholder="C:\Documents\ActuarialFiles or /home/user/documents">
+                    <button type="button" class="btn btn-secondary btn-browse" onclick="browseFolderForFileImport()">Browse...</button>
+                </div>
                 <small class="form-hint">Enter the full path to your local directory</small>
             </div>
             <div class="form-group">
@@ -619,6 +622,19 @@
 }
 
 .form-row { display: flex; gap: 15px; }
+
+.input-row {
+    display: flex;
+    gap: 10px;
+}
+
+.input-row input {
+    flex: 1;
+}
+
+.btn-browse {
+    white-space: nowrap;
+}
 .form-group.half { flex: 1; }
 
 /* File Format Selector Styles */
@@ -739,14 +755,6 @@ function openCatalogModal() { openModal('catalog-modal'); }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
 
-window.onclick = function(event) {
-    if (event.target.classList.contains('modal')) {
-        event.target.style.display = "none";
-        resetFormatSelector(event.target.id);  // 点击背景关闭时也重置
-        if (window.syncModalState) window.syncModalState();
-    }
-}
-
 // --- Task Starters ---
 function startWebSearch(e) {
     e.preventDefault();
@@ -837,6 +845,22 @@ function startUrlCollection(e) {
         name: `URL Collection (${urls.length} URLs)`
     });
     closeModal('url-collection-modal');
+}
+
+function browseFolderForFileImport() {
+    fetch('/api/utils/browse-folder')
+        .then(response => response.json())
+        .then(data => {
+            if (data.path) {
+                document.getElementById('directory-path-input').value = data.path;
+            } else if (data.error) {
+                showNotification(data.error, 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error browsing folder:', error);
+            showNotification('Could not open folder dialog. Please verify the server is running locally.', 'error');
+        });
 }
 
 function startFileImport(e) {
