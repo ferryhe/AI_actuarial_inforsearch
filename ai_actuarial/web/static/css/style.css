@@ -417,6 +417,8 @@ tr:last-child td {
     border-radius: 6px;
     font-size: 1rem;
     transition: border-color 0.2s;
+    background-color: var(--card-bg);
+    color: var(--text-primary);
 }
 
 .form-group input:focus,
@@ -769,4 +771,99 @@ body {
 
 .navbar, .card, .stat-card, .action-card, .collection-card, .info-card, table {
     transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Additional dark mode support for inline styled elements */
+/* Modal styles that work with inline styles */
+[data-theme="dark"] .modal-content {
+    background: linear-gradient(135deg, var(--gray-800) 0%, var(--gray-900) 100%) !important;
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .modal-content h3 {
+    color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .close {
+    color: var(--gray-400) !important;
+}
+
+[data-theme="dark"] .close:hover {
+    color: var(--error-500) !important;
+}
+
+/* Tab styles */
+[data-theme="dark"] .tab-link {
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .tab-link:hover {
+    background-color: var(--gray-700) !important;
+}
+
+[data-theme="dark"] .tab-link.active {
+    border-bottom-color: var(--primary-500) !important;
+    color: var(--text-primary);
+}
+
+[data-theme="dark"] .tabs {
+    border-bottom-color: var(--border-color) !important;
+}
+
+/* Task card launch styles */
+[data-theme="dark"] .task-card-launch {
+    background: var(--card-bg) !important;
+    border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .task-card-launch:hover {
+    border-color: var(--primary-500) !important;
+}
+
+[data-theme="dark"] .launch-content h4 {
+    color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .launch-content p {
+    color: var(--text-secondary) !important;
+}
+
+/* Hint and info messages */
+[data-theme="dark"] .hint {
+    background: var(--gray-700) !important;
+    color: var(--text-secondary) !important;
+    border-left-color: var(--primary-500) !important;
+}
+
+/* Tooltip styles */
+[data-theme="dark"] .tooltip-text {
+    background-color: var(--gray-700) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+[data-theme="dark"] .tooltip-icon {
+    color: var(--primary-400) !important;
+}
+
+/* Log viewer */
+[data-theme="dark"] .log-viewer {
+    background: var(--gray-900) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Toolbar */
+[data-theme="dark"] .toolbar input {
+    background-color: var(--card-bg);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+/* Progress panel */
+[data-theme="dark"] .progress-panel,
+[data-theme="dark"] .collection-form,
+[data-theme="dark"] .trigger-form {
+    background-color: var(--card-bg);
+    color: var(--text-primary);
 }
