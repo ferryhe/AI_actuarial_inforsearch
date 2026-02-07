@@ -143,6 +143,17 @@ window.formatBytes = formatBytes;
 window.showNotification = showNotification;
 window.API = API;
 
+// Modal state helper (locks background scroll when any modal is open)
+function syncModalState() {
+    const modals = document.querySelectorAll('.modal');
+    const anyOpen = Array.from(modals).some((modal) => {
+        return getComputedStyle(modal).display !== 'none';
+    });
+    document.body.classList.toggle('modal-open', anyOpen);
+}
+
+window.syncModalState = syncModalState;
+
 // Custom confirm dialog
 function customConfirm(message, title = 'Confirm Action') {
     return new Promise((resolve) => {
@@ -155,15 +166,18 @@ function customConfirm(message, title = 'Confirm Action') {
         titleEl.textContent = title;
         messageEl.textContent = message;
         modal.style.display = 'flex';
+        syncModalState();
         
         const handleOk = () => {
             modal.style.display = 'none';
+            syncModalState();
             cleanup();
             resolve(true);
         };
         
         const handleCancel = () => {
             modal.style.display = 'none';
+            syncModalState();
             cleanup();
             resolve(false);
         };
