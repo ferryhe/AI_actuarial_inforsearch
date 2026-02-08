@@ -72,10 +72,10 @@ class Toast {
         
         // Icon based on type
         const icons = {
-            success: '✓',
-            error: '✕',
-            warning: '⚠',
-            info: 'ℹ'
+            success: 'OK',
+            error: 'ERR',
+            warning: 'WARN',
+            info: 'INFO'
         };
         
         toast.innerHTML = `
@@ -564,19 +564,6 @@ class DataTable {
         }
     }
     
-    updateSelection() {
-        const rows = this.container.querySelectorAll('tbody tr');
-        rows.forEach((row, index) => {
-            const rowData = this.options.data[index];
-            const rowId = this.getRowId(rowData);
-            const checkbox = row.querySelector('input[type="checkbox"]');
-            if (checkbox) {
-                checkbox.checked = this.selectedRows.has(rowId);
-                row.classList.toggle('selected', this.selectedRows.has(rowId));
-            }
-        });
-        
-        // Update selected count in toolbar
     updateSelection() {
         const rows = this.container.querySelectorAll('tbody tr');
         rows.forEach((row, index) => {
