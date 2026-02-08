@@ -748,10 +748,12 @@ class Storage:
             order_dir = 'desc'
         
         # Build query
-        filters = ["f.local_path IS NOT NULL AND f.local_path != ''"]
+        filters = []
         
-        # Only exclude deleted files if include_deleted is False
+        # When not including deleted files, only show files with valid local_path
+        # When including deleted files, show all (deleted files have local_path cleared)
         if not include_deleted:
+            filters.append("f.local_path IS NOT NULL AND f.local_path != ''")
             filters.append("f.deleted_at IS NULL")
         
         params = []
