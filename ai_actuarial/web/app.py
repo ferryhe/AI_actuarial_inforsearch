@@ -162,6 +162,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             query = request.args.get('query', '')
             source = request.args.get('source', '')
             category = request.args.get('category', '')
+            include_deleted = request.args.get('include_deleted', 'false').lower() == 'true'
             
             # Use abstraction method instead of direct _conn access
             files, total = storage.query_files_with_catalog(
@@ -172,6 +173,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 query=query,
                 source=source,
                 category=category,
+                include_deleted=include_deleted,
             )
             
             storage.close()
@@ -1011,7 +1013,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             # Feature flag check
             if os.getenv("ENABLE_FILE_DELETION") != "true":
-                return jsonify({"error": "File deletion is disabled"}), 403
+                logger.warning("File deletion attempt rejected: ENABLE_FILE_DELETION not set to 'true'")
+                return jsonify({"error": "File deletion is disabled. Set ENABLE_FILE_DELETION=true in environment."}), 403
 
             # Optional authentication check
             expected_token = app.config.get("FILE_DELETION_AUTH_TOKEN") or os.getenv(
@@ -1020,19 +1023,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if expected_token:
                 provided_token = request.headers.get("X-Auth-Token")
                 if not provided_token or provided_token != expected_token:
+                    logger.warning("File deletion attempt rejected: authentication failed")
                     return jsonify({"error": "Forbidden"}), 403
 
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
+                logger.error("File deletion request has invalid JSON body")
                 return jsonify({"error": "Invalid or missing JSON body"}), 400
 
             url = data.get("url")
             if not url:
+                logger.error("File deletion request missing URL")
                 return jsonify({"error": "No URL provided"}), 400
 
             # Require explicit confirmation to reduce accidental deletions
             confirmation = data.get("confirm")
             if confirmation != "DELETE":
+                logger.warning(f"File deletion attempt for {url} rejected: missing confirmation")
                 return (
                     jsonify(
                         {
@@ -1045,51 +1052,88 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     400,
                 )
 
+            logger.info(f"Starting file deletion for URL: {url}")
             storage = Storage(db_path)
+            deletion_details = {
+                "url": url,
+                "database_marked": False,
+                "physical_file_deleted": False,
+                "errors": []
+            }
+            
             try:
                 # Mark as deleted using abstraction method
                 deleted_time = datetime.now().isoformat()
                 storage.mark_file_deleted(url, deleted_time)
+                deletion_details["database_marked"] = True
+                logger.info(f"Database marked file as deleted: {url} at {deleted_time}")
 
-                # Optionally remove local file? User said "Delete stored file".
-                # Yes, "delete storage file".
+                # Delete physical file
                 file_record = storage.get_file_by_url(url)
                 if file_record and file_record.get("local_path"):
                     local_path = file_record["local_path"]
                     try:
                         # Path traversal protection: only delete within download_dir
                         base_dir = Path(download_dir).resolve()
-                        candidate_path = Path(local_path).resolve()
+                        
+                        # Handle relative paths
+                        if not os.path.isabs(local_path):
+                            candidate_path = (base_dir.parent / local_path).resolve()
+                        else:
+                            candidate_path = Path(local_path).resolve()
 
                         # Ensure candidate_path is within base_dir
                         try:
                             # Python 3.9+ has is_relative_to; fall back otherwise
-                            is_within = candidate_path.is_relative_to(base_dir)  # type: ignore[attr-defined]
+                            is_within = candidate_path.is_relative_to(base_dir.parent)  # type: ignore[attr-defined]
                         except AttributeError:
                             is_within = os.path.commonpath(
-                                [str(base_dir), str(candidate_path)]
-                            ) == str(base_dir)
+                                [str(base_dir.parent), str(candidate_path)]
+                            ) == str(base_dir.parent)
 
                         if not is_within:
-                            logger.error(
-                                "Refusing to delete file outside download_dir: %s",
-                                candidate_path,
-                            )
+                            error_msg = f"Security: File outside allowed directory: {candidate_path}"
+                            logger.error(error_msg)
+                            deletion_details["errors"].append(error_msg)
                         elif candidate_path.exists():
                             os.remove(candidate_path)
+                            deletion_details["physical_file_deleted"] = True
+                            logger.info(f"Physical file deleted successfully: {candidate_path}")
                             # Clear local path in DB to indicate it's gone
                             storage.clear_local_path(url)
+                            logger.info(f"Database local_path cleared for: {url}")
+                        else:
+                            warning_msg = f"Physical file not found (already deleted?): {candidate_path}"
+                            logger.warning(warning_msg)
+                            deletion_details["errors"].append(warning_msg)
+                            # Still clear the path since file doesn't exist
+                            storage.clear_local_path(url)
                     except Exception as ex:
-                        logger.error(
-                            "Failed to delete local file %s: %s", local_path, ex
-                        )
+                        error_msg = f"Failed to delete physical file {local_path}: {str(ex)}"
+                        logger.error(error_msg, exc_info=True)
+                        deletion_details["errors"].append(error_msg)
+                else:
+                    warning_msg = "No local_path found in database for this file"
+                    logger.warning(f"{warning_msg}: {url}")
+                    deletion_details["errors"].append(warning_msg)
 
             finally:
                 storage.close()
 
-            return jsonify({"success": True})
+            # Log final status
+            if deletion_details["database_marked"] and deletion_details["physical_file_deleted"]:
+                logger.info(f"File deletion completed successfully: {url}")
+            elif deletion_details["database_marked"]:
+                logger.warning(f"File deletion partial: database marked but physical file not deleted: {url}")
+            else:
+                logger.error(f"File deletion failed: {url}")
+
+            return jsonify({
+                "success": True,
+                "details": deletion_details
+            })
         except Exception as e:
-            logger.exception("Error deleting file")
+            logger.exception(f"Error deleting file: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/logs/global")
@@ -1107,11 +1151,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
             # Simple approach for reasonable log sizes
             with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                # Seek to end and read backwards if needed, or just read all and slice
-                # For simplicity, read all lines (assuming log isn't massive yet)
-                # In production, use file seeking
+                # Read all lines and get last 500
                 all_lines = f.readlines()
                 lines = all_lines[-500:]
+                
+            # Reverse to show newest first
+            lines.reverse()
                 
             return jsonify({"logs": "".join(lines)})
         except Exception as e:
