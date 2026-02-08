@@ -35,7 +35,52 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 
 ## Operations Manual
 
-- Service start guide (Linux + Windows): `20260208_SERVICE_START_GUIDE.md`
+- Service start guide (Linux + Windows): `SERVICE_START_GUIDE.md`
+
+## System Architecture
+
+```mermaid
+flowchart LR
+    subgraph Sources
+        A[Actuarial Sites]
+        B[Web Search APIs]
+    end
+    subgraph Core
+        C[Crawler & Collectors]
+        D[Storage Layer]
+        E[Catalog Processor]
+    end
+    subgraph Data
+        F[(SQLite/PostgreSQL)]
+        G[data/files]
+        H[data/catalog.*]
+    end
+    subgraph UI
+        I[Flask Web App]
+        J[Database Browser & Task Center]
+    end
+
+    A --> C
+    B --> C
+    C --> D
+    C --> G
+    D --> F
+    E --> H
+    D --> E
+    D --> I
+    I --> J
+```
+
+## Runtime Environment
+
+| Component | Supported / Notes |
+| --- | --- |
+| Python | 3.10+ |
+| Web Server | Flask (built-in dev server for local) |
+| Database | SQLite (local), PostgreSQL (production) |
+| Deployment | Docker + Docker Compose |
+| Reverse Proxy | Caddy |
+| OS | Windows (local), Linux (server) |
 
 ## Configuration Notes
 
