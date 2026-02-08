@@ -292,7 +292,7 @@ class DataTable {
         
         this.sortColumn = null;
         this.sortDirection = 'asc';
-        this.selectedRows = new Set();
+        this.selectedRows = new Map(); // Changed to Map to track by identifier
         
         this.render();
     }
@@ -415,7 +415,10 @@ class DataTable {
             const tr = document.createElement('tr');
             tr.dataset.index = index;
             
-            if (this.selectedRows.has(index)) {
+            // Get unique identifier for this row (use url or fallback to index)
+            const rowId = this.getRowId(row);
+            
+            if (this.selectedRows.has(rowId)) {
                 tr.classList.add('selected');
             }
             
@@ -425,10 +428,10 @@ class DataTable {
                 td.className = 'row-select';
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
-                checkbox.checked = this.selectedRows.has(index);
+                checkbox.checked = this.selectedRows.has(rowId);
                 checkbox.addEventListener('change', (e) => {
                     e.stopPropagation();
-                    this.toggleRow(index);
+                    this.toggleRow(rowId, row);
                 });
                 td.appendChild(checkbox);
                 tr.appendChild(td);
@@ -467,6 +470,11 @@ class DataTable {
         });
         
         return tbody;
+    }
+    
+    getRowId(row) {
+        // Use URL as unique identifier, fall back to stringified row
+        return row.url || JSON.stringify(row);
     }
     
     sort(columnKey) {
@@ -523,17 +531,17 @@ class DataTable {
         }
     }
     
-    toggleRow(index) {
-        if (this.selectedRows.has(index)) {
-            this.selectedRows.delete(index);
+    toggleRow(rowId, rowData) {
+        if (this.selectedRows.has(rowId)) {
+            this.selectedRows.delete(rowId);
         } else {
-            this.selectedRows.add(index);
+            this.selectedRows.set(rowId, rowData);
         }
         
         this.updateSelection();
         
         if (this.options.onSelectionChange) {
-            const selectedData = Array.from(this.selectedRows).map(i => this.options.data[i]);
+            const selectedData = Array.from(this.selectedRows.values());
             this.options.onSelectionChange(selectedData);
         }
     }
@@ -542,15 +550,16 @@ class DataTable {
         this.selectedRows.clear();
         
         if (checked) {
-            this.options.data.forEach((_, index) => {
-                this.selectedRows.add(index);
+            this.options.data.forEach((row) => {
+                const rowId = this.getRowId(row);
+                this.selectedRows.set(rowId, row);
             });
         }
         
         this.updateSelection();
         
         if (this.options.onSelectionChange) {
-            const selectedData = Array.from(this.selectedRows).map(i => this.options.data[i]);
+            const selectedData = Array.from(this.selectedRows.values());
             this.options.onSelectionChange(selectedData);
         }
     }
@@ -558,24 +567,39 @@ class DataTable {
     updateSelection() {
         const rows = this.container.querySelectorAll('tbody tr');
         rows.forEach((row, index) => {
+            const rowData = this.options.data[index];
+            const rowId = this.getRowId(rowData);
             const checkbox = row.querySelector('input[type="checkbox"]');
             if (checkbox) {
-                checkbox.checked = this.selectedRows.has(index);
+                checkbox.checked = this.selectedRows.has(rowId);
+                row.classList.toggle('selected', this.selectedRows.has(rowId));
             }
-            row.classList.toggle('selected', this.selectedRows.has(index));
         });
         
-        // Update header checkbox
-        const headerCheckbox = this.container.querySelector('thead input[type="checkbox"]');
-        if (headerCheckbox) {
-            headerCheckbox.checked = this.selectedRows.size === this.options.data.length;
-            headerCheckbox.indeterminate = this.selectedRows.size > 0 && this.selectedRows.size < this.options.data.length;
-        }
+        // Update selected count in toolbar
+    updateSelection() {
+        const rows = this.container.querySelectorAll('tbody tr');
+        rows.forEach((row, index) => {
+            const rowData = this.options.data[index];
+            const rowId = this.getRowId(rowData);
+            const checkbox = row.querySelector('input[type="checkbox"]');
+            if (checkbox) {
+                checkbox.checked = this.selectedRows.has(rowId);
+                row.classList.toggle('selected', this.selectedRows.has(rowId));
+            }
+        });
         
-        // Update selected count
+        // Update selected count in toolbar
         const selectedCount = this.container.querySelector('.selected-count');
         if (selectedCount) {
             selectedCount.textContent = `${this.selectedRows.size} selected`;
+        }
+        
+        // Update select all checkbox
+        const selectAllCheckbox = this.container.querySelector('thead input[type="checkbox"]');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = this.selectedRows.size === this.options.data.length && this.options.data.length > 0;
+            selectAllCheckbox.indeterminate = this.selectedRows.size > 0 && this.selectedRows.size < this.options.data.length;
         }
     }
     
@@ -587,7 +611,7 @@ class DataTable {
         
         // Get data to export (selected or all)
         const dataToExport = this.selectedRows.size > 0
-            ? Array.from(this.selectedRows).map(i => this.options.data[i])
+            ? Array.from(this.selectedRows.values())
             : this.options.data;
         
         // Create CSV content with visible columns plus URL
@@ -595,20 +619,32 @@ class DataTable {
         // Add Original URL as last column
         headers.push('Original URL');
         
+        // Escape and sanitize a value for safe inclusion in CSV
+        const escapeCsvValue = (rawValue) => {
+            // Normalize null/undefined to empty string
+            let str = String(rawValue == null ? '' : rawValue);
+            
+            // Neutralize potential CSV formula injection
+            // If the first non-whitespace character is =, +, - or @, prefix with a single quote
+            if (/^\s*[=+\-@]/.test(str)) {
+                str = "'" + str;
+            }
+            
+            // Escape double quotes
+            const escaped = str.replace(/"/g, '""');
+            
+            // Wrap in quotes if it contains comma, quote, or newline
+            const needsQuotes = /[",\n]/.test(escaped);
+            return needsQuotes ? `"${escaped}"` : escaped;
+        };
+        
         const rows = dataToExport.map(row => {
             const values = this.options.columns.map(col => {
                 const value = row[col.key];
-                // Escape quotes and wrap in quotes if contains comma or quote
-                const str = String(value == null ? '' : value);
-                return str.includes(',') || str.includes('"') 
-                    ? `"${str.replace(/"/g, '""')}"` 
-                    : str;
+                return escapeCsvValue(value);
             });
             // Add URL as last value
-            const urlStr = String(row.url || '');
-            values.push(urlStr.includes(',') || urlStr.includes('"') 
-                ? `"${urlStr.replace(/"/g, '""')}"` 
-                : urlStr);
+            values.push(escapeCsvValue(row.url || ''));
             return values;
         });
         
@@ -673,8 +709,8 @@ class DataTable {
                 if (inputValue === 'confirm delete') {
                     closeModal();
                     
-                    // Get selected data
-                    const selectedData = Array.from(this.selectedRows).map(i => this.options.data[i]);
+                    // Get selected data from Map values
+                    const selectedData = Array.from(this.selectedRows.values());
                     
                     // Call the callback if provided
                     if (this.options.onBulkDelete) {
@@ -706,6 +742,8 @@ class DataTable {
 // 3.2 Enhanced Modal System
 class ModalManager {
     static currentModal = null;
+    static escHandlers = new Map(); // Track ESC handlers per modal
+    static focusTrapHandlers = new Map(); // Track focus trap handlers per modal
     
     static open(modalId, options = {}) {
         const modal = document.getElementById(modalId);
@@ -715,6 +753,14 @@ class ModalManager {
         if (options.size) {
             const content = modal.querySelector('.modal-content');
             if (content) {
+                // Remove any existing modal size classes before adding a new one
+                content.classList.remove(
+                    'modal-sm',
+                    'modal-md',
+                    'modal-lg',
+                    'modal-xl',
+                    'modal-fullscreen'
+                );
                 content.classList.add(`modal-${options.size}`);
             }
         }
@@ -726,13 +772,17 @@ class ModalManager {
         // Focus trap
         this.setupFocusTrap(modal);
         
-        // ESC key handler
+        // ESC key handler - remove old one if exists
+        if (this.escHandlers.has(modalId)) {
+            document.removeEventListener('keydown', this.escHandlers.get(modalId));
+        }
+        
         const escHandler = (e) => {
             if (e.key === 'Escape') {
                 this.close(modalId);
-                document.removeEventListener('keydown', escHandler);
             }
         };
+        this.escHandlers.set(modalId, escHandler);
         document.addEventListener('keydown', escHandler);
     }
     
@@ -743,9 +793,28 @@ class ModalManager {
         modal.style.display = 'none';
         this.currentModal = null;
         syncModalState();
+        
+        // Clean up ESC handler
+        if (this.escHandlers.has(modalId)) {
+            document.removeEventListener('keydown', this.escHandlers.get(modalId));
+            this.escHandlers.delete(modalId);
+        }
+        
+        // Clean up focus trap handler
+        if (this.focusTrapHandlers.has(modalId)) {
+            modal.removeEventListener('keydown', this.focusTrapHandlers.get(modalId));
+            this.focusTrapHandlers.delete(modalId);
+        }
     }
     
     static setupFocusTrap(modal) {
+        const modalId = modal.id;
+        
+        // Remove old focus trap handler if exists
+        if (this.focusTrapHandlers.has(modalId)) {
+            modal.removeEventListener('keydown', this.focusTrapHandlers.get(modalId));
+        }
+        
         const focusableElements = modal.querySelectorAll(
             'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
         );
@@ -771,6 +840,7 @@ class ModalManager {
             }
         };
         
+        this.focusTrapHandlers.set(modalId, trapFocus);
         modal.addEventListener('keydown', trapFocus);
         firstElement.focus();
     }
