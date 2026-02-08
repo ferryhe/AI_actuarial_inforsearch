@@ -254,7 +254,8 @@ function resetFilters() {
 }
 
 function viewFile(url) {
-    window.location = `/file/${url}`;
+    // Properly encode URL for path parameter
+    window.location = `/file/${encodeURIComponent(url)}`;
 }
 
 function downloadFile(url) {
