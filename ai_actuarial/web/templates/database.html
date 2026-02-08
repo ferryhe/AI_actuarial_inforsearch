@@ -187,6 +187,7 @@ function displayResults(data) {
                 // Bulk delete selected files
                 let successCount = 0;
                 let failCount = 0;
+                let errors = [];
                 
                 for (const file of selectedFiles) {
                     try {
@@ -197,13 +198,19 @@ function displayResults(data) {
                         });
                         
                         const data = await response.json();
-                        if (data.success) {
+                        if (response.ok && data.success) {
                             successCount++;
+                            console.log(`Deleted: ${file.title || file.url}`, data.details);
                         } else {
                             failCount++;
+                            const errorMsg = data.error || 'Unknown error';
+                            errors.push(`${file.title || file.url}: ${errorMsg}`);
+                            console.error(`Failed to delete ${file.url}:`, data);
                         }
                     } catch (err) {
                         failCount++;
+                        errors.push(`${file.title || file.url}: ${err.message}`);
+                        console.error(`Exception deleting ${file.url}:`, err);
                     }
                 }
                 
@@ -216,7 +223,12 @@ function displayResults(data) {
                 }
                 
                 if (failCount > 0) {
-                    Toast.error(`Failed to delete ${failCount} file(s)`);
+                    let errorMsg = `Failed to delete ${failCount} file(s)`;
+                    if (errors.length > 0 && errors[0].includes('disabled')) {
+                        errorMsg += '. Set ENABLE_FILE_DELETION=true';
+                    }
+                    Toast.error(errorMsg);
+                    console.error('Delete errors:', errors);
                 }
             }
         });
