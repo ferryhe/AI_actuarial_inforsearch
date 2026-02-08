@@ -162,6 +162,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             query = request.args.get('query', '')
             source = request.args.get('source', '')
             category = request.args.get('category', '')
+            include_deleted = request.args.get('include_deleted', 'false').lower() == 'true'
             
             # Use abstraction method instead of direct _conn access
             files, total = storage.query_files_with_catalog(
@@ -172,6 +173,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 query=query,
                 source=source,
                 category=category,
+                include_deleted=include_deleted,
             )
             
             storage.close()

@@ -1531,31 +1531,32 @@ html {
 }
 
 /* Delete button */
+/* Delete button - normal gray color like export */
 .btn-delete {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 1rem;
-    background: var(--error-500);
-    color: white;
-    border: 1px solid var(--error-600);
+    background: var(--gray-100);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .btn-delete:hover {
-    background: var(--error-600);
+    background: var(--gray-200);
     transform: translateY(-1px);
 }
 
 [data-theme="dark"] .btn-delete {
-    background: var(--error-600);
-    border-color: var(--error-500);
+    background: var(--gray-700);
+    border-color: var(--gray-600);
 }
 
 [data-theme="dark"] .btn-delete:hover {
-    background: var(--error-500);
+    background: var(--gray-600);
 }
 
 /* Column resizer */
