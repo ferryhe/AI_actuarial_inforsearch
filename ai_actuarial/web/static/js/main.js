@@ -590,18 +590,27 @@ class DataTable {
             ? Array.from(this.selectedRows).map(i => this.options.data[i])
             : this.options.data;
         
-        // Create CSV content
+        // Create CSV content with visible columns plus URL
         const headers = this.options.columns.map(col => col.label || col.key);
-        const rows = dataToExport.map(row => 
-            this.options.columns.map(col => {
+        // Add Original URL as last column
+        headers.push('Original URL');
+        
+        const rows = dataToExport.map(row => {
+            const values = this.options.columns.map(col => {
                 const value = row[col.key];
                 // Escape quotes and wrap in quotes if contains comma or quote
                 const str = String(value == null ? '' : value);
                 return str.includes(',') || str.includes('"') 
                     ? `"${str.replace(/"/g, '""')}"` 
                     : str;
-            })
-        );
+            });
+            // Add URL as last value
+            const urlStr = String(row.url || '');
+            values.push(urlStr.includes(',') || urlStr.includes('"') 
+                ? `"${urlStr.replace(/"/g, '""')}"` 
+                : urlStr);
+            return values;
+        });
         
         const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
         

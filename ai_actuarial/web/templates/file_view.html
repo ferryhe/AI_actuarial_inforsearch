@@ -62,14 +62,7 @@
                 </tr>
                 <tr>
                     <th>Local Path</th>
-                    <td>
-                        {% if file.source_site == 'Local Import' or file.source_site == 'File Import' %}
-                            {# For privacy, only show filename for local imports #}
-                            {{ file.original_filename or file.local_path.split('/')[-1] if file.local_path else 'Not stored locally' }}
-                        {% else %}
-                            {{ file.local_path or 'Not stored locally' }}
-                        {% endif %}
-                    </td>
+                    <td>{{ file.local_path or 'Not stored locally' }}</td>
                 </tr>
                 <tr>
                     <th>Collected Date</th>
