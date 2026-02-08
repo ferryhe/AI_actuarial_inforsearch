@@ -36,16 +36,23 @@ function escapeHtml(text) {
 ```
 
 ### 2. CSV Export Security
+- **Formula Neutralization:** Leading `=`, `+`, `-`, or `@` characters are prefixed with a single quote to prevent CSV formula injection
 - **Quote Escaping:** Double quotes properly escaped in CSV data
-- **Safe Formatting:** Special characters handled correctly
-- **Implementation:** Proper CSV escaping prevents formula injection
+- **Safe Formatting:** Special characters (commas, quotes, newlines) handled correctly
+- **Implementation:** Comprehensive CSV escaping prevents formula injection attacks
 - **Location:** `ai_actuarial/web/static/js/main.js` DataTable.exportToCSV()
 
 ```javascript
-const str = String(value == null ? '' : value);
-return str.includes(',') || str.includes('"') 
-    ? `"${str.replace(/"/g, '""')}"` 
-    : str;
+const escapeCsvValue = (rawValue) => {
+    let str = String(rawValue == null ? '' : rawValue);
+    // Neutralize potential CSV formula injection
+    if (/^\s*[=+\-@]/.test(str)) {
+        str = "'" + str;
+    }
+    const escaped = str.replace(/"/g, '""');
+    const needsQuotes = /[",\n]/.test(escaped);
+    return needsQuotes ? `"${escaped}"` : escaped;
+};
 ```
 
 ### 3. URL Handling

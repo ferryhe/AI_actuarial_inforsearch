@@ -26,10 +26,10 @@
                     <th>Original URL</th>
                     <td>
                         {% if file.url.startswith('file://') %}
-                            {# Extract just the filename from file:// URLs #}
-                            Local Import: {{ file.url.split('/')[-1] }}
+                            {# Use source_site name and extract filename #}
+                            {{ file.source_site }}: {{ file.url.split('/')[-1] }}
                         {% else %}
-                            Local Import
+                            {{ file.source_site }}
                         {% endif %}
                     </td>
                 </tr>
@@ -44,10 +44,10 @@
                     <th>Source Page</th>
                     <td>
                         {% if file.source_page_url.startswith('file://') %}
-                            {# Extract just the last directory name #}
-                            Local Import/{{ file.source_page_url.rstrip('/').split('/')[-1] }}
+                            {# Use source_site name and extract directory name #}
+                            {{ file.source_site }}/{{ file.source_page_url.rstrip('/').split('/')[-1] }}
                         {% else %}
-                            Local Import
+                            {{ file.source_site }}
                         {% endif %}
                     </td>
                 </tr>
