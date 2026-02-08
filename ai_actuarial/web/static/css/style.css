@@ -32,6 +32,24 @@
     --gray-700: #374151;
     --gray-800: #1f2937;
     --gray-900: #111827;
+
+    /* Typography Scale */
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-base: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.25rem;
+    --text-2xl: 1.5rem;
+    --text-3xl: 1.875rem;
+    --text-4xl: 2.25rem;
+    --font-light: 300;
+    --font-normal: 400;
+    --font-medium: 500;
+    --font-semibold: 600;
+    --font-bold: 700;
+    --leading-tight: 1.25;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.625;
     
     /* Theme Variables - Light Mode */
     --primary-color: var(--primary-600);
@@ -70,7 +88,18 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     background-color: var(--background);
     color: var(--text-primary);
-    line-height: 1.6;
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+}
+
+h1, h2, h3, h4 {
+    line-height: var(--leading-tight);
+}
+
+h1 { font-size: var(--text-3xl); }
+h2 { font-size: var(--text-2xl); }
+h3 { font-size: var(--text-xl); }
+h4 { font-size: var(--text-lg); }
 }
 
 /* Prevent background scroll when a modal is open */
@@ -503,9 +532,33 @@ tr:last-child td {
 .form-hint {
     display: block;
     margin-top: 0.25rem;
-    font-size: 0.875rem;
+    font-size: var(--text-sm);
     color: var(--text-secondary);
     font-style: italic;
+}
+
+/* Validation Feedback */
+.field-error {
+    display: block;
+    margin-top: 0.35rem;
+    font-size: var(--text-sm);
+    color: var(--error-color);
+}
+
+.input-error,
+.form-group input.input-error,
+.form-group textarea.input-error,
+.form-group select.input-error {
+    border-color: var(--error-color);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+}
+
+.form-error {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--error-color);
+    margin-bottom: 1rem;
 }
 
 /* Search Panel */
@@ -1403,6 +1456,32 @@ html {
     white-space: nowrap;
 }
 
+/* Column resize handle */
+.data-table th .col-resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    user-select: none;
+}
+
+.data-table th .col-resizer::after {
+    content: '';
+    position: absolute;
+    top: 20%;
+    right: 3px;
+    width: 2px;
+    height: 60%;
+    background: var(--gray-300);
+    opacity: 0.6;
+}
+
+[data-theme="dark"] .data-table th .col-resizer::after {
+    background: var(--gray-600);
+}
+
 .data-table th:hover {
     background: var(--gray-200);
 }
@@ -1463,6 +1542,18 @@ html {
 .data-table td {
     padding: 1rem;
     color: var(--text-secondary);
+}
+
+/* Inline editable cells */
+.data-table td.cell-editable {
+    cursor: text;
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.data-table td.cell-editable:focus {
+    outline: 2px solid rgba(37, 99, 235, 0.4);
+    outline-offset: -2px;
+    background: rgba(59, 130, 246, 0.12);
 }
 
 /* Row selection checkbox */
