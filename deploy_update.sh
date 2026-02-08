@@ -10,6 +10,8 @@ RELOAD_CADDY="${RELOAD_CADDY:-false}"
 cd "$REPO_DIR"
 
 echo "[1/4] Git pull"
+git restore .
+git fetch
 git pull
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
