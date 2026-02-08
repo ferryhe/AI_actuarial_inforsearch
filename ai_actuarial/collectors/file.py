@@ -120,7 +120,7 @@ class FileCollector(BaseCollector):
                         url=f"file://{source_path}",
                         sha256=sha256,
                         title=source_path.stem,
-                        source_site=config.name,
+                        source_site="Local Import",  # Standardized name
                         source_page_url=f"file://{source_path.parent}",
                         original_filename=source_path.name,
                         local_path=rel_path,

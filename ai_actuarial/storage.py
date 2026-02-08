@@ -721,6 +721,7 @@ class Storage:
         query: str = '',
         source: str = '',
         category: str = '',
+        include_deleted: bool = False,
     ) -> tuple[list[dict], int]:
         """Query files with catalog information, filtering and pagination.
         
@@ -732,6 +733,7 @@ class Storage:
             query: Search term for title/filename/url
             source: Source site filter
             category: Category filter
+            include_deleted: Whether to include deleted files
             
         Returns:
             Tuple of (list of file dicts, total count)
@@ -746,7 +748,14 @@ class Storage:
             order_dir = 'desc'
         
         # Build query
-        filters = ["f.local_path IS NOT NULL AND f.local_path != ''"]
+        filters = []
+        
+        # When not including deleted files, only show files with valid local_path
+        # When including deleted files, show all (deleted files have local_path cleared)
+        if not include_deleted:
+            filters.append("f.local_path IS NOT NULL AND f.local_path != ''")
+            filters.append("f.deleted_at IS NULL")
+        
         params = []
         
         if query:
@@ -793,7 +802,7 @@ class Storage:
             SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
                    f.original_filename, f.local_path, f.bytes, f.content_type,
                    f.last_modified, f.etag, f.published_time, f.first_seen,
-                   f.last_seen, f.crawl_time,
+                   f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords
             FROM files f
             {join_clause}
@@ -822,9 +831,10 @@ class Storage:
                 "first_seen": row[12],
                 "last_seen": row[13],
                 "crawl_time": row[14],
-                "category": row[15],
-                "summary": row[16],
-                "keywords": json.loads(row[17]) if row[17] else []
+                "deleted_at": row[15],
+                "category": row[16],
+                "summary": row[17],
+                "keywords": json.loads(row[18]) if row[18] else []
             }
             files.append(file_dict)
         
@@ -860,7 +870,7 @@ class Storage:
             SELECT f.url, f.sha256, f.title, f.source_site, f.source_page_url,
                    f.original_filename, f.local_path, f.bytes, f.content_type,
                    f.last_modified, f.etag, f.published_time, f.first_seen,
-                   f.last_seen, f.crawl_time,
+                   f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords, c.status
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
@@ -888,10 +898,11 @@ class Storage:
             "first_seen": row[12],
             "last_seen": row[13],
             "crawl_time": row[14],
-            "category": row[15],
-            "summary": row[16],
-            "keywords": json.loads(row[17]) if row[17] else [],
-            "catalog_status": row[18],
+            "deleted_at": row[15],
+            "category": row[16],
+            "summary": row[17],
+            "keywords": json.loads(row[18]) if row[18] else [],
+            "catalog_status": row[19],
         }
     
     def clear_local_path(self, url: str) -> None:

@@ -885,7 +885,7 @@ function startFileImport(e) {
         directory_path: directoryPath,
         recursive: formData.get('recursive') === 'on',
         extensions: extensions,  // File Import使用extensions字段
-        name: `File Import: ${directoryPath}`
+        name: 'File Import'  // Only show "File Import" without path for privacy
     });
     closeModal('file-import-modal');
 }

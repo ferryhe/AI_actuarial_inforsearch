@@ -19,6 +19,10 @@
             <select id="category-filter" onchange="searchFiles()">
                 <option value="">All Categories</option>
             </select>
+            <label style="margin-left: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" id="include-deleted" onchange="searchFiles()">
+                <span>Include deleted</span>
+            </label>
             <button onclick="resetFilters()" class="btn btn-secondary" style="margin-left: auto;">Reset</button>
         </div>
     </div>
@@ -88,6 +92,7 @@ function searchFiles(page = 1) {
     const query = document.getElementById('search-query').value;
     const source = document.getElementById('source-filter').value;
     const category = document.getElementById('category-filter').value;
+    const includeDeleted = document.getElementById('include-deleted').checked;
     let sortBy = document.getElementById('sort-by').value;
     let orderDir = 'desc'; // Default
 
@@ -106,6 +111,7 @@ function searchFiles(page = 1) {
     if (query) params.append('query', query);
     if (source) params.append('source', source);
     if (category) params.append('category', category);
+    if (includeDeleted) params.append('include_deleted', 'true');
 
     document.getElementById('results-container').innerHTML = '<p class="loading">Loading...</p>';
 
@@ -125,35 +131,107 @@ function displayResults(data) {
     document.getElementById('results-count').textContent = `${data.total} files`;
 
     if (data.files && data.files.length > 0) {
-        const table = document.createElement('table');
-        table.className = 'files-table';
-        table.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Title / Summary</th>
-                    <th>Source</th>
-                    <th>Category</th>
-                    <th>Size</th>
-                    <th>Last Seen</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.files.map(file => `
-                    <tr onclick="viewFile('${encodeURIComponent(file.url)}')" style="cursor: pointer;">
-                        <td>
-                            <div class="file-title">${escapeHtml(file.title || file.original_filename || 'Untitled')}</div>
-                            ${file.summary ? `<div class="file-summary">${escapeHtml(file.summary.substring(0, 100))}...</div>` : ''}
-                        </td>
-                        <td>${escapeHtml(file.source_site || 'Unknown')}</td>
-                        <td>${escapeHtml(file.category || '-')}</td>
-                        <td>${formatBytes(file.bytes)}</td>
-                        <td>${formatDate(file.last_seen)}</td>
-                    </tr>
-                `).join('')}
-            </tbody>
-        `;
-        container.innerHTML = '';
-        container.appendChild(table);
+        // Use Phase 3 DataTable component
+        new DataTable(container, {
+            data: data.files,
+            columns: [
+                {
+                    key: 'title',
+                    label: 'Title / Summary',
+                    sortable: true,
+                    render: (value, row) => {
+                        const title = escapeHtml(row.title || row.original_filename || 'Untitled');
+                        const summary = row.summary ? `<div class="file-summary">${escapeHtml(row.summary.substring(0, 100))}...</div>` : '';
+                        return `<div class="file-title">${title}</div>${summary}`;
+                    }
+                },
+                {
+                    key: 'source_site',
+                    label: 'Source',
+                    sortable: true,
+                    render: (value) => escapeHtml(value || 'Unknown')
+                },
+                {
+                    key: 'category',
+                    label: 'Category',
+                    sortable: true,
+                    render: (value) => escapeHtml(value || '-')
+                },
+                {
+                    key: 'bytes',
+                    label: 'Size',
+                    sortable: true,
+                    render: (value) => formatBytes(value)
+                },
+                {
+                    key: 'last_seen',
+                    label: 'Last Seen',
+                    sortable: true,
+                    render: (value) => formatDate(value)
+                }
+            ],
+            sortable: true,
+            selectable: true,
+            exportable: true,
+            deleteable: true,
+            exportFilename: 'database_files',
+            onRowClick: (row) => {
+                // URLs are validated and sanitized server-side before storage
+                // viewFile function performs additional URI encoding
+                viewFile(row.url);
+            },
+            onSelectionChange: (selectedFiles) => {
+                console.log(`Selected ${selectedFiles.length} files`);
+            },
+            onBulkDelete: async (selectedFiles) => {
+                // Bulk delete selected files
+                let successCount = 0;
+                let failCount = 0;
+                let errors = [];
+                
+                for (const file of selectedFiles) {
+                    try {
+                        const response = await fetch('/api/files/delete', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({url: file.url, confirm: 'DELETE'})
+                        });
+                        
+                        const data = await response.json();
+                        if (response.ok && data.success) {
+                            successCount++;
+                            console.log(`Deleted: ${file.title || file.url}`, data.details);
+                        } else {
+                            failCount++;
+                            const errorMsg = data.error || 'Unknown error';
+                            errors.push(`${file.title || file.url}: ${errorMsg}`);
+                            console.error(`Failed to delete ${file.url}:`, data);
+                        }
+                    } catch (err) {
+                        failCount++;
+                        errors.push(`${file.title || file.url}: ${err.message}`);
+                        console.error(`Exception deleting ${file.url}:`, err);
+                    }
+                }
+                
+                if (successCount > 0) {
+                    Toast.success(`Successfully deleted ${successCount} file(s)`);
+                    // Refresh the page after a short delay
+                    setTimeout(() => {
+                        searchFiles(currentPage);
+                    }, 1000);
+                }
+                
+                if (failCount > 0) {
+                    let errorMsg = `Failed to delete ${failCount} file(s)`;
+                    if (errors.length > 0 && errors[0].includes('disabled')) {
+                        errorMsg += '. Set ENABLE_FILE_DELETION=true';
+                    }
+                    Toast.error(errorMsg);
+                    console.error('Delete errors:', errors);
+                }
+            }
+        });
 
         // Update pagination
         updatePagination(data.total);
@@ -190,11 +268,16 @@ function resetFilters() {
     document.getElementById('search-query').value = '';
     document.getElementById('source-filter').value = '';
     document.getElementById('category-filter').value = '';
+    const includeDeletedCheckbox = document.getElementById('include-deleted');
+    if (includeDeletedCheckbox) {
+        includeDeletedCheckbox.checked = false;
+    }
     searchFiles(1);
 }
 
 function viewFile(url) {
-    window.location = `/file/${url}`;
+    // Properly encode URL for path parameter
+    window.location = `/file/${encodeURIComponent(url)}`;
 }
 
 function downloadFile(url) {
@@ -220,5 +303,45 @@ function debounceSearch() {
     clearTimeout(window.searchTimeout);
     window.searchTimeout = setTimeout(() => searchFiles(1), 500);
 }
+
+// Initialize Phase 3 Search Autocomplete
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('search-query');
+    
+    if (searchInput && typeof SearchAutocomplete !== 'undefined') {
+        new SearchAutocomplete(searchInput, {
+            onSearch: (query) => {
+                searchFiles(1);
+            },
+            // Don't call searchFiles on select since onSearch will be called automatically
+            // Just update the input value (which SearchAutocomplete already does)
+            onSelect: (value) => {
+                // Selection already updates the input, no need to search again
+            },
+            getSuggestions: async (query) => {
+                // Return search suggestions (could be enhanced with API call)
+                const suggestions = [];
+                
+                // Add common search terms
+                const commonTerms = ['PDF', 'IFRS', 'actuarial', 'insurance', 'risk'];
+                commonTerms.forEach(term => {
+                    if (term.toLowerCase().includes(query.toLowerCase())) {
+                        suggestions.push({
+                            text: term,
+                            subtitle: 'Common search term'
+                        });
+                    }
+                });
+                
+                return suggestions;
+            },
+            minLength: 2,
+            debounceDelay: 300,
+            showHistory: true,
+            maxHistory: 5
+        });
+    }
+});
+
 </script>
 {% endblock %}
