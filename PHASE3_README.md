@@ -404,6 +404,50 @@ For issues or questions:
 
 ---
 
+## Configuration
+
+### Enabling File Deletion
+
+File deletion is disabled by default for security. To enable it:
+
+**Method 1: Environment Variable (Recommended)**
+```bash
+# Linux/Mac
+export ENABLE_FILE_DELETION=true
+
+# Windows CMD
+set ENABLE_FILE_DELETION=true
+
+# Windows PowerShell
+$env:ENABLE_FILE_DELETION="true"
+```
+
+**Method 2: Docker/Docker Compose**
+```yaml
+environment:
+  - ENABLE_FILE_DELETION=true
+```
+
+**Method 3: Python Runtime**
+```python
+import os
+os.environ['ENABLE_FILE_DELETION'] = 'true'
+# Then start your Flask app
+```
+
+**Important Notes:**
+- The environment variable must be set BEFORE starting the Flask application
+- .env files are NOT automatically loaded - use one of the methods above
+- Value must be exactly `"true"` (lowercase)
+- Restart the application after setting the variable
+
+**Verify Deletion is Enabled:**
+1. Try to delete a file
+2. Check error message - if it says "Set ENABLE_FILE_DELETION=true", the variable isn't set correctly
+3. Check application logs at `/logs` for detailed deletion status
+
+---
+
 ## What's Next?
 
 Phase 3 is complete! Optional future enhancements could include:

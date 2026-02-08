@@ -166,16 +166,32 @@
                     
                     const data = await response.json();
                     
-                    if (data.success) {
-                        Toast.success('File deleted successfully');
+                    if (response.ok && data.success) {
+                        // Show detailed success message
+                        let message = 'File deleted successfully';
+                        if (data.details) {
+                            if (data.details.physical_file_deleted) {
+                                message += ' (file removed from disk)';
+                            } else if (data.details.database_marked) {
+                                message += ' (marked as deleted)';
+                            }
+                        }
+                        Toast.success(message);
                         setTimeout(() => {
                             window.location.href = '/database';
-                        }, 1000);
+                        }, 1500);
                     } else {
-                        Toast.error('Error: ' + data.error);
+                        // Show detailed error message
+                        let errorMsg = data.error || 'Unknown error';
+                        if (response.status === 403) {
+                            errorMsg = 'Deletion disabled. Administrator must set ENABLE_FILE_DELETION=true';
+                        }
+                        Toast.error('Delete failed: ' + errorMsg);
+                        console.error('Delete error details:', data);
                     }
                 } catch (err) {
-                    Toast.error('Error: ' + err);
+                    Toast.error('Network error: ' + err.message);
+                    console.error('Delete exception:', err);
                 }
             } else {
                 Toast.error('Please type "confirm delete" exactly to proceed');
