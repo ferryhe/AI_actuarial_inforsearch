@@ -282,17 +282,21 @@ class DataTable {
             sortable: options.sortable !== false,
             selectable: options.selectable || false,
             resizable: options.resizable || false,
+            editable: options.editable || false,
+            minColumnWidth: options.minColumnWidth || 80,
             exportable: options.exportable !== false,
             deleteable: options.deleteable || false,
             exportFilename: options.exportFilename || 'data_export',
             onRowClick: options.onRowClick || null,
             onSelectionChange: options.onSelectionChange || null,
-            onBulkDelete: options.onBulkDelete || null
+            onBulkDelete: options.onBulkDelete || null,
+            onCellEdit: options.onCellEdit || null
         };
         
         this.sortColumn = null;
         this.sortDirection = 'asc';
         this.selectedRows = new Map(); // Changed to Map to track by identifier
+        this.table = null;
         
         this.render();
     }
@@ -311,6 +315,7 @@ class DataTable {
         // Add table
         const table = document.createElement('table');
         table.className = 'data-table';
+        this.table = table;
         
         // Add header
         table.appendChild(this.createHeader());
@@ -394,13 +399,24 @@ class DataTable {
         }
         
         // Add data columns
-        this.options.columns.forEach(column => {
+        this.options.columns.forEach((column, index) => {
             const th = document.createElement('th');
             if (this.options.sortable && column.sortable !== false) {
                 th.className = 'sortable';
                 th.addEventListener('click', () => this.sort(column.key));
             }
+            if (column.width) {
+                const widthValue = typeof column.width === 'number' ? `${column.width}px` : column.width;
+                th.style.width = widthValue;
+            }
             th.textContent = column.label || column.key;
+            
+            if (this.options.resizable && column.resizable !== false) {
+                const resizer = document.createElement('div');
+                resizer.className = 'col-resizer';
+                this.attachResizer(resizer, index);
+                th.appendChild(resizer);
+            }
             tr.appendChild(th);
         });
         
@@ -441,11 +457,43 @@ class DataTable {
             this.options.columns.forEach(column => {
                 const td = document.createElement('td');
                 const value = row[column.key];
+                const isEditable = (column.editable || this.options.editable) && !column.render;
                 
-                if (column.render) {
+                if (isEditable) {
+                    td.classList.add('cell-editable');
+                    td.contentEditable = 'true';
+                    td.textContent = value == null ? '' : String(value);
+                    
+                    let lastValue = td.textContent;
+                    td.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            td.blur();
+                        }
+                    });
+                    td.addEventListener('click', (e) => e.stopPropagation());
+                    td.addEventListener('focus', (e) => e.stopPropagation());
+                    td.addEventListener('blur', () => {
+                        const newValue = td.textContent == null ? '' : td.textContent;
+                        if (newValue !== lastValue) {
+                            const oldValue = row[column.key];
+                            row[column.key] = newValue;
+                            lastValue = newValue;
+                            if (this.options.onCellEdit) {
+                                this.options.onCellEdit({
+                                    row,
+                                    columnKey: column.key,
+                                    oldValue,
+                                    newValue,
+                                    rowIndex: index
+                                });
+                            }
+                        }
+                    });
+                } else if (column.render) {
                     td.innerHTML = column.render(value, row);
                 } else {
-                    td.textContent = value;
+                    td.textContent = value == null ? '' : String(value);
                 }
                 
                 tr.appendChild(td);
@@ -470,6 +518,51 @@ class DataTable {
         });
         
         return tbody;
+    }
+
+    attachResizer(resizer, columnIndex) {
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const th = resizer.parentElement;
+            if (!th) return;
+            const startX = e.clientX;
+            const startWidth = th.getBoundingClientRect().width;
+            
+            const onMouseMove = (moveEvent) => {
+                const delta = moveEvent.clientX - startX;
+                const newWidth = Math.max(this.options.minColumnWidth, startWidth + delta);
+                this.setColumnWidth(columnIndex, newWidth);
+            };
+            
+            const onMouseUp = () => {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            };
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    }
+
+    setColumnWidth(columnIndex, width) {
+        if (!this.table) return;
+        if (this.options.columns[columnIndex]) {
+            this.options.columns[columnIndex].width = width;
+        }
+        const offset = this.options.selectable ? 1 : 0;
+        const headerCells = this.table.querySelectorAll('th');
+        const headerCell = headerCells[columnIndex + offset];
+        if (headerCell) {
+            headerCell.style.width = `${width}px`;
+        }
+        const rows = this.table.querySelectorAll('tbody tr');
+        rows.forEach((row) => {
+            const cell = row.children[columnIndex + offset];
+            if (cell) {
+                cell.style.width = `${width}px`;
+            }
+        });
     }
     
     getRowId(row) {
