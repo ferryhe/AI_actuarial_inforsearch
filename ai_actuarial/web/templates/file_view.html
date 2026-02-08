@@ -72,6 +72,16 @@
                     <th>Category</th>
                     <td>{{ file.category or 'Uncategorized' }}</td>
                 </tr>
+                {% if file.deleted_at %}
+                <tr>
+                    <th>Status</th>
+                    <td><span style="color: var(--error-500); font-weight: 600;">Deleted</span></td>
+                </tr>
+                <tr>
+                    <th>Deletion Time</th>
+                    <td>{{ file.deleted_at }}</td>
+                </tr>
+                {% endif %}
             </table>
         </div>
 
