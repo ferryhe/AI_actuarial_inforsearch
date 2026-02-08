@@ -746,7 +746,10 @@ class Storage:
             order_dir = 'desc'
         
         # Build query
-        filters = ["f.local_path IS NOT NULL AND f.local_path != ''"]
+        filters = [
+            "f.local_path IS NOT NULL AND f.local_path != ''",
+            "f.deleted_at IS NULL"  # Exclude deleted files
+        ]
         params = []
         
         if query:
