@@ -1136,6 +1136,59 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception(f"Error deleting file: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/files/update", methods=["POST"])
+    def api_files_update():
+        """Update file catalog information (category, summary, keywords)."""
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                logger.error("File update request has invalid JSON body")
+                return jsonify({"error": "Invalid or missing JSON body"}), 400
+
+            url = data.get("url")
+            if not url:
+                logger.error("File update request missing URL")
+                return jsonify({"error": "No URL provided"}), 400
+
+            # Extract update fields
+            category = data.get("category")
+            summary = data.get("summary")
+            keywords = data.get("keywords")
+
+            # Validate keywords is a list if provided
+            if keywords is not None and not isinstance(keywords, list):
+                return jsonify({"error": "Keywords must be a list"}), 400
+
+            logger.info(f"Updating file catalog for URL: {url}")
+            storage = Storage(db_path)
+            
+            try:
+                success = storage.update_file_catalog(
+                    url=url,
+                    category=category,
+                    summary=summary,
+                    keywords=keywords
+                )
+                
+                if success:
+                    logger.info(f"File catalog updated successfully: {url}")
+                    # Fetch updated data to return
+                    file_data = storage.get_file_with_catalog(url)
+                    return jsonify({
+                        "success": True,
+                        "file": file_data
+                    })
+                else:
+                    logger.warning(f"File catalog update had no changes: {url}")
+                    return jsonify({"error": "No updates provided"}), 400
+                    
+            finally:
+                storage.close()
+
+        except Exception as e:
+            logger.exception(f"Error updating file: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/logs/global")
     def api_logs_global():
         """Get global application logs."""

@@ -906,6 +906,61 @@ class Storage:
             "catalog_status": row[19],
         }
     
+    def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> bool:
+        """Update catalog information for a file.
+        
+        Args:
+            url: File URL
+            category: New category value (optional)
+            summary: New summary value (optional)
+            keywords: New keywords list (optional)
+            
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        # Check if catalog entry exists
+        cur = self._conn.execute(
+            "SELECT file_url FROM catalog_items WHERE file_url = ?",
+            (url,)
+        )
+        exists = cur.fetchone() is not None
+        
+        if not exists:
+            # Create a catalog entry if it doesn't exist
+            self._conn.execute(
+                """
+                INSERT INTO catalog_items (file_url, sha256, pipeline_version, status)
+                SELECT url, sha256, 'manual', 'ok' FROM files WHERE url = ?
+                """,
+                (url,)
+            )
+        
+        # Build update query dynamically based on provided fields
+        updates = []
+        params = []
+        
+        if category is not None:
+            updates.append("category = ?")
+            params.append(category)
+        
+        if summary is not None:
+            updates.append("summary = ?")
+            params.append(summary)
+        
+        if keywords is not None:
+            updates.append("keywords = ?")
+            params.append(json.dumps(keywords) if keywords else "")
+        
+        if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            query = f"UPDATE catalog_items SET {', '.join(updates)} WHERE file_url = ?"
+            params.append(url)
+            self._conn.execute(query, tuple(params))
+            self._maybe_commit()
+            return True
+        
+        return False
+    
     def clear_local_path(self, url: str) -> None:
         """Clear the local_path for a file (for deletion tracking).
         

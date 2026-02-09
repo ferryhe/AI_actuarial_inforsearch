@@ -70,7 +70,10 @@
                 </tr>
                 <tr>
                     <th>Category</th>
-                    <td>{{ file.category or 'Uncategorized' }}</td>
+                    <td>
+                        <span id="category-display">{{ file.category or 'Uncategorized' }}</span>
+                        <input type="text" id="category-input" class="edit-input" value="{{ file.category or '' }}" style="display:none;">
+                    </td>
                 </tr>
                 {% if file.deleted_at %}
                 <tr>
@@ -85,27 +88,37 @@
             </table>
         </div>
 
-        {% if file.summary %}
         <div class="summary-section">
-            <h4>Summary</h4>
-            <div class="summary-box">
-                {{ file.summary }}
+            <h4>
+                Summary
+            </h4>
+            <div id="summary-display" class="summary-box" {% if not file.summary %}style="display:none;"{% endif %}>
+                {{ file.summary or '' }}
             </div>
+            <textarea id="summary-input" class="edit-textarea" style="display:none;">{{ file.summary or '' }}</textarea>
+            {% if not file.summary %}
+            <div id="summary-empty" class="summary-box" style="color: var(--text-secondary);">No summary available</div>
+            {% endif %}
         </div>
-        {% endif %}
 
-        {% if file.keywords %}
         <div class="keywords-section">
             <h4>Keywords</h4>
-            <div class="keywords-list">
+            <div id="keywords-display" class="keywords-list" {% if not file.keywords %}style="display:none;"{% endif %}>
                 {% for keyword in file.keywords %}
                 <span class="keyword-tag">{{ keyword }}</span>
                 {% endfor %}
             </div>
+            <input type="text" id="keywords-input" class="edit-input" placeholder="Comma-separated keywords" style="display:none;" value="{{ file.keywords|join(', ') if file.keywords else '' }}">
+            {% if not file.keywords %}
+            <div id="keywords-empty" style="color: var(--text-secondary);">No keywords available</div>
+            {% endif %}
         </div>
-        {% endif %}
 
         <div class="actions-section">
+            <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
+            <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
+            <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
+            
             {% if file.local_path %}
             <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
             {% else %}
@@ -118,6 +131,112 @@
 </div>
 
 <script>
+    let editMode = false;
+    const fileUrl = {{ file.url|tojson }};
+    
+    function toggleEditMode() {
+        editMode = true;
+        
+        // Show input fields, hide display fields
+        document.getElementById('category-input').style.display = 'inline-block';
+        document.getElementById('category-display').style.display = 'none';
+        
+        document.getElementById('summary-input').style.display = 'block';
+        document.getElementById('summary-display').style.display = 'none';
+        const summaryEmpty = document.getElementById('summary-empty');
+        if (summaryEmpty) summaryEmpty.style.display = 'none';
+        
+        document.getElementById('keywords-input').style.display = 'block';
+        document.getElementById('keywords-display').style.display = 'none';
+        const keywordsEmpty = document.getElementById('keywords-empty');
+        if (keywordsEmpty) keywordsEmpty.style.display = 'none';
+        
+        // Show save/cancel buttons, hide edit button
+        document.getElementById('edit-btn').style.display = 'none';
+        document.getElementById('save-btn').style.display = 'inline-block';
+        document.getElementById('cancel-btn').style.display = 'inline-block';
+    }
+    
+    function cancelEdit() {
+        editMode = false;
+        
+        // Hide input fields, show display fields
+        document.getElementById('category-input').style.display = 'none';
+        document.getElementById('category-display').style.display = 'inline';
+        
+        document.getElementById('summary-input').style.display = 'none';
+        const summaryDisplay = document.getElementById('summary-display');
+        if (summaryDisplay.textContent.trim()) {
+            summaryDisplay.style.display = 'block';
+        } else {
+            const summaryEmpty = document.getElementById('summary-empty');
+            if (summaryEmpty) summaryEmpty.style.display = 'block';
+        }
+        
+        document.getElementById('keywords-input').style.display = 'none';
+        const keywordsDisplay = document.getElementById('keywords-display');
+        if (keywordsDisplay.children.length > 0) {
+            keywordsDisplay.style.display = 'flex';
+        } else {
+            const keywordsEmpty = document.getElementById('keywords-empty');
+            if (keywordsEmpty) keywordsEmpty.style.display = 'block';
+        }
+        
+        // Show edit button, hide save/cancel buttons
+        document.getElementById('edit-btn').style.display = 'inline-block';
+        document.getElementById('save-btn').style.display = 'none';
+        document.getElementById('cancel-btn').style.display = 'none';
+    }
+    
+    async function saveChanges() {
+        const category = document.getElementById('category-input').value.trim();
+        const summary = document.getElementById('summary-input').value.trim();
+        const keywordsText = document.getElementById('keywords-input').value.trim();
+        const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
+        
+        try {
+            const response = await fetch('/api/files/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    url: fileUrl,
+                    category: category || '',
+                    summary: summary || '',
+                    keywords: keywords
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                Toast.success('File details updated successfully');
+                
+                // Update display values
+                document.getElementById('category-display').textContent = category || 'Uncategorized';
+                
+                const summaryDisplay = document.getElementById('summary-display');
+                summaryDisplay.textContent = summary || '';
+                
+                const keywordsDisplay = document.getElementById('keywords-display');
+                keywordsDisplay.innerHTML = '';
+                keywords.forEach(keyword => {
+                    const tag = document.createElement('span');
+                    tag.className = 'keyword-tag';
+                    tag.textContent = keyword;
+                    keywordsDisplay.appendChild(tag);
+                });
+                
+                // Exit edit mode
+                cancelEdit();
+            } else {
+                Toast.error('Update failed: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            Toast.error('Network error: ' + err.message);
+            console.error('Update exception:', err);
+        }
+    }
+    
     async function deleteFile(url) {
         // Create a custom modal for text confirmation
         const modal = document.createElement('div');
@@ -308,6 +427,44 @@
         margin-top: 2rem;
         border-top: 1px solid var(--border-color);
         padding-top: 1rem;
+    }
+    
+    /* Edit mode styles */
+    .edit-input {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 1rem;
+    }
+    
+    .edit-textarea {
+        width: 100%;
+        min-height: 100px;
+        padding: 1rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 1rem;
+        line-height: 1.6;
+        resize: vertical;
+    }
+    
+    .edit-input:focus,
+    .edit-textarea:focus {
+        outline: none;
+        border-color: var(--primary-500);
+    }
+    
+    .keywords-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
     }
 </style>
 {% endblock %}
