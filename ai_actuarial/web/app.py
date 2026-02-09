@@ -30,6 +30,88 @@ _task_history = []
 _task_lock = threading.Lock()
 
 
+def _get_sites_config_path() -> str:
+    return os.getenv("CONFIG_PATH", "config/sites.yaml")
+
+
+def _get_categories_config_path() -> str:
+    return os.getenv("CATEGORIES_CONFIG_PATH", "config/categories.yaml")
+
+
+def _load_yaml(path: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    if default is None:
+        default = {}
+    if not os.path.exists(path):
+        return dict(default)
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        return dict(default)
+    return data
+
+
+def _write_yaml(path: str, data: dict[str, Any]) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, sort_keys=False, allow_unicode=True)
+
+
+def _normalize_list(value: Any, *, field_name: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = value.replace("\r\n", "\n").replace(",", "\n").split("\n")
+        return [p.strip() for p in parts if p.strip()]
+    if isinstance(value, list):
+        normalized: list[str] = []
+        for item in value:
+            s = str(item).strip()
+            if s:
+                normalized.append(s)
+        return normalized
+    raise ValueError(f"{field_name} must be a list or string")
+
+
+def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
+    defaults = config_data.get("defaults") or {}
+    paths = config_data.get("paths") or {}
+    search = config_data.get("search") or {}
+    return {
+        "defaults": {
+            "user_agent": defaults.get("user_agent", ""),
+            "max_pages": defaults.get("max_pages", 200),
+            "max_depth": defaults.get("max_depth", 2),
+            "delay_seconds": defaults.get("delay_seconds", 0.5),
+            "file_exts": defaults.get("file_exts", []),
+            "keywords": defaults.get("keywords", []),
+            "exclude_keywords": defaults.get("exclude_keywords", []),
+            "exclude_prefixes": defaults.get("exclude_prefixes", []),
+            "schedule_interval": defaults.get("schedule_interval", ""),
+        },
+        "paths": {
+            "db": paths.get("db", "data/index.db"),
+            "download_dir": paths.get("download_dir", "data/files"),
+            "updates_dir": paths.get("updates_dir", "data/updates"),
+            "last_run_new": paths.get("last_run_new", "data/last_run_new.json"),
+        },
+        "search": {
+            "enabled": bool(search.get("enabled", True)),
+            "max_results": search.get("max_results", 5),
+            "delay_seconds": search.get("delay_seconds", 0.5),
+            "languages": search.get("languages", ["en"]),
+            "country": search.get("country", "us"),
+            "exclude_keywords": search.get("exclude_keywords", []),
+            "queries": search.get("queries", []),
+        },
+        "runtime": {
+            "config_path": _get_sites_config_path(),
+            "categories_config_path": _get_categories_config_path(),
+            "file_deletion_enabled": os.getenv("ENABLE_FILE_DELETION") == "true",
+            "file_deletion_auth_required": bool(os.getenv("FILE_DELETION_AUTH_TOKEN")),
+        },
+    }
+
+
 def create_app(config: dict[str, Any] | None = None) -> Any:
     """Create and configure the Flask application.
     
@@ -54,7 +136,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         app.config.update(config)
     
     # Load configuration
-    config_path = os.getenv('CONFIG_PATH', 'config/sites.yaml')
+    config_path = _get_sites_config_path()
     with open(config_path, 'r', encoding='utf-8') as f:
         site_config = yaml.safe_load(f)
     
@@ -111,6 +193,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def scheduled_tasks():
         """Scheduled task management page."""
         return render_template("scheduled_tasks.html")
+
+    @app.route("/settings")
+    def settings():
+        """Backend settings management page."""
+        return render_template("settings.html")
     
     @app.route("/collection/url")
     def collection_url():
@@ -205,10 +292,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """Get list of available categories."""
         try:
             # Load categories from config
-            category_config_path = 'config/categories.yaml'
+            category_config_path = _get_categories_config_path()
             if os.path.exists(category_config_path):
                 with open(category_config_path, 'r', encoding='utf-8') as f:
-                    cat_config = yaml.safe_load(f)
+                    cat_config = yaml.safe_load(f) or {}
                     categories = list(cat_config.get('categories', {}).keys())
             else:
                 # Fallback to database using abstraction method
@@ -220,13 +307,177 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         except Exception as e:
             logger.exception("Error getting categories")
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/categories")
+    def api_config_categories():
+        """Get full category configuration."""
+        try:
+            config_data = _load_yaml(
+                _get_categories_config_path(),
+                default={"categories": {}, "ai_filter_keywords": [], "ai_keywords": []},
+            )
+            categories = config_data.get("categories") or {}
+            if not isinstance(categories, dict):
+                categories = {}
+            ai_filter_keywords = _normalize_list(
+                config_data.get("ai_filter_keywords"), field_name="ai_filter_keywords"
+            )
+            ai_keywords = _normalize_list(
+                config_data.get("ai_keywords"), field_name="ai_keywords"
+            )
+            return jsonify(
+                {
+                    "categories": categories,
+                    "ai_filter_keywords": ai_filter_keywords,
+                    "ai_keywords": ai_keywords,
+                }
+            )
+        except Exception as e:
+            logger.exception("Error loading categories config")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/categories", methods=["POST"])
+    def api_config_categories_update():
+        """Update category configuration in categories.yaml."""
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"error": "Invalid JSON body"}), 400
+
+            raw_categories = data.get("categories")
+            if not isinstance(raw_categories, dict):
+                return jsonify({"error": "categories must be an object"}), 400
+
+            normalized_categories: dict[str, list[str]] = {}
+            for raw_name, raw_keywords in raw_categories.items():
+                name = str(raw_name).strip()
+                if not name:
+                    continue
+                normalized_categories[name] = _normalize_list(
+                    raw_keywords, field_name=f"categories.{name}"
+                )
+
+            existing = _load_yaml(_get_categories_config_path(), default={})
+            existing["categories"] = normalized_categories
+            existing["ai_filter_keywords"] = _normalize_list(
+                data.get("ai_filter_keywords"), field_name="ai_filter_keywords"
+            )
+            existing["ai_keywords"] = _normalize_list(
+                data.get("ai_keywords"), field_name="ai_keywords"
+            )
+            _write_yaml(_get_categories_config_path(), existing)
+            return jsonify({"success": True})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.exception("Error updating categories config")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/backend-settings")
+    def api_config_backend_settings():
+        """Get backend settings from sites.yaml and runtime environment."""
+        try:
+            config_data = _load_yaml(_get_sites_config_path(), default={})
+            return jsonify(_serialize_backend_settings(config_data))
+        except Exception as e:
+            logger.exception("Error getting backend settings")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/backend-settings", methods=["POST"])
+    def api_config_backend_settings_update():
+        """Update editable backend settings in sites.yaml."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"error": "Invalid JSON body"}), 400
+
+            config_data = _load_yaml(_get_sites_config_path(), default={})
+            config_data.setdefault("defaults", {})
+            config_data.setdefault("paths", {})
+            config_data.setdefault("search", {})
+
+            defaults_in = data.get("defaults")
+            if isinstance(defaults_in, dict):
+                defaults = config_data["defaults"]
+                if "user_agent" in defaults_in:
+                    defaults["user_agent"] = str(defaults_in.get("user_agent", "")).strip()
+                if "max_pages" in defaults_in:
+                    defaults["max_pages"] = int(defaults_in.get("max_pages") or 0)
+                if "max_depth" in defaults_in:
+                    defaults["max_depth"] = int(defaults_in.get("max_depth") or 0)
+                if "delay_seconds" in defaults_in:
+                    defaults["delay_seconds"] = float(defaults_in.get("delay_seconds") or 0)
+                if "file_exts" in defaults_in:
+                    defaults["file_exts"] = _normalize_list(
+                        defaults_in.get("file_exts"), field_name="defaults.file_exts"
+                    )
+                if "keywords" in defaults_in:
+                    defaults["keywords"] = _normalize_list(
+                        defaults_in.get("keywords"), field_name="defaults.keywords"
+                    )
+                if "exclude_keywords" in defaults_in:
+                    defaults["exclude_keywords"] = _normalize_list(
+                        defaults_in.get("exclude_keywords"),
+                        field_name="defaults.exclude_keywords",
+                    )
+                if "exclude_prefixes" in defaults_in:
+                    defaults["exclude_prefixes"] = _normalize_list(
+                        defaults_in.get("exclude_prefixes"),
+                        field_name="defaults.exclude_prefixes",
+                    )
+                if "schedule_interval" in defaults_in:
+                    defaults["schedule_interval"] = str(
+                        defaults_in.get("schedule_interval", "")
+                    ).strip()
+
+            paths_in = data.get("paths")
+            if isinstance(paths_in, dict):
+                paths = config_data["paths"]
+                for key in ["db", "download_dir", "updates_dir", "last_run_new"]:
+                    if key in paths_in:
+                        paths[key] = str(paths_in.get(key, "")).strip()
+
+            search_in = data.get("search")
+            if isinstance(search_in, dict):
+                search = config_data["search"]
+                if "enabled" in search_in:
+                    search["enabled"] = bool(search_in.get("enabled"))
+                if "max_results" in search_in:
+                    search["max_results"] = int(search_in.get("max_results") or 0)
+                if "delay_seconds" in search_in:
+                    search["delay_seconds"] = float(search_in.get("delay_seconds") or 0)
+                if "languages" in search_in:
+                    search["languages"] = _normalize_list(
+                        search_in.get("languages"), field_name="search.languages"
+                    )
+                if "country" in search_in:
+                    search["country"] = str(search_in.get("country", "")).strip()
+                if "exclude_keywords" in search_in:
+                    search["exclude_keywords"] = _normalize_list(
+                        search_in.get("exclude_keywords"),
+                        field_name="search.exclude_keywords",
+                    )
+                if "queries" in search_in:
+                    search["queries"] = _normalize_list(
+                        search_in.get("queries"), field_name="search.queries"
+                    )
+
+            _write_yaml(_get_sites_config_path(), config_data)
+            site_config = config_data
+            return jsonify({"success": True, **_serialize_backend_settings(config_data)})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.exception("Error updating backend settings")
+            return jsonify({"error": str(e)}), 500
     
     @app.route("/api/config/sites")
     def api_config_sites():
         """Get configured sites."""
         try:
             # Re-load config to ensure fresh data
-            config_path = os.getenv('CONFIG_PATH', 'config/sites.yaml')
+            config_path = _get_sites_config_path()
             with open(config_path, 'r', encoding='utf-8') as f:
                 current_config = yaml.safe_load(f)
             
@@ -251,12 +502,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/api/config/sites/add", methods=["POST"])
     def api_config_sites_add():
         """Add a new site to configuration."""
+        nonlocal site_config
         try:
             data = request.get_json()
             if not data or not data.get('name') or not data.get('url'):
                 return jsonify({"error": "Name and URL are required"}), 400
             
-            config_path = os.getenv('CONFIG_PATH', 'config/sites.yaml')
+            config_path = _get_sites_config_path()
             
             # Read current config
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -287,8 +539,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
             
-            # Update global config copy
-            global site_config
+            # Update in-memory config copy
             site_config = config_data
             
             return jsonify({"success": True})
@@ -299,12 +550,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/api/config/sites/update", methods=["POST"])
     def api_config_sites_update():
         """Update an existing site in configuration."""
+        nonlocal site_config
         try:
             data = request.get_json()
             if not data or not data.get('original_name') or not data.get('name'):
                 return jsonify({"error": "Original name and new name are required"}), 400
             
-            config_path = os.getenv('CONFIG_PATH', 'config/sites.yaml')
+            config_path = _get_sites_config_path()
             
             with open(config_path, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
@@ -345,7 +597,6 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
                 
-            global site_config
             site_config = config_data
             
             return jsonify({"success": True})
