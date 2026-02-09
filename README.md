@@ -33,6 +33,24 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 - `data/` downloaded files, catalogs, and database
 - `docs/` implementation notes and operational guidance
 
+## Project Directory Overview
+
+```
+AI_actuarial_inforsearch/
+├─ ai_actuarial/           # Core package (crawler, catalog, storage, web app)
+├─ config/                 # Site and category configuration
+├─ data/                   # Downloads, catalog outputs, and database
+├─ docs/                   # Implementation notes and summaries
+├─ scripts/                # Maintenance and helper scripts
+├─ SERVICE_START_GUIDE.md  # Service start guide (Linux + Windows)
+├─ QUICK_START_NEW_FEATURES.md
+├─ QUICK_REFERENCE.md
+├─ DATABASE_BACKEND_GUIDE.md
+├─ MODULAR_SYSTEM_GUIDE.md
+├─ README.md
+└─ requirements.txt
+```
+
 ## Operations Manual
 
 - Service start guide (Linux + Windows): `SERVICE_START_GUIDE.md`
