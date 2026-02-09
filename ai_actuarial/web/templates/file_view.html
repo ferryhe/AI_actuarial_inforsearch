@@ -72,7 +72,9 @@
                     <th>Category</th>
                     <td>
                         <span id="category-display">{{ file.category or 'Uncategorized' }}</span>
-                        <input type="text" id="category-input" class="edit-input" value="{{ file.category or '' }}" style="display:none;">
+                        <select id="category-select" class="edit-input" data-current-value="{{ file.category or '' }}" style="display:none;">
+                            <option value="">Uncategorized</option>
+                        </select>
                     </td>
                 </tr>
                 {% if file.deleted_at %}
@@ -133,12 +135,48 @@
 <script>
     let editMode = false;
     const fileUrl = {{ file.url|tojson }};
+    let categoryOptionsLoaded = false;
+
+    function setCategoryOptions(categories) {
+        const categorySelect = document.getElementById('category-select');
+        const currentValue = (categorySelect.dataset.currentValue || '').trim();
+        const unique = Array.from(new Set((categories || []).filter(Boolean)));
+        const sortedCategories = unique.sort((a, b) => a.localeCompare(b));
+
+        categorySelect.innerHTML = '';
+        categorySelect.appendChild(new Option('Uncategorized', ''));
+
+        sortedCategories.forEach((cat) => {
+            categorySelect.appendChild(new Option(cat, cat));
+        });
+
+        if (currentValue && !sortedCategories.includes(currentValue)) {
+            categorySelect.appendChild(new Option(`${currentValue} (current)`, currentValue));
+        }
+        categorySelect.value = currentValue;
+    }
+
+    async function ensureCategoryOptions() {
+        if (categoryOptionsLoaded) return;
+        try {
+            const response = await fetch('/api/categories');
+            if (!response.ok) throw new Error('Failed to load categories');
+            const data = await response.json();
+            setCategoryOptions(data.categories || []);
+            categoryOptionsLoaded = true;
+        } catch (err) {
+            console.error('Failed loading category options:', err);
+            // Keep at least current category option available.
+            setCategoryOptions([]);
+        }
+    }
     
-    function toggleEditMode() {
+    async function toggleEditMode() {
+        await ensureCategoryOptions();
         editMode = true;
         
         // Show input fields, hide display fields
-        document.getElementById('category-input').style.display = 'inline-block';
+        document.getElementById('category-select').style.display = 'inline-block';
         document.getElementById('category-display').style.display = 'none';
         
         document.getElementById('summary-input').style.display = 'block';
@@ -161,7 +199,9 @@
         editMode = false;
         
         // Hide input fields, show display fields
-        document.getElementById('category-input').style.display = 'none';
+        const categorySelect = document.getElementById('category-select');
+        categorySelect.style.display = 'none';
+        categorySelect.value = categorySelect.dataset.currentValue || '';
         document.getElementById('category-display').style.display = 'inline';
         
         document.getElementById('summary-input').style.display = 'none';
@@ -189,7 +229,7 @@
     }
     
     async function saveChanges() {
-        const category = document.getElementById('category-input').value.trim();
+        const category = document.getElementById('category-select').value.trim();
         const summary = document.getElementById('summary-input').value.trim();
         const keywordsText = document.getElementById('keywords-input').value.trim();
         const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
@@ -212,6 +252,7 @@
                 Toast.success('File details updated successfully');
                 
                 // Update display values
+                document.getElementById('category-select').dataset.currentValue = category || '';
                 document.getElementById('category-display').textContent = category || 'Uncategorized';
                 
                 const summaryDisplay = document.getElementById('summary-display');
@@ -236,6 +277,9 @@
             console.error('Update exception:', err);
         }
     }
+
+    // Load categories early so the first edit interaction is instant.
+    ensureCategoryOptions();
     
     async function deleteFile(url) {
         // Create a custom modal for text confirmation
