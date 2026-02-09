@@ -291,6 +291,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_categories():
         """Get list of available categories."""
         try:
+            mode = request.args.get("mode", "").strip().lower()
+            if mode == "used":
+                storage = Storage(db_path)
+                categories = storage.get_unique_categories()
+                storage.close()
+                return jsonify({"categories": categories})
+
             # Load categories from config
             category_config_path = _get_categories_config_path()
             if os.path.exists(category_config_path):
@@ -1009,10 +1016,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 class CatalogResult:
                     def __init__(self, s):
                         self.success = s
-                        self.errors = []
-                        self.items_found = stats.get('scanned', 0)
-                        self.items_downloaded = stats.get('written', 0)
-                        self.items_skipped = stats.get('skipped_ai', 0)
+                        self.errors = stats.get('error_samples', [])
+                        self.catalog_scanned = stats.get('scanned', 0)
+                        self.catalog_ok = stats.get('processed', 0)
+                        self.catalog_skipped = stats.get('skipped_ai', 0)
+                        self.catalog_errors = stats.get('errors', 0)
+                        self.items_found = self.catalog_scanned
+                        self.items_downloaded = self.catalog_ok
+                        self.items_skipped = self.catalog_skipped
                 
                 result = CatalogResult(True)
                 progress_callback(100, 100, f"Cataloging complete. Processed {stats.get('processed')} items.")
@@ -1032,7 +1043,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "items_processed": result.items_found if result else 0,
                         "items_downloaded": result.items_downloaded if result else 0,
                         "items_skipped": getattr(result, "items_skipped", 0),
-                        "errors": result.errors if result else []
+                        "errors": result.errors if result else [],
+                        "catalog_scanned": getattr(result, "catalog_scanned", None),
+                        "catalog_ok": getattr(result, "catalog_ok", None),
+                        "catalog_skipped": getattr(result, "catalog_skipped", None),
+                        "catalog_errors": getattr(result, "catalog_errors", None),
                     })
                     # Check if stopped
                     if task_data.get("stop_requested"):

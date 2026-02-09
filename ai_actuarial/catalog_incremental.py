@@ -507,6 +507,7 @@ def run_incremental_catalog(
         "skipped_ai": 0,
         "errors": 0,
         "missing_files": 0,
+        "error_samples": [],
     }
     
     seen_urls = set()
@@ -629,6 +630,8 @@ def run_incremental_catalog(
                     elif status.startswith("error:"):
                         stats["errors"] += 1
                         err_msg = status[6:]
+                        if len(stats["error_samples"]) < 20:
+                            stats["error_samples"].append(err_msg)
                         if "File not found" in err_msg:
                             stats["missing_files"] += 1
                             
@@ -655,6 +658,8 @@ def run_incremental_catalog(
                 except Exception as e:
                     logger.exception("Worker thread crashed")
                     stats["errors"] += 1
+                    if len(stats["error_samples"]) < 20:
+                        stats["error_samples"].append(str(e))
         
         # Append outputs incrementally
         if batch_items:
