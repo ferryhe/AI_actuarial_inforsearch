@@ -134,6 +134,25 @@
                 <input type="number" name="count" value="10" min="1" max="50">
             </div>
             <div class="form-group">
+                <label>
+                    <input type="checkbox" name="use_search_defaults" id="use-search-defaults" checked onchange="toggleSearchDefaults(this.checked)">
+                    Use defaults from Settings -> Search Settings
+                </label>
+                <small id="search-defaults-summary" class="format-hint" style="color: var(--text-secondary);">Loading search defaults...</small>
+            </div>
+            <div class="form-group search-override-field">
+                <label>Language (Optional)</label>
+                <input type="text" name="search_lang" placeholder="e.g. en">
+            </div>
+            <div class="form-group search-override-field">
+                <label>Country (Optional)</label>
+                <input type="text" name="search_country" placeholder="e.g. us">
+            </div>
+            <div class="form-group search-override-field">
+                <label>Exclude Keywords (Optional, comma separated)</label>
+                <input type="text" name="search_exclude_keywords" placeholder="newsletter, brochure">
+            </div>
+            <div class="form-group">
                 <label>Site Filter (Optional)</label>
                 <input type="text" name="site" placeholder="e.g. actuaries.org">
             </div>
@@ -749,7 +768,39 @@ function refreshTasksPage() {
     loadTaskHistory();
 }
 
-function openWebSearchModal() { openModal('web-search-modal'); }
+let searchDefaultsConfig = null;
+
+function toggleSearchDefaults(checked) {
+    const modal = document.getElementById('web-search-modal');
+    if (!modal) return;
+    modal.querySelectorAll('.search-override-field input').forEach((input) => {
+        input.disabled = checked;
+    });
+}
+
+async function loadSearchDefaults() {
+    try {
+        const resp = await fetch('/api/config/search-defaults');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Failed to load search defaults');
+        searchDefaultsConfig = data;
+        const summary = document.getElementById('search-defaults-summary');
+        if (summary) {
+            summary.textContent = `Default max_results=${data.max_results}, country=${data.country || '-'}, languages=${(data.languages || []).join(', ') || '-'}`;
+        }
+    } catch (err) {
+        const summary = document.getElementById('search-defaults-summary');
+        if (summary) summary.textContent = 'Failed to load defaults';
+        console.error(err);
+    }
+}
+
+async function openWebSearchModal() {
+    openModal('web-search-modal');
+    await loadSearchDefaults();
+    const cb = document.getElementById('use-search-defaults');
+    if (cb) toggleSearchDefaults(cb.checked);
+}
 function openQuickCheckModal() { openModal('quick-check-modal'); }
 function openCatalogModal() { openModal('catalog-modal'); }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
@@ -795,6 +846,7 @@ function startWebSearch(e) {
     if (!validateForm(form)) return;
     const formData = new FormData(form);
     const data = Object.fromEntries(formData.entries());
+    const useDefaults = formData.get('use_search_defaults') === 'on';
     
     // 获取选中的文件格式
     const formats = getSelectedFormats(form);
@@ -803,8 +855,17 @@ function startWebSearch(e) {
         type: 'search',
         query: data.query,
         engine: data.engine,
-        count: data.count,
+        count: useDefaults ? null : data.count,
         site: data.site,
+        use_search_defaults: useDefaults,
+        search_lang: useDefaults ? '' : (data.search_lang || ''),
+        search_country: useDefaults ? '' : (data.search_country || ''),
+        search_exclude_keywords: useDefaults
+            ? []
+            : (data.search_exclude_keywords || '')
+                .split(',')
+                .map(k => k.trim())
+                .filter(Boolean),
         file_exts: formats,  // 添加文件格式参数
         name: `Web Search: ${data.query}`
     });

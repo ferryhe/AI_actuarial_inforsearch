@@ -1,486 +1,390 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 
 {% block content %}
 <div class="settings-page">
-    <div class="page-header">
-        <h2>Backend Settings</h2>
+  <div class="page-header"><h2>Backend Settings</h2></div>
+  <div class="tabs">
+    <button class="tab-link active" onclick="openTab(event,'tab-categories')">Categories</button>
+    <button class="tab-link" onclick="openTab(event,'tab-backend')">Other Settings</button>
+  </div>
+
+  <div id="tab-categories" class="tab-content" style="display:block;">
+    <section class="settings-module" data-module="categories">
+      <div class="module-header">
+        <div>
+          <h3>Category Rules</h3>
+          <p class="module-help">Editable category options for File Detail multi-select and classification rules.</p>
+        </div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('categories')">Edit</button></div>
+        <div class="module-actions-edit" style="display:none;">
+          <button class="btn btn-primary" onclick="saveModule('categories')">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('categories')">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('categories')">Exit Edit</button>
+        </div>
+      </div>
+      <div class="settings-grid">
+        <div class="card">
+          <h4>Category List</h4>
+          <div class="row">
+            <input id="new-category-name" class="module-field" data-module="categories" type="text" placeholder="New category name">
+            <button class="btn btn-secondary requires-edit" data-module="categories" type="button" onclick="addCategory()">Add</button>
+          </div>
+          <select id="category-list" class="module-field" data-module="categories" size="12" onchange="onCategorySelect()"></select>
+          <button class="btn btn-danger requires-edit" data-module="categories" type="button" onclick="removeCategory()">Delete Selected</button>
+        </div>
+        <div class="card">
+          <h4>Category Keywords</h4>
+          <input id="category-name" class="module-field" data-module="categories" type="text" readonly>
+          <textarea id="category-keywords" class="module-field" data-module="categories" rows="10"></textarea>
+          <button class="btn btn-secondary requires-edit" data-module="categories" type="button" onclick="applyCategoryKeywords()">Apply to Selected</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-module" data-module="ai_keywords">
+      <div class="module-header">
+        <div>
+          <h3>AI Keyword Settings</h3>
+          <p class="module-help">Single list for both ai_filter_keywords and ai_keywords.</p>
+        </div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_keywords')">Edit</button></div>
+        <div class="module-actions-edit" style="display:none;">
+          <button class="btn btn-primary" onclick="saveModule('ai_keywords')">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('ai_keywords')">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('ai_keywords')">Exit Edit</button>
+        </div>
+      </div>
+      <div class="card"><textarea id="ai-shared-keywords" class="module-field" data-module="ai_keywords" rows="8"></textarea></div>
+    </section>
+  </div>
+
+  <div id="tab-backend" class="tab-content">
+    <section class="settings-module" data-module="crawler_defaults">
+      <div class="module-header">
+        <div>
+          <h3>Crawler Defaults</h3>
+          <p class="module-help">Used by URL/Scheduled/Quick-Check crawling. User Agent is locked.</p>
+        </div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('crawler_defaults')">Edit</button></div>
+        <div class="module-actions-edit" style="display:none;">
+          <button class="btn btn-primary" onclick="saveModule('crawler_defaults')">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('crawler_defaults')">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('crawler_defaults')">Exit Edit</button>
+        </div>
+      </div>
+      <div class="card form-grid">
+        <div><label>User Agent (locked)</label><input id="defaults-user-agent" class="module-field" data-module="crawler_defaults" data-lock="true" type="text"></div>
+        <div><label>Max Pages</label><input id="defaults-max-pages" class="module-field" data-module="crawler_defaults" type="number" min="1"></div>
+        <div><label>Max Depth</label><input id="defaults-max-depth" class="module-field" data-module="crawler_defaults" type="number" min="1"></div>
+        <div><label>Delay Seconds</label><input id="defaults-delay" class="module-field" data-module="crawler_defaults" type="number" step="0.1" min="0"></div>
+        <div><label>File Extensions</label><textarea id="defaults-file-exts" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label>Keywords</label><textarea id="defaults-keywords" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label>Exclude Keywords</label><textarea id="defaults-exclude-keywords" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label>Exclude Prefixes</label><textarea id="defaults-exclude-prefixes" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label>Schedule Interval</label><input id="defaults-schedule-interval" class="module-field" data-module="crawler_defaults" type="text"></div>
+      </div>
+    </section>
+    <section class="settings-module" data-module="paths">
+      <div class="module-header">
+        <div>
+          <h3>Paths</h3>
+          <p class="module-help">DB Path is locked to prevent runtime data split. Other paths are editable.</p>
+        </div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('paths')">Edit</button></div>
+        <div class="module-actions-edit" style="display:none;">
+          <button class="btn btn-primary" onclick="saveModule('paths')">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('paths')">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('paths')">Exit Edit</button>
+        </div>
+      </div>
+      <div class="card form-grid">
+        <div><label>DB Path (locked)</label><input id="paths-db" class="module-field" data-module="paths" data-lock="true" type="text"></div>
+        <div><label>Download Directory</label><input id="paths-download-dir" class="module-field" data-module="paths" type="text"></div>
+        <div><label>Updates Directory</label><input id="paths-updates-dir" class="module-field" data-module="paths" type="text"></div>
+        <div><label>Last Run File</label><input id="paths-last-run-new" class="module-field" data-module="paths" type="text"></div>
+      </div>
+    </section>
+
+    <section class="settings-module" data-module="search_defaults">
+      <div class="module-header">
+        <div>
+          <h3>Search Settings</h3>
+          <p class="module-help">Defaults for Task Center -> Web Search. You can still override per run in the search dialog.</p>
+        </div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('search_defaults')">Edit</button></div>
+        <div class="module-actions-edit" style="display:none;">
+          <button class="btn btn-primary" onclick="saveModule('search_defaults')">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('search_defaults')">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('search_defaults')">Exit Edit</button>
+        </div>
+      </div>
+      <div class="card form-grid">
+        <div><label>Enabled</label><input id="search-enabled" class="module-field" data-module="search_defaults" type="checkbox"></div>
+        <div><label>Max Results</label><input id="search-max-results" class="module-field" data-module="search_defaults" type="number" min="1"></div>
+        <div><label>Delay Seconds</label><input id="search-delay" class="module-field" data-module="search_defaults" type="number" step="0.1" min="0"></div>
+        <div><label>Country</label><input id="search-country" class="module-field" data-module="search_defaults" type="text"></div>
+        <div><label>Languages</label><textarea id="search-languages" class="module-field" data-module="search_defaults" rows="4"></textarea></div>
+        <div><label>Exclude Keywords</label><textarea id="search-exclude-keywords" class="module-field" data-module="search_defaults" rows="4"></textarea></div>
+        <div><label>Queries</label><textarea id="search-queries" class="module-field" data-module="search_defaults" rows="5"></textarea></div>
+      </div>
+    </section>
+
+    <section class="settings-module" data-module="runtime_flags">
+      <div class="module-header">
+        <div>
+          <h3>Runtime Flags</h3>
+          <p class="module-help">Read-only runtime and environment status.</p>
+        </div>
+      </div>
+      <div class="card"><div id="runtime-flags" class="runtime-flags"></div></div>
+    </section>
+  </div>
+</div>
+
+<div id="typed-delete-modal" class="modal" style="display:none;">
+  <div class="modal-content confirm-dialog">
+    <h3>Confirm Delete</h3>
+    <p id="typed-delete-message"></p>
+    <input type="text" id="typed-delete-input" class="form-control" placeholder="confirm delete">
+    <div class="confirm-buttons">
+      <button class="btn btn-secondary" id="typed-delete-cancel">Cancel</button>
+      <button class="btn btn-danger" id="typed-delete-confirm">Delete</button>
     </div>
-
-    <div class="tabs">
-        <button class="tab-link active" onclick="openTab(event, 'tab-categories')">Categories</button>
-        <button class="tab-link" onclick="openTab(event, 'tab-backend')">Other Settings</button>
-    </div>
-
-    <div id="tab-categories" class="tab-content" style="display:block;">
-        <div class="settings-grid">
-            <section class="card">
-                <h3>Category List</h3>
-                <div class="row">
-                    <input id="new-category-name" type="text" placeholder="New category name">
-                    <button class="btn btn-secondary" onclick="addCategory()">Add</button>
-                </div>
-                <select id="category-list" size="16" onchange="onCategorySelect()"></select>
-                <button class="btn btn-danger" onclick="removeCategory()">Delete Selected</button>
-            </section>
-
-            <section class="card">
-                <h3>Category Details</h3>
-                <label for="category-name">Category Name</label>
-                <input id="category-name" type="text" readonly>
-                <label for="category-keywords">Keywords (one per line)</label>
-                <textarea id="category-keywords" rows="13" placeholder="artificial intelligence&#10;machine learning"></textarea>
-                <button class="btn btn-primary" onclick="saveCategoryKeywords()">Apply to Selected Category</button>
-            </section>
-        </div>
-
-        <div class="card">
-            <h3>AI Keyword Settings</h3>
-            <div class="dual-grid">
-                <div>
-                    <label for="ai-filter-keywords">ai_filter_keywords</label>
-                    <textarea id="ai-filter-keywords" rows="10"></textarea>
-                </div>
-                <div>
-                    <label for="ai-keywords">ai_keywords</label>
-                    <textarea id="ai-keywords" rows="10"></textarea>
-                </div>
-            </div>
-            <button class="btn btn-primary" onclick="saveCategoriesConfig()">Save Categories Config</button>
-        </div>
-    </div>
-
-    <div id="tab-backend" class="tab-content">
-        <div class="card">
-            <h3>Crawler Defaults (sites.yaml)</h3>
-            <div class="form-grid">
-                <div>
-                    <label for="defaults-user-agent">User Agent</label>
-                    <input id="defaults-user-agent" type="text">
-                </div>
-                <div>
-                    <label for="defaults-max-pages">Max Pages</label>
-                    <input id="defaults-max-pages" type="number" min="1">
-                </div>
-                <div>
-                    <label for="defaults-max-depth">Max Depth</label>
-                    <input id="defaults-max-depth" type="number" min="1">
-                </div>
-                <div>
-                    <label for="defaults-delay">Delay Seconds</label>
-                    <input id="defaults-delay" type="number" step="0.1" min="0">
-                </div>
-                <div>
-                    <label for="defaults-file-exts">File Extensions (one per line)</label>
-                    <textarea id="defaults-file-exts" rows="6"></textarea>
-                </div>
-                <div>
-                    <label for="defaults-keywords">Keywords (one per line)</label>
-                    <textarea id="defaults-keywords" rows="6"></textarea>
-                </div>
-                <div>
-                    <label for="defaults-exclude-keywords">Exclude Keywords (one per line)</label>
-                    <textarea id="defaults-exclude-keywords" rows="6"></textarea>
-                </div>
-                <div>
-                    <label for="defaults-exclude-prefixes">Exclude Prefixes (one per line)</label>
-                    <textarea id="defaults-exclude-prefixes" rows="6"></textarea>
-                </div>
-                <div>
-                    <label for="defaults-schedule-interval">Schedule Interval</label>
-                    <input id="defaults-schedule-interval" type="text" placeholder="daily / every 6 hours / daily at 01:00">
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3>Paths (sites.yaml)</h3>
-            <div class="form-grid">
-                <div>
-                    <label for="paths-db">DB Path</label>
-                    <input id="paths-db" type="text">
-                </div>
-                <div>
-                    <label for="paths-download-dir">Download Directory</label>
-                    <input id="paths-download-dir" type="text">
-                </div>
-                <div>
-                    <label for="paths-updates-dir">Updates Directory</label>
-                    <input id="paths-updates-dir" type="text">
-                </div>
-                <div>
-                    <label for="paths-last-run-new">Last Run File</label>
-                    <input id="paths-last-run-new" type="text">
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3>Search Settings (sites.yaml)</h3>
-            <div class="form-grid">
-                <div>
-                    <label for="search-enabled">Enabled</label>
-                    <input id="search-enabled" type="checkbox">
-                </div>
-                <div>
-                    <label for="search-max-results">Max Results</label>
-                    <input id="search-max-results" type="number" min="1">
-                </div>
-                <div>
-                    <label for="search-delay">Delay Seconds</label>
-                    <input id="search-delay" type="number" step="0.1" min="0">
-                </div>
-                <div>
-                    <label for="search-country">Country</label>
-                    <input id="search-country" type="text">
-                </div>
-                <div>
-                    <label for="search-languages">Languages (one per line)</label>
-                    <textarea id="search-languages" rows="4"></textarea>
-                </div>
-                <div>
-                    <label for="search-exclude-keywords">Exclude Keywords (one per line)</label>
-                    <textarea id="search-exclude-keywords" rows="4"></textarea>
-                </div>
-                <div>
-                    <label for="search-queries">Queries (one per line)</label>
-                    <textarea id="search-queries" rows="6"></textarea>
-                </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3>Runtime Flags (read-only)</h3>
-            <div id="runtime-flags" class="runtime-flags"></div>
-            <button class="btn btn-primary" onclick="saveBackendSettings()">Save Backend Settings</button>
-        </div>
-    </div>
+  </div>
 </div>
 
 <script>
-let categoriesConfig = {
-    categories: {},
-    ai_filter_keywords: [],
-    ai_keywords: [],
-};
+let categoriesConfig = { categories: {}, ai_filter_keywords: [], ai_keywords: [] };
 let selectedCategory = '';
+const moduleState = { editing: {}, snapshots: {} };
 
 function openTab(evt, tabId) {
-    document.querySelectorAll('.tab-content').forEach((tab) => {
-        tab.style.display = 'none';
-    });
-    document.querySelectorAll('.tab-link').forEach((btn) => {
-        btn.classList.remove('active');
-    });
-    document.getElementById(tabId).style.display = 'block';
-    evt.currentTarget.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(tab => tab.style.display = 'none');
+  document.querySelectorAll('.tab-link').forEach(btn => btn.classList.remove('active'));
+  document.getElementById(tabId).style.display = 'block';
+  evt.currentTarget.classList.add('active');
 }
 
-function notifySuccess(message) {
-    if (window.Toast && typeof window.Toast.success === 'function') {
-        window.Toast.success(message);
-    } else {
-        alert(message);
-    }
+function notifySuccess(msg) { window.Toast ? Toast.success(msg) : alert(msg); }
+function notifyError(msg) { window.Toast ? Toast.error(msg) : alert(msg); }
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+function textToList(text) { return String(text || '').split('\n').map(v => v.trim()).filter(Boolean); }
+function listToText(items) { return (items || []).join('\n'); }
+function getModuleElement(name) { return document.querySelector(`.settings-module[data-module="${name}"]`); }
+
+function setModuleEditable(name, editable) {
+  const el = getModuleElement(name); if (!el) return;
+  el.querySelectorAll('.module-field').forEach(field => {
+    if (field.dataset.module !== name) return;
+    field.disabled = !editable || field.dataset.lock === 'true';
+  });
+  el.querySelectorAll('.requires-edit').forEach(btn => {
+    if (btn.dataset.module !== name) return;
+    btn.disabled = !editable;
+  });
+  const v = el.querySelector('.module-actions-view');
+  const e = el.querySelector('.module-actions-edit');
+  if (v) v.style.display = editable ? 'none' : 'block';
+  if (e) e.style.display = editable ? 'flex' : 'none';
 }
 
-function notifyError(message) {
-    if (window.Toast && typeof window.Toast.error === 'function') {
-        window.Toast.error(message);
-    } else {
-        alert(message);
-    }
+function getModuleData(name) {
+  if (name === 'categories') return deepClone(categoriesConfig.categories);
+  if (name === 'ai_keywords') return textToList(document.getElementById('ai-shared-keywords').value);
+  if (name === 'crawler_defaults') return {
+    max_pages: Number(document.getElementById('defaults-max-pages').value || 0),
+    max_depth: Number(document.getElementById('defaults-max-depth').value || 0),
+    delay_seconds: Number(document.getElementById('defaults-delay').value || 0),
+    file_exts: textToList(document.getElementById('defaults-file-exts').value),
+    keywords: textToList(document.getElementById('defaults-keywords').value),
+    exclude_keywords: textToList(document.getElementById('defaults-exclude-keywords').value),
+    exclude_prefixes: textToList(document.getElementById('defaults-exclude-prefixes').value),
+    schedule_interval: document.getElementById('defaults-schedule-interval').value.trim(),
+  };
+  if (name === 'paths') return {
+    download_dir: document.getElementById('paths-download-dir').value.trim(),
+    updates_dir: document.getElementById('paths-updates-dir').value.trim(),
+    last_run_new: document.getElementById('paths-last-run-new').value.trim(),
+  };
+  if (name === 'search_defaults') return {
+    enabled: document.getElementById('search-enabled').checked,
+    max_results: Number(document.getElementById('search-max-results').value || 0),
+    delay_seconds: Number(document.getElementById('search-delay').value || 0),
+    country: document.getElementById('search-country').value.trim(),
+    languages: textToList(document.getElementById('search-languages').value),
+    exclude_keywords: textToList(document.getElementById('search-exclude-keywords').value),
+    queries: textToList(document.getElementById('search-queries').value),
+  };
+  return {};
+}
+function applyModuleData(name, data) {
+  if (!data) return;
+  if (name === 'categories') {
+    categoriesConfig.categories = deepClone(data);
+    selectedCategory = Object.keys(categoriesConfig.categories)[0] || '';
+    renderCategoryList();
+  } else if (name === 'ai_keywords') {
+    document.getElementById('ai-shared-keywords').value = listToText(data);
+  } else if (name === 'crawler_defaults') {
+    document.getElementById('defaults-max-pages').value = data.max_pages || '';
+    document.getElementById('defaults-max-depth').value = data.max_depth || '';
+    document.getElementById('defaults-delay').value = data.delay_seconds || '';
+    document.getElementById('defaults-file-exts').value = listToText(data.file_exts || []);
+    document.getElementById('defaults-keywords').value = listToText(data.keywords || []);
+    document.getElementById('defaults-exclude-keywords').value = listToText(data.exclude_keywords || []);
+    document.getElementById('defaults-exclude-prefixes').value = listToText(data.exclude_prefixes || []);
+    document.getElementById('defaults-schedule-interval').value = data.schedule_interval || '';
+  } else if (name === 'paths') {
+    document.getElementById('paths-download-dir').value = data.download_dir || '';
+    document.getElementById('paths-updates-dir').value = data.updates_dir || '';
+    document.getElementById('paths-last-run-new').value = data.last_run_new || '';
+  } else if (name === 'search_defaults') {
+    document.getElementById('search-enabled').checked = !!data.enabled;
+    document.getElementById('search-max-results').value = data.max_results || '';
+    document.getElementById('search-delay').value = data.delay_seconds || '';
+    document.getElementById('search-country').value = data.country || '';
+    document.getElementById('search-languages').value = listToText(data.languages || []);
+    document.getElementById('search-exclude-keywords').value = listToText(data.exclude_keywords || []);
+    document.getElementById('search-queries').value = listToText(data.queries || []);
+  }
 }
 
-function textToList(text) {
-    return text
-        .split('\n')
-        .map((v) => v.trim())
-        .filter(Boolean);
+function isModuleDirty(name) {
+  const snap = moduleState.snapshots[name];
+  if (snap === undefined) return false;
+  return JSON.stringify(getModuleData(name)) !== JSON.stringify(snap);
 }
-
-function listToText(items) {
-    return (items || []).join('\n');
-}
+function enterEditMode(name) { moduleState.editing[name] = true; moduleState.snapshots[name] = deepClone(getModuleData(name)); setModuleEditable(name, true); }
+function cancelModule(name) { if (moduleState.snapshots[name] !== undefined) applyModuleData(name, deepClone(moduleState.snapshots[name])); moduleState.editing[name] = false; setModuleEditable(name, false); }
+async function exitModuleEdit(name) { if (!isModuleDirty(name)) { moduleState.editing[name] = false; setModuleEditable(name, false); return; } const save = await customConfirm('You have unsaved changes. Save before exiting edit mode?', 'Unsaved Changes'); if (save) await saveModule(name); else cancelModule(name); }
 
 function renderCategoryList() {
-    const listEl = document.getElementById('category-list');
-    listEl.innerHTML = '';
-    Object.keys(categoriesConfig.categories)
-        .sort((a, b) => a.localeCompare(b))
-        .forEach((name) => {
-            const option = new Option(name, name);
-            if (name === selectedCategory) option.selected = true;
-            listEl.appendChild(option);
-        });
-    onCategorySelect();
+  const list = document.getElementById('category-list');
+  list.innerHTML = '';
+  Object.keys(categoriesConfig.categories).sort((a,b)=>a.localeCompare(b)).forEach(name => {
+    const o = new Option(name, name); if (name === selectedCategory) o.selected = true; list.appendChild(o);
+  });
+  onCategorySelect();
 }
-
 function onCategorySelect() {
-    const listEl = document.getElementById('category-list');
-    if (listEl.value) {
-        selectedCategory = listEl.value;
-    } else if (!Object.prototype.hasOwnProperty.call(categoriesConfig.categories, selectedCategory)) {
-        selectedCategory = '';
-    }
-
-    document.getElementById('category-name').value = selectedCategory;
-    document.getElementById('category-keywords').value = selectedCategory
-        ? listToText(categoriesConfig.categories[selectedCategory] || [])
-        : '';
+  const list = document.getElementById('category-list');
+  if (list.value) selectedCategory = list.value;
+  else if (!Object.prototype.hasOwnProperty.call(categoriesConfig.categories, selectedCategory)) selectedCategory = '';
+  document.getElementById('category-name').value = selectedCategory;
+  document.getElementById('category-keywords').value = selectedCategory ? listToText(categoriesConfig.categories[selectedCategory] || []) : '';
 }
-
 function addCategory() {
-    const input = document.getElementById('new-category-name');
-    const name = input.value.trim();
-    if (!name) {
-        notifyError('Category name is required');
-        return;
-    }
-    if (Object.prototype.hasOwnProperty.call(categoriesConfig.categories, name)) {
-        notifyError('Category already exists');
-        return;
-    }
-    categoriesConfig.categories[name] = [];
-    selectedCategory = name;
-    input.value = '';
-    renderCategoryList();
+  if (!moduleState.editing.categories) return notifyError('Enter edit mode first');
+  const input = document.getElementById('new-category-name'); const name = input.value.trim();
+  if (!name) return notifyError('Category name is required');
+  if (Object.prototype.hasOwnProperty.call(categoriesConfig.categories, name)) return notifyError('Category already exists');
+  categoriesConfig.categories[name] = []; selectedCategory = name; input.value = ''; renderCategoryList();
+}
+function applyCategoryKeywords() {
+  if (!moduleState.editing.categories) return notifyError('Enter edit mode first');
+  if (!selectedCategory) return notifyError('Select one category first');
+  categoriesConfig.categories[selectedCategory] = textToList(document.getElementById('category-keywords').value);
+  notifySuccess('Category keywords updated in memory');
 }
 
-function removeCategory() {
-    if (!selectedCategory) {
-        notifyError('Select one category first');
-        return;
-    }
-    delete categoriesConfig.categories[selectedCategory];
-    selectedCategory = '';
-    renderCategoryList();
+function promptTypedDelete(message) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('typed-delete-modal');
+    const msg = document.getElementById('typed-delete-message');
+    const input = document.getElementById('typed-delete-input');
+    const cancelBtn = document.getElementById('typed-delete-cancel');
+    const confirmBtn = document.getElementById('typed-delete-confirm');
+    msg.textContent = message; input.value = ''; modal.style.display = 'flex'; if (window.syncModalState) window.syncModalState();
+    const cleanup = () => { cancelBtn.removeEventListener('click', onCancel); confirmBtn.removeEventListener('click', onConfirm); input.removeEventListener('keydown', onKeyDown); modal.style.display = 'none'; if (window.syncModalState) window.syncModalState(); };
+    const onCancel = () => { cleanup(); resolve(false); };
+    const onConfirm = () => { if (input.value.trim().toLowerCase() !== 'confirm delete') { notifyError('Type "confirm delete" to proceed'); input.focus(); return; } cleanup(); resolve(true); };
+    const onKeyDown = (e) => { if (e.key === 'Enter') onConfirm(); if (e.key === 'Escape') onCancel(); };
+    cancelBtn.addEventListener('click', onCancel); confirmBtn.addEventListener('click', onConfirm); input.addEventListener('keydown', onKeyDown); setTimeout(() => input.focus(), 50);
+  });
 }
 
-function saveCategoryKeywords() {
-    if (!selectedCategory) {
-        notifyError('Select one category first');
-        return;
+async function removeCategory() {
+  if (!moduleState.editing.categories) return notifyError('Enter edit mode first');
+  if (!selectedCategory) return notifyError('Select one category first');
+  const ok = await promptTypedDelete(`Type "confirm delete" to remove category: ${selectedCategory}`); if (!ok) return;
+  delete categoriesConfig.categories[selectedCategory]; selectedCategory = Object.keys(categoriesConfig.categories)[0] || ''; renderCategoryList();
+}
+
+async function saveCategoriesPayload() {
+  const payload = { categories: categoriesConfig.categories, ai_filter_keywords: categoriesConfig.ai_filter_keywords, ai_keywords: categoriesConfig.ai_keywords };
+  const resp = await fetch('/api/config/categories', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+  const data = await resp.json(); if (!resp.ok || !data.success) throw new Error(data.error || 'Failed to save categories config');
+}
+async function saveModule(name) {
+  try {
+    if (name === 'categories') {
+      await saveCategoriesPayload();
+      notifySuccess('Category rules saved');
+    } else if (name === 'ai_keywords') {
+      const shared = textToList(document.getElementById('ai-shared-keywords').value);
+      categoriesConfig.ai_filter_keywords = shared;
+      categoriesConfig.ai_keywords = shared;
+      await saveCategoriesPayload();
+      notifySuccess('AI keyword settings saved');
+    } else if (name === 'crawler_defaults') {
+      const resp = await fetch('/api/config/backend-settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ defaults: getModuleData('crawler_defaults') }) });
+      const data = await resp.json(); if (!resp.ok || !data.success) throw new Error(data.error || 'Save failed');
+      notifySuccess('Crawler defaults saved');
+    } else if (name === 'paths') {
+      const resp = await fetch('/api/config/backend-settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ paths: getModuleData('paths') }) });
+      const data = await resp.json(); if (!resp.ok || !data.success) throw new Error(data.error || 'Save failed');
+      notifySuccess('Path settings saved');
+    } else if (name === 'search_defaults') {
+      const resp = await fetch('/api/config/backend-settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ search: getModuleData('search_defaults') }) });
+      const data = await resp.json(); if (!resp.ok || !data.success) throw new Error(data.error || 'Save failed');
+      notifySuccess('Search defaults saved');
     }
-    const keywords = textToList(document.getElementById('category-keywords').value);
-    categoriesConfig.categories[selectedCategory] = keywords;
-    notifySuccess('Selected category updated in memory');
+    await Promise.all([loadCategoriesConfig(), loadBackendSettings()]);
+    moduleState.editing[name] = false; moduleState.snapshots[name] = deepClone(getModuleData(name)); setModuleEditable(name, false);
+  } catch (err) {
+    notifyError(err.message || String(err));
+  }
 }
 
 async function loadCategoriesConfig() {
-    const response = await fetch('/api/config/categories');
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Failed to load categories config');
-
-    categoriesConfig = {
-        categories: data.categories || {},
-        ai_filter_keywords: data.ai_filter_keywords || [],
-        ai_keywords: data.ai_keywords || [],
-    };
-    selectedCategory = Object.keys(categoriesConfig.categories)[0] || '';
-    document.getElementById('ai-filter-keywords').value = listToText(categoriesConfig.ai_filter_keywords);
-    document.getElementById('ai-keywords').value = listToText(categoriesConfig.ai_keywords);
-    renderCategoryList();
-}
-
-async function saveCategoriesConfig() {
-    categoriesConfig.ai_filter_keywords = textToList(document.getElementById('ai-filter-keywords').value);
-    categoriesConfig.ai_keywords = textToList(document.getElementById('ai-keywords').value);
-    const response = await fetch('/api/config/categories', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(categoriesConfig),
-    });
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to save categories config');
-    }
-    notifySuccess('categories.yaml updated');
+  const resp = await fetch('/api/config/categories'); const data = await resp.json(); if (!resp.ok) throw new Error(data.error || 'Failed to load categories config');
+  categoriesConfig = { categories: data.categories || {}, ai_filter_keywords: data.ai_filter_keywords || [], ai_keywords: data.ai_keywords || [] };
+  selectedCategory = Object.keys(categoriesConfig.categories)[0] || '';
+  document.getElementById('ai-shared-keywords').value = listToText(categoriesConfig.ai_keywords || []);
+  renderCategoryList();
 }
 
 async function loadBackendSettings() {
-    const response = await fetch('/api/config/backend-settings');
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Failed to load backend settings');
-
-    document.getElementById('defaults-user-agent').value = data.defaults.user_agent || '';
-    document.getElementById('defaults-max-pages').value = data.defaults.max_pages || '';
-    document.getElementById('defaults-max-depth').value = data.defaults.max_depth || '';
-    document.getElementById('defaults-delay').value = data.defaults.delay_seconds || '';
-    document.getElementById('defaults-file-exts').value = listToText(data.defaults.file_exts || []);
-    document.getElementById('defaults-keywords').value = listToText(data.defaults.keywords || []);
-    document.getElementById('defaults-exclude-keywords').value = listToText(data.defaults.exclude_keywords || []);
-    document.getElementById('defaults-exclude-prefixes').value = listToText(data.defaults.exclude_prefixes || []);
-    document.getElementById('defaults-schedule-interval').value = data.defaults.schedule_interval || '';
-
-    document.getElementById('paths-db').value = data.paths.db || '';
-    document.getElementById('paths-download-dir').value = data.paths.download_dir || '';
-    document.getElementById('paths-updates-dir').value = data.paths.updates_dir || '';
-    document.getElementById('paths-last-run-new').value = data.paths.last_run_new || '';
-
-    document.getElementById('search-enabled').checked = !!data.search.enabled;
-    document.getElementById('search-max-results').value = data.search.max_results || '';
-    document.getElementById('search-delay').value = data.search.delay_seconds || '';
-    document.getElementById('search-country').value = data.search.country || '';
-    document.getElementById('search-languages').value = listToText(data.search.languages || []);
-    document.getElementById('search-exclude-keywords').value = listToText(data.search.exclude_keywords || []);
-    document.getElementById('search-queries').value = listToText(data.search.queries || []);
-
-    const runtimeEl = document.getElementById('runtime-flags');
-    runtimeEl.innerHTML = `
-        <div><strong>CONFIG_PATH:</strong> ${data.runtime.config_path}</div>
-        <div><strong>CATEGORIES_CONFIG_PATH:</strong> ${data.runtime.categories_config_path}</div>
-        <div><strong>ENABLE_FILE_DELETION:</strong> ${data.runtime.file_deletion_enabled}</div>
-        <div><strong>FILE_DELETION_AUTH_TOKEN set:</strong> ${data.runtime.file_deletion_auth_required}</div>
-    `;
+  const resp = await fetch('/api/config/backend-settings'); const data = await resp.json(); if (!resp.ok) throw new Error(data.error || 'Failed to load backend settings');
+  document.getElementById('defaults-user-agent').value = data.defaults.user_agent || '';
+  applyModuleData('crawler_defaults', data.defaults || {});
+  document.getElementById('paths-db').value = data.paths.db || '';
+  applyModuleData('paths', data.paths || {});
+  applyModuleData('search_defaults', data.search || {});
+  document.getElementById('runtime-flags').innerHTML = `<div><strong>CONFIG_PATH:</strong> ${data.runtime.config_path}</div><div><strong>CATEGORIES_CONFIG_PATH:</strong> ${data.runtime.categories_config_path}</div><div><strong>ENABLE_FILE_DELETION:</strong> ${data.runtime.file_deletion_enabled}</div><div><strong>FILE_DELETION_AUTH_TOKEN set:</strong> ${data.runtime.file_deletion_auth_required}</div>`;
 }
 
-async function saveBackendSettings() {
-    const payload = {
-        defaults: {
-            user_agent: document.getElementById('defaults-user-agent').value.trim(),
-            max_pages: Number(document.getElementById('defaults-max-pages').value),
-            max_depth: Number(document.getElementById('defaults-max-depth').value),
-            delay_seconds: Number(document.getElementById('defaults-delay').value),
-            file_exts: textToList(document.getElementById('defaults-file-exts').value),
-            keywords: textToList(document.getElementById('defaults-keywords').value),
-            exclude_keywords: textToList(document.getElementById('defaults-exclude-keywords').value),
-            exclude_prefixes: textToList(document.getElementById('defaults-exclude-prefixes').value),
-            schedule_interval: document.getElementById('defaults-schedule-interval').value.trim(),
-        },
-        paths: {
-            db: document.getElementById('paths-db').value.trim(),
-            download_dir: document.getElementById('paths-download-dir').value.trim(),
-            updates_dir: document.getElementById('paths-updates-dir').value.trim(),
-            last_run_new: document.getElementById('paths-last-run-new').value.trim(),
-        },
-        search: {
-            enabled: document.getElementById('search-enabled').checked,
-            max_results: Number(document.getElementById('search-max-results').value),
-            delay_seconds: Number(document.getElementById('search-delay').value),
-            country: document.getElementById('search-country').value.trim(),
-            languages: textToList(document.getElementById('search-languages').value),
-            exclude_keywords: textToList(document.getElementById('search-exclude-keywords').value),
-            queries: textToList(document.getElementById('search-queries').value),
-        },
-    };
-
-    const response = await fetch('/api/config/backend-settings', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload),
-    });
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to save backend settings');
-    }
-    notifySuccess('sites.yaml backend settings updated');
-    await loadBackendSettings();
-}
-
-async function initPage() {
-    try {
-        await Promise.all([loadCategoriesConfig(), loadBackendSettings()]);
-    } catch (err) {
-        notifyError(err.message);
-        console.error(err);
-    }
-}
-
+function initReadonlyModules() { ['categories','ai_keywords','crawler_defaults','paths','search_defaults'].forEach(name => { moduleState.editing[name] = false; setModuleEditable(name, false); }); }
+async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings()]); } catch (err) { notifyError(err.message || String(err)); } }
 initPage();
 </script>
 
 <style>
-.tabs {
-    overflow: hidden;
-    border-bottom: 1px solid var(--border-color);
-    margin-bottom: 20px;
-}
-
-.tab-link {
-    background-color: inherit;
-    border: none;
-    outline: none;
-    cursor: pointer;
-    padding: 14px 16px;
-    transition: 0.3s;
-    font-size: 16px;
-    border-bottom: 3px solid transparent;
-    color: var(--text-secondary);
-}
-
-.tab-link.active {
-    border-bottom: 3px solid var(--primary-color);
-    font-weight: bold;
-    color: var(--text-primary);
-}
-
-.tab-content {
-    display: none;
-    padding: 20px 0;
-}
-
-.settings-grid {
-    display: grid;
-    grid-template-columns: 1fr 2fr;
-    gap: 16px;
-    margin-bottom: 16px;
-}
-
-.card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 16px;
-}
-
-.row {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 10px;
-}
-
-.row input {
-    flex: 1;
-}
-
-.card select,
-.card input,
-.card textarea {
-    width: 100%;
-    margin: 6px 0 12px;
-    padding: 8px;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    background: var(--card-bg);
-    color: var(--text-primary);
-    font-family: inherit;
-}
-
-.dual-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-}
-
-.form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-}
-
-.runtime-flags {
-    display: grid;
-    gap: 6px;
-    margin-bottom: 12px;
-}
-
-@media (max-width: 900px) {
-    .settings-grid,
-    .dual-grid,
-    .form-grid {
-        grid-template-columns: 1fr;
-    }
-}
+.tabs{overflow:hidden;border-bottom:1px solid var(--border-color);margin-bottom:20px}
+.tab-link{background:inherit;border:none;cursor:pointer;padding:14px 16px;border-bottom:3px solid transparent;color:var(--text-secondary)}
+.tab-link.active{border-bottom:3px solid var(--primary-color);font-weight:700;color:var(--text-primary)}
+.tab-content{display:none;padding:20px 0}
+.settings-module{background:var(--card-bg);border:1px solid var(--border-color);border-radius:10px;padding:16px;margin-bottom:16px}
+.module-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+.module-help{color:var(--text-secondary);margin:6px 0 0}
+.module-actions-edit{display:flex;gap:8px;flex-wrap:wrap}
+.settings-grid{display:grid;grid-template-columns:1fr 2fr;gap:12px}
+.card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:8px;padding:12px}
+.row{display:flex;gap:8px;margin-bottom:10px}.row input{flex:1}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.settings-module select,.settings-module input,.settings-module textarea{width:100%;margin:6px 0 12px;padding:8px;border:1px solid var(--border-color);border-radius:6px;background:var(--card-bg);color:var(--text-primary);font-family:inherit}
+.settings-module input:disabled,.settings-module textarea:disabled,.settings-module select:disabled{opacity:.75;cursor:not-allowed}
+.runtime-flags{display:grid;gap:6px}
+@media (max-width:900px){.settings-grid,.form-grid{grid-template-columns:1fr}.module-header{flex-direction:column}}
 </style>
 {% endblock %}
