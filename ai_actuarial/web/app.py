@@ -383,6 +383,30 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error getting backend settings")
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/config/search-defaults")
+    def api_config_search_defaults():
+        """Get search defaults used by Task Center web-search module."""
+        try:
+            config_data = _load_yaml(_get_sites_config_path(), default={})
+            search = (config_data.get("search") or {})
+            return jsonify(
+                {
+                    "enabled": bool(search.get("enabled", True)),
+                    "max_results": int(search.get("max_results", 5)),
+                    "delay_seconds": float(search.get("delay_seconds", 0.5)),
+                    "languages": _normalize_list(search.get("languages"), field_name="search.languages"),
+                    "country": str(search.get("country", "us")),
+                    "exclude_keywords": _normalize_list(
+                        search.get("exclude_keywords"),
+                        field_name="search.exclude_keywords",
+                    ),
+                    "queries": _normalize_list(search.get("queries"), field_name="search.queries"),
+                }
+            )
+        except Exception as e:
+            logger.exception("Error getting search defaults")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/config/backend-settings", methods=["POST"])
     def api_config_backend_settings_update():
         """Update editable backend settings in sites.yaml."""
@@ -400,8 +424,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             defaults_in = data.get("defaults")
             if isinstance(defaults_in, dict):
                 defaults = config_data["defaults"]
-                if "user_agent" in defaults_in:
-                    defaults["user_agent"] = str(defaults_in.get("user_agent", "")).strip()
+                # user_agent is intentionally locked in UI/API to avoid accidental
+                # crawler identity drift across environments.
                 if "max_pages" in defaults_in:
                     defaults["max_pages"] = int(defaults_in.get("max_pages") or 0)
                 if "max_depth" in defaults_in:
@@ -434,7 +458,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             paths_in = data.get("paths")
             if isinstance(paths_in, dict):
                 paths = config_data["paths"]
-                for key in ["db", "download_dir", "updates_dir", "last_run_new"]:
+                # db path is intentionally locked to prevent runtime/storage split.
+                for key in ["download_dir", "updates_dir", "last_run_new"]:
                     if key in paths_in:
                         paths[key] = str(paths_in.get(key, "")).strip()
 
@@ -755,8 +780,44 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 query = data.get("query")
                 site = data.get("site")
                 engine = data.get("engine")
-                count = int(data.get("count", 20))
+                search_defaults = site_config.get("search", {}) or {}
+                use_search_defaults = bool(data.get("use_search_defaults", True))
+
+                if use_search_defaults and not search_defaults.get("enabled", True):
+                    raise ValueError("Search is disabled in sites.yaml (search.enabled=false)")
+
+                default_count = int(search_defaults.get("max_results", 20))
+                raw_count = data.get("count")
+                count = int(raw_count) if raw_count not in (None, "", "null") else default_count
+                if count <= 0:
+                    count = default_count
                 api_key = data.get("api_key")
+                search_lang = (data.get("search_lang") or "").strip()
+                if not search_lang and use_search_defaults:
+                    langs = search_defaults.get("languages") or []
+                    search_lang = str(langs[0]).strip() if langs else ""
+                search_country = (data.get("search_country") or "").strip()
+                if not search_country and use_search_defaults:
+                    search_country = str(search_defaults.get("country") or "").strip()
+                search_exclude_keywords = data.get("search_exclude_keywords") or []
+                if isinstance(search_exclude_keywords, str):
+                    search_exclude_keywords = [
+                        k.strip().lower()
+                        for k in search_exclude_keywords.split(",")
+                        if k.strip()
+                    ]
+                elif isinstance(search_exclude_keywords, list):
+                    search_exclude_keywords = [
+                        str(k).strip().lower() for k in search_exclude_keywords if str(k).strip()
+                    ]
+                else:
+                    search_exclude_keywords = []
+                if not search_exclude_keywords and use_search_defaults:
+                    search_exclude_keywords = [
+                        str(k).strip().lower()
+                        for k in (search_defaults.get("exclude_keywords") or [])
+                        if str(k).strip()
+                    ]
                 
                 progress_callback(0, count, f"Searching {engine} for '{query}'...")
                 
@@ -772,7 +833,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     if not api_key:
                         raise ValueError("Brave API Key is missing")
                         
-                    results = brave_search(query, count, api_key, site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'))
+                    results = brave_search(
+                        query,
+                        count,
+                        api_key,
+                        site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        lang=search_lang or None,
+                        country=search_country or None,
+                    )
                     urls = [r.url for r in results]
                 
                 elif engine == "google":
@@ -786,9 +854,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         count, 
                         api_key, 
                         site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        lang=search_lang or None,
+                        country=search_country or None,
                         engine="google"
                     )
                     urls = [r.url for r in results]
+
+                if search_exclude_keywords:
+                    urls = [
+                        u for u in urls
+                        if not any(ex_kw in u.lower() for ex_kw in search_exclude_keywords)
+                    ]
                 
                 logger.info(f"Search found {len(urls)} URLs")
                 progress_callback(0, len(urls), f"Found {len(urls)} URLs. Starting processing...")
@@ -920,24 +996,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # New Catalog Task
                 from ..catalog_incremental import run_incremental_catalog
                 
-                progress_callback(0, 100, "Starting incremental cataloging...")
-                
-                # Wrapper to adapt catalog progress to our callback format if catalog supported it
-                # For now assume run_incremental_catalog is blocking and maybe prints logs
-                # We can't easily get progress unless we modify catalog_incremental.
-                # Let's just update status.
-                
                 stats = run_incremental_catalog(
                     db_path=db_path,
                     out_jsonl=Path("data/catalog.jsonl"),
                     out_md=Path("data/catalog.md"),
                     limit=int(data.get("max_items", 100)),
-                    retry_errors=data.get("retry_errors", False)
+                    retry_errors=data.get("retry_errors", False),
+                    progress_callback=progress_callback,
                 )
                 
                 # Mock result for catalog
                 class CatalogResult:
-                    def __init__(self, s): self.success = s; self.errors = []; self.items_found = stats.get('processed', 0); self.items_downloaded = stats.get('updated', 0)
+                    def __init__(self, s):
+                        self.success = s
+                        self.errors = []
+                        self.items_found = stats.get('scanned', 0)
+                        self.items_downloaded = stats.get('written', 0)
+                        self.items_skipped = stats.get('skipped_ai', 0)
                 
                 result = CatalogResult(True)
                 progress_callback(100, 100, f"Cataloging complete. Processed {stats.get('processed')} items.")
@@ -1405,6 +1480,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             category = data.get("category")
             summary = data.get("summary")
             keywords = data.get("keywords")
+
+            # Accept category as list (multi-select) and store as semicolon-separated text.
+            if isinstance(category, list):
+                category = "; ".join(
+                    [str(c).strip() for c in category if str(c).strip()]
+                )
+            elif category is not None:
+                category = str(category).strip()
 
             # Validate keywords is a list if provided
             if keywords is not None and not isinstance(keywords, list):

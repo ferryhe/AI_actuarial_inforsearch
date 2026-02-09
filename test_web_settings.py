@@ -164,15 +164,27 @@ class TestWebSettingsApi(unittest.TestCase):
         with open(self.sites_config_path, "r", encoding="utf-8") as f:
             saved = yaml.safe_load(f)
         self.assertEqual(saved["defaults"]["max_pages"], 240)
+        # user_agent is locked by API for safety.
+        self.assertEqual(saved["defaults"]["user_agent"], "test-agent/1.0")
         self.assertEqual(saved["defaults"]["file_exts"], [".pdf", ".txt"])
+        # db path is locked by API for safety.
+        self.assertEqual(saved["paths"]["db"], self.db_path)
         self.assertEqual(saved["paths"]["download_dir"], payload["paths"]["download_dir"])
         self.assertFalse(saved["search"]["enabled"])
         self.assertEqual(saved["search"]["languages"], ["en", "fr"])
 
         verify = self.client.get("/api/config/backend-settings")
         verify_data = verify.get_json()
-        self.assertEqual(verify_data["defaults"]["user_agent"], "changed-agent/2.0")
+        self.assertEqual(verify_data["defaults"]["user_agent"], "test-agent/1.0")
         self.assertEqual(verify_data["search"]["country"], "ca")
+
+    def test_search_defaults_endpoint(self):
+        resp = self.client.get("/api/config/search-defaults")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["enabled"])
+        self.assertEqual(data["max_results"], 5)
+        self.assertEqual(data["country"], "us")
 
 
 if __name__ == "__main__":
