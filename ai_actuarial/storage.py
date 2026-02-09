@@ -918,6 +918,15 @@ class Storage:
         Returns:
             True if update succeeded, False otherwise
         """
+        # Check if file exists
+        file_cur = self._conn.execute(
+            "SELECT url FROM files WHERE url = ?",
+            (url,)
+        )
+        if file_cur.fetchone() is None:
+            # File doesn't exist, can't update
+            return False
+        
         # Check if catalog entry exists
         cur = self._conn.execute(
             "SELECT file_url FROM catalog_items WHERE file_url = ?",
