@@ -44,8 +44,8 @@
     <section class="settings-module" data-module="ai_keywords">
       <div class="module-header">
         <div>
-          <h3>AI Keyword Settings</h3>
-          <p class="module-help">Single list for both ai_filter_keywords and ai_keywords.</p>
+          <h3>AI Filter Keywords</h3>
+          <p class="module-help">Used to decide whether a document is AI-related (e.g. in AI-only flows). This single list is also copied to <code>ai_keywords</code> to avoid drift.</p>
         </div>
         <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_keywords')">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
@@ -54,7 +54,10 @@
           <button class="btn btn-secondary" onclick="exitModuleEdit('ai_keywords')">Exit Edit</button>
         </div>
       </div>
-      <div class="card"><textarea id="ai-shared-keywords" class="module-field" data-module="ai_keywords" rows="8"></textarea></div>
+      <div class="card">
+        <label for="ai-shared-keywords">ai_filter_keywords (one per line)</label>
+        <textarea id="ai-shared-keywords" class="module-field" data-module="ai_keywords" rows="8"></textarea>
+      </div>
     </section>
   </div>
 

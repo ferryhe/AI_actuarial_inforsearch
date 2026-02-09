@@ -212,6 +212,31 @@
         });
     }
 
+    function openCategoryOptionsPanel() {
+        const panel = document.getElementById('category-options-panel');
+        const toggleBtn = document.getElementById('category-picker-toggle');
+        const rect = toggleBtn.getBoundingClientRect();
+        const panelWidth = Math.min(420, Math.max(300, Math.floor(window.innerWidth * 0.9)));
+        const margin = 8;
+        let left = rect.right + margin;
+        let top = rect.top;
+
+        if (left + panelWidth > window.innerWidth - margin) {
+            left = Math.max(margin, rect.left);
+            top = rect.bottom + margin;
+        }
+        left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
+        panel.style.width = `${panelWidth}px`;
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.display = 'block';
+    }
+
+    function closeCategoryOptionsPanel() {
+        const panel = document.getElementById('category-options-panel');
+        panel.style.display = 'none';
+    }
+
     function renderCategorySelectedPreview() {
         const preview = document.getElementById('category-selected-preview');
         preview.innerHTML = '';
@@ -276,7 +301,7 @@
         renderCategorySelectedPreview();
         renderCategoryDisplay(selectedCategories);
         document.getElementById('category-editor').style.display = 'none';
-        document.getElementById('category-options-panel').style.display = 'none';
+        closeCategoryOptionsPanel();
         document.getElementById('category-display').style.display = 'block';
         
         document.getElementById('summary-input').style.display = 'none';
@@ -355,8 +380,28 @@
 
     document.getElementById('category-picker-toggle').addEventListener('click', () => {
         const panel = document.getElementById('category-options-panel');
-        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        if (panel.style.display === 'none') {
+            openCategoryOptionsPanel();
+        } else {
+            closeCategoryOptionsPanel();
+        }
     });
+
+    document.addEventListener('click', (event) => {
+        const panel = document.getElementById('category-options-panel');
+        const toggleBtn = document.getElementById('category-picker-toggle');
+        if (panel.style.display === 'none') return;
+        if (panel.contains(event.target) || toggleBtn.contains(event.target)) return;
+        closeCategoryOptionsPanel();
+    });
+
+    window.addEventListener('resize', () => {
+        const panel = document.getElementById('category-options-panel');
+        if (panel.style.display !== 'none') openCategoryOptionsPanel();
+    });
+    window.addEventListener('scroll', () => {
+        closeCategoryOptionsPanel();
+    }, true);
 
     // Load categories early so the first edit interaction is instant.
     ensureCategoryOptions();
@@ -596,19 +641,11 @@
         font-size: 0.85rem;
     }
 
-    .category-picker {
-        position: relative;
-    }
-
     .category-options-panel {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        z-index: 20;
-        width: 100%;
+        position: fixed;
+        z-index: 2200;
         max-height: 220px;
         overflow-y: auto;
-        margin-top: 0.25rem;
         border: 1px solid var(--border-color);
         border-radius: 6px;
         background: var(--card-bg);
