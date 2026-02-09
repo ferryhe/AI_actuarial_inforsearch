@@ -780,7 +780,8 @@ class Storage:
                 filters.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
                 params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
         
-        where_clause = " AND ".join(filters)
+        # Avoid empty WHERE which causes SQLite "incomplete input"
+        where_clause = " AND ".join(filters) if filters else "1=1"
         
         # Get total count
         count_query = f"""

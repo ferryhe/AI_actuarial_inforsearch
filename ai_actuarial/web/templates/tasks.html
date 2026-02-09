@@ -755,10 +755,44 @@ function openCatalogModal() { openModal('catalog-modal'); }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
 
+// --- Validation Helpers ---
+function clearValidationErrors(form) {
+    form.querySelectorAll('.field-error').forEach(el => el.remove());
+    form.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
+}
+
+function showFieldError(field, message) {
+    field.classList.add('input-error');
+    const group = field.closest('.form-group') || field.parentElement;
+    if (!group) return;
+    const error = document.createElement('div');
+    error.className = 'field-error';
+    error.textContent = message || 'Invalid value';
+    group.appendChild(error);
+}
+
+function validateForm(form) {
+    clearValidationErrors(form);
+    let firstInvalid = null;
+    const fields = form.querySelectorAll('input, textarea, select');
+    fields.forEach(field => {
+        if (!field.checkValidity()) {
+            if (!firstInvalid) firstInvalid = field;
+            showFieldError(field, field.validationMessage);
+        }
+    });
+    if (firstInvalid) {
+        firstInvalid.focus();
+        return false;
+    }
+    return true;
+}
+
 // --- Task Starters ---
 function startWebSearch(e) {
     e.preventDefault();
     const form = e.target;
+    if (!validateForm(form)) return;
     const formData = new FormData(form);
     const data = Object.fromEntries(formData.entries());
     
@@ -780,6 +814,7 @@ function startWebSearch(e) {
 function startQuickCheck(e) {
     e.preventDefault();
     const form = e.target;
+    if (!validateForm(form)) return;
     const formData = new FormData(form);
     let url = formData.get('url');
     
@@ -808,7 +843,9 @@ function startQuickCheck(e) {
 
 function startCatalog(e) {
     e.preventDefault();
-    const formData = new FormData(e.target);
+    const form = e.target;
+    if (!validateForm(form)) return;
+    const formData = new FormData(form);
     
     startTask('catalog', {
         type: 'catalog',
@@ -823,6 +860,7 @@ function startCatalog(e) {
 function startUrlCollection(e) {
     e.preventDefault();
     const form = e.target;
+    if (!validateForm(form)) return;
     const formData = new FormData(form);
     
     // 解析URL列表（一行一个）
@@ -866,6 +904,7 @@ function browseFolderForFileImport() {
 function startFileImport(e) {
     e.preventDefault();
     const form = e.target;
+    if (!validateForm(form)) return;
     const formData = new FormData(form);
     
     const directoryPath = formData.get('directory_path');
