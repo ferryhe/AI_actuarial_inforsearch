@@ -709,7 +709,14 @@ class Storage:
             WHERE category IS NOT NULL AND category != ''
             ORDER BY category
         """)
-        return [row[0] for row in cur.fetchall()]
+        categories: set[str] = set()
+        for row in cur.fetchall():
+            raw = row[0] or ""
+            # Support semicolon-separated multi-categories: "AI; Risk; Pricing"
+            parts = [p.strip() for p in raw.split(";") if p.strip()]
+            for part in parts:
+                categories.add(part)
+        return sorted(categories, key=lambda x: x.lower())
     
     def query_files_with_catalog(
         self,
