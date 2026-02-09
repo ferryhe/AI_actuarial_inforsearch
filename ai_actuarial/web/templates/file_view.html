@@ -71,10 +71,18 @@
                 <tr>
                     <th>Category</th>
                     <td>
-                        <span id="category-display">{{ file.category or 'Uncategorized' }}</span>
-                        <select id="category-select" class="edit-input" data-current-value="{{ file.category or '' }}" style="display:none;">
-                            <option value="">Uncategorized</option>
-                        </select>
+                        <div id="category-display" class="category-display-text">{{ file.category or 'Uncategorized' }}</div>
+                        <div id="category-editor" style="display:none;">
+                            <div class="category-picker">
+                                <button type="button" id="category-picker-toggle" class="btn btn-secondary btn-small">
+                                    Choose Categories
+                                </button>
+                                <div id="category-options-panel" class="category-options-panel" style="display:none;"></div>
+                            </div>
+                            <div id="category-selected-preview" class="category-selected-preview"></div>
+                            <small class="category-help-text">Category options are managed in the Settings page.</small>
+                        </div>
+                        <input type="hidden" id="category-input" data-current-value="{{ file.category or '' }}">
                     </td>
                 </tr>
                 {% if file.deleted_at %}
@@ -136,24 +144,87 @@
     let editMode = false;
     const fileUrl = {{ file.url|tojson }};
     let categoryOptionsLoaded = false;
+    let categoryOptions = [];
+    let selectedCategories = [];
+
+    function parseCategoryString(rawValue) {
+        return (rawValue || '')
+            .split(';')
+            .map(v => v.trim())
+            .filter(Boolean);
+    }
+
+    function categoryListToString(list) {
+        return list.join('; ');
+    }
+
+    function renderCategoryDisplay(categories) {
+        const displayEl = document.getElementById('category-display');
+        displayEl.textContent = categories.length ? categoryListToString(categories) : 'Uncategorized';
+    }
 
     function setCategoryOptions(categories) {
-        const categorySelect = document.getElementById('category-select');
-        const currentValue = (categorySelect.dataset.currentValue || '').trim();
-        const unique = Array.from(new Set((categories || []).filter(Boolean)));
+        const categoryInput = document.getElementById('category-input');
+        const currentSelected = parseCategoryString(categoryInput.dataset.currentValue || '');
+        const unique = Array.from(new Set((categories || []).map(c => (c || '').trim()).filter(Boolean)));
         const sortedCategories = unique.sort((a, b) => a.localeCompare(b));
-
-        categorySelect.innerHTML = '';
-        categorySelect.appendChild(new Option('Uncategorized', ''));
-
-        sortedCategories.forEach((cat) => {
-            categorySelect.appendChild(new Option(cat, cat));
+        currentSelected.forEach((cat) => {
+            if (!sortedCategories.includes(cat)) {
+                sortedCategories.push(cat);
+            }
         });
+        categoryOptions = sortedCategories;
+        selectedCategories = currentSelected;
+        renderCategoryOptionsPanel();
+        renderCategorySelectedPreview();
+        renderCategoryDisplay(selectedCategories);
+    }
 
-        if (currentValue && !sortedCategories.includes(currentValue)) {
-            categorySelect.appendChild(new Option(`${currentValue} (current)`, currentValue));
+    function renderCategoryOptionsPanel() {
+        const panel = document.getElementById('category-options-panel');
+        panel.innerHTML = '';
+        if (!categoryOptions.length) {
+            panel.innerHTML = '<div class="category-option-empty">No configured categories.</div>';
+            return;
         }
-        categorySelect.value = currentValue;
+        categoryOptions.forEach((cat) => {
+            const row = document.createElement('label');
+            row.className = 'category-option-row';
+
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = cat;
+            cb.checked = selectedCategories.includes(cat);
+            cb.addEventListener('change', () => {
+                if (cb.checked) {
+                    if (!selectedCategories.includes(cat)) selectedCategories.push(cat);
+                } else {
+                    selectedCategories = selectedCategories.filter(v => v !== cat);
+                }
+                renderCategorySelectedPreview();
+            });
+
+            const text = document.createElement('span');
+            text.textContent = cat;
+            row.appendChild(cb);
+            row.appendChild(text);
+            panel.appendChild(row);
+        });
+    }
+
+    function renderCategorySelectedPreview() {
+        const preview = document.getElementById('category-selected-preview');
+        preview.innerHTML = '';
+        if (!selectedCategories.length) {
+            preview.innerHTML = '<span class="category-empty">Uncategorized</span>';
+            return;
+        }
+        selectedCategories.forEach((cat) => {
+            const tag = document.createElement('span');
+            tag.className = 'category-chip';
+            tag.textContent = cat;
+            preview.appendChild(tag);
+        });
     }
 
     async function ensureCategoryOptions() {
@@ -176,7 +247,7 @@
         editMode = true;
         
         // Show input fields, hide display fields
-        document.getElementById('category-select').style.display = 'inline-block';
+        document.getElementById('category-editor').style.display = 'block';
         document.getElementById('category-display').style.display = 'none';
         
         document.getElementById('summary-input').style.display = 'block';
@@ -199,10 +270,14 @@
         editMode = false;
         
         // Hide input fields, show display fields
-        const categorySelect = document.getElementById('category-select');
-        categorySelect.style.display = 'none';
-        categorySelect.value = categorySelect.dataset.currentValue || '';
-        document.getElementById('category-display').style.display = 'inline';
+        const categoryInput = document.getElementById('category-input');
+        selectedCategories = parseCategoryString(categoryInput.dataset.currentValue || '');
+        renderCategoryOptionsPanel();
+        renderCategorySelectedPreview();
+        renderCategoryDisplay(selectedCategories);
+        document.getElementById('category-editor').style.display = 'none';
+        document.getElementById('category-options-panel').style.display = 'none';
+        document.getElementById('category-display').style.display = 'block';
         
         document.getElementById('summary-input').style.display = 'none';
         const summaryDisplay = document.getElementById('summary-display');
@@ -229,7 +304,7 @@
     }
     
     async function saveChanges() {
-        const category = document.getElementById('category-select').value.trim();
+        const category = categoryListToString(selectedCategories);
         const summary = document.getElementById('summary-input').value.trim();
         const keywordsText = document.getElementById('keywords-input').value.trim();
         const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
@@ -252,8 +327,8 @@
                 Toast.success('File details updated successfully');
                 
                 // Update display values
-                document.getElementById('category-select').dataset.currentValue = category || '';
-                document.getElementById('category-display').textContent = category || 'Uncategorized';
+                document.getElementById('category-input').dataset.currentValue = category || '';
+                renderCategoryDisplay(parseCategoryString(category));
                 
                 const summaryDisplay = document.getElementById('summary-display');
                 summaryDisplay.textContent = summary || '';
@@ -277,6 +352,11 @@
             console.error('Update exception:', err);
         }
     }
+
+    document.getElementById('category-picker-toggle').addEventListener('click', () => {
+        const panel = document.getElementById('category-options-panel');
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
 
     // Load categories early so the first edit interaction is instant.
     ensureCategoryOptions();
@@ -509,6 +589,65 @@
         display: flex;
         flex-wrap: wrap;
         gap: 0.5rem;
+    }
+
+    .btn-small {
+        padding: 0.35rem 0.6rem;
+        font-size: 0.85rem;
+    }
+
+    .category-picker {
+        position: relative;
+    }
+
+    .category-options-panel {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 20;
+        width: 100%;
+        max-height: 220px;
+        overflow-y: auto;
+        margin-top: 0.25rem;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--card-bg);
+        box-shadow: var(--shadow);
+        padding: 0.5rem;
+    }
+
+    .category-option-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.35rem;
+        cursor: pointer;
+    }
+
+    .category-option-empty,
+    .category-empty,
+    .category-help-text {
+        color: var(--text-secondary);
+    }
+
+    .category-selected-preview {
+        margin-top: 0.6rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+
+    .category-chip {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        border: 1px solid var(--border-color);
+        background: var(--gray-100);
+    }
+
+    [data-theme="dark"] .category-chip {
+        background: var(--gray-800);
     }
 </style>
 {% endblock %}
