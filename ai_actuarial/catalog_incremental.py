@@ -14,7 +14,7 @@ import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .catalog import (
     CatalogItem,
@@ -59,10 +59,100 @@ CATALOG_INDEX_DDL = """
 CREATE INDEX IF NOT EXISTS idx_catalog_items_status ON catalog_items(status);
 """
 
+CATALOG_OPTIONAL_COLUMNS = {
+    "file_sha256": "TEXT",
+    "title": "TEXT",
+    "source_site": "TEXT",
+    "original_filename": "TEXT",
+    "local_path": "TEXT",
+    "keywords_json": "TEXT",
+    "summary": "TEXT",
+    "category": "TEXT",
+    "catalog_version": "TEXT",
+    "processed_at": "TEXT",
+    "status": "TEXT",
+    "error": "TEXT",
+}
+
 
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    cur = conn.execute(f"PRAGMA table_info({table})")
+    return {row[1] for row in cur.fetchall()}
+
+
+def _ensure_catalog_schema(conn: sqlite3.Connection) -> None:
+    """Ensure catalog_items supports both legacy and incremental schemas."""
+    existing = _table_columns(conn, "catalog_items")
+
+    for col_name, col_type in CATALOG_OPTIONAL_COLUMNS.items():
+        if col_name not in existing:
+            conn.execute(
+                f"ALTER TABLE catalog_items ADD COLUMN {col_name} {col_type}"
+            )
+
+    existing = _table_columns(conn, "catalog_items")
+
+    # Backfill incremental columns from legacy schema when available.
+    if "sha256" in existing and "file_sha256" in existing:
+        conn.execute(
+            """
+            UPDATE catalog_items
+            SET file_sha256 = sha256
+            WHERE (file_sha256 IS NULL OR file_sha256 = '')
+              AND sha256 IS NOT NULL
+            """
+        )
+    if "pipeline_version" in existing and "catalog_version" in existing:
+        conn.execute(
+            """
+            UPDATE catalog_items
+            SET catalog_version = pipeline_version
+            WHERE (catalog_version IS NULL OR catalog_version = '')
+              AND pipeline_version IS NOT NULL
+            """
+        )
+    if "keywords" in existing and "keywords_json" in existing:
+        conn.execute(
+            """
+            UPDATE catalog_items
+            SET keywords_json = keywords
+            WHERE (keywords_json IS NULL OR keywords_json = '')
+              AND keywords IS NOT NULL
+            """
+        )
+    # Keep legacy sha256/pipeline_version/keywords populated for NOT NULL schemas.
+    if "sha256" in existing and "file_sha256" in existing:
+        conn.execute(
+            """
+            UPDATE catalog_items
+            SET sha256 = file_sha256
+            WHERE (sha256 IS NULL OR sha256 = '')
+              AND file_sha256 IS NOT NULL
+            """
+        )
+    if "pipeline_version" in existing and "catalog_version" in existing:
+        conn.execute(
+            """
+            UPDATE catalog_items
+            SET pipeline_version = catalog_version
+            WHERE (pipeline_version IS NULL OR pipeline_version = '')
+              AND catalog_version IS NOT NULL
+            """
+        )
+    if "keywords" in existing and "keywords_json" in existing:
+        conn.execute(
+            """
+            UPDATE catalog_items
+            SET keywords = keywords_json
+            WHERE (keywords IS NULL OR keywords = '')
+              AND keywords_json IS NOT NULL
+            """
+        )
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -74,6 +164,7 @@ def _connect(db_path: str) -> sqlite3.Connection:
     # Ensure table exists (fallback if Storage didn't create it)
     conn.execute(CATALOG_TABLE_DDL)
     conn.execute(CATALOG_INDEX_DDL)
+    _ensure_catalog_schema(conn)
     conn.commit()
     return conn
 
@@ -96,28 +187,7 @@ def _fetch_candidates(
     Set retry_errors=True to reprocess files with status='error'.
     Deterministic order: files.id ASC.
     """
-    filters: list[str] = []
-    params: list[object] = []
-
-    if site_filter:
-        sites = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
-        if sites:
-            filters.append(
-                "(" + " OR ".join(["LOWER(f.source_site) LIKE ?"] * len(sites)) + ")"
-            )
-            params.extend([f"%{s}%" for s in sites])
-
-    where_extra = (" AND " + " AND ".join(filters)) if filters else ""
-
-    # Build the reprocess condition:
-    # - c.file_url IS NULL: never processed
-    # - c.file_sha256 != f.sha256: file content changed
-    # - c.catalog_version != ?: catalog version changed (force reprocess)
-    # Errors are NOT retried by default (they typically keep failing)
-    if retry_errors:
-        status_cond = "OR c.status = 'error'"
-    else:
-        status_cond = ""
+    where_extra, params, status_cond = _candidate_filter_sql(site_filter, retry_errors)
 
     # Sort newest first (descending ID) so we process recent content first.
     # Deterministic order: files.id DESC.
@@ -156,6 +226,56 @@ def _fetch_candidates(
     return list(cur.fetchall())
 
 
+def _candidate_filter_sql(
+    site_filter: Optional[str],
+    retry_errors: bool,
+) -> tuple[str, list[object], str]:
+    filters: list[str] = []
+    params: list[object] = []
+
+    if site_filter:
+        sites = [s.strip().lower() for s in site_filter.split(",") if s.strip()]
+        if sites:
+            filters.append(
+                "(" + " OR ".join(["LOWER(f.source_site) LIKE ?"] * len(sites)) + ")"
+            )
+            params.extend([f"%{s}%" for s in sites])
+
+    where_extra = (" AND " + " AND ".join(filters)) if filters else ""
+    status_cond = "OR c.status = 'error'" if retry_errors else ""
+    return where_extra, params, status_cond
+
+
+def _count_candidates(
+    conn: sqlite3.Connection,
+    *,
+    site_filter: Optional[str],
+    catalog_version: str,
+    retry_errors: bool = False,
+) -> int:
+    where_extra, params, status_cond = _candidate_filter_sql(site_filter, retry_errors)
+    sql = f"""
+    SELECT COUNT(*)
+    FROM files f
+    LEFT JOIN catalog_items c
+        ON c.file_url = f.url
+    WHERE
+        f.local_path IS NOT NULL
+        AND f.local_path != ''
+        AND (
+            c.file_url IS NULL
+            OR c.file_sha256 IS NULL
+            OR c.file_sha256 != f.sha256
+            OR c.catalog_version != ?
+            {status_cond}
+        )
+        {where_extra}
+    """
+    cur = conn.execute(sql, [catalog_version] + params)
+    row = cur.fetchone()
+    return int(row[0]) if row else 0
+
+
 def _upsert_catalog_row(
     conn: sqlite3.Connection,
     *,
@@ -171,43 +291,65 @@ def _upsert_catalog_row(
     Uses _db_lock to prevent concurrent write conflicts with SQLite.
     """
     with _db_lock:
-        conn.execute(
+        existing = _table_columns(conn, "catalog_items")
+        keywords_json = json.dumps(item.keywords, ensure_ascii=False)
+        value_map: dict[str, object] = {
+            "file_url": item.url,
+            "file_sha256": file_sha256,
+            "sha256": file_sha256,
+            "title": item.title,
+            "source_site": item.source_site,
+            "original_filename": item.original_filename,
+            "local_path": item.local_path,
+            "keywords_json": keywords_json,
+            "keywords": keywords_json,
+            "summary": item.summary,
+            "category": item.category,
+            "catalog_version": catalog_version,
+            "pipeline_version": catalog_version,
+            "processed_at": processed_at,
+            "status": status,
+            "error": error,
+        }
+        insert_columns = [
+            col
+            for col in [
+                "file_url",
+                "file_sha256",
+                "sha256",
+                "title",
+                "source_site",
+                "original_filename",
+                "local_path",
+                "keywords_json",
+                "keywords",
+                "summary",
+                "category",
+                "catalog_version",
+                "pipeline_version",
+                "processed_at",
+                "status",
+                "error",
+            ]
+            if col in existing
+        ]
+        values = [value_map[col] for col in insert_columns]
+        update_columns = [col for col in insert_columns if col != "file_url"]
+        placeholders = ", ".join(["?"] * len(insert_columns))
+        if update_columns:
+            assignments = ", ".join([f"{col}=excluded.{col}" for col in update_columns])
+            sql = f"""
+                INSERT INTO catalog_items ({", ".join(insert_columns)})
+                VALUES ({placeholders})
+                ON CONFLICT(file_url) DO UPDATE SET
+                    {assignments}
             """
-            INSERT INTO catalog_items (
-                file_url, file_sha256, title, source_site, original_filename, local_path,
-                keywords_json, summary, category, catalog_version, processed_at, status, error
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(file_url) DO UPDATE SET
-                file_sha256=excluded.file_sha256,
-                title=excluded.title,
-                source_site=excluded.source_site,
-                original_filename=excluded.original_filename,
-                local_path=excluded.local_path,
-                keywords_json=excluded.keywords_json,
-                summary=excluded.summary,
-                category=excluded.category,
-                catalog_version=excluded.catalog_version,
-                processed_at=excluded.processed_at,
-                status=excluded.status,
-                error=excluded.error
-            """,
-            (
-                item.url,
-                file_sha256,
-                item.title,
-                item.source_site,
-                item.original_filename,
-                item.local_path,
-                json.dumps(item.keywords, ensure_ascii=False),
-                item.summary,
-                item.category,
-                catalog_version,
-                processed_at,
-                status,
-                error,
-            ),
-        )
+        else:
+            sql = f"""
+                INSERT OR IGNORE INTO catalog_items ({", ".join(insert_columns)})
+                VALUES ({placeholders})
+            """
+        conn.execute(sql, values)
         conn.commit()
 
 
@@ -331,7 +473,8 @@ def run_incremental_catalog(
     max_chars: int = 20000,
     retry_errors: bool = False,
     max_workers: int = 5,
-    limit: int = 0
+    limit: int = 0,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Run incremental catalog processing.
     
@@ -367,6 +510,20 @@ def run_incremental_catalog(
     }
     
     seen_urls = set()
+    total_candidates = _count_candidates(
+        conn,
+        site_filter=site_filter,
+        catalog_version=catalog_version,
+        retry_errors=retry_errors,
+    )
+    if limit > 0:
+        total_candidates = min(total_candidates, limit)
+    if progress_callback:
+        progress_callback(
+            0,
+            max(total_candidates, 1),
+            f"Catalog candidates: {total_candidates}",
+        )
 
     while True:
         # Check global limit
@@ -437,6 +594,15 @@ def run_incremental_catalog(
                             status="ok",
                             processed_at=processed_at,
                         )
+                        if progress_callback:
+                            completed = (
+                                stats["processed"] + stats["skipped_ai"] + stats["errors"]
+                            )
+                            progress_callback(
+                                completed,
+                                max(total_candidates, completed, 1),
+                                f"Cataloging {completed}/{max(total_candidates, 1)}",
+                            )
                         
                     elif status == "skipped":
                         # Non-AI (or otherwise skipped) items are treated as fully processed.
@@ -450,6 +616,15 @@ def run_incremental_catalog(
                             status="skipped",
                             processed_at=processed_at,
                         )
+                        if progress_callback:
+                            completed = (
+                                stats["processed"] + stats["skipped_ai"] + stats["errors"]
+                            )
+                            progress_callback(
+                                completed,
+                                max(total_candidates, completed, 1),
+                                f"Cataloging {completed}/{max(total_candidates, 1)}",
+                            )
                         
                     elif status.startswith("error:"):
                         stats["errors"] += 1
@@ -467,6 +642,15 @@ def run_incremental_catalog(
                             processed_at=processed_at,
                             error=err_msg,
                         )
+                        if progress_callback:
+                            completed = (
+                                stats["processed"] + stats["skipped_ai"] + stats["errors"]
+                            )
+                            progress_callback(
+                                completed,
+                                max(total_candidates, completed, 1),
+                                f"Cataloging {completed}/{max(total_candidates, 1)}",
+                            )
                         
                 except Exception as e:
                     logger.exception("Worker thread crashed")
@@ -490,4 +674,11 @@ def run_incremental_catalog(
         stats["scanned"], stats["processed"], stats["written"],
         stats["skipped_ai"], stats["errors"], stats["missing_files"]
     )
+    if progress_callback:
+        completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
+        progress_callback(
+            max(total_candidates, completed, 1),
+            max(total_candidates, completed, 1),
+            f"Catalog finished: processed={stats['processed']} skipped={stats['skipped_ai']} errors={stats['errors']}",
+        )
     return stats
