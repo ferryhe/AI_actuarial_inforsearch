@@ -15,7 +15,9 @@ Tests the following issues fixed:
 """
 
 import os
+import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -80,6 +82,124 @@ class TestSkippedItemsStatus(unittest.TestCase):
         result = cur.fetchone()
         self.assertIn("filtered", result[0].lower())
         conn.close()
+
+
+class TestCatalogSchemaCompatibility(unittest.TestCase):
+    """Test incremental catalog compatibility with legacy catalog_items schema."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.temp_dir, "test.db")
+
+    def tearDown(self):
+        import shutil
+        if os.path.exists(self.temp_dir):
+            for _ in range(5):
+                try:
+                    shutil.rmtree(self.temp_dir)
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
+
+    def test_connect_adds_incremental_columns_for_legacy_schema(self):
+        # Create legacy schema via Storage (no file_sha256/catalog_version columns).
+        storage = Storage(self.db_path)
+        storage.close()
+
+        with sqlite3.connect(self.db_path) as check_conn:
+            cols_before = {
+                row[1]
+                for row in check_conn.execute("PRAGMA table_info(catalog_items)")
+            }
+            self.assertNotIn("file_sha256", cols_before)
+            self.assertNotIn("catalog_version", cols_before)
+
+        # _connect should apply compatibility migration.
+        conn = _connect(self.db_path)
+        try:
+            cols_after = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(catalog_items)")
+            }
+            self.assertIn("file_sha256", cols_after)
+            self.assertIn("catalog_version", cols_after)
+
+            # This query used to fail with "no such column: c.file_sha256".
+            conn.execute(
+                """
+                SELECT f.url
+                FROM files f
+                LEFT JOIN catalog_items c ON c.file_url = f.url
+                WHERE c.file_sha256 IS NULL
+                LIMIT 1
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+
+    def test_upsert_works_when_legacy_sha256_is_not_null(self):
+        # Build a strict legacy table to reproduce:
+        # sqlite3.IntegrityError: NOT NULL constraint failed: catalog_items.sha256
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE files (
+                    id INTEGER PRIMARY KEY,
+                    url TEXT UNIQUE,
+                    sha256 TEXT,
+                    title TEXT,
+                    source_site TEXT,
+                    original_filename TEXT,
+                    local_path TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE catalog_items (
+                    file_url TEXT PRIMARY KEY,
+                    sha256 TEXT NOT NULL,
+                    pipeline_version TEXT NOT NULL,
+                    keywords TEXT,
+                    summary TEXT,
+                    category TEXT,
+                    processed_at TEXT,
+                    status TEXT,
+                    error TEXT
+                )
+                """
+            )
+            conn.commit()
+
+        conn = _connect(self.db_path)
+        try:
+            item = CatalogItem(
+                source_site="test.com",
+                title="Legacy Strict Schema",
+                original_filename="legacy.pdf",
+                url="http://test.com/legacy.pdf",
+                local_path="/tmp/legacy.pdf",
+                keywords=["ai"],
+                summary="summary",
+                category="AI",
+            )
+            _upsert_catalog_row(
+                conn,
+                item=item,
+                file_sha256="legacy_sha",
+                catalog_version="v1",
+                status="ok",
+                processed_at="2026-02-09T00:00:00Z",
+            )
+            row = conn.execute(
+                "SELECT sha256, pipeline_version FROM catalog_items WHERE file_url = ?",
+                (item.url,),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(row[0], "legacy_sha")
+            self.assertEqual(row[1], "v1")
+        finally:
+            conn.close()
 
 
 class TestStorageAbstraction(unittest.TestCase):
