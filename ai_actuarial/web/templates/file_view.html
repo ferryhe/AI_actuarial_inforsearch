@@ -391,6 +391,8 @@
         const panel = document.getElementById('category-options-panel');
         const toggleBtn = document.getElementById('category-picker-toggle');
         if (panel.style.display === 'none') return;
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        if (path.includes(panel) || path.includes(toggleBtn)) return;
         if (panel.contains(event.target) || toggleBtn.contains(event.target)) return;
         closeCategoryOptionsPanel();
     });
@@ -399,8 +401,10 @@
         const panel = document.getElementById('category-options-panel');
         if (panel.style.display !== 'none') openCategoryOptionsPanel();
     });
+    // Keep dropdown open while scrolling; only reposition to follow the trigger.
     window.addEventListener('scroll', () => {
-        closeCategoryOptionsPanel();
+        const panel = document.getElementById('category-options-panel');
+        if (panel.style.display !== 'none') openCategoryOptionsPanel();
     }, true);
 
     // Load categories early so the first edit interaction is instant.
