@@ -10,6 +10,9 @@ from typing import Iterable
 
 
 class Storage:
+    # Allowlist for schema/migration helpers that interpolate table names into PRAGMA.
+    _SCHEMA_TABLES = frozenset({"files", "pages", "blobs", "catalog_items"})
+
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
@@ -124,6 +127,8 @@ class Storage:
         self._migrate_catalog_items()
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
+        if table not in self._SCHEMA_TABLES:
+            raise ValueError(f"Invalid table name for schema migration: {table!r}")
         cur = self._conn.execute(f"PRAGMA table_info({table})")
         existing = {row[1] for row in cur.fetchall()}
         for name, col_type in columns.items():
