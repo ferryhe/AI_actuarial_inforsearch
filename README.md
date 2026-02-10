@@ -35,7 +35,7 @@ The system supports viewing, editing, and converting documents to markdown forma
 ### File Detail Page
 - **View Mode**: Renders markdown content with proper formatting (headings, lists, code blocks, tables)
 - **Edit Mode**: Edit markdown directly in a textarea with monospace font
-- **Auto-save**: Markdown edits are saved with timestamp tracking
+- **Manual save**: Markdown edits are saved when you click **Save Markdown**, with timestamp tracking
 - **Source Tracking**: Tracks whether content is manual, converted, or original
 
 ### Markdown Conversion Task
