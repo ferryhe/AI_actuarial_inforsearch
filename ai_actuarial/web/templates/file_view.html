@@ -134,6 +134,7 @@
         {% set can_write_catalog = auth_group in ['admin', 'operator'] %}
         {% set can_write_markdown = auth_group in ['admin', 'operator'] %}
         {% set can_delete_file = auth_group == 'admin' %}
+        {% set can_download_file = auth_group in ['admin', 'operator', 'reader'] %}
 
         <div class="actions-section">
             {% if can_write_catalog %}
@@ -142,9 +143,9 @@
             <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
             {% endif %}
             
-            {% if file.local_path %}
+            {% if can_download_file and file.local_path %}
             <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
-            {% else %}
+            {% elif can_download_file %}
             <button class="btn btn-secondary" disabled>Download Unavailable</button>
             {% endif %}
               
@@ -177,12 +178,11 @@
                  <div class="markdown-convert-actions">
                       <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
                       <select id="markdown-convert-engine" class="markdown-convert-select">
-                          <option value="auto">Auto</option>
                          <option value="marker">Marker</option>
-                         <option value="docling">Docling</option>
-                         <option value="mistral">Mistral OCR</option>
-                         <option value="deepseekocr">DeepSeek OCR</option>
-                     </select>
+                          <option value="docling">Docling</option>
+                          <option value="mistral">Mistral OCR</option>
+                          <option value="deepseekocr">DeepSeek OCR</option>
+                      </select>
                      <label class="markdown-convert-overwrite">
                          <input type="checkbox" id="markdown-convert-overwrite" checked>
                          Overwrite

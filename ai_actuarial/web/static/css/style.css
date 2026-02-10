@@ -165,6 +165,17 @@ body.modal-open {
     color: var(--primary-color);
 }
 
+.nav-link.nav-link-disabled {
+    opacity: 0.6;
+    cursor: pointer;
+}
+
+.nav-link.nav-link-disabled:hover {
+    color: var(--text-secondary);
+    text-decoration: underline;
+    text-decoration-style: dotted;
+}
+
 /* Main Content */
 .main-content {
     padding: 2rem 0;

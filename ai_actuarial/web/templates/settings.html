@@ -7,6 +7,7 @@
     <button class="tab-link active" onclick="openTab(event,'tab-categories')">Categories</button>
     <button class="tab-link" onclick="openTab(event,'tab-backend')">Other Settings</button>
     <button class="tab-link" onclick="openTab(event,'tab-tokens')">Tokens</button>
+    <button class="tab-link" onclick="openTab(event,'tab-history')">Task History</button>
   </div>
 
   <div id="tab-categories" class="tab-content" style="display:block;">
@@ -196,6 +197,24 @@
       </div>
     </section>
   </div>
+
+  <div id="tab-history" class="tab-content">
+    <section class="settings-module" data-module="task_history">
+      <div class="module-header">
+        <div>
+          <h3>Task History</h3>
+          <p class="module-help">Recent task runs and logs. (Moved here from Schedule.)</p>
+        </div>
+        <div class="module-actions-view" style="display:flex; gap: 8px;">
+          <button class="btn btn-secondary" type="button" onclick="historyReload()">Reload</button>
+          <button class="btn" type="button" onclick="historyOpenGlobalLogs()">Global Logs</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="settings-task-history-container"><p class="loading">Loading task history...</p></div>
+      </div>
+    </section>
+  </div>
 </div>
 
 <div id="typed-delete-modal" class="modal" style="display:none;">
@@ -222,6 +241,21 @@
   </div>
 </div>
 
+<div id="settings-history-log-modal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width: 900px;">
+    <span class="close" onclick="historyCloseLogModal()">&times;</span>
+    <div id="settings-history-log-body"></div>
+  </div>
+</div>
+
+<div id="settings-global-log-modal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width: 900px;">
+    <span class="close" onclick="historyCloseGlobalLogModal()">&times;</span>
+    <h3>Global Application Logs</h3>
+    <pre id="settings-global-log-content" style="white-space: pre-wrap; max-height: 520px; overflow: auto; margin: 0;"></pre>
+  </div>
+</div>
+
 <script>
 let categoriesConfig = { categories: {}, ai_filter_keywords: [], ai_keywords: [] };
 let selectedCategory = '';
@@ -233,6 +267,9 @@ function openTab(evt, tabId) {
   document.querySelectorAll('.tab-link').forEach(btn => btn.classList.remove('active'));
   document.getElementById(tabId).style.display = 'block';
   evt.currentTarget.classList.add('active');
+  if (tabId === 'tab-history') {
+    historyReload();
+  }
 }
 
 function notifySuccess(msg) { window.Toast ? Toast.success(msg) : alert(msg); }
@@ -241,6 +278,147 @@ function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
 function textToList(text) { return String(text || '').split('\n').map(v => v.trim()).filter(Boolean); }
 function listToText(items) { return (items || []).join('\n'); }
 function getModuleElement(name) { return document.querySelector(`.settings-module[data-module="${name}"]`); }
+
+// ===== Task History (Settings) =====
+function historyReload() {
+  const container = document.getElementById('settings-task-history-container');
+  if (container) container.innerHTML = '<p class="loading">Loading task history...</p>';
+  fetch('/api/tasks/history?limit=30')
+    .then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      const tasks = (j && j.tasks) || [];
+      if (!ok) {
+        if (container) container.innerHTML = `<p class="error">Failed to load history: ${escapeHtml(j.error || 'unknown')}</p>`;
+        return;
+      }
+      if (!tasks.length) {
+        if (container) container.innerHTML = '<p class="no-data">No history available.</p>';
+        return;
+      }
+      if (container) {
+        container.innerHTML = `
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Items</th>
+                <th>Time</th>
+                <th>Log</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tasks.map(t => `
+                <tr>
+                  <td>${escapeHtml(t.name || '')}</td>
+                  <td>${escapeHtml(t.type || '')}</td>
+                  <td><span class="status-badge status-${escapeHtml(t.status || 'unknown')}">${escapeHtml(t.status || 'unknown')}</span></td>
+                  <td>${t.items_processed || 0}</td>
+                  <td>${formatDate(t.started_at)}</td>
+                  <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, \"&#39;\")})'>View Log</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+    })
+    .catch(e => {
+      if (container) container.innerHTML = `<p class="error">Failed to load history: ${escapeHtml(e.message)}</p>`;
+    });
+}
+
+function historyShowLog(task) {
+  const body = document.getElementById('settings-history-log-body');
+  if (!body) return;
+  const mainStats = `
+    <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
+    <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
+    <li><strong>Skipped:</strong> ${task.items_skipped || 0}</li>
+    <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+  `;
+  body.innerHTML = `
+    <div style="padding: 10px;">
+      <h4>Task Log: ${escapeHtml(task.name || '')}</h4>
+      <ul style="list-style: none; padding: 0;">
+        <li><strong>Status:</strong> ${escapeHtml(task.status || '')}</li>
+        <li><strong>Started:</strong> ${formatDate(task.started_at)}</li>
+        <li><strong>Completed:</strong> ${formatDate(task.completed_at || '')}</li>
+        ${mainStats}
+      </ul>
+      <div class="error-details-box">
+        <h5>Error Details:</h5>
+        ${(task.errors && task.errors.length > 0) ? task.errors.map(e => `<div class=\"error-item\">• ${escapeHtml(e)}</div>`).join('') : 'No detailed errors logged.'}
+      </div>
+      <div class="error-details-box" style="margin-top: 12px;">
+        <h5>Application Log (Task)</h5>
+        <pre id="settings-task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
+        <div style="margin-top: 8px; display: flex; gap: 8px;">
+          <button class="btn-small" onclick="historyReloadTaskLog('${String(task.id || '')}')">Reload</button>
+          <button class="btn-small" onclick="historyOpenGlobalLogs()">Global Logs</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const modal = document.getElementById('settings-history-log-modal');
+  if (modal) {
+    modal.style.display = 'block';
+    if (window.syncModalState) window.syncModalState();
+  }
+  historyReloadTaskLog(String(task.id || ''));
+}
+
+function historyCloseLogModal() {
+  const modal = document.getElementById('settings-history-log-modal');
+  if (modal) modal.style.display = 'none';
+  if (window.syncModalState) window.syncModalState();
+}
+
+async function historyReloadTaskLog(taskId) {
+  const pre = document.getElementById('settings-task-log-content');
+  if (!pre) return;
+  pre.textContent = 'Loading...';
+  try {
+    const resp = await fetch(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
+    const data = await resp.json();
+    if (resp.ok && data.success) {
+      pre.textContent = data.log || '(no task log yet)';
+    } else {
+      pre.textContent = 'Failed to load task log: ' + (data.error || resp.status);
+    }
+  } catch (e) {
+    pre.textContent = 'Failed to load task log: ' + e.message;
+  }
+}
+
+function historyOpenGlobalLogs() {
+  const pre = document.getElementById('settings-global-log-content');
+  const modal = document.getElementById('settings-global-log-modal');
+  if (pre) pre.textContent = 'Loading...';
+  fetch('/api/logs/global')
+    .then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      if (pre) pre.textContent = ok ? (j.logs || '(no logs)') : ('Failed to load global logs: ' + (j.error || 'unknown'));
+      if (modal) {
+        modal.style.display = 'block';
+        if (window.syncModalState) window.syncModalState();
+      }
+    })
+    .catch(e => {
+      if (pre) pre.textContent = 'Failed to load global logs: ' + e.message;
+      if (modal) {
+        modal.style.display = 'block';
+        if (window.syncModalState) window.syncModalState();
+      }
+    });
+}
+
+function historyCloseGlobalLogModal() {
+  const modal = document.getElementById('settings-global-log-modal');
+  if (modal) modal.style.display = 'none';
+  if (window.syncModalState) window.syncModalState();
+}
 
 function setModuleEditable(name, editable) {
   const el = getModuleElement(name); if (!el) return;
