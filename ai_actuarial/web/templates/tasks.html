@@ -321,11 +321,17 @@
             </svg>
             Run Incremental Cataloging
         </h3>
-        <p class="hint">Use AI to categorize new files.</p>
+        <p class="hint">Batch catalog locally-available files (newest first).</p>
+        <div id="catalog-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="catalog-form" onsubmit="startCatalog(event)">
             <div class="form-group">
-                <label>Max Items to Process</label>
-                <input type="number" name="max_items" value="50">
+                <label>Start From Index (1-based, newest first)</label>
+                <input type="number" name="scan_start_index" id="catalog-scan-start-index" value="1" min="1">
+                <small class="form-hint">Use the stats above to jump to the first uncataloged candidate.</small>
+            </div>
+            <div class="form-group">
+                <label>Scan Count</label>
+                <input type="number" name="scan_count" id="catalog-scan-count" value="50" min="1" max="2000">
             </div>
             <div class="form-group">
                 <label>
@@ -486,15 +492,9 @@
             </svg>
             Convert to Markdown
         </h3>
-        <p class="hint">Convert files to markdown format using AI-powered tools.</p>
+        <p class="hint">Batch convert locally-available files to markdown format using the selected engine.</p>
+        <div id="markdown-conversion-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="markdown-conversion-form" onsubmit="startMarkdownConversion(event)">
-            <div class="form-group">
-                <label>Select Files to Convert</label>
-                <div class="file-selection-box" id="markdown-file-selection">
-                    <p class="loading">Loading files...</p>
-                </div>
-                <small class="form-hint">Select PDF, DOCX, PPTX, or other document files to convert</small>
-            </div>
             <div class="form-group">
                 <label>Conversion Tool</label>
                 <select name="conversion_tool" id="conversion-tool-select">
@@ -507,8 +507,24 @@
                 <small class="form-hint">Different tools work better for different file types</small>
             </div>
             <div class="form-group">
+                <label>Start From Index (1-based, newest first)</label>
+                <input type="number" name="scan_start_index" id="md-scan-start-index" value="1" min="1">
+                <small class="form-hint">Use the stats above to jump to the first file without markdown.</small>
+            </div>
+            <div class="form-group">
+                <label>Scan Count</label>
+                <input type="number" name="scan_count" id="md-scan-count" value="50" min="1" max="2000">
+                <small class="form-hint">The server will scan this window and convert matching files from local_path.</small>
+            </div>
+            <div class="form-group">
                 <label>
-                    <input type="checkbox" name="overwrite_existing" id="overwrite-existing"> 
+                    <input type="checkbox" name="skip_existing" id="md-skip-existing" checked>
+                    Skip already converted
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="overwrite_existing" id="overwrite-existing">
                     Overwrite existing markdown content
                 </label>
             </div>
@@ -885,7 +901,10 @@ async function openWebSearchModal() {
     if (cb) toggleSearchDefaults(cb.checked);
 }
 function openQuickCheckModal() { openModal('quick-check-modal'); }
-function openCatalogModal() { openModal('catalog-modal'); }
+function openCatalogModal() {
+    openModal('catalog-modal');
+    loadCatalogStats();
+}
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
 
@@ -993,150 +1012,125 @@ function startCatalog(e) {
     
     startTask('catalog', {
         type: 'catalog',
-        max_items: parseInt(formData.get('max_items')),
+        scan_start_index: parseInt(formData.get('scan_start_index') || '1'),
+        scan_count: parseInt(formData.get('scan_count') || '50'),
         retry_errors: formData.get('retry_errors') === 'on',
         provider: formData.get('provider'),
-        name: "Incremental Cataloging"
+        name: `Cataloging (start ${formData.get('scan_start_index') || 1}, scan ${formData.get('scan_count') || 50})`
     });
     closeModal('catalog-modal');
 }
 
-// Markdown Conversion Modal Functions
-let selectedFilesForMarkdown = new Set();
-let availableFilesForMarkdown = [];
-
-function openMarkdownConversionModal() {
-    openModal('markdown-conversion-modal');
-    loadFilesForMarkdownConversion();
-}
-
-async function loadFilesForMarkdownConversion() {
-    const container = document.getElementById('markdown-file-selection');
-    container.innerHTML = '<p class="loading">Loading files...</p>';
-    
+async function loadCatalogStats() {
+    const statsEl = document.getElementById('catalog-stats');
+    const startEl = document.getElementById('catalog-scan-start-index');
+    if (statsEl) statsEl.textContent = 'Loading stats...';
     try {
-        const response = await fetch('/api/files?limit=100');
-        const data = await response.json();
-        
-        if (data.files && data.files.length > 0) {
-            availableFilesForMarkdown = data.files.filter(f => {
-                // Filter for convertible file types
-                const ext = (f.content_type || '').toLowerCase();
-                return ext.includes('pdf') || ext.includes('word') ||
-                       ext.includes('powerpoint') || ext.includes('document') ||
-                       ext.includes('presentation') || ext.includes('image');
-             });
-            
-            if (availableFilesForMarkdown.length > 0) {
-                renderMarkdownFileSelection();
-            } else {
-                container.innerHTML = '<p class="empty-message">No convertible files found. Import some PDFs or Word documents first.</p>';
-            }
-        } else {
-            container.innerHTML = '<p class="empty-message">No files in database yet.</p>';
+        const resp = await fetch('/api/catalog/stats');
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            return;
         }
-    } catch (err) {
-        console.error('Error loading files:', err);
-        container.innerHTML = '<p class="error-message">Error loading files</p>';
+        const totalLocal = data.total_local_files ?? 0;
+        const ok = data.total_catalog_ok ?? 0;
+        const candidates = data.candidate_total ?? 0;
+        const first = data.first_candidate_index;
+        if (statsEl) {
+            statsEl.textContent =
+                `Local files: ${totalLocal} | Catalog OK: ${ok} | Candidates: ${candidates}` +
+                (first ? ` | First candidate index: ${first}` : '');
+        }
+        if (startEl && first) {
+            startEl.value = String(first);
+        }
+    } catch (e) {
+        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
     }
 }
 
-function renderMarkdownFileSelection() {
-    const container = document.getElementById('markdown-file-selection');
-    container.innerHTML = '';
-    
-    // Add select all button
-    const selectAllDiv = document.createElement('div');
-    selectAllDiv.style.marginBottom = '10px';
-    selectAllDiv.innerHTML = `
-        <button type="button" class="btn btn-secondary btn-small" onclick="selectAllMarkdownFiles()">Select All</button>
-        <button type="button" class="btn btn-secondary btn-small" onclick="clearAllMarkdownFiles()">Clear All</button>
-        <span style="margin-left: 10px; color: var(--text-secondary);">${selectedFilesForMarkdown.size} selected</span>
-    `;
-    container.appendChild(selectAllDiv);
-    
-    // Add file list
-    const fileList = document.createElement('div');
-    fileList.className = 'file-checkbox-list';
-    fileList.style.maxHeight = '300px';
-    fileList.style.overflowY = 'auto';
-    fileList.style.border = '1px solid var(--border-color)';
-    fileList.style.borderRadius = '4px';
-    fileList.style.padding = '10px';
-    
-    availableFilesForMarkdown.forEach(file => {
-        const label = document.createElement('label');
-        label.className = 'file-checkbox-item';
-        label.style.display = 'block';
-        label.style.padding = '8px';
-        label.style.cursor = 'pointer';
-        label.style.borderBottom = '1px solid var(--border-color)';
-        
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.value = file.url;
-        checkbox.checked = selectedFilesForMarkdown.has(file.url);
-        checkbox.onchange = () => {
-            if (checkbox.checked) {
-                selectedFilesForMarkdown.add(file.url);
+// Markdown Conversion (Batch) Modal Functions
+let markdownConversionStats = null;
+
+function openMarkdownConversionModal() {
+    openModal('markdown-conversion-modal');
+    loadMarkdownConversionStats();
+    // Keep skip/overwrite mutually consistent
+    const overwrite = document.getElementById('overwrite-existing');
+    if (overwrite) {
+        overwrite.addEventListener('change', () => {
+            const skip = document.getElementById('md-skip-existing');
+            if (!skip) return;
+            if (overwrite.checked) {
+                skip.checked = false;
+                skip.disabled = true;
             } else {
-                selectedFilesForMarkdown.delete(file.url);
+                skip.disabled = false;
             }
-            updateMarkdownSelectionCount();
-        };
-        
-        const text = document.createElement('span');
-        text.style.marginLeft = '8px';
-        text.textContent = `${file.title || file.original_filename || 'Untitled'} (${file.content_type || 'unknown'})`;
-        
-        label.appendChild(checkbox);
-        label.appendChild(text);
-        fileList.appendChild(label);
-    });
-    
-    container.appendChild(fileList);
+        }, { once: true });
+    }
 }
 
-function selectAllMarkdownFiles() {
-    selectedFilesForMarkdown.clear();
-    availableFilesForMarkdown.forEach(f => selectedFilesForMarkdown.add(f.url));
-    renderMarkdownFileSelection();
-}
-
-function clearAllMarkdownFiles() {
-    selectedFilesForMarkdown.clear();
-    renderMarkdownFileSelection();
-}
-
-function updateMarkdownSelectionCount() {
-    const countSpan = document.querySelector('#markdown-file-selection span');
-    if (countSpan) {
-        countSpan.textContent = `${selectedFilesForMarkdown.size} selected`;
+async function loadMarkdownConversionStats() {
+    const statsEl = document.getElementById('markdown-conversion-stats');
+    const startEl = document.getElementById('md-scan-start-index');
+    if (statsEl) statsEl.textContent = 'Loading stats...';
+    try {
+        const resp = await fetch('/api/markdown_conversion/stats');
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            return;
+        }
+        markdownConversionStats = data;
+        const total = data.total_convertible ?? 0;
+        const withMd = data.total_with_markdown ?? 0;
+        const firstMissing = data.first_without_markdown_index;
+        const missing = Math.max(0, total - withMd);
+        if (statsEl) {
+            statsEl.textContent = `Convertible files: ${total} | With markdown: ${withMd} | Missing: ${missing}` +
+                (firstMissing ? ` | First missing index: ${firstMissing}` : '');
+        }
+        if (startEl && firstMissing) {
+            startEl.value = String(firstMissing);
+        }
+    } catch (e) {
+        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
     }
 }
 
 function startMarkdownConversion(e) {
     e.preventDefault();
-    
-    if (selectedFilesForMarkdown.size === 0) {
-        showNotification('Please select at least one file to convert', 'error');
-        return;
-    }
-    
+
     const form = e.target;
     const formData = new FormData(form);
-    
+    const engine = formData.get('conversion_tool');
+    const startIndex = parseInt(formData.get('scan_start_index') || '1');
+    const scanCount = parseInt(formData.get('scan_count') || '50');
+    const skipExisting = formData.get('skip_existing') === 'on';
+    const overwriteExisting = formData.get('overwrite_existing') === 'on';
+
+    if (!Number.isFinite(startIndex) || startIndex < 1) {
+        showNotification('Start index must be >= 1', 'error');
+        return;
+    }
+    if (!Number.isFinite(scanCount) || scanCount < 1) {
+        showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+
     const payload = {
         type: 'markdown_conversion',
-        file_urls: Array.from(selectedFilesForMarkdown),
-        conversion_tool: formData.get('conversion_tool'),
-        overwrite_existing: formData.get('overwrite_existing') === 'on',
-        name: `Markdown Conversion (${selectedFilesForMarkdown.size} files)`
+        conversion_tool: engine,
+        scan_start_index: startIndex,
+        scan_count: scanCount,
+        skip_existing: skipExisting,
+        overwrite_existing: overwriteExisting,
+        name: `Markdown Conversion - engine ${engine} (start ${startIndex}, scan ${scanCount})`
     };
-    
+
     startTask('markdown_conversion', payload);
     closeModal('markdown-conversion-modal');
-    selectedFilesForMarkdown.clear();
 }
 
 function startUrlCollection(e) {
@@ -1355,7 +1349,7 @@ function showLog(task) {
         : `
             <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
             <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
-            <li><strong>Skipped (Duplicates):</strong> ${task.items_skipped || 0}</li>
+            <li><strong>Skipped:</strong> ${task.items_skipped || 0}</li>
             <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
           `;
 
