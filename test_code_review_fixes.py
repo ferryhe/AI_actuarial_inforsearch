@@ -444,7 +444,7 @@ class TestConcurrentSQLiteWrites(unittest.TestCase):
         """Test that catalog_incremental uses thread-safe writes."""
         # Read the source code to verify thread-safe write protection
         catalog_path = Path(__file__).parent / "ai_actuarial" / "catalog_incremental.py"
-        with open(catalog_path, 'r') as f:
+        with open(catalog_path, "r", encoding="utf-8") as f:
             content = f.read()
         
         # Main's version uses ThreadPoolExecutor with _db_lock for thread safety
@@ -460,12 +460,18 @@ class TestFilenameExclusionLogic(unittest.TestCase):
         """Create a temporary directory and crawler."""
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
-        storage = Storage(self.db_path)
-        self.crawler = Crawler(storage, self.temp_dir, "TestAgent/1.0")
-    
+        self.storage = Storage(self.db_path)
+        self.crawler = Crawler(self.storage, self.temp_dir, "TestAgent/1.0")
+     
     def tearDown(self):
         """Clean up temporary files."""
         import shutil
+        try:
+            # Ensure SQLite connection is closed on Windows so the temp directory can be removed.
+            if hasattr(self, "storage") and self.storage is not None:
+                self.storage.close()
+        except Exception:
+            pass
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
     
@@ -512,7 +518,7 @@ class TestOrderByDocumentation(unittest.TestCase):
     def test_order_by_comment_exists(self):
         """Test that ORDER BY comment exists in catalog_incremental."""
         catalog_path = Path(__file__).parent / "ai_actuarial" / "catalog_incremental.py"
-        with open(catalog_path, 'r') as f:
+        with open(catalog_path, "r", encoding="utf-8") as f:
             content = f.read()
         
         # Verify comment about ORDER BY is present (DESC version from main)
@@ -525,7 +531,7 @@ class TestPathTraversalProtection(unittest.TestCase):
     def test_path_validation_in_code(self):
         """Test that path validation exists in web app."""
         app_path = Path(__file__).parent / "ai_actuarial" / "web" / "app.py"
-        with open(app_path, 'r') as f:
+        with open(app_path, "r", encoding="utf-8") as f:
             content = f.read()
         
         # Verify path validation is present
