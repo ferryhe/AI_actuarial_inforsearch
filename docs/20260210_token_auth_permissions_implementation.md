@@ -47,6 +47,14 @@ Group mapping:
   - `POST /api/auth/tokens` (returns plaintext token once)
   - `POST /api/auth/tokens/<id>/revoke`
 
+## Settings UI (Admin)
+
+In the Settings page, a **Tokens** tab is available for admins:
+
+- List existing tokens (subject/group/active/created/last_used/revoked)
+- Create token (shows plaintext once + copy button)
+- Revoke token
+
 ## Environment Variables
 
 See `.env.example` for full list. Core ones:
@@ -77,4 +85,3 @@ Optional hardening:
   - bearer token auth works
   - permission group enforcement (reader forbidden on config)
   - admin token create/revoke works
-
