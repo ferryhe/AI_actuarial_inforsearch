@@ -608,8 +608,15 @@
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
             loadMarkdownContent();
         } else {
-            // Wait a bit and try again
-            setTimeout(initMarkdown, 100);
+            // Wait a bit and try again (max 10 seconds to prevent infinite loop)
+            if (!initMarkdown.attempts) initMarkdown.attempts = 0;
+            if (initMarkdown.attempts < 100) {
+                initMarkdown.attempts++;
+                setTimeout(initMarkdown, 100);
+            } else {
+                console.error('Failed to load markdown libraries after 10 seconds');
+                Toast.error('Failed to load markdown rendering libraries');
+            }
         }
     }
     
