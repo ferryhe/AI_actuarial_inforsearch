@@ -24,15 +24,15 @@
                 <ul class="navbar-menu">
                     <li><a href="{{ url_for('index') }}" class="nav-link">Dashboard</a></li>
                     <li><a href="{{ url_for('database') }}" class="nav-link">Database</a></li>
-                    {% if not require_auth or auth_group in ['admin', 'operator'] %}
+                    {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('tasks') }}" class="nav-link">Tasks</a></li>
                     {% endif %}
-                    {% if not require_auth or auth_group == 'admin' %}
+                    {% if auth_group == 'admin' %}
                     <li><a href="{{ url_for('scheduled_tasks') }}" class="nav-link">Schedule</a></li>
                     <li><a href="{{ url_for('settings') }}" class="nav-link">Settings</a></li>
                     {% endif %}
                 </ul>
-                {% if require_auth %}
+                {% if auth_token %}
                 <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
                     <span style="font-size: 0.9rem; opacity: 0.85;">
                         {{ auth_subject or 'Unknown' }} ({{ auth_group or 'n/a' }})
@@ -40,6 +40,10 @@
                     <form method="POST" action="{{ url_for('logout') }}" style="margin: 0;">
                         <button type="submit" class="btn btn-secondary btn-sm">Logout</button>
                     </form>
+                </div>
+                {% else %}
+                <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
+                    <a href="{{ url_for('login') }}" class="btn btn-secondary btn-sm">Login</a>
                 </div>
                 {% endif %}
                 <div class="theme-toggle">

@@ -154,6 +154,17 @@ _PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
+# When REQUIRE_AUTH=false, we still run the app in a "public read-only" mode:
+# endpoints that require any permission outside this allowlist will require a token.
+_PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
+    {
+        "stats.read",
+        "files.read",
+        "files.download",
+        "markdown.read",
+    }
+)
+
 _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
     "reader": frozenset(
         {
@@ -571,7 +582,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             @wraps(func)
             def wrapped(*args, **kwargs):
                 if not require_auth:
-                    return func(*args, **kwargs)
+                    # Optional-auth mode: allow "public read-only" permissions without a token,
+                    # but keep everything else protected.
+                    if all(p in _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED for p in required):
+                        return func(*args, **kwargs)
                 perms = getattr(g, "_auth_perms", frozenset())
                 token = getattr(g, "_auth_token", None)
                 if not token:
@@ -587,9 +601,6 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
     @app.before_request
     def _enforce_auth_and_cache_perms():
-        if not require_auth:
-            return None
-
         # Public endpoints
         if request.path.startswith("/static/"):
             return None
@@ -599,16 +610,27 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         if request.path == "/health":
             return None
 
+        # Optional-auth mode fast path: if no session/header token is presented,
+        # avoid opening the DB and treat the request as "guest".
+        if not require_auth:
+            token_id = session.get("auth_token_id")
+            presented = _extract_bearer_token()
+            if token_id is None and not presented:
+                g._auth_token = None
+                g._auth_perms = frozenset()
+                return None
+
         storage = None
         try:
             storage = Storage(db_path)
             token, _perms = _load_auth_from_request(storage)
-            if not token:
+            if require_auth and not token:
                 return _unauthorized_response()
             # Optional: touch last_used_at (off by default to avoid write amplification)
             if _env_flag("TOUCH_TOKEN_LAST_USED", False):
                 try:
-                    storage.touch_auth_token_last_used(int(token["id"]))
+                    if token:
+                        storage.touch_auth_token_last_used(int(token["id"]))
                 except Exception:
                     pass
         finally:

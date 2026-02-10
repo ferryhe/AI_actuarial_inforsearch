@@ -68,8 +68,12 @@ class TestWebSettingsApi(unittest.TestCase):
 
         self.original_config_path = os.environ.get("CONFIG_PATH")
         self.original_categories_path = os.environ.get("CATEGORIES_CONFIG_PATH")
+        self.original_bootstrap_token = os.environ.get("BOOTSTRAP_ADMIN_TOKEN")
+        self.original_flask_secret_key = os.environ.get("FLASK_SECRET_KEY")
         os.environ["CONFIG_PATH"] = self.sites_config_path
         os.environ["CATEGORIES_CONFIG_PATH"] = self.categories_config_path
+        os.environ["BOOTSTRAP_ADMIN_TOKEN"] = "test-bootstrap-admin-token"
+        os.environ["FLASK_SECRET_KEY"] = "test-flask-secret-key"
 
         self.app = create_app({"TESTING": True, "DEBUG": True})
         self.client = self.app.test_client()
@@ -84,17 +88,38 @@ class TestWebSettingsApi(unittest.TestCase):
             os.environ.pop("CATEGORIES_CONFIG_PATH", None)
         else:
             os.environ["CATEGORIES_CONFIG_PATH"] = self.original_categories_path
+        if self.original_bootstrap_token is None:
+            os.environ.pop("BOOTSTRAP_ADMIN_TOKEN", None)
+        else:
+            os.environ["BOOTSTRAP_ADMIN_TOKEN"] = self.original_bootstrap_token
+        if self.original_flask_secret_key is None:
+            os.environ.pop("FLASK_SECRET_KEY", None)
+        else:
+            os.environ["FLASK_SECRET_KEY"] = self.original_flask_secret_key
 
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
     def test_settings_page_available(self):
-        resp = self.client.get("/settings")
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn(b"Backend Settings", resp.data)
+        # REQUIRE_AUTH defaults to false, but settings should still require a token.
+        guest = self.client.get("/settings", follow_redirects=False)
+        self.assertEqual(guest.status_code, 302)
+        admin = self.client.get(
+            "/settings",
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
+        self.assertEqual(admin.status_code, 200)
+        self.assertIn(b"Backend Settings", admin.data)
 
     def test_categories_config_roundtrip(self):
-        resp = self.client.get("/api/config/categories")
+        # Guest cannot read config APIs.
+        guest = self.client.get("/api/config/categories")
+        self.assertEqual(guest.status_code, 401)
+
+        resp = self.client.get(
+            "/api/config/categories",
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
         self.assertIn("AI", data["categories"])
@@ -107,7 +132,11 @@ class TestWebSettingsApi(unittest.TestCase):
             "ai_filter_keywords": ["ai", "genai"],
             "ai_keywords": ["llm", "transformer"],
         }
-        save_resp = self.client.post("/api/config/categories", json=payload)
+        save_resp = self.client.post(
+            "/api/config/categories",
+            json=payload,
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
         self.assertEqual(save_resp.status_code, 200)
         self.assertTrue(save_resp.get_json().get("success"))
 
@@ -123,7 +152,13 @@ class TestWebSettingsApi(unittest.TestCase):
         self.assertIn("Pricing", list_resp.get_json()["categories"])
 
     def test_backend_settings_roundtrip(self):
-        resp = self.client.get("/api/config/backend-settings")
+        guest = self.client.get("/api/config/backend-settings")
+        self.assertEqual(guest.status_code, 401)
+
+        resp = self.client.get(
+            "/api/config/backend-settings",
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
         self.assertEqual(data["defaults"]["max_pages"], 100)
@@ -156,7 +191,11 @@ class TestWebSettingsApi(unittest.TestCase):
                 "queries": ["actuary machine learning filetype:pdf"],
             },
         }
-        save_resp = self.client.post("/api/config/backend-settings", json=payload)
+        save_resp = self.client.post(
+            "/api/config/backend-settings",
+            json=payload,
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
         self.assertEqual(save_resp.status_code, 200)
         self.assertTrue(save_resp.get_json().get("success"))
 
@@ -172,13 +211,23 @@ class TestWebSettingsApi(unittest.TestCase):
         self.assertFalse(saved["search"]["enabled"])
         self.assertEqual(saved["search"]["languages"], ["en", "fr"])
 
-        verify = self.client.get("/api/config/backend-settings")
+        verify = self.client.get(
+            "/api/config/backend-settings",
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
         verify_data = verify.get_json()
         self.assertEqual(verify_data["defaults"]["user_agent"], "test-agent/1.0")
         self.assertEqual(verify_data["search"]["country"], "ca")
 
     def test_search_defaults_endpoint(self):
-        resp = self.client.get("/api/config/search-defaults")
+        # This endpoint is tasks-related and should require a token.
+        guest = self.client.get("/api/config/search-defaults")
+        self.assertEqual(guest.status_code, 401)
+
+        resp = self.client.get(
+            "/api/config/search-defaults",
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
         self.assertTrue(data["enabled"])
