@@ -498,9 +498,11 @@
             <div class="form-group">
                 <label>Conversion Tool</label>
                 <select name="conversion_tool" id="conversion-tool-select">
+                    <option value="auto">Auto-detect best tool</option>
                     <option value="marker">Marker (PDF optimized)</option>
                     <option value="docling">Docling (Multi-format)</option>
-                    <option value="auto">Auto-detect best tool</option>
+                    <option value="mistral">Mistral OCR (API)</option>
+                    <option value="deepseekocr">DeepSeek OCR (SiliconFlow API)</option>
                 </select>
                 <small class="form-hint">Different tools work better for different file types</small>
             </div>
@@ -1020,10 +1022,10 @@ async function loadFilesForMarkdownConversion() {
             availableFilesForMarkdown = data.files.filter(f => {
                 // Filter for convertible file types
                 const ext = (f.content_type || '').toLowerCase();
-                return ext.includes('pdf') || ext.includes('word') || 
+                return ext.includes('pdf') || ext.includes('word') ||
                        ext.includes('powerpoint') || ext.includes('document') ||
-                       ext.includes('presentation');
-            });
+                       ext.includes('presentation') || ext.includes('image');
+             });
             
             if (availableFilesForMarkdown.length > 0) {
                 renderMarkdownFileSelection();
