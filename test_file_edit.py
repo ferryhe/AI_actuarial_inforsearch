@@ -17,16 +17,15 @@ class TestFileEdit(unittest.TestCase):
         self.db_path = os.path.join(self.temp_dir, "test.db")
         self.storage = Storage(self.db_path)
         
-        # Insert a test file
+        # Insert a test file using the public Storage API
         self.test_url = "http://test.com/file.pdf"
-        self.storage._conn.execute(
-            """
-            INSERT INTO files (url, sha256, source_site, bytes, content_type)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (self.test_url, "test_hash", "test_site", 1024, "application/pdf")
+        self.storage.insert_file(
+            self.test_url,
+            "test_hash",
+            "test_site",
+            1024,
+            "application/pdf",
         )
-        self.storage._conn.commit()
     
     def tearDown(self):
         """Clean up temporary files."""
