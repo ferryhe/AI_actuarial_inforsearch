@@ -62,6 +62,18 @@ Conservative default: prefer local tools first to avoid unexpected paid API call
     return "docling"
 
 
+def _auto_candidates(path: Path) -> list[str]:
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        # Prefer local tools first; fall back to API engines if configured.
+        return ["marker", "docling", "mistral", "deepseekocr", "local"]
+    if suffix in {".docx", ".pptx"}:
+        return ["docling", "mistral", "deepseekocr", "local"]
+    if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+        return ["deepseekocr", "mistral", "local"]
+    return ["docling", "mistral", "deepseekocr", "local"]
+
+
 def convert_path(
     path: Path,
     *,
@@ -69,7 +81,14 @@ def convert_path(
     model: Optional[str] = None,
 ) -> ConversionOutput:
     if engine == "auto":
-        engine = pick_auto_engine(path)
+        last_exc: Exception | None = None
+        for candidate in _auto_candidates(path):
+            try:
+                return convert_path(path, engine=candidate, model=model)
+            except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
+                last_exc = exc
+                continue
+        raise RuntimeError(f"Auto conversion failed for {path.name}") from last_exc
 
     engine_cls = _import_engine(engine)
     try:
@@ -79,4 +98,3 @@ def convert_path(
 
     response = engine_instance.convert(path)
     return ConversionOutput(markdown=response.markdown, engine=str(engine_instance.name), model=str(response.model))
-
