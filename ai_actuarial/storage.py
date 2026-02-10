@@ -709,7 +709,14 @@ class Storage:
             WHERE category IS NOT NULL AND category != ''
             ORDER BY category
         """)
-        return [row[0] for row in cur.fetchall()]
+        categories: set[str] = set()
+        for row in cur.fetchall():
+            raw = row[0] or ""
+            # Support semicolon-separated multi-categories: "AI; Risk; Pricing"
+            parts = [p.strip() for p in raw.split(";") if p.strip()]
+            for part in parts:
+                categories.add(part)
+        return sorted(categories, key=lambda x: x.lower())
     
     def query_files_with_catalog(
         self,
@@ -905,6 +912,73 @@ class Storage:
             "keywords": json.loads(row[18]) if row[18] else [],
             "catalog_status": row[19],
         }
+    
+    def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
+        """Update catalog information for a file.
+        
+        Args:
+            url: File URL
+            category: New category value (optional)
+            summary: New summary value (optional)
+            keywords: New keywords list (optional)
+            
+        Returns:
+            Tuple of (success: bool, error_reason: str | None)
+            - (True, None) if update succeeded
+            - (False, "file_not_found") if file doesn't exist
+            - (False, "no_updates") if no update fields were provided
+        """
+        # Check if file exists
+        file_cur = self._conn.execute(
+            "SELECT url FROM files WHERE url = ?",
+            (url,)
+        )
+        if file_cur.fetchone() is None:
+            # File doesn't exist, can't update
+            return (False, "file_not_found")
+        
+        # Check if catalog entry exists
+        cur = self._conn.execute(
+            "SELECT file_url FROM catalog_items WHERE file_url = ?",
+            (url,)
+        )
+        exists = cur.fetchone() is not None
+        
+        if not exists:
+            # Create a catalog entry if it doesn't exist
+            self._conn.execute(
+                """
+                INSERT INTO catalog_items (file_url, sha256, pipeline_version, status)
+                SELECT url, sha256, 'manual', 'ok' FROM files WHERE url = ?
+                """,
+                (url,)
+            )
+        
+        # Build update query dynamically based on provided fields
+        updates = []
+        params = []
+        
+        if category is not None:
+            updates.append("category = ?")
+            params.append(category)
+        
+        if summary is not None:
+            updates.append("summary = ?")
+            params.append(summary)
+        
+        if keywords is not None:
+            updates.append("keywords = ?")
+            params.append(json.dumps(keywords) if keywords else "")
+        
+        if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            query = f"UPDATE catalog_items SET {', '.join(updates)} WHERE file_url = ?"
+            params.append(url)
+            self._conn.execute(query, tuple(params))
+            self._maybe_commit()
+            return (True, None)
+        
+        return (False, "no_updates")
     
     def clear_local_path(self, url: str) -> None:
         """Clear the local_path for a file (for deletion tracking).

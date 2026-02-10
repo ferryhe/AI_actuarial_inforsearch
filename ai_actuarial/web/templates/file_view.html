@@ -70,7 +70,20 @@
                 </tr>
                 <tr>
                     <th>Category</th>
-                    <td>{{ file.category or 'Uncategorized' }}</td>
+                    <td>
+                        <div id="category-display" class="category-display-text">{{ file.category or 'Uncategorized' }}</div>
+                        <div id="category-editor" style="display:none;">
+                            <div class="category-picker">
+                                <button type="button" id="category-picker-toggle" class="btn btn-secondary btn-small">
+                                    Choose Categories
+                                </button>
+                                <div id="category-options-panel" class="category-options-panel" style="display:none;"></div>
+                            </div>
+                            <div id="category-selected-preview" class="category-selected-preview"></div>
+                            <small class="category-help-text">Category options are managed in the Settings page.</small>
+                        </div>
+                        <input type="hidden" id="category-input" data-current-value="{{ file.category or '' }}">
+                    </td>
                 </tr>
                 {% if file.deleted_at %}
                 <tr>
@@ -85,27 +98,37 @@
             </table>
         </div>
 
-        {% if file.summary %}
         <div class="summary-section">
-            <h4>Summary</h4>
-            <div class="summary-box">
-                {{ file.summary }}
+            <h4>
+                Summary
+            </h4>
+            <div id="summary-display" class="summary-box" {% if not file.summary %}style="display:none;"{% endif %}>
+                {{ file.summary or '' }}
             </div>
+            <textarea id="summary-input" class="edit-textarea" data-current-value="{{ file.summary or '' }}" style="display:none;">{{ file.summary or '' }}</textarea>
+            {% if not file.summary %}
+            <div id="summary-empty" class="summary-box" style="color: var(--text-secondary);">No summary available</div>
+            {% endif %}
         </div>
-        {% endif %}
 
-        {% if file.keywords %}
         <div class="keywords-section">
             <h4>Keywords</h4>
-            <div class="keywords-list">
+            <div id="keywords-display" class="keywords-list" {% if not file.keywords %}style="display:none;"{% endif %}>
                 {% for keyword in file.keywords %}
                 <span class="keyword-tag">{{ keyword }}</span>
                 {% endfor %}
             </div>
+            <input type="text" id="keywords-input" class="edit-input" placeholder="Comma-separated keywords" data-current-value="{{ file.keywords|join(', ') if file.keywords else '' }}" style="display:none;" value="{{ file.keywords|join(', ') if file.keywords else '' }}">
+            {% if not file.keywords %}
+            <div id="keywords-empty" style="color: var(--text-secondary);">No keywords available</div>
+            {% endif %}
         </div>
-        {% endif %}
 
         <div class="actions-section">
+            <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
+            <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
+            <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
+            
             {% if file.local_path %}
             <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
             {% else %}
@@ -118,6 +141,304 @@
 </div>
 
 <script>
+    let editMode = false;
+    const fileUrl = {{ file.url|tojson }};
+    let categoryOptionsLoaded = false;
+    let categoryOptions = [];
+    let selectedCategories = [];
+
+    function parseCategoryString(rawValue) {
+        return (rawValue || '')
+            .split(';')
+            .map(v => v.trim())
+            .filter(Boolean);
+    }
+
+    function categoryListToString(list) {
+        return list.join('; ');
+    }
+
+    function renderCategoryDisplay(categories) {
+        const displayEl = document.getElementById('category-display');
+        displayEl.textContent = categories.length ? categoryListToString(categories) : 'Uncategorized';
+    }
+
+    function setCategoryOptions(categories) {
+        const categoryInput = document.getElementById('category-input');
+        const currentSelected = parseCategoryString(categoryInput.dataset.currentValue || '');
+        const unique = Array.from(new Set((categories || []).map(c => (c || '').trim()).filter(Boolean)));
+        const sortedCategories = unique.sort((a, b) => a.localeCompare(b));
+        currentSelected.forEach((cat) => {
+            if (!sortedCategories.includes(cat)) {
+                sortedCategories.push(cat);
+            }
+        });
+        categoryOptions = sortedCategories;
+        selectedCategories = currentSelected;
+        renderCategoryOptionsPanel();
+        renderCategorySelectedPreview();
+        renderCategoryDisplay(selectedCategories);
+    }
+
+    function renderCategoryOptionsPanel() {
+        const panel = document.getElementById('category-options-panel');
+        panel.innerHTML = '';
+        if (!categoryOptions.length) {
+            panel.innerHTML = '<div class="category-option-empty">No configured categories.</div>';
+            return;
+        }
+        categoryOptions.forEach((cat) => {
+            const row = document.createElement('label');
+            row.className = 'category-option-row';
+
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = cat;
+            cb.checked = selectedCategories.includes(cat);
+            cb.addEventListener('change', () => {
+                if (cb.checked) {
+                    if (!selectedCategories.includes(cat)) selectedCategories.push(cat);
+                } else {
+                    selectedCategories = selectedCategories.filter(v => v !== cat);
+                }
+                renderCategorySelectedPreview();
+            });
+
+            const text = document.createElement('span');
+            text.textContent = cat;
+            row.appendChild(cb);
+            row.appendChild(text);
+            panel.appendChild(row);
+        });
+    }
+
+    function openCategoryOptionsPanel() {
+        const panel = document.getElementById('category-options-panel');
+        const toggleBtn = document.getElementById('category-picker-toggle');
+        const rect = toggleBtn.getBoundingClientRect();
+        const panelWidth = Math.min(420, Math.max(300, Math.floor(window.innerWidth * 0.9)));
+        const margin = 8;
+        let left = rect.right + margin;
+        let top = rect.top;
+
+        if (left + panelWidth > window.innerWidth - margin) {
+            left = Math.max(margin, rect.left);
+            top = rect.bottom + margin;
+        }
+        left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
+        panel.style.width = `${panelWidth}px`;
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.display = 'block';
+    }
+
+    function closeCategoryOptionsPanel() {
+        const panel = document.getElementById('category-options-panel');
+        panel.style.display = 'none';
+    }
+
+    function renderCategorySelectedPreview() {
+        const preview = document.getElementById('category-selected-preview');
+        preview.innerHTML = '';
+        if (!selectedCategories.length) {
+            preview.innerHTML = '<span class="category-empty">Uncategorized</span>';
+            return;
+        }
+        selectedCategories.forEach((cat) => {
+            const tag = document.createElement('span');
+            tag.className = 'category-chip';
+            tag.textContent = cat;
+            preview.appendChild(tag);
+        });
+    }
+
+    async function ensureCategoryOptions() {
+        if (categoryOptionsLoaded) return;
+        try {
+            const response = await fetch('/api/categories');
+            if (!response.ok) throw new Error('Failed to load categories');
+            const data = await response.json();
+            setCategoryOptions(data.categories || []);
+            categoryOptionsLoaded = true;
+        } catch (err) {
+            console.error('Failed loading category options:', err);
+            // Keep at least current category option available.
+            setCategoryOptions([]);
+        }
+    }
+    
+    async function toggleEditMode() {
+        await ensureCategoryOptions();
+        editMode = true;
+        
+        // Show input fields, hide display fields
+        document.getElementById('category-editor').style.display = 'block';
+        document.getElementById('category-display').style.display = 'none';
+        
+        document.getElementById('summary-input').style.display = 'block';
+        document.getElementById('summary-display').style.display = 'none';
+        const summaryEmpty = document.getElementById('summary-empty');
+        if (summaryEmpty) summaryEmpty.style.display = 'none';
+        
+        document.getElementById('keywords-input').style.display = 'block';
+        document.getElementById('keywords-display').style.display = 'none';
+        const keywordsEmpty = document.getElementById('keywords-empty');
+        if (keywordsEmpty) keywordsEmpty.style.display = 'none';
+        
+        // Show save/cancel buttons, hide edit button
+        document.getElementById('edit-btn').style.display = 'none';
+        document.getElementById('save-btn').style.display = 'inline-block';
+        document.getElementById('cancel-btn').style.display = 'inline-block';
+    }
+    
+    function cancelEdit() {
+        editMode = false;
+        
+        // Hide input fields, show display fields
+        const categoryInput = document.getElementById('category-input');
+        selectedCategories = parseCategoryString(categoryInput.dataset.currentValue || '');
+        renderCategoryOptionsPanel();
+        renderCategorySelectedPreview();
+        renderCategoryDisplay(selectedCategories);
+        document.getElementById('category-editor').style.display = 'none';
+        closeCategoryOptionsPanel();
+        document.getElementById('category-display').style.display = 'block';
+        
+        const summaryInput = document.getElementById('summary-input');
+        const summaryDisplay = document.getElementById('summary-display');
+        if (summaryInput) {
+            const savedSummary = (summaryInput.dataset && typeof summaryInput.dataset.currentValue !== 'undefined')
+                ? summaryInput.dataset.currentValue
+                : (summaryDisplay ? summaryDisplay.textContent.trim() : '');
+            summaryInput.value = savedSummary || '';
+            summaryInput.style.display = 'none';
+        }
+        if (summaryDisplay) {
+            if (summaryDisplay.textContent.trim()) {
+                summaryDisplay.style.display = 'block';
+            } else {
+                const summaryEmpty = document.getElementById('summary-empty');
+                if (summaryEmpty) summaryEmpty.style.display = 'block';
+            }
+        }
+        
+        const keywordsInput = document.getElementById('keywords-input');
+        const keywordsDisplay = document.getElementById('keywords-display');
+        if (keywordsInput) {
+            let savedKeywords = '';
+            if (keywordsInput.dataset && typeof keywordsInput.dataset.currentValue !== 'undefined') {
+                savedKeywords = keywordsInput.dataset.currentValue || '';
+            } else if (keywordsDisplay) {
+                savedKeywords = Array.from(keywordsDisplay.children || [])
+                    .map(function (child) { return child.textContent.trim(); })
+                    .filter(function (text) { return text.length > 0; })
+                    .join(', ');
+            }
+            keywordsInput.value = savedKeywords;
+            keywordsInput.style.display = 'none';
+        }
+        if (keywordsDisplay) {
+            if (keywordsDisplay.children.length > 0) {
+                keywordsDisplay.style.display = 'flex';
+            } else {
+                const keywordsEmpty = document.getElementById('keywords-empty');
+                if (keywordsEmpty) keywordsEmpty.style.display = 'block';
+            }
+        }
+        
+        // Show edit button, hide save/cancel buttons
+        document.getElementById('edit-btn').style.display = 'inline-block';
+        document.getElementById('save-btn').style.display = 'none';
+        document.getElementById('cancel-btn').style.display = 'none';
+    }
+    
+    async function saveChanges() {
+        const category = categoryListToString(selectedCategories);
+        const summary = document.getElementById('summary-input').value.trim();
+        const keywordsText = document.getElementById('keywords-input').value.trim();
+        const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
+        
+        try {
+            const response = await fetch('/api/files/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    url: fileUrl,
+                    category: category || '',
+                    summary: summary || '',
+                    keywords: keywords
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                Toast.success('File details updated successfully');
+                
+                // Update display values and store current values
+                document.getElementById('category-input').dataset.currentValue = category || '';
+                renderCategoryDisplay(parseCategoryString(category));
+                
+                const summaryInput = document.getElementById('summary-input');
+                const summaryDisplay = document.getElementById('summary-display');
+                summaryInput.dataset.currentValue = summary || '';
+                summaryDisplay.textContent = summary || '';
+                
+                const keywordsInput = document.getElementById('keywords-input');
+                const keywordsDisplay = document.getElementById('keywords-display');
+                const keywordsStr = keywords.join(', ');
+                keywordsInput.dataset.currentValue = keywordsStr;
+                keywordsDisplay.innerHTML = '';
+                keywords.forEach(keyword => {
+                    const tag = document.createElement('span');
+                    tag.className = 'keyword-tag';
+                    tag.textContent = keyword;
+                    keywordsDisplay.appendChild(tag);
+                });
+                
+                // Exit edit mode
+                cancelEdit();
+            } else {
+                Toast.error('Update failed: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            Toast.error('Network error: ' + err.message);
+            console.error('Update exception:', err);
+        }
+    }
+
+    document.getElementById('category-picker-toggle').addEventListener('click', () => {
+        const panel = document.getElementById('category-options-panel');
+        if (panel.style.display === 'none') {
+            openCategoryOptionsPanel();
+        } else {
+            closeCategoryOptionsPanel();
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        const panel = document.getElementById('category-options-panel');
+        const toggleBtn = document.getElementById('category-picker-toggle');
+        if (panel.style.display === 'none') return;
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        if (path.includes(panel) || path.includes(toggleBtn)) return;
+        if (panel.contains(event.target) || toggleBtn.contains(event.target)) return;
+        closeCategoryOptionsPanel();
+    });
+
+    window.addEventListener('resize', () => {
+        const panel = document.getElementById('category-options-panel');
+        if (panel.style.display !== 'none') openCategoryOptionsPanel();
+    });
+    // Keep dropdown open while scrolling; only reposition to follow the trigger.
+    window.addEventListener('scroll', () => {
+        const panel = document.getElementById('category-options-panel');
+        if (panel.style.display !== 'none') openCategoryOptionsPanel();
+    }, true);
+
+    // Load categories early so the first edit interaction is instant.
+    ensureCategoryOptions();
+    
     async function deleteFile(url) {
         // Create a custom modal for text confirmation
         const modal = document.createElement('div');
@@ -308,6 +629,95 @@
         margin-top: 2rem;
         border-top: 1px solid var(--border-color);
         padding-top: 1rem;
+    }
+    
+    /* Edit mode styles */
+    .edit-input {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 1rem;
+    }
+    
+    .edit-textarea {
+        width: 100%;
+        min-height: 100px;
+        padding: 1rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 1rem;
+        line-height: 1.6;
+        resize: vertical;
+    }
+    
+    .edit-input:focus,
+    .edit-textarea:focus {
+        outline: none;
+        border-color: var(--primary-500);
+    }
+    
+    .keywords-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .btn-small {
+        padding: 0.35rem 0.6rem;
+        font-size: 0.85rem;
+    }
+
+    .category-options-panel {
+        position: fixed;
+        z-index: 2200;
+        max-height: 220px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--card-bg);
+        box-shadow: var(--shadow);
+        padding: 0.5rem;
+    }
+
+    .category-option-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.35rem;
+        cursor: pointer;
+    }
+
+    .category-option-empty,
+    .category-empty,
+    .category-help-text {
+        color: var(--text-secondary);
+    }
+
+    .category-selected-preview {
+        margin-top: 0.6rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+
+    .category-chip {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        border: 1px solid var(--border-color);
+        background: var(--gray-100);
+    }
+
+    [data-theme="dark"] .category-chip {
+        background: var(--gray-800);
     }
 </style>
 {% endblock %}

@@ -138,6 +138,51 @@
                 <input type="text" name="site" placeholder="e.g. actuaries.org">
             </div>
             <div class="form-group">
+                <label>
+                    <input type="checkbox" name="use_search_defaults" id="use-search-defaults" checked onchange="toggleSearchDefaults(this.checked)">
+                    Use defaults from Settings -> Search Settings
+                </label>
+                <small id="search-defaults-summary" class="format-hint" style="color: var(--text-secondary);">Loading search defaults...</small>
+            </div>
+            <div class="form-group search-override-field">
+                <label>Language (Optional, single select)</label>
+                <select name="search_lang">
+                    <option value="">Use default</option>
+                    <option value="en">English (en)</option>
+                    <option value="zh">Chinese (zh)</option>
+                    <option value="ja">Japanese (ja)</option>
+                    <option value="ko">Korean (ko)</option>
+                    <option value="fr">French (fr)</option>
+                    <option value="de">German (de)</option>
+                    <option value="es">Spanish (es)</option>
+                    <option value="it">Italian (it)</option>
+                    <option value="pt">Portuguese (pt)</option>
+                </select>
+            </div>
+            <div class="form-group search-override-field">
+                <label>Country (Optional, single select)</label>
+                <select name="search_country">
+                    <option value="">Use default</option>
+                    <option value="us">United States (us)</option>
+                    <option value="ca">Canada (ca)</option>
+                    <option value="gb">United Kingdom (gb)</option>
+                    <option value="au">Australia (au)</option>
+                    <option value="cn">China (cn)</option>
+                    <option value="jp">Japan (jp)</option>
+                    <option value="kr">Korea (kr)</option>
+                    <option value="tw">Taiwan (tw)</option>
+                    <option value="fr">France (fr)</option>
+                    <option value="de">Germany (de)</option>
+                    <option value="es">Spain (es)</option>
+                    <option value="it">Italy (it)</option>
+                    <option value="in">India (in)</option>
+                </select>
+            </div>
+            <div class="form-group search-override-field">
+                <label>Exclude Keywords (Optional, comma separated)</label>
+                <input type="text" name="search_exclude_keywords" placeholder="newsletter, brochure">
+            </div>
+            <div class="form-group">
                 <label>File Formats:</label>
                 <div class="format-checkboxes">
                     <label class="format-option">
@@ -749,7 +794,42 @@ function refreshTasksPage() {
     loadTaskHistory();
 }
 
-function openWebSearchModal() { openModal('web-search-modal'); }
+let searchDefaultsConfig = null;
+
+function toggleSearchDefaults(checked) {
+    const modal = document.getElementById('web-search-modal');
+    if (!modal) return;
+    modal.querySelectorAll('.search-override-field').forEach((group) => {
+        group.style.display = checked ? 'none' : 'block';
+    });
+    modal.querySelectorAll('.search-override-field input, .search-override-field select').forEach((input) => {
+        input.disabled = checked;
+    });
+}
+
+async function loadSearchDefaults() {
+    try {
+        const resp = await fetch('/api/config/search-defaults');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Failed to load search defaults');
+        searchDefaultsConfig = data;
+        const summary = document.getElementById('search-defaults-summary');
+        if (summary) {
+            summary.textContent = `Default max_results=${data.max_results}, country=${data.country || '-'}, languages=${(data.languages || []).join(', ') || '-'}`;
+        }
+    } catch (err) {
+        const summary = document.getElementById('search-defaults-summary');
+        if (summary) summary.textContent = 'Failed to load defaults';
+        console.error(err);
+    }
+}
+
+async function openWebSearchModal() {
+    openModal('web-search-modal');
+    await loadSearchDefaults();
+    const cb = document.getElementById('use-search-defaults');
+    if (cb) toggleSearchDefaults(cb.checked);
+}
 function openQuickCheckModal() { openModal('quick-check-modal'); }
 function openCatalogModal() { openModal('catalog-modal'); }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
@@ -795,6 +875,7 @@ function startWebSearch(e) {
     if (!validateForm(form)) return;
     const formData = new FormData(form);
     const data = Object.fromEntries(formData.entries());
+    const useDefaults = formData.get('use_search_defaults') === 'on';
     
     // 获取选中的文件格式
     const formats = getSelectedFormats(form);
@@ -803,8 +884,17 @@ function startWebSearch(e) {
         type: 'search',
         query: data.query,
         engine: data.engine,
-        count: data.count,
+        count: useDefaults ? null : data.count,
         site: data.site,
+        use_search_defaults: useDefaults,
+        search_lang: useDefaults ? '' : (data.search_lang || ''),
+        search_country: useDefaults ? '' : (data.search_country || ''),
+        search_exclude_keywords: useDefaults
+            ? []
+            : (data.search_exclude_keywords || '')
+                .split(',')
+                .map(k => k.trim())
+                .filter(Boolean),
         file_exts: formats,  // 添加文件格式参数
         name: `Web Search: ${data.query}`
     });
@@ -1028,12 +1118,24 @@ function loadTaskHistory() {
                                 <td>${task.type}</td>
                                 <td><span class="status-badge status-${task.status}">${task.status}</span></td>
                                 <td>
-                                    ${task.items_processed || 0} processed
-                                    <br><small>
-                                        ${task.items_downloaded || 0} new / 
-                                        ${task.items_skipped || 0} skip /
-                                        ${task.errors ? task.errors.length : 0} err
-                                    </small>
+                                    ${task.type === 'catalog'
+                                        ? `
+                                            ${task.catalog_scanned ?? task.items_processed ?? 0} scanned
+                                            <br><small>
+                                                ${(task.catalog_ok ?? task.items_downloaded ?? 0)} categorized /
+                                                ${(task.catalog_skipped ?? task.items_skipped ?? 0)} skipped /
+                                                ${(task.catalog_errors ?? (task.errors ? task.errors.length : 0))} failed
+                                            </small>
+                                          `
+                                        : `
+                                            ${task.items_processed || 0} processed
+                                            <br><small>
+                                                ${task.items_downloaded || 0} new / 
+                                                ${task.items_skipped || 0} skip /
+                                                ${task.errors ? task.errors.length : 0} err
+                                            </small>
+                                          `
+                                    }
                                 </td>
                                 <td>${formatDate(task.started_at)}</td>
                                 <td>
@@ -1050,6 +1152,21 @@ function loadTaskHistory() {
 }
 
 function showLog(task) {
+    const isCatalog = task.type === 'catalog';
+    const mainStats = isCatalog
+        ? `
+            <li><strong>Scanned:</strong> ${task.catalog_scanned ?? task.items_processed ?? 0}</li>
+            <li><strong>Categorized (OK):</strong> ${task.catalog_ok ?? task.items_downloaded ?? 0}</li>
+            <li><strong>Skipped:</strong> ${task.catalog_skipped ?? task.items_skipped ?? 0}</li>
+            <li><strong>Failed:</strong> ${task.catalog_errors ?? (task.errors ? task.errors.length : 0)}</li>
+          `
+        : `
+            <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
+            <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
+            <li><strong>Skipped (Duplicates):</strong> ${task.items_skipped || 0}</li>
+            <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+          `;
+
     const content = `
         <div style="padding: 10px;">
             <h4>Task Log: ${escapeHtml(task.name)}</h4>
@@ -1057,10 +1174,7 @@ function showLog(task) {
                 <li><strong>Status:</strong> ${task.status}</li>
                 <li><strong>Started:</strong> ${formatDate(task.started_at)}</li>
                 <li><strong>Completed:</strong> ${formatDate(task.completed_at || '')}</li>
-                <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
-                <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
-                <li><strong>Skipped (Duplicates):</strong> ${task.items_skipped || 0}</li>
-                <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+                ${mainStats}
             </ul>
             <div class="error-details-box">
                 <h5>Error Details:</h5>
