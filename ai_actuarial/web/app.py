@@ -1573,6 +1573,91 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception(f"Error updating file: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/files/<path:file_url>/markdown", methods=["GET"])
+    def api_files_get_markdown(file_url):
+        """Get markdown content for a file."""
+        try:
+            from urllib.parse import unquote
+            url = unquote(file_url)
+            
+            logger.info(f"Fetching markdown content for URL: {url}")
+            storage = Storage(db_path)
+            
+            try:
+                markdown_data = storage.get_file_markdown(url)
+                
+                if markdown_data and markdown_data.get("markdown_content"):
+                    logger.info(f"Markdown content found for: {url}")
+                    return jsonify({
+                        "success": True,
+                        "markdown": markdown_data
+                    })
+                else:
+                    logger.info(f"No markdown content found for: {url}")
+                    return jsonify({
+                        "success": True,
+                        "markdown": None
+                    })
+                    
+            finally:
+                storage.close()
+                
+        except Exception as e:
+            logger.exception(f"Error fetching markdown content: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/files/<path:file_url>/markdown", methods=["POST"])
+    def api_files_update_markdown(file_url):
+        """Update markdown content for a file."""
+        try:
+            from urllib.parse import unquote
+            url = unquote(file_url)
+            
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                logger.error("Markdown update request has invalid JSON body")
+                return jsonify({"error": "Invalid or missing JSON body"}), 400
+            
+            markdown_content = data.get("markdown_content")
+            if markdown_content is None:
+                logger.error("Markdown update request missing content")
+                return jsonify({"error": "No markdown_content provided"}), 400
+            
+            markdown_source = data.get("markdown_source", "manual")
+            
+            logger.info(f"Updating markdown content for URL: {url}")
+            storage = Storage(db_path)
+            
+            try:
+                success, error_reason = storage.update_file_markdown(
+                    url=url,
+                    markdown_content=markdown_content,
+                    markdown_source=markdown_source
+                )
+                
+                if success:
+                    logger.info(f"Markdown content updated successfully: {url}")
+                    # Fetch updated data to return
+                    markdown_data = storage.get_file_markdown(url)
+                    return jsonify({
+                        "success": True,
+                        "markdown": markdown_data
+                    })
+                else:
+                    if error_reason == "file_not_found":
+                        logger.warning(f"Markdown update failed - file not found: {url}")
+                        return jsonify({"error": "File not found"}), 404
+                    else:
+                        logger.error(f"Markdown update failed: {url}")
+                        return jsonify({"error": "Update failed"}), 500
+                        
+            finally:
+                storage.close()
+                
+        except Exception as e:
+            logger.exception(f"Error updating markdown: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/logs/global")
     def api_logs_global():
         """Get global application logs."""
