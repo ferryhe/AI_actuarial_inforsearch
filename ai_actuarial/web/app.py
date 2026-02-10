@@ -104,10 +104,9 @@ def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "queries": search.get("queries", []),
         },
         "runtime": {
-            "config_path": _get_sites_config_path(),
-            "categories_config_path": _get_categories_config_path(),
             "file_deletion_enabled": os.getenv("ENABLE_FILE_DELETION") == "true",
             "file_deletion_auth_required": bool(os.getenv("FILE_DELETION_AUTH_TOKEN")),
+            "config_write_auth_required": bool(os.getenv("CONFIG_WRITE_AUTH_TOKEN")),
         },
     }
 
@@ -345,8 +344,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
     @app.route("/api/config/categories", methods=["POST"])
     def api_config_categories_update():
-        """Update category configuration in categories.yaml."""
+        """Update category configuration in categories.yaml.
+        
+        Security: Requires CONFIG_WRITE_AUTH_TOKEN environment variable to be set.
+        Requests must include matching X-Auth-Token header.
+        """
         try:
+            # Authentication check
+            expected_token = app.config.get("CONFIG_WRITE_AUTH_TOKEN") or os.getenv(
+                "CONFIG_WRITE_AUTH_TOKEN"
+            )
+            if expected_token:
+                provided_token = request.headers.get("X-Auth-Token")
+                if not provided_token or provided_token != expected_token:
+                    logger.warning("Config write attempt rejected: authentication failed")
+                    return jsonify({"error": "Forbidden"}), 403
+            
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
                 return jsonify({"error": "Invalid JSON body"}), 400
@@ -416,9 +429,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
     @app.route("/api/config/backend-settings", methods=["POST"])
     def api_config_backend_settings_update():
-        """Update editable backend settings in sites.yaml."""
+        """Update editable backend settings in sites.yaml.
+        
+        Security: Requires CONFIG_WRITE_AUTH_TOKEN environment variable to be set.
+        Requests must include matching X-Auth-Token header.
+        """
         nonlocal site_config
         try:
+            # Authentication check
+            expected_token = app.config.get("CONFIG_WRITE_AUTH_TOKEN") or os.getenv(
+                "CONFIG_WRITE_AUTH_TOKEN"
+            )
+            if expected_token:
+                provided_token = request.headers.get("X-Auth-Token")
+                if not provided_token or provided_token != expected_token:
+                    logger.warning("Config write attempt rejected: authentication failed")
+                    return jsonify({"error": "Forbidden"}), 403
+            
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
                 return jsonify({"error": "Invalid JSON body"}), 400
