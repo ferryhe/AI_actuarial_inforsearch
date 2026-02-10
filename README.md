@@ -14,6 +14,7 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 - Downloads for PDF, Word, PowerPoint, Excel, and HTML sources
 - SHA256-based deduplication to prevent duplicates
 - Incremental cataloging with summaries, keywords, and categories
+- **Markdown content management** - view, edit, and convert documents to markdown
 - SQLite for local use and PostgreSQL for production
 - Web interface for search, export, and operational management
 
@@ -22,8 +23,32 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 - Database browser with sorting, selection, and CSV export
 - Site management with keyword and prefix exclusions
 - Task center for running and monitoring collections
+- **Markdown conversion** - convert PDFs and documents to markdown format
+- **File detail pages** - view and edit markdown content with live preview
 - Global logs for operational visibility
 - Local file import with directory browsing
+
+## Markdown Feature
+
+The system supports viewing, editing, and converting documents to markdown format:
+
+### File Detail Page
+- **View Mode**: Renders markdown content with proper formatting (headings, lists, code blocks, tables)
+- **Edit Mode**: Edit markdown directly in a textarea with monospace font
+- **Auto-save**: Markdown edits are saved with timestamp tracking
+- **Source Tracking**: Tracks whether content is manual, converted, or original
+
+### Markdown Conversion Task
+- Select multiple files from the database for batch conversion
+- Choose conversion tool: Marker (PDF-optimized), Docling (multi-format), or Auto-detect
+- Option to overwrite existing markdown content
+- Progress tracking and error reporting
+- Currently uses a placeholder implementation - integrate with [doc_to_md](https://github.com/ferryhe/doc_to_md) tools for production use
+
+### Database Storage
+- Markdown content stored in `catalog_items` table
+- Fields: `markdown_content` (TEXT), `markdown_updated_at` (TIMESTAMP), `markdown_source` (TEXT)
+- Accessible via Storage API: `get_file_markdown()`, `update_file_markdown()`
 
 ## Project Structure (High-Level)
 
