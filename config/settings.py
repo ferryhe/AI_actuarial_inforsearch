@@ -71,6 +71,7 @@ class Settings(BaseSettings):
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         populate_by_name=True,
+        extra="ignore",  # Allow unrelated keys in .env (project-wide env file)
     )
 
     @field_validator("input_dir", "output_dir", mode="before")
@@ -108,4 +109,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached Settings instance so imports stay cheap."""
     return Settings()
-

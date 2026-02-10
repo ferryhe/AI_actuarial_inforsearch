@@ -290,18 +290,17 @@ Multi-image batching is not supported; each page must be sent in a separate call
     def _sanitize_markdown(text: str) -> str:
         cleaned = (text or "").strip()
         patterns = [
-            (r"width\\s*=\\s*\\d+%?", ""),
-            (r'align\\s*=\\s*\"(left|right|center)\"', ""),
-            (r"captions?:\\\".*?\\\"", ""),
-            (r"image:\\\".*?\\\"", ""),
-            (r"\\|{2,}", "|"),
-            (r"\\{[\\}\\{]{2,}", "\n"),
-            (r"\\}+", "\n"),
-            (r"\\[\\[.*?\\]\\]", ""),
+            (r"width\s*=\s*\d+%?", ""),
+            (r'align\s*=\s*"(left|right|center)"', ""),
+            (r'captions?:".*?"', ""),
+            (r'image:".*?"', ""),
+            (r"\|{2,}", "|"),
+            (r"\{[\}\{]{2,}", "\n"),
+            (r"\}+", "\n"),
+            (r"\[\[.*?\]\]", ""),
         ]
         for pattern, replacement in patterns:
             cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE | re.MULTILINE)
-        cleaned = re.sub(r"\\n{3,}", "\n\n", cleaned)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         cleaned = re.sub(r"[ ]{3,}", "  ", cleaned)
         return cleaned.strip()
-
