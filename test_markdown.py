@@ -327,8 +327,8 @@ class TestMarkdownAPI(unittest.TestCase):
         self.assertEqual(data['markdown']['markdown_content'], markdown_content)
         self.assertEqual(data['markdown']['markdown_source'], 'converted_marker')
     
-    def test_get_markdown_404_on_unknown_file(self):
-        """Test GET returns appropriate response for unknown file."""
+    def test_get_markdown_for_unknown_file(self):
+        """Test GET returns null markdown for non-existent file (not 404)."""
         from urllib.parse import quote
         
         unknown_url = "file:///nonexistent/file.pdf"
@@ -336,10 +336,11 @@ class TestMarkdownAPI(unittest.TestCase):
         
         response = self.client.get(f'/api/files/{encoded_url}/markdown')
         
+        # API returns 200 with success=true and markdown=None for missing files
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertTrue(data['success'])
-        # Should return None for non-existent file
+        # Should return None for non-existent file (not an error, just no content)
         self.assertIsNone(data['markdown'])
     
     def test_post_markdown_400_on_missing_content(self):

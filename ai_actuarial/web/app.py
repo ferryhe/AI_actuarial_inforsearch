@@ -1155,9 +1155,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             continue
                         
                         # Resolve relative paths to absolute paths (same as /api/download)
+                        # Local Import stores files with local_path relative to download_dir.parent
+                        # (the data directory), not relative to download_dir itself
                         if not os.path.isabs(local_path):
                             relative_path = Path(local_path)
-                            # Use the parent of download_dir as base to resolve relative paths from the database
+                            # Use the parent of download_dir as base (e.g., data/) for relative paths
                             base_dir = Path(download_dir).parent.resolve()
                             candidate = (base_dir / relative_path).resolve()
                             
