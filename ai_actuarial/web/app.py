@@ -42,6 +42,14 @@ try:
 except ImportError:
     FLASK_LIMITER_AVAILABLE = False
 
+# Optional: CSRF protection (Flask-SeaSurf)
+try:
+    from flask_seasurf import SeaSurf
+
+    FLASK_SEASURF_AVAILABLE = True
+except ImportError:
+    FLASK_SEASURF_AVAILABLE = False
+
 import csv
 import io
 import yaml
@@ -370,6 +378,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     app.config.setdefault("SESSION_COOKIE_SAMESITE", os.getenv("SESSION_COOKIE_SAMESITE", "Lax"))
     app.config.setdefault("SESSION_COOKIE_SECURE", _env_flag("SESSION_COOKIE_SECURE", False))
 
+    # Optional security headers (recommended for public deployments)
+    enable_security_headers = _env_flag("ENABLE_SECURITY_HEADERS", True)
+    if enable_security_headers:
+
+        @app.after_request
+        def _add_security_headers(resp):
+            resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+            resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+            resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+            resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+            resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+            # CSP is optional and should be tuned for actual assets and any CDN usage.
+            csp = os.getenv("CONTENT_SECURITY_POLICY", "").strip()
+            if csp:
+                resp.headers.setdefault("Content-Security-Policy", csp)
+            return resp
+
     # Optional rate limiting (disabled by default; recommended for public deployments)
     limiter = None
 
@@ -394,6 +419,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 default_limits=default_limits,
                 storage_uri=storage_uri,
             )
+
+    # Optional CSRF protection (recommended when using cookie sessions)
+    csrf = None
+    if _env_flag("ENABLE_CSRF", False):
+        if not FLASK_SEASURF_AVAILABLE:
+            logger.warning("ENABLE_CSRF=true but Flask-SeaSurf is not installed; skipping")
+        else:
+            csrf = SeaSurf(app)
 
     # Load configuration
     config_path = _get_sites_config_path()
@@ -677,6 +710,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         session.pop("auth_token_id", None)
         session.pop("auth_group_name", None)
         return redirect(url_for("login"))
+
+    if csrf is not None:
+        # Token login/logout are special: login happens before a client can reliably
+        # attach CSRF headers; logout is low-risk and should remain usable.
+        csrf.exempt(login)
+        csrf.exempt(logout)
 
     @app.route("/api/auth/me")
     def api_auth_me():
