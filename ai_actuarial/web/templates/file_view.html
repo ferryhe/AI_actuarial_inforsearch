@@ -131,18 +131,26 @@
             {% endif %}
         </div>
 
+        {% set can_write_catalog = auth_group in ['admin', 'operator'] %}
+        {% set can_write_markdown = auth_group in ['admin', 'operator'] %}
+        {% set can_delete_file = auth_group == 'admin' %}
+
         <div class="actions-section">
+            {% if can_write_catalog %}
             <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
             <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
             <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
+            {% endif %}
             
             {% if file.local_path %}
             <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
             {% else %}
             <button class="btn btn-secondary" disabled>Download Unavailable</button>
             {% endif %}
-             
-              <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+              
+            {% if can_delete_file %}
+            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+            {% endif %}
         </div>
 
         <div class="markdown-section">
@@ -150,7 +158,9 @@
                 <h4>Markdown Content</h4>
                 <div class="markdown-tabs">
                     <button id="markdown-view-tab" class="markdown-tab active" onclick="switchMarkdownTab('view')">View</button>
+                    {% if can_write_markdown %}
                     <button id="markdown-edit-tab" class="markdown-tab" onclick="switchMarkdownTab('edit')">Edit</button>
+                    {% endif %}
                     <button id="markdown-expand-btn" class="markdown-tab" onclick="toggleMarkdownHeight()" style="display:none;">Expand</button>
                 </div>
             </div>
@@ -161,12 +171,13 @@
                 <div id="markdown-empty" style="color: var(--text-secondary); padding: 1rem;">No markdown content available</div>
             </div>
             
+            {% if can_write_markdown %}
             <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
                 <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
                  <div class="markdown-convert-actions">
-                     <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
-                     <select id="markdown-convert-engine" class="markdown-convert-select">
-                         <option value="auto">Auto</option>
+                      <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
+                      <select id="markdown-convert-engine" class="markdown-convert-select">
+                          <option value="auto">Auto</option>
                          <option value="marker">Marker</option>
                          <option value="docling">Docling</option>
                          <option value="mistral">Mistral OCR</option>
@@ -181,9 +192,10 @@
                 <div class="markdown-edit-actions">
                     <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
                     <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
-                    <span id="markdown-last-updated" class="markdown-timestamp"></span>
-                </div>
+                     <span id="markdown-last-updated" class="markdown-timestamp"></span>
+                 </div>
             </div>
+            {% endif %}
         </div>
     </div>
 </div>
