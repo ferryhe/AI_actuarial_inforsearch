@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - AI Actuarial Info Search</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <main class="main-content">
+        <div class="container" style="max-width: 720px;">
+            <h2 style="margin-top: 2rem;">Token Login</h2>
+            <p style="opacity: 0.8;">
+                Paste your API token to access the web UI.
+            </p>
+
+            <form method="POST" action="{{ url_for('login', next=next) }}">
+                <input type="hidden" name="next" value="{{ next }}">
+                <div class="form-group">
+                    <label for="token">API Token</label>
+                    <input id="token" name="token" type="password" class="form-control" autocomplete="off" required>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 1rem;">
+                    <button type="submit" class="btn btn-primary">Login</button>
+                </div>
+            </form>
+        </div>
+    </main>
+</body>
+</html>
+
