@@ -304,22 +304,46 @@
         closeCategoryOptionsPanel();
         document.getElementById('category-display').style.display = 'block';
         
-        document.getElementById('summary-input').style.display = 'none';
+        const summaryInput = document.getElementById('summary-input');
         const summaryDisplay = document.getElementById('summary-display');
-        if (summaryDisplay.textContent.trim()) {
-            summaryDisplay.style.display = 'block';
-        } else {
-            const summaryEmpty = document.getElementById('summary-empty');
-            if (summaryEmpty) summaryEmpty.style.display = 'block';
+        if (summaryInput) {
+            const savedSummary = (summaryInput.dataset && typeof summaryInput.dataset.currentValue !== 'undefined')
+                ? summaryInput.dataset.currentValue
+                : (summaryDisplay ? summaryDisplay.textContent.trim() : '');
+            summaryInput.value = savedSummary || '';
+            summaryInput.style.display = 'none';
+        }
+        if (summaryDisplay) {
+            if (summaryDisplay.textContent.trim()) {
+                summaryDisplay.style.display = 'block';
+            } else {
+                const summaryEmpty = document.getElementById('summary-empty');
+                if (summaryEmpty) summaryEmpty.style.display = 'block';
+            }
         }
         
-        document.getElementById('keywords-input').style.display = 'none';
+        const keywordsInput = document.getElementById('keywords-input');
         const keywordsDisplay = document.getElementById('keywords-display');
-        if (keywordsDisplay.children.length > 0) {
-            keywordsDisplay.style.display = 'flex';
-        } else {
-            const keywordsEmpty = document.getElementById('keywords-empty');
-            if (keywordsEmpty) keywordsEmpty.style.display = 'block';
+        if (keywordsInput) {
+            let savedKeywords = '';
+            if (keywordsInput.dataset && typeof keywordsInput.dataset.currentValue !== 'undefined') {
+                savedKeywords = keywordsInput.dataset.currentValue || '';
+            } else if (keywordsDisplay) {
+                savedKeywords = Array.from(keywordsDisplay.children || [])
+                    .map(function (child) { return child.textContent.trim(); })
+                    .filter(function (text) { return text.length > 0; })
+                    .join(', ');
+            }
+            keywordsInput.value = savedKeywords;
+            keywordsInput.style.display = 'none';
+        }
+        if (keywordsDisplay) {
+            if (keywordsDisplay.children.length > 0) {
+                keywordsDisplay.style.display = 'flex';
+            } else {
+                const keywordsEmpty = document.getElementById('keywords-empty');
+                if (keywordsEmpty) keywordsEmpty.style.display = 'block';
+            }
         }
         
         // Show edit button, hide save/cancel buttons
