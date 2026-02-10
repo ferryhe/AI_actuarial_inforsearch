@@ -71,7 +71,7 @@ To enable real conversion, implement the integration with these tools in the `co
 
 ## File Information
 
-- Path: `{file_path}`
+- Path: `[redacted]`
 - Type: {content_type}
 
 ---
