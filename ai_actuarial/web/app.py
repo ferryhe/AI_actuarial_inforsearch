@@ -326,9 +326,19 @@ def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "queries": search.get("queries", []),
         },
         "runtime": {
+            "config_path": _get_sites_config_path(),
+            "categories_config_path": _get_categories_config_path(),
+            "require_auth": _env_flag("REQUIRE_AUTH", False),
+            "flask_secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
+            "bootstrap_admin_token_set": bool(os.getenv("BOOTSTRAP_ADMIN_TOKEN")),
             "file_deletion_enabled": os.getenv("ENABLE_FILE_DELETION") == "true",
             "file_deletion_auth_required": bool(os.getenv("FILE_DELETION_AUTH_TOKEN")),
             "config_write_auth_required": bool(os.getenv("CONFIG_WRITE_AUTH_TOKEN")),
+            "enable_global_logs_api": _env_flag("ENABLE_GLOBAL_LOGS_API", False),
+            "logs_read_auth_required": bool(os.getenv("LOGS_READ_AUTH_TOKEN")),
+            "enable_rate_limiting": _env_flag("ENABLE_RATE_LIMITING", False),
+            "enable_csrf": _env_flag("ENABLE_CSRF", False),
+            "enable_security_headers": _env_flag("ENABLE_SECURITY_HEADERS", True),
         },
     }
 
