@@ -30,6 +30,62 @@ _task_history = []
 _task_lock = threading.Lock()
 
 
+def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type: str) -> str | None:
+    """Convert a file to markdown format.
+    
+    This is a placeholder implementation that should be extended to integrate
+    with actual conversion tools like marker-pdf, docling, etc.
+    
+    Args:
+        file_path: Path to the file to convert
+        conversion_tool: Tool to use ('marker', 'docling', 'auto')
+        content_type: MIME type of the file
+        
+    Returns:
+        Markdown content as string, or None if conversion failed
+    """
+    try:
+        logger.info(f"Converting {file_path} using {conversion_tool}")
+        
+        # Placeholder: Just create a basic markdown representation
+        # In a real implementation, this would call marker-pdf, docling, etc.
+        file_name = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path)
+        
+        # Simple placeholder markdown
+        markdown = f"""# {file_name}
+
+**File Type:** {content_type}  
+**File Size:** {file_size} bytes  
+**Converted:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
+**Tool:** {conversion_tool}
+
+## Content
+
+> **Note:** This is a placeholder. Actual file conversion requires integration with tools like:
+> - marker-pdf (for PDFs)
+> - docling (for multi-format documents)
+> - pandoc (for various formats)
+
+To enable real conversion, implement the integration with these tools in the `convert_file_to_markdown()` function.
+
+## File Information
+
+- Path: `[redacted]`
+- Type: {content_type}
+
+---
+
+*Placeholder conversion. Real content extraction will be implemented in future updates.*
+"""
+        
+        return markdown
+        
+    except Exception as e:
+        logger.exception(f"Error converting file {file_path}: {e}")
+        return None
+
+
 def _get_sites_config_path() -> str:
     return os.getenv("CONFIG_PATH", "config/sites.yaml")
 
@@ -1055,6 +1111,121 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 result = CatalogResult(True)
                 progress_callback(100, 100, f"Cataloging complete. Processed {stats.get('processed')} items.")
 
+            elif collection_type == "markdown_conversion":
+                # Markdown conversion task
+                file_urls = data.get("file_urls", [])
+                conversion_tool = data.get("conversion_tool", "auto")
+                overwrite_existing = data.get("overwrite_existing", False)
+                
+                logger.info(f"Starting markdown conversion for {len(file_urls)} files")
+                
+                converted_count = 0
+                error_count = 0
+                skipped_count = 0
+                errors = []
+                
+                for idx, file_url in enumerate(file_urls):
+                    if stop_check():
+                        logger.info("Markdown conversion stopped by user")
+                        break
+                    
+                    progress_callback(idx, len(file_urls), f"Converting file {idx+1}/{len(file_urls)}")
+                    
+                    try:
+                        # Get file info
+                        file_info = storage.get_file_with_catalog(file_url)
+                        if not file_info:
+                            logger.warning(f"File not found: {file_url}")
+                            error_count += 1
+                            errors.append(f"File not found: {file_url}")
+                            continue
+                        
+                        # Skip if markdown already exists and not overwriting
+                        if not overwrite_existing and file_info.get('markdown_content'):
+                            logger.info(f"Skipping file with existing markdown: {file_url}")
+                            skipped_count += 1
+                            continue
+                        
+                        # Check if file has local_path
+                        local_path = file_info.get('local_path')
+                        if not local_path:
+                            logger.warning(f"File has no local_path: {file_url}")
+                            error_count += 1
+                            errors.append(f"File not available locally: {file_url}")
+                            continue
+                        
+                        # Resolve relative paths to absolute paths (same as /api/download)
+                        # Local Import stores files with local_path relative to download_dir.parent
+                        # (the data directory), not relative to download_dir itself
+                        if not os.path.isabs(local_path):
+                            relative_path = Path(local_path)
+                            # Use the parent of download_dir as base (e.g., data/) for relative paths
+                            base_dir = Path(download_dir).parent.resolve()
+                            candidate = (base_dir / relative_path).resolve()
+                            
+                            if candidate.exists():
+                                local_path = str(candidate)
+                            else:
+                                # Fallback: try resolving relative to download_dir itself
+                                fallback_base = Path(download_dir).resolve()
+                                fallback_candidate = (fallback_base / relative_path).resolve()
+                                if fallback_candidate.exists():
+                                    local_path = str(fallback_candidate)
+                                else:
+                                    logger.warning(f"Failed to resolve local_path for {file_url}")
+                                    error_count += 1
+                                    errors.append(f"File not found on disk: {file_url}")
+                                    continue
+                        
+                        # Check if resolved path exists
+                        if not os.path.exists(local_path):
+                            logger.warning(f"File not available locally: {file_url}")
+                            error_count += 1
+                            errors.append(f"File not available locally: {file_url}")
+                            continue
+                        
+                        # Convert file to markdown (placeholder - integrate with actual tools)
+                        markdown_content = convert_file_to_markdown(
+                            local_path, 
+                            conversion_tool, 
+                            file_info.get('content_type', '')
+                        )
+                        
+                        if markdown_content:
+                            # Save markdown to database
+                            success, error = storage.update_file_markdown(
+                                url=file_url,
+                                markdown_content=markdown_content,
+                                markdown_source=f"converted_{conversion_tool}"
+                            )
+                            
+                            if success:
+                                converted_count += 1
+                                logger.info(f"Converted file to markdown: {file_url}")
+                            else:
+                                error_count += 1
+                                errors.append(f"Failed to save markdown for {file_url}: {error}")
+                        else:
+                            error_count += 1
+                            errors.append(f"Conversion failed for {file_url}")
+                    
+                    except Exception as e:
+                        logger.exception(f"Error converting {file_url}")
+                        error_count += 1
+                        errors.append(f"{file_url}: {str(e)}")
+                
+                # Create result object
+                class MarkdownConversionResult:
+                    def __init__(self):
+                        self.success = True
+                        self.items_found = len(file_urls)
+                        self.items_downloaded = converted_count
+                        self.items_skipped = skipped_count
+                        self.errors = errors[:10]  # Limit to first 10 errors
+                
+                result = MarkdownConversionResult()
+                progress_callback(100, 100, f"Conversion complete. Converted: {converted_count}, Skipped: {skipped_count}, Errors: {error_count}")
+
             storage.close()
             
             # Update status
@@ -1571,6 +1742,90 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
         except Exception as e:
             logger.exception(f"Error updating file: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/files/<path:file_url>/markdown", methods=["GET"])
+    def api_files_get_markdown(file_url):
+        """Get markdown content for a file."""
+        try:
+            url = file_url
+            
+            logger.info(f"Fetching markdown content for URL: {url}")
+            storage = Storage(db_path)
+            
+            try:
+                markdown_data = storage.get_file_markdown(url)
+                
+                if markdown_data and markdown_data.get("markdown_content"):
+                    logger.info(f"Markdown content found for: {url}")
+                    return jsonify({
+                        "success": True,
+                        "markdown": markdown_data
+                    })
+                else:
+                    logger.info(f"No markdown content found for: {url}")
+                    return jsonify({
+                        "success": True,
+                        "markdown": None
+                    })
+                    
+            finally:
+                storage.close()
+                
+        except Exception as e:
+            logger.exception(f"Error fetching markdown content: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/files/<path:file_url>/markdown", methods=["POST"])
+    def api_files_update_markdown(file_url):
+        """Update markdown content for a file."""
+        try:
+            from urllib.parse import unquote
+            url = unquote(file_url)
+            
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                logger.error("Markdown update request has invalid JSON body")
+                return jsonify({"error": "Invalid or missing JSON body"}), 400
+            
+            markdown_content = data.get("markdown_content")
+            if markdown_content is None:
+                logger.error("Markdown update request missing content")
+                return jsonify({"error": "No markdown_content provided"}), 400
+            
+            markdown_source = data.get("markdown_source", "manual")
+            
+            logger.info(f"Updating markdown content for URL: {url}")
+            storage = Storage(db_path)
+            
+            try:
+                success, error_reason = storage.update_file_markdown(
+                    url=url,
+                    markdown_content=markdown_content,
+                    markdown_source=markdown_source
+                )
+                
+                if success:
+                    logger.info(f"Markdown content updated successfully: {url}")
+                    # Fetch updated data to return
+                    markdown_data = storage.get_file_markdown(url)
+                    return jsonify({
+                        "success": True,
+                        "markdown": markdown_data
+                    })
+                else:
+                    if error_reason == "file_not_found":
+                        logger.warning(f"Markdown update failed - file not found: {url}")
+                        return jsonify({"error": "File not found"}), 404
+                    else:
+                        logger.error(f"Markdown update failed: {url}")
+                        return jsonify({"error": "Update failed"}), 500
+                        
+            finally:
+                storage.close()
+                
+        except Exception as e:
+            logger.exception(f"Error updating markdown: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/logs/global")

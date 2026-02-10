@@ -88,6 +88,19 @@
                 <p>Manage Schedules</p>
             </div>
         </div>
+        
+        <!-- Card 7: Convert to Markdown -->
+        <div class="task-card-launch" onclick="openMarkdownConversionModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-document"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Convert to Markdown</h4>
+                <p>Convert files to MD</p>
+            </div>
+        </div>
     </div>
 
     <!-- Active Tasks Monitoring -->
@@ -459,6 +472,45 @@
                 <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
             </div>
             <button type="submit" class="btn btn-primary">Start File Import</button>
+        </form>
+    </div>
+</div>
+
+<!-- Markdown Conversion Modal -->
+<div id="markdown-conversion-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('markdown-conversion-modal')">&times;</span>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-document"></use>
+            </svg>
+            Convert to Markdown
+        </h3>
+        <p class="hint">Convert files to markdown format using AI-powered tools.</p>
+        <form id="markdown-conversion-form" onsubmit="startMarkdownConversion(event)">
+            <div class="form-group">
+                <label>Select Files to Convert</label>
+                <div class="file-selection-box" id="markdown-file-selection">
+                    <p class="loading">Loading files...</p>
+                </div>
+                <small class="form-hint">Select PDF, DOCX, PPTX, or other document files to convert</small>
+            </div>
+            <div class="form-group">
+                <label>Conversion Tool</label>
+                <select name="conversion_tool" id="conversion-tool-select">
+                    <option value="marker">Marker (PDF optimized)</option>
+                    <option value="docling">Docling (Multi-format)</option>
+                    <option value="auto">Auto-detect best tool</option>
+                </select>
+                <small class="form-hint">Different tools work better for different file types</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="overwrite_existing" id="overwrite-existing"> 
+                    Overwrite existing markdown content
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary" id="markdown-convert-btn">Convert Files</button>
         </form>
     </div>
 </div>
@@ -945,6 +997,144 @@ function startCatalog(e) {
         name: "Incremental Cataloging"
     });
     closeModal('catalog-modal');
+}
+
+// Markdown Conversion Modal Functions
+let selectedFilesForMarkdown = new Set();
+let availableFilesForMarkdown = [];
+
+function openMarkdownConversionModal() {
+    openModal('markdown-conversion-modal');
+    loadFilesForMarkdownConversion();
+}
+
+async function loadFilesForMarkdownConversion() {
+    const container = document.getElementById('markdown-file-selection');
+    container.innerHTML = '<p class="loading">Loading files...</p>';
+    
+    try {
+        const response = await fetch('/api/files?limit=100');
+        const data = await response.json();
+        
+        if (data.files && data.files.length > 0) {
+            availableFilesForMarkdown = data.files.filter(f => {
+                // Filter for convertible file types
+                const ext = (f.content_type || '').toLowerCase();
+                return ext.includes('pdf') || ext.includes('word') || 
+                       ext.includes('powerpoint') || ext.includes('document') ||
+                       ext.includes('presentation');
+            });
+            
+            if (availableFilesForMarkdown.length > 0) {
+                renderMarkdownFileSelection();
+            } else {
+                container.innerHTML = '<p class="empty-message">No convertible files found. Import some PDFs or Word documents first.</p>';
+            }
+        } else {
+            container.innerHTML = '<p class="empty-message">No files in database yet.</p>';
+        }
+    } catch (err) {
+        console.error('Error loading files:', err);
+        container.innerHTML = '<p class="error-message">Error loading files</p>';
+    }
+}
+
+function renderMarkdownFileSelection() {
+    const container = document.getElementById('markdown-file-selection');
+    container.innerHTML = '';
+    
+    // Add select all button
+    const selectAllDiv = document.createElement('div');
+    selectAllDiv.style.marginBottom = '10px';
+    selectAllDiv.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-small" onclick="selectAllMarkdownFiles()">Select All</button>
+        <button type="button" class="btn btn-secondary btn-small" onclick="clearAllMarkdownFiles()">Clear All</button>
+        <span style="margin-left: 10px; color: var(--text-secondary);">${selectedFilesForMarkdown.size} selected</span>
+    `;
+    container.appendChild(selectAllDiv);
+    
+    // Add file list
+    const fileList = document.createElement('div');
+    fileList.className = 'file-checkbox-list';
+    fileList.style.maxHeight = '300px';
+    fileList.style.overflowY = 'auto';
+    fileList.style.border = '1px solid var(--border-color)';
+    fileList.style.borderRadius = '4px';
+    fileList.style.padding = '10px';
+    
+    availableFilesForMarkdown.forEach(file => {
+        const label = document.createElement('label');
+        label.className = 'file-checkbox-item';
+        label.style.display = 'block';
+        label.style.padding = '8px';
+        label.style.cursor = 'pointer';
+        label.style.borderBottom = '1px solid var(--border-color)';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = file.url;
+        checkbox.checked = selectedFilesForMarkdown.has(file.url);
+        checkbox.onchange = () => {
+            if (checkbox.checked) {
+                selectedFilesForMarkdown.add(file.url);
+            } else {
+                selectedFilesForMarkdown.delete(file.url);
+            }
+            updateMarkdownSelectionCount();
+        };
+        
+        const text = document.createElement('span');
+        text.style.marginLeft = '8px';
+        text.textContent = `${file.title || file.original_filename || 'Untitled'} (${file.content_type || 'unknown'})`;
+        
+        label.appendChild(checkbox);
+        label.appendChild(text);
+        fileList.appendChild(label);
+    });
+    
+    container.appendChild(fileList);
+}
+
+function selectAllMarkdownFiles() {
+    selectedFilesForMarkdown.clear();
+    availableFilesForMarkdown.forEach(f => selectedFilesForMarkdown.add(f.url));
+    renderMarkdownFileSelection();
+}
+
+function clearAllMarkdownFiles() {
+    selectedFilesForMarkdown.clear();
+    renderMarkdownFileSelection();
+}
+
+function updateMarkdownSelectionCount() {
+    const countSpan = document.querySelector('#markdown-file-selection span');
+    if (countSpan) {
+        countSpan.textContent = `${selectedFilesForMarkdown.size} selected`;
+    }
+}
+
+function startMarkdownConversion(e) {
+    e.preventDefault();
+    
+    if (selectedFilesForMarkdown.size === 0) {
+        showNotification('Please select at least one file to convert', 'error');
+        return;
+    }
+    
+    const form = e.target;
+    const formData = new FormData(form);
+    
+    const payload = {
+        type: 'markdown_conversion',
+        file_urls: Array.from(selectedFilesForMarkdown),
+        conversion_tool: formData.get('conversion_tool'),
+        overwrite_existing: formData.get('overwrite_existing') === 'on',
+        name: `Markdown Conversion (${selectedFilesForMarkdown.size} files)`
+    };
+    
+    startTask('markdown_conversion', payload);
+    closeModal('markdown-conversion-modal');
+    selectedFilesForMarkdown.clear();
 }
 
 function startUrlCollection(e) {
