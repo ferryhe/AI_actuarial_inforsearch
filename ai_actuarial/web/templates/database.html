@@ -68,7 +68,7 @@ fetch('/api/sources')
         });
     });
 
-fetch('/api/categories')
+fetch('/api/categories?mode=used')
     .then(response => response.json())
     .then(data => {
         const select = document.getElementById('category-filter');
