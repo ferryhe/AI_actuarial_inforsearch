@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{% block extra_js %}
+<!-- Markdown rendering library -->
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+{% endblock %}
+
 {% block content %}
 <div class="file-view-page">
     <div class="page-header">
@@ -122,6 +127,30 @@
             {% if not file.keywords %}
             <div id="keywords-empty" style="color: var(--text-secondary);">No keywords available</div>
             {% endif %}
+        </div>
+
+        <div class="markdown-section">
+            <div class="markdown-header">
+                <h4>Markdown Content</h4>
+                <div class="markdown-tabs">
+                    <button id="markdown-view-tab" class="markdown-tab active" onclick="switchMarkdownTab('view')">View</button>
+                    <button id="markdown-edit-tab" class="markdown-tab" onclick="switchMarkdownTab('edit')">Edit</button>
+                </div>
+            </div>
+            
+            <div id="markdown-view-mode" class="markdown-content-box">
+                <div id="markdown-rendered" class="markdown-body"></div>
+                <div id="markdown-empty" style="color: var(--text-secondary); padding: 1rem;">No markdown content available</div>
+            </div>
+            
+            <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
+                <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
+                <div class="markdown-edit-actions">
+                    <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
+                    <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
+                    <span id="markdown-last-updated" class="markdown-timestamp"></span>
+                </div>
+            </div>
         </div>
 
         <div class="actions-section">
@@ -439,6 +468,130 @@
     // Load categories early so the first edit interaction is instant.
     ensureCategoryOptions();
     
+    // ===== Markdown functionality =====
+    let currentMarkdownContent = '';
+    let markdownMode = 'view';
+    
+    async function loadMarkdownContent() {
+        try {
+            const encodedUrl = encodeURIComponent(fileUrl);
+            const response = await fetch(`/api/files/${encodedUrl}/markdown`);
+            const data = await response.json();
+            
+            if (response.ok && data.success && data.markdown && data.markdown.markdown_content) {
+                currentMarkdownContent = data.markdown.markdown_content;
+                renderMarkdownView();
+                
+                // Update timestamp if available
+                if (data.markdown.markdown_updated_at) {
+                    const timestamp = document.getElementById('markdown-last-updated');
+                    timestamp.textContent = `Last updated: ${data.markdown.markdown_updated_at}`;
+                }
+                
+                // Hide empty message
+                document.getElementById('markdown-empty').style.display = 'none';
+            } else {
+                // No markdown content
+                currentMarkdownContent = '';
+                document.getElementById('markdown-rendered').innerHTML = '';
+                document.getElementById('markdown-empty').style.display = 'block';
+            }
+        } catch (err) {
+            console.error('Error loading markdown:', err);
+            Toast.error('Failed to load markdown content');
+        }
+    }
+    
+    function renderMarkdownView() {
+        const rendered = document.getElementById('markdown-rendered');
+        if (currentMarkdownContent) {
+            // Use marked.js for rendering if available, otherwise plain text
+            if (typeof marked !== 'undefined') {
+                rendered.innerHTML = marked.parse(currentMarkdownContent);
+            } else {
+                // Fallback: simple text rendering with line breaks
+                rendered.textContent = currentMarkdownContent;
+            }
+            rendered.style.display = 'block';
+            document.getElementById('markdown-empty').style.display = 'none';
+        } else {
+            rendered.innerHTML = '';
+            rendered.style.display = 'none';
+            document.getElementById('markdown-empty').style.display = 'block';
+        }
+    }
+    
+    function switchMarkdownTab(mode) {
+        markdownMode = mode;
+        
+        const viewTab = document.getElementById('markdown-view-tab');
+        const editTab = document.getElementById('markdown-edit-tab');
+        const viewMode = document.getElementById('markdown-view-mode');
+        const editMode = document.getElementById('markdown-edit-mode');
+        
+        if (mode === 'view') {
+            viewTab.classList.add('active');
+            editTab.classList.remove('active');
+            viewMode.style.display = 'block';
+            editMode.style.display = 'none';
+        } else {
+            viewTab.classList.remove('active');
+            editTab.classList.add('active');
+            viewMode.style.display = 'none';
+            editMode.style.display = 'block';
+            
+            // Load current content into editor
+            document.getElementById('markdown-editor').value = currentMarkdownContent;
+        }
+    }
+    
+    async function saveMarkdown() {
+        const content = document.getElementById('markdown-editor').value;
+        
+        try {
+            const encodedUrl = encodeURIComponent(fileUrl);
+            const response = await fetch(`/api/files/${encodedUrl}/markdown`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    markdown_content: content,
+                    markdown_source: 'manual'
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                Toast.success('Markdown saved successfully');
+                currentMarkdownContent = content;
+                renderMarkdownView();
+                
+                // Update timestamp
+                if (data.markdown && data.markdown.markdown_updated_at) {
+                    const timestamp = document.getElementById('markdown-last-updated');
+                    timestamp.textContent = `Last updated: ${data.markdown.markdown_updated_at}`;
+                }
+                
+                // Switch back to view mode
+                switchMarkdownTab('view');
+            } else {
+                Toast.error('Failed to save markdown: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            Toast.error('Network error: ' + err.message);
+            console.error('Markdown save exception:', err);
+        }
+    }
+    
+    function cancelMarkdownEdit() {
+        // Revert to current content and switch to view mode
+        document.getElementById('markdown-editor').value = currentMarkdownContent;
+        switchMarkdownTab('view');
+    }
+    
+    // Load markdown content on page load
+    loadMarkdownContent();
+    
     async function deleteFile(url) {
         // Create a custom modal for text confirmation
         const modal = document.createElement('div');
@@ -718,6 +871,193 @@
 
     [data-theme="dark"] .category-chip {
         background: var(--gray-800);
+    }
+    
+    /* Markdown section styles */
+    .markdown-section {
+        margin-top: 2rem;
+        margin-bottom: 2rem;
+    }
+    
+    .markdown-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+    
+    .markdown-tabs {
+        display: flex;
+        gap: 0.5rem;
+    }
+    
+    .markdown-tab {
+        padding: 0.5rem 1rem;
+        background: var(--gray-100);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        cursor: pointer;
+        color: var(--text-primary);
+        font-size: 0.9rem;
+        transition: all 0.2s;
+    }
+    
+    [data-theme="dark"] .markdown-tab {
+        background: var(--gray-800);
+    }
+    
+    .markdown-tab:hover {
+        background: var(--gray-200);
+    }
+    
+    [data-theme="dark"] .markdown-tab:hover {
+        background: var(--gray-700);
+    }
+    
+    .markdown-tab.active {
+        background: var(--primary-600);
+        color: white;
+        border-color: var(--primary-600);
+    }
+    
+    .markdown-content-box {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        min-height: 200px;
+    }
+    
+    .markdown-body {
+        padding: 1rem;
+        line-height: 1.6;
+        color: var(--text-primary);
+    }
+    
+    .markdown-body h1,
+    .markdown-body h2,
+    .markdown-body h3,
+    .markdown-body h4,
+    .markdown-body h5,
+    .markdown-body h6 {
+        margin-top: 1.5rem;
+        margin-bottom: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .markdown-body h1 { font-size: 2rem; }
+    .markdown-body h2 { font-size: 1.5rem; }
+    .markdown-body h3 { font-size: 1.25rem; }
+    
+    .markdown-body p {
+        margin-bottom: 1rem;
+    }
+    
+    .markdown-body ul,
+    .markdown-body ol {
+        margin-left: 2rem;
+        margin-bottom: 1rem;
+    }
+    
+    .markdown-body code {
+        background: var(--gray-100);
+        padding: 0.2rem 0.4rem;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 0.9em;
+    }
+    
+    [data-theme="dark"] .markdown-body code {
+        background: var(--gray-800);
+    }
+    
+    .markdown-body pre {
+        background: var(--gray-100);
+        padding: 1rem;
+        border-radius: 4px;
+        overflow-x: auto;
+        margin-bottom: 1rem;
+    }
+    
+    [data-theme="dark"] .markdown-body pre {
+        background: var(--gray-800);
+    }
+    
+    .markdown-body pre code {
+        background: none;
+        padding: 0;
+    }
+    
+    .markdown-body blockquote {
+        border-left: 4px solid var(--primary-500);
+        padding-left: 1rem;
+        margin-left: 0;
+        margin-bottom: 1rem;
+        color: var(--text-secondary);
+    }
+    
+    .markdown-body img {
+        max-width: 100%;
+        height: auto;
+    }
+    
+    .markdown-body table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 1rem;
+    }
+    
+    .markdown-body table th,
+    .markdown-body table td {
+        border: 1px solid var(--border-color);
+        padding: 0.5rem;
+    }
+    
+    .markdown-body table th {
+        background: var(--gray-100);
+        font-weight: 600;
+    }
+    
+    [data-theme="dark"] .markdown-body table th {
+        background: var(--gray-800);
+    }
+    
+    .markdown-edit-box {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 1rem;
+    }
+    
+    .markdown-textarea {
+        width: 100%;
+        min-height: 300px;
+        padding: 1rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-family: monospace;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        resize: vertical;
+    }
+    
+    .markdown-textarea:focus {
+        outline: none;
+        border-color: var(--primary-500);
+    }
+    
+    .markdown-edit-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+    
+    .markdown-timestamp {
+        margin-left: auto;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
     }
 </style>
 {% endblock %}
