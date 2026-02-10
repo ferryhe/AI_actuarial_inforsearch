@@ -173,6 +173,7 @@ def _fetch_candidates(
     conn: sqlite3.Connection,
     *,
     batch: int,
+    offset: int = 0,
     site_filter: Optional[str],
     catalog_version: str,
     retry_errors: bool = False,
@@ -220,9 +221,9 @@ def _fetch_candidates(
     -- ORDER BY f.id DESC processes newest files first for better UX
     -- (Alternative: ASC for oldest-first incremental processing)
     ORDER BY f.id DESC
-    LIMIT ?
+    LIMIT ? OFFSET ?
     """
-    cur = conn.execute(sql, [catalog_version, batch] + params)
+    cur = conn.execute(sql, [catalog_version, batch, max(0, int(offset or 0))] + params)
     return list(cur.fetchall())
 
 
@@ -474,6 +475,7 @@ def run_incremental_catalog(
     retry_errors: bool = False,
     max_workers: int = 5,
     limit: int = 0,
+    candidate_offset: int = 0,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Run incremental catalog processing.
@@ -517,6 +519,8 @@ def run_incremental_catalog(
         catalog_version=catalog_version,
         retry_errors=retry_errors,
     )
+    if candidate_offset > 0:
+        total_candidates = max(0, total_candidates - int(candidate_offset))
     if limit > 0:
         total_candidates = min(total_candidates, limit)
     if progress_callback:
@@ -526,6 +530,7 @@ def run_incremental_catalog(
             f"Catalog candidates: {total_candidates}",
         )
 
+    remaining_offset = max(0, int(candidate_offset or 0))
     while True:
         # Check global limit
         if limit > 0 and stats["processed"] >= limit:
@@ -539,10 +544,12 @@ def run_incremental_catalog(
         rows = _fetch_candidates(
             conn,
             batch=current_batch_size,
+            offset=remaining_offset,
             site_filter=site_filter,
             catalog_version=catalog_version,
             retry_errors=retry_errors,
         )
+        remaining_offset = 0
         
         # Filter already seen URLs to prevent infinite loops when retrying errors
         new_rows = [r for r in rows if r["url"] not in seen_urls]
