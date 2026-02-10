@@ -36,7 +36,7 @@ If you discover a security vulnerability in this project, please follow these st
 - **Token-based authentication**: X-Auth-Token header validation
 
 #### Input Validation
-- **SQL Injection Protection**: SQLAlchemy ORM with parameterized queries
+- **SQL Injection Mitigations**: Parameterized queries (sqlite3) + allowlisted ORDER BY columns (optional SQLAlchemy backend available)
 - **Path Traversal Prevention**: Sanitized task IDs and path validation
 - **CSV Formula Injection Prevention**: Escaping of formula characters in CSV exports
 

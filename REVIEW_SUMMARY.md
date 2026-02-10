@@ -20,9 +20,9 @@ A comprehensive code review has been completed, covering security, code quality,
 
 **优秀的地方 / Strengths** (85%):
 - ✅ 清晰的模块化架构
-- ✅ SQLAlchemy ORM防护SQL注入
+- ✅ 参数化查询 + ORDER BY 列 allowlist 防护注入（默认 sqlite3；可选 SQLAlchemy backend）
 - ✅ 客户端XSS防护完善
-- ✅ CodeQL安全扫描通过 (0个漏洞)
+- ✅ 提供安全工具配置模板（pre-commit / bandit / pytest；建议在 CI 中启用 CodeQL）
 - ✅ 完整的项目文档
 - ✅ 结构化的日志系统
 - ✅ 类型注解使用良好
