@@ -316,7 +316,7 @@ function historyReload() {
                   <td><span class="status-badge status-${escapeHtml(t.status || 'unknown')}">${escapeHtml(t.status || 'unknown')}</span></td>
                   <td>${t.items_processed || 0}</td>
                   <td>${formatDate(t.started_at)}</td>
-                  <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, \"&#39;\")})'>View Log</button></td>
+                  <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, "&#39;")})'>View Log</button></td>
                 </tr>
               `).join('')}
             </tbody>
