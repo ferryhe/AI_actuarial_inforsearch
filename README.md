@@ -28,6 +28,15 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 - **File detail pages** - view, edit, preview markdown, and submit conversion tasks
 - Global logs and per-task logs for operational visibility
 - Local file import with directory browsing
+- Admin-only catalog CSV export endpoint: `GET /api/export?format=csv`
+
+## Authentication Modes
+
+- `REQUIRE_AUTH=true`: all pages and APIs require login (token or session).
+- `REQUIRE_AUTH=false` (default): **guest read-only** mode.
+  - Guests can browse Dashboard and Database (read-only).
+  - Guests cannot download stored files or run/edit tasks.
+  - Tasks / Schedule / Settings and all write operations require a token.
 
 ## Markdown Feature
 
@@ -43,7 +52,7 @@ The system supports viewing, editing, and converting documents to markdown forma
 
 ### Markdown Conversion Task
 - Batch conversion runs against **local files already downloaded/imported** (uses DB `local_path`, no re-download)
-- Choose conversion engine: `auto`, `marker`, `docling`, `mistral`, `deepseekocr`
+- Choose conversion engine: `marker`, `docling`, `mistral`, `deepseekocr`
 - Batch window controls: start index (newest first) + scan count
 - Skip already converted files, or overwrite existing markdown
 - Progress tracking, per-task application log, and error reporting
@@ -62,7 +71,7 @@ The markdown conversion feature supports multiple engines. Some are heavy and/or
 - `docling` (local multi-format): requires `docling`
 - `mistral` (API): requires `MISTRAL_API_KEY`
 - `deepseekocr` (API via SiliconFlow): requires `SILICONFLOW_API_KEY` and optionally `SILICONFLOW_BASE_URL`
-- `auto`: picks a reasonable engine and falls back when dependencies are missing
+Note: an `auto` mode previously existed but is intentionally disabled in the UI because it can be slow.
 
 ## Project Structure (High-Level)
 
