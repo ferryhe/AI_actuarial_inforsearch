@@ -207,6 +207,44 @@ const API = {
     }
 };
 
+// Global fetch wrapper:
+// - On 401, redirect browser users to /login (preserving next=...)
+// - When CSRF cookie exists (Flask-SeaSurf), attach X-CSRFToken for mutating requests
+(function () {
+    if (!window.fetch) return;
+
+    function getCookie(name) {
+        const parts = (`; ${document.cookie}`).split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+        init = init || {};
+        const method = (init.method || 'GET').toUpperCase();
+
+        // Attach CSRF header for mutating requests when cookie exists.
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+            const csrf = getCookie('csrf_token');
+            if (csrf) {
+                const headers = new Headers(init.headers || {});
+                if (!headers.has('X-CSRFToken')) {
+                    headers.set('X-CSRFToken', csrf);
+                }
+                init.headers = headers;
+            }
+        }
+
+        const resp = await originalFetch(input, init);
+        if (resp.status === 401 && window.location.pathname !== '/login') {
+            const next = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = `/login?next=${next}`;
+        }
+        return resp;
+    };
+})();
+
 // Export for use in templates
 window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
