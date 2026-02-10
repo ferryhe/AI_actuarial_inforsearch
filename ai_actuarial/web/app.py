@@ -19,6 +19,15 @@ try:
 except ImportError:
     FLASK_AVAILABLE = False
 
+# Optional: rate limiting (Flask-Limiter)
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    FLASK_LIMITER_AVAILABLE = True
+except ImportError:
+    FLASK_LIMITER_AVAILABLE = False
+
 import csv
 import io
 import yaml
@@ -62,6 +71,43 @@ def _tail_text_file(path: Path, max_lines: int = 400) -> str:
         return "".join(lines[-max_lines:])
     except Exception:
         return ""
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _expose_error_details() -> bool:
+    # Never enable by default when exposed to the public Internet.
+    return _env_flag("EXPOSE_ERROR_DETAILS", False) or _env_flag("FLASK_DEBUG", False)
+
+
+def _parse_int_clamped(
+    value: object,
+    *,
+    default: int,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except Exception:
+        n = default
+    if min_value is not None:
+        n = max(min_value, n)
+    if max_value is not None:
+        n = min(max_value, n)
+    return n
+
+
+def _api_error(message: str, *, status_code: int, detail: str | None = None):
+    payload: dict[str, Any] = {"error": message}
+    if detail and _expose_error_details():
+        payload["detail"] = detail
+    return jsonify(payload), status_code
 
 
 def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type: str) -> dict[str, str]:
@@ -215,7 +261,32 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     
     if config:
         app.config.update(config)
-    
+
+    # Optional rate limiting (disabled by default; recommended for public deployments)
+    limiter = None
+
+    def _limit(rule: str):
+        def decorator(func):
+            if limiter is None:
+                return func
+            return limiter.limit(rule)(func)
+
+        return decorator
+
+    if _env_flag("ENABLE_RATE_LIMITING", False):
+        if not FLASK_LIMITER_AVAILABLE:
+            logger.warning("ENABLE_RATE_LIMITING=true but Flask-Limiter is not installed; skipping")
+        else:
+            raw_defaults = os.getenv("RATE_LIMIT_DEFAULTS", "200 per hour, 50 per minute")
+            default_limits = [s.strip() for s in re.split(r"[,;]", raw_defaults) if s.strip()]
+            storage_uri = os.getenv("RATE_LIMIT_STORAGE_URI", "memory://")
+            limiter = Limiter(
+                key_func=get_remote_address,
+                app=app,
+                default_limits=default_limits,
+                storage_uri=storage_uri,
+            )
+
     # Load configuration
     config_path = _get_sites_config_path()
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -314,7 +385,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             })
         except Exception as e:
             logger.exception("Error getting stats")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/files")
     def api_files():
@@ -323,8 +394,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             storage = Storage(db_path)
             
             # Get query parameters
-            limit = int(request.args.get('limit', 20))
-            offset = int(request.args.get('offset', 0))
+            limit = _parse_int_clamped(request.args.get("limit", 20), default=20, min_value=1, max_value=1000)
+            offset = _parse_int_clamped(request.args.get("offset", 0), default=0, min_value=0, max_value=1_000_000)
             order_by = request.args.get('order_by', 'last_seen')
             order_dir = request.args.get('order_dir', 'desc')
             query = request.args.get('query', '')
@@ -354,7 +425,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             })
         except Exception as e:
             logger.exception("Error listing files")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/sources")
     def api_sources():
@@ -366,7 +437,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"sources": sources})
         except Exception as e:
             logger.exception("Error getting sources")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/categories")
     def api_categories():
@@ -394,7 +465,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"categories": categories})
         except Exception as e:
             logger.exception("Error getting categories")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/categories")
     def api_config_categories():
@@ -422,7 +493,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error loading categories config")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/categories", methods=["POST"])
     def api_config_categories_update():
@@ -473,7 +544,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             logger.exception("Error updating categories config")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/backend-settings")
     def api_config_backend_settings():
@@ -483,7 +554,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify(_serialize_backend_settings(config_data))
         except Exception as e:
             logger.exception("Error getting backend settings")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/search-defaults")
     def api_config_search_defaults():
@@ -507,7 +578,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error getting search defaults")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/backend-settings", methods=["POST"])
     def api_config_backend_settings_update():
@@ -611,7 +682,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             logger.exception("Error updating backend settings")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/config/sites")
     def api_config_sites():
@@ -638,7 +709,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"sites": sites})
         except Exception as e:
             logger.exception("Error getting sites config")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/add", methods=["POST"])
     def api_config_sites_add():
@@ -686,7 +757,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error adding site")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/update", methods=["POST"])
     def api_config_sites_update():
@@ -743,7 +814,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error updating site")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/utils/browse-folder")
     def api_browse_folder():
@@ -785,13 +856,15 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # Try simple matching if exact match failed (e.g. trailing slash issues)
                 # or maybe the URL in DB is http but request is https or vice versa if proxied?
                 # For now, just return 404
-                return f"File not found: {file_url}", 404
+                return "File not found", 404
             
             return render_template("file_view.html", file=file_data)
             
         except Exception as e:
             logger.exception("Error viewing file")
-            return f"Error: {str(e)}", 500
+            if _expose_error_details():
+                return f"Error: {e}", 500
+            return "Error viewing file", 500
     
     def execute_collection_task(task_id, collection_type, data):
         """Background task execution logic."""
@@ -1374,7 +1447,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             )
                         except Exception as exc:  # noqa: BLE001
                             error_count += 1
-                            errors.append(f"{file_url}: conversion failed ({conversion_tool}): {exc}")
+                            errors.append(f"{file_url}: conversion failed ({conversion_tool})")
                             _append_task_log(task_id, "ERROR", f"Conversion failed: {file_url} engine={conversion_tool} error={exc}")
                             continue
 
@@ -1400,7 +1473,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     except Exception as e:
                         logger.exception(f"Error converting {file_url}")
                         error_count += 1
-                        errors.append(f"{file_url}: {str(e)}")
+                        errors.append(f"{file_url}: conversion failed")
                         _append_task_log(task_id, "ERROR", f"Unhandled exception converting {file_url}: {e}")
                 
                 # Create result object
@@ -1454,12 +1527,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "status": "error",
                         "completed_at": datetime.now().isoformat(),
                         "progress": 100,
-                        "errors": [str(e)]
+                        "errors": ["Task failed"]
                     })
                     _task_history.append(task_data)
                     _append_history_to_disk(task_data)
 
     @app.route("/api/export")
+    @_limit("10 per hour")
     def export_data():
         """Export catalog data as CSV/JSON."""
         format_type = request.args.get('format', 'csv')
@@ -1533,9 +1607,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
         except Exception as e:
             logger.exception("Export failed")
-            return f"Export failed: {str(e)}", 500
+            if _expose_error_details():
+                return f"Export failed: {e}", 500
+            return "Export failed", 500
 
     @app.route("/api/collections/run", methods=["POST"])
+    @_limit("10 per minute")
     def run_collection():
         """Start a collection operation."""
         try:
@@ -1633,7 +1710,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
         except Exception as e:
             logger.exception("Error starting collection")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     def _append_history_to_disk(task_data):
         """Append a task record to the persistent history file."""
@@ -1665,7 +1742,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/api/tasks/history")
     def api_tasks_history():
         """Get task history."""
-        limit = int(request.args.get('limit', 10))
+        limit = _parse_int_clamped(request.args.get("limit", 10), default=10, min_value=1, max_value=200)
         with _task_lock:
             # Sort by started_at desc
             tasks = sorted(_task_history, key=lambda x: x.get('started_at', ''), reverse=True)[:limit]
@@ -1755,7 +1832,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error computing markdown conversion stats")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
         finally:
             try:
                 storage.close()
@@ -1854,7 +1931,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error computing catalog stats")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
         finally:
             try:
                 storage.close()
@@ -1869,11 +1946,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if not safe_id:
                 return jsonify({"error": "Invalid task id"}), 400
 
-            try:
-                tail = int(request.args.get("tail", 400))
-            except Exception:
-                tail = 400
-            tail = max(1, min(tail, 5000))
+            tail = _parse_int_clamped(request.args.get("tail", 400), default=400, min_value=1, max_value=5000)
 
             path = _task_log_path(safe_id)
             content = _tail_text_file(path, max_lines=tail)
@@ -1882,7 +1955,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True, "log": content, "log_file": str(path)})
         except Exception as e:
             logger.exception("Error reading task log")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/collections/history")
     def api_collections_history():
@@ -1919,9 +1992,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"history": history})
         except Exception as e:
             logger.exception("Error getting collection history")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/download")
+    @_limit("60 per minute")
     def api_download():
         """Download a file."""
         try:
@@ -1985,7 +2059,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return send_file(local_path, as_attachment=True, download_name=filename)
         except Exception as e:
             logger.exception("Error downloading file")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/files/delete", methods=["POST"])
     def api_files_delete():
@@ -2123,7 +2197,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             })
         except Exception as e:
             logger.exception(f"Error deleting file: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/files/update", methods=["POST"])
     def api_files_update():
@@ -2192,7 +2266,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
         except Exception as e:
             logger.exception(f"Error updating file: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/files/<path:file_url>/markdown", methods=["GET"])
     def api_files_get_markdown(file_url):
@@ -2224,7 +2298,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
         except Exception as e:
             logger.exception(f"Error fetching markdown content: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/files/<path:file_url>/markdown", methods=["POST"])
     def api_files_update_markdown(file_url):
@@ -2276,12 +2350,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
         except Exception as e:
             logger.exception(f"Error updating markdown: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/logs/global")
+    @_limit("30 per minute")
     def api_logs_global():
         """Get global application logs."""
         try:
+            if not _env_flag("ENABLE_GLOBAL_LOGS_API", False):
+                return jsonify({"error": "Forbidden"}), 403
+
+            expected_token = os.getenv("LOGS_READ_AUTH_TOKEN")
+            if expected_token:
+                provided_token = request.headers.get("X-Auth-Token")
+                if not provided_token or provided_token != expected_token:
+                    logger.warning("Global log read attempt rejected: authentication failed")
+                    return jsonify({"error": "Forbidden"}), 403
+
             log_dir = Path("data")
             log_file = log_dir / "app.log"
             
@@ -2302,7 +2387,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
             return jsonify({"logs": "".join(lines)})
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            logger.exception("Error reading global logs")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     # Scheduler Initialization
     def init_scheduler():

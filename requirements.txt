@@ -6,6 +6,7 @@ python-pptx>=1.0.2
 keybert>=0.9.0
 sentence-transformers>=5.0.0
 flask>=3.0.0
+Flask-Limiter>=3.0.0
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 schedule
