@@ -160,7 +160,6 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
-        "files.download",
         "markdown.read",
     }
 )
@@ -220,7 +219,7 @@ def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type:
 
     Args:
         file_path: Local path to the file to convert.
-        conversion_tool: Engine name ('marker', 'docling', 'mistral', 'deepseekocr', 'auto').
+        conversion_tool: Engine name ('marker', 'docling', 'mistral', 'deepseekocr').
         content_type: MIME type (kept for logging/diagnostics).
 
     Returns:
@@ -229,6 +228,10 @@ def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type:
     Raises:
         RuntimeError: If conversion fails or engine dependencies are missing.
     """
+    # 'auto' used to exist but is intentionally disabled in UI (too slow).
+    # For compatibility with older clients, treat it as marker.
+    if (conversion_tool or "").strip().lower() == "auto":
+        conversion_tool = "marker"
     logger.info("Converting %s using %s (content_type=%s)", file_path, conversion_tool, content_type)
 
     try:
@@ -671,7 +674,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         return render_template("tasks.html")
     
     @app.route("/scheduled_tasks")
-    @require_permissions("config.read")
+    @require_permissions("tasks.view")
     def scheduled_tasks():
         """Scheduled task management page."""
         return render_template("scheduled_tasks.html")
@@ -741,7 +744,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """Logout (clear cookie session)."""
         session.pop("auth_token_id", None)
         session.pop("auth_group_name", None)
-        return redirect(url_for("login"))
+        return redirect(url_for("index"))
 
     if csrf is not None:
         # Token login/logout are special: login happens before a client can reliably
@@ -1175,7 +1178,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/config/sites")
-    @require_permissions("config.read")
+    @require_permissions("tasks.view")
     def api_config_sites():
         """Get configured sites."""
         try:
@@ -1794,7 +1797,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
                 file_urls = data.get("file_urls", []) or []
-                conversion_tool = data.get("conversion_tool", "auto")
+                conversion_tool = data.get("conversion_tool", "marker")
+                if (conversion_tool or "").strip().lower() == "auto":
+                    conversion_tool = "marker"
                 overwrite_existing = data.get("overwrite_existing", False)
                 skip_existing = bool(data.get("skip_existing", True))
                 scan_start_index = data.get("scan_start_index")
