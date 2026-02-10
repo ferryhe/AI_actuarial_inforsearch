@@ -1374,6 +1374,14 @@ function showLog(task) {
                     task.errors.map(e => `<div class="error-item">• ${escapeHtml(e)}</div>`).join('') 
                     : 'No detailed errors logged.'}
             </div>
+            <div class="error-details-box" style="margin-top: 12px;">
+                <h5>Application Log (Task)</h5>
+                <pre id="task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
+                <div style="margin-top: 8px; display: flex; gap: 8px;">
+                    <button class="btn-small" onclick="reloadTaskLog('${task.id}')">Reload</button>
+                    <button class="btn-small" onclick="openGlobalLogs()">Global Logs</button>
+                </div>
+            </div>
             ${task.message ? `<p><strong>Message:</strong> ${escapeHtml(task.message)}</p>` : ''}
         </div>
     `;
@@ -1394,6 +1402,49 @@ function showLog(task) {
     }
     document.getElementById('log-modal-body').innerHTML = content;
     openModal('log-modal');
+    reloadTaskLog(task.id);
+}
+
+async function reloadTaskLog(taskId) {
+    const pre = document.getElementById('task-log-content');
+    if (!pre) return;
+    pre.textContent = 'Loading...';
+    try {
+        const resp = await fetch(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            pre.textContent = data.log || '(no task log yet)';
+        } else {
+            pre.textContent = 'Failed to load task log: ' + (data.error || resp.status);
+        }
+    } catch (e) {
+        pre.textContent = 'Failed to load task log: ' + e.message;
+    }
+}
+
+async function openGlobalLogs() {
+    try {
+        const resp = await fetch('/api/logs/global');
+        const data = await resp.json();
+        const logs = data.logs || data.error || 'No logs';
+        let modal = document.getElementById('global-log-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'global-log-modal';
+            modal.className = 'modal';
+            modal.innerHTML = `
+                <div class="modal-content" style="max-width: 900px;">
+                    <span class="close" onclick="closeModal('global-log-modal')">&times;</span>
+                    <h4>Global Application Logs</h4>
+                    <pre id="global-log-content" style="white-space: pre-wrap; max-height: 520px; overflow: auto; margin: 0;"></pre>
+                </div>`;
+            document.body.appendChild(modal);
+        }
+        document.getElementById('global-log-content').textContent = logs;
+        openModal('global-log-modal');
+    } catch (e) {
+        showNotification('Failed to load global logs: ' + e.message, 'error');
+    }
 }
 
 async function stopTask(taskId) {
