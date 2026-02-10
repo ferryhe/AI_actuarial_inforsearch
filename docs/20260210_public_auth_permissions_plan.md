@@ -1,126 +1,156 @@
-# 2026-02-10 Public Internet Plan: Users, Auth, Permissions (Phase 2/4)
+# 2026-02-10 Public Internet Plan: Token Auth, Groups, Permissions (Phase 2/4)
 
-This is a **detailed plan only**. Implementation will start after you confirm the decisions in **Confirmations**.
+This document is a **detailed plan**. You asked to prefer **per-user API tokens** and assign **permission groups via tokens**.
+
+Implementation will proceed based on this plan.
 
 ## Goal
 
 Make the web UI and API safe to expose on the public Internet by adding:
 
-- User management (accounts, login/logout, password policy)
-- Authorization (roles/permissions for API endpoints and UI actions)
-- CSRF protection (for cookie-based sessions)
+- Token-based authentication (per-user API tokens)
+- Authorization (token groups + explicit permission list)
+- CSRF protection (because the web UI needs cookie sessions)
 - Security headers (CSP, clickjacking, etc.) and production defaults
 
-## Current State (as of 2026-02-10)
+## Constraints / Current State (as of 2026-02-10)
 
-- Most endpoints are accessible without authentication.
-- Some write endpoints use optional `X-Auth-Token` checks only if a token env var is set.
+- The app serves HTML pages via Flask templates. Browsers do not attach custom headers on normal navigation.
+- Many API endpoints are currently accessible without authentication.
 - No CSRF protection.
-- No rate limiting by default (Phase 3 adds optional limiter).
 
-## Threat Model (Public)
+## Recommended Approach (Token-First, Web-Compatible)
 
-We must assume:
+### Authentication (AuthN)
 
-- Untrusted clients and bots will hit all endpoints.
-- Credential stuffing, brute force, scraping, and DoS attempts.
-- CSRF is relevant if we use cookies/sessions.
-- Logs and exports can leak sensitive data if not protected.
+Primary credential: **per-user API token**.
 
-## Recommended Approach (Pragmatic, Web-UI Friendly)
+- Automation access: `Authorization: Bearer <token>` on every request.
+- Web UI access:
+  - Provide `/login` where a user pastes a token once.
+  - Server validates the token, then creates a **cookie session** bound to the token ID.
+  - Subsequent UI navigation works without needing headers.
 
-### AuthN (Authentication)
+### Authorization (AuthZ)
 
-Use **Flask-Login (session cookie)** for the web UI and UI-driven API calls, because:
+Authorization is based on **token group**. Each token belongs to exactly one group.
 
-- It fits browser usage and is simpler than rolling custom tokens.
-- It works well with CSRF (Flask-WTF/SeaSurf).
+Default groups:
 
-Additionally, for non-browser / automation access:
+- `admin`: full access (config, delete files, export, run tasks, view task logs, view system logs)
+- `operator`: run tasks, edit markdown, view task logs, no config writes or deletes
+- `reader`: browse/search/view/download; no writes, no export, no logs, no tasks page, no scheduled tasks page
 
-- Add **per-user API tokens** (header-based, e.g. `Authorization: Bearer ...`) as an optional path.
+All enforcement is **server-side**.
 
-### AuthZ (Authorization)
+## Permissions (Explicit List)
 
-Add **RBAC** (role-based access control) with a small set of roles:
+Permission IDs:
 
-- `admin`: full access (config, delete files, export, run tasks, view logs)
-- `operator`: run tasks, edit markdown, view logs; no config writes or deletes
-- `reader`: browse/search/view/download; no writes, no export, no logs
+- `stats.read`: dashboard stats
+- `files.read`: list/search file records
+- `files.download`: download local file bytes
+- `files.delete`: delete file (soft delete and optional disk deletion)
+- `catalog.read`: view catalog metadata (category/summary/keywords)
+- `catalog.write`: update catalog metadata (category/summary/keywords)
+- `markdown.read`: read markdown content
+- `markdown.write`: edit markdown content
+- `config.read`: read config endpoints (sites/categories/backend settings)
+- `config.write`: write config endpoints
+- `tasks.view`: view Tasks page and task history/active list
+- `tasks.run`: start tasks (collections, cataloging, markdown conversion)
+- `tasks.stop`: stop running tasks
+- `logs.task.read`: read per-task logs (`/api/tasks/log/<task_id>`)
+- `logs.system.read`: read system/global logs (`/api/logs/global`)
+- `export.read`: export DB (`/api/export`)
+- `tokens.manage`: create/revoke/list tokens
 
-We will enforce authorization **server-side** for every endpoint, not in the UI.
+Group -> permissions (baseline mapping):
+
+- `reader`:
+  - `stats.read`, `files.read`, `files.download`, `catalog.read`, `markdown.read`
+- `operator`:
+  - all `reader`
+  - `catalog.write`, `markdown.write`
+  - `tasks.view`, `tasks.run`, `tasks.stop`
+  - `logs.task.read`
+- `admin`:
+  - all `operator`
+  - `files.delete`, `config.read`, `config.write`, `export.read`
+  - `logs.system.read`
+  - `tokens.manage`
 
 ## Data Model
 
-Store users in the same DB used by the app (SQLite initially; PostgreSQL later).
+Store auth data in the same DB used by the app (SQLite initially; PostgreSQL later).
 
 Tables (minimal):
 
-- `users`
+- `auth_tokens`
   - `id` (pk)
-  - `username` (unique)
-  - `password_hash`
-  - `role` (enum-like string)
+  - `subject` (string, e.g. username/email/team name)
+  - `group_name` (`admin`/`operator`/`reader`)
+  - `token_hash` (never store plaintext)
   - `is_active` (bool)
-  - `created_at`, `last_login_at`
-- `api_tokens` (optional but recommended for automation)
-  - `id` (pk)
-  - `user_id` (fk)
-  - `token_hash`
   - `created_at`, `last_used_at`, `revoked_at`
+  - `expires_at` (optional)
 - `audit_events` (recommended)
-  - `id`, `user_id`, `event_type`, `resource`, `detail`, `ip`, `created_at`
+  - `id`, `token_id`, `event_type`, `resource`, `detail`, `ip`, `created_at`
 
-Password hashing:
+Token hashing:
 
-- Prefer `argon2-cffi` (best) or `bcrypt`.
-- Never store plaintext tokens; hash API tokens too.
+- Use SHA-256 of the token (acceptable baseline).
+- Tokens must be long random secrets (e.g. `secrets.token_urlsafe(32)`).
 
-## Endpoint Protection Map (Draft)
-
-Protect everything except the login page and static assets.
+## Endpoint / Page Protection Map (Draft)
 
 ### Public/Anonymous
 
-- `GET /` (optional: redirect to login; recommended for public)
-- `GET /login` (new)
-- `POST /login` (new)
-- `POST /logout` (new, CSRF-protected)
-- `GET /health` (optional; new minimal endpoint)
+- `GET /login`
+- `POST /login`
+
+Optional:
+
+- `GET /health`
 
 ### Reader+
 
-- `GET /api/stats`
-- `GET /api/files`
-- `GET /api/sources`
-- `GET /api/categories`
-- `GET /api/files/<url>/markdown`
-- `GET /api/download`
+- Pages: `/`, `/database`, `/file/<...>` (view-only)
+- APIs: `GET /api/stats`, `GET /api/files`, `GET /api/sources`, `GET /api/categories`, `GET /api/files/<...>/markdown`, `GET /api/download`
 
 ### Operator+
 
-- `POST /api/collections/run`
-- `POST /api/files/<url>/markdown` (edit markdown)
-- `GET /api/tasks/*` (active/history/log)
-- `GET /api/logs/global`
+- Pages: `/tasks`
+- APIs: `POST /api/collections/run`, `POST /api/files/update`, `POST /api/files/<...>/markdown`
+- APIs: `GET /api/tasks/active`, `GET /api/tasks/history`, `GET /api/tasks/log/<...>`
 
 ### Admin only
 
-- `GET /api/export`
-- `POST /api/files/delete`
-- `POST /api/config/*` (all config writes)
+- Pages: `/scheduled_tasks`, `/settings` (because they contain write controls)
+- APIs: `POST /api/config/*`, `POST /api/files/delete`, `GET /api/export`, `GET /api/logs/global`
+- APIs: token management endpoints (new)
+
+## Token Management (Admin)
+
+Add admin-only endpoints:
+
+- `GET /api/auth/tokens` (list)
+- `POST /api/auth/tokens` (create token with `subject` + `group_name`)
+- `POST /api/auth/tokens/<id>/revoke`
+
+Bootstrap problem:
+
+- Add env `BOOTSTRAP_ADMIN_TOKEN` (plaintext) used only to bootstrap the first admin token record.
+- When set, app startup will upsert an `admin` token matching it.
 
 ## CSRF (Phase 4)
 
-If using session cookies:
+Because web UI uses cookie sessions:
 
-- Add CSRF protection for all mutating requests (POST/PUT/PATCH/DELETE).
-- For JSON `fetch()` requests, include CSRF token in a header (e.g. `X-CSRFToken`).
+- Add CSRF protection for mutating requests (POST/PUT/PATCH/DELETE).
+- For JSON fetch, send CSRF token in a header (e.g. `X-CSRFToken`) or use SeaSurf defaults.
 
-Implementation options:
-
-- `Flask-SeaSurf` (simple global CSRF protection)
-- `Flask-WTF` CSRF (more “Flask standard” if forms are used)
+Preferred library: **Flask-SeaSurf**.
 
 ## Security Headers (Phase 4)
 
@@ -129,48 +159,33 @@ Add via `@app.after_request`:
 - `X-Frame-Options: SAMEORIGIN`
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: strict-origin-when-cross-origin`
-- `Content-Security-Policy` (needs tuning for current templates and any CDN usage)
+- `Content-Security-Policy` (tuned to actual assets)
 - `Strict-Transport-Security` (only when HTTPS is enforced)
 
 ## Phase Breakdown (Proposed)
 
-### Phase 2A: “Auth required” baseline (fast)
+### Phase 2A: Auth required baseline
 
-- Add login/logout (Flask-Login)
-- Gate all endpoints behind auth, with minimal RBAC (admin vs non-admin)
-- Protect logs/export immediately
-- Add audit logging for sensitive actions
+- Token validation (header + session)
+- Permission checks per endpoint + per page
+- Add `/login` + `/logout` and `/api/auth/me`
+- Add bootstrap admin token support
 
-### Phase 2B: Full RBAC + API tokens
+### Phase 2B: Token management UI
 
-- Implement roles: admin/operator/reader
-- Add per-user API tokens (create/revoke UI, header auth path)
-- Add brute-force controls (lockouts, exponential backoff, rate limit login)
+- Admin UI for creating/revoking tokens
+- Audit logging for token usage + sensitive operations
 
 ### Phase 4: CSRF + security headers + cookie hardening
 
-- CSRF across all write endpoints
+- CSRF integration
 - Cookie flags: `Secure`, `HttpOnly`, `SameSite`
-- CSP rollout with report-only mode first (optional)
+- CSP rollout (optionally report-only first)
 
-## Confirmations Needed (Before Implementation)
+## Confirmations (Last Checks)
 
-1. Auth mode:
-   - A) Flask-Login sessions for UI (recommended)
-   - B) Global API key only (fastest, no users)
-   - C) Reverse proxy SSO (Caddy/Nginx/OAuth) + app trusts headers
-2. Anonymous access:
-   - A) No anonymous access (recommended for public)
-   - B) Allow read-only browsing without login
-3. Roles:
-   - A) admin/operator/reader (recommended)
-   - B) admin/reader only (simpler)
-4. Automation access:
-   - A) Per-user API tokens (recommended)
-   - B) None (UI only)
-5. CSRF library preference:
-   - A) SeaSurf (simple)
-   - B) Flask-WTF (standard)
-
-Once you answer these, I will convert this plan into an implementation PR series with tests and migration notes.
+- Token header: use `Authorization: Bearer <token>`.
+- Anonymous access: default to no anonymous access for public.
+- Groups: `admin/operator/reader` as defined above.
+- CSRF: use SeaSurf.
 
