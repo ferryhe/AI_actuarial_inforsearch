@@ -1512,7 +1512,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             storage = Storage(db_path)
             
             try:
-                success = storage.update_file_catalog(
+                success, error_reason = storage.update_file_catalog(
                     url=url,
                     category=category,
                     summary=summary,
@@ -1528,8 +1528,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "file": file_data
                     })
                 else:
-                    logger.warning(f"File catalog update had no changes: {url}")
-                    return jsonify({"error": "No updates provided"}), 400
+                    # Handle different failure reasons
+                    if error_reason == "file_not_found":
+                        logger.warning(f"File catalog update failed - file not found: {url}")
+                        return jsonify({"error": "File not found"}), 404
+                    elif error_reason == "no_updates":
+                        logger.warning(f"File catalog update had no changes: {url}")
+                        return jsonify({"error": "No updates provided"}), 400
+                    else:
+                        logger.error(f"File catalog update failed with unknown reason: {url}")
+                        return jsonify({"error": "Update failed"}), 500
                     
             finally:
                 storage.close()

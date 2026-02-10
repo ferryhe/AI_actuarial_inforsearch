@@ -105,7 +105,7 @@
             <div id="summary-display" class="summary-box" {% if not file.summary %}style="display:none;"{% endif %}>
                 {{ file.summary or '' }}
             </div>
-            <textarea id="summary-input" class="edit-textarea" style="display:none;">{{ file.summary or '' }}</textarea>
+            <textarea id="summary-input" class="edit-textarea" data-current-value="{{ file.summary or '' }}" style="display:none;">{{ file.summary or '' }}</textarea>
             {% if not file.summary %}
             <div id="summary-empty" class="summary-box" style="color: var(--text-secondary);">No summary available</div>
             {% endif %}
@@ -118,7 +118,7 @@
                 <span class="keyword-tag">{{ keyword }}</span>
                 {% endfor %}
             </div>
-            <input type="text" id="keywords-input" class="edit-input" placeholder="Comma-separated keywords" style="display:none;" value="{{ file.keywords|join(', ') if file.keywords else '' }}">
+            <input type="text" id="keywords-input" class="edit-input" placeholder="Comma-separated keywords" data-current-value="{{ file.keywords|join(', ') if file.keywords else '' }}" style="display:none;" value="{{ file.keywords|join(', ') if file.keywords else '' }}">
             {% if not file.keywords %}
             <div id="keywords-empty" style="color: var(--text-secondary);">No keywords available</div>
             {% endif %}
@@ -375,14 +375,19 @@
             if (response.ok && data.success) {
                 Toast.success('File details updated successfully');
                 
-                // Update display values
+                // Update display values and store current values
                 document.getElementById('category-input').dataset.currentValue = category || '';
                 renderCategoryDisplay(parseCategoryString(category));
                 
+                const summaryInput = document.getElementById('summary-input');
                 const summaryDisplay = document.getElementById('summary-display');
+                summaryInput.dataset.currentValue = summary || '';
                 summaryDisplay.textContent = summary || '';
                 
+                const keywordsInput = document.getElementById('keywords-input');
                 const keywordsDisplay = document.getElementById('keywords-display');
+                const keywordsStr = keywords.join(', ');
+                keywordsInput.dataset.currentValue = keywordsStr;
                 keywordsDisplay.innerHTML = '';
                 keywords.forEach(keyword => {
                     const tag = document.createElement('span');

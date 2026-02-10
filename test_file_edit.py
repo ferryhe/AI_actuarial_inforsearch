@@ -20,11 +20,15 @@ class TestFileEdit(unittest.TestCase):
         # Insert a test file using the public Storage API
         self.test_url = "http://test.com/file.pdf"
         self.storage.insert_file(
-            self.test_url,
-            "test_hash",
-            "test_site",
-            1024,
-            "application/pdf",
+            url=self.test_url,
+            sha256="test_hash",
+            title="Test File",
+            source_site="test_site",
+            source_page_url="http://test.com",
+            original_filename="file.pdf",
+            local_path="/tmp/file.pdf",
+            bytes=1024,
+            content_type="application/pdf"
         )
     
     def tearDown(self):
@@ -36,11 +40,12 @@ class TestFileEdit(unittest.TestCase):
     
     def test_update_category(self):
         """Test updating category."""
-        success = self.storage.update_file_catalog(
+        success, error = self.storage.update_file_catalog(
             self.test_url,
             category="Test Category"
         )
         self.assertTrue(success)
+        self.assertIsNone(error)
         
         # Verify the update
         file_data = self.storage.get_file_with_catalog(self.test_url)
@@ -48,11 +53,12 @@ class TestFileEdit(unittest.TestCase):
     
     def test_update_summary(self):
         """Test updating summary."""
-        success = self.storage.update_file_catalog(
+        success, error = self.storage.update_file_catalog(
             self.test_url,
             summary="Test summary text"
         )
         self.assertTrue(success)
+        self.assertIsNone(error)
         
         # Verify the update
         file_data = self.storage.get_file_with_catalog(self.test_url)
@@ -61,11 +67,12 @@ class TestFileEdit(unittest.TestCase):
     def test_update_keywords(self):
         """Test updating keywords."""
         keywords = ["keyword1", "keyword2", "keyword3"]
-        success = self.storage.update_file_catalog(
+        success, error = self.storage.update_file_catalog(
             self.test_url,
             keywords=keywords
         )
         self.assertTrue(success)
+        self.assertIsNone(error)
         
         # Verify the update
         file_data = self.storage.get_file_with_catalog(self.test_url)
@@ -74,13 +81,14 @@ class TestFileEdit(unittest.TestCase):
     def test_update_all_fields(self):
         """Test updating all fields at once."""
         keywords = ["test", "keywords"]
-        success = self.storage.update_file_catalog(
+        success, error = self.storage.update_file_catalog(
             self.test_url,
             category="New Category",
             summary="New summary",
             keywords=keywords
         )
         self.assertTrue(success)
+        self.assertIsNone(error)
         
         # Verify all updates
         file_data = self.storage.get_file_with_catalog(self.test_url)
@@ -89,27 +97,25 @@ class TestFileEdit(unittest.TestCase):
         self.assertEqual(file_data["keywords"], keywords)
     
     def test_update_nonexistent_file(self):
-        """Test updating a file that doesn't exist creates catalog entry."""
-        # This should fail because the file doesn't exist in the files table
+        """Test updating a nonexistent file returns file_not_found error."""
         nonexistent_url = "http://test.com/nonexistent.pdf"
-        success = self.storage.update_file_catalog(
+        success, error = self.storage.update_file_catalog(
             nonexistent_url,
             category="Test"
         )
-        # The catalog entry won't be created if the file doesn't exist in files table
-        # because of the INSERT ... SELECT query
-        # So we just verify the method completes
         self.assertFalse(success)
+        self.assertEqual(error, "file_not_found")
     
     def test_update_with_empty_values(self):
         """Test updating with empty strings."""
-        success = self.storage.update_file_catalog(
+        success, error = self.storage.update_file_catalog(
             self.test_url,
             category="",
             summary="",
             keywords=[]
         )
         self.assertTrue(success)
+        self.assertIsNone(error)
         
         # Verify the empty values
         file_data = self.storage.get_file_with_catalog(self.test_url)

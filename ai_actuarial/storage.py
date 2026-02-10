@@ -913,7 +913,7 @@ class Storage:
             "catalog_status": row[19],
         }
     
-    def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> bool:
+    def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
         """Update catalog information for a file.
         
         Args:
@@ -923,7 +923,10 @@ class Storage:
             keywords: New keywords list (optional)
             
         Returns:
-            True if update succeeded, False otherwise
+            Tuple of (success: bool, error_reason: str | None)
+            - (True, None) if update succeeded
+            - (False, "file_not_found") if file doesn't exist
+            - (False, "no_updates") if no update fields were provided
         """
         # Check if file exists
         file_cur = self._conn.execute(
@@ -932,7 +935,7 @@ class Storage:
         )
         if file_cur.fetchone() is None:
             # File doesn't exist, can't update
-            return False
+            return (False, "file_not_found")
         
         # Check if catalog entry exists
         cur = self._conn.execute(
@@ -973,9 +976,9 @@ class Storage:
             params.append(url)
             self._conn.execute(query, tuple(params))
             self._maybe_commit()
-            return True
+            return (True, None)
         
-        return False
+        return (False, "no_updates")
     
     def clear_local_path(self, url: str) -> None:
         """Clear the local_path for a file (for deletion tracking).
