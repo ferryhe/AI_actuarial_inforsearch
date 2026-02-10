@@ -131,22 +131,38 @@
             {% endif %}
         </div>
 
+        <div class="actions-section">
+            <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
+            <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
+            <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
+            
+            {% if file.local_path %}
+            <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
+            {% else %}
+            <button class="btn btn-secondary" disabled>Download Unavailable</button>
+            {% endif %}
+             
+              <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+        </div>
+
         <div class="markdown-section">
             <div class="markdown-header">
                 <h4>Markdown Content</h4>
                 <div class="markdown-tabs">
                     <button id="markdown-view-tab" class="markdown-tab active" onclick="switchMarkdownTab('view')">View</button>
                     <button id="markdown-edit-tab" class="markdown-tab" onclick="switchMarkdownTab('edit')">Edit</button>
+                    <button id="markdown-expand-btn" class="markdown-tab" onclick="toggleMarkdownHeight()" style="display:none;">Expand</button>
                 </div>
             </div>
+            <div id="markdown-meta" class="markdown-meta" style="display:none;"></div>
             
-            <div id="markdown-view-mode" class="markdown-content-box">
+            <div id="markdown-view-mode" class="markdown-content-box markdown-view-box">
                 <div id="markdown-rendered" class="markdown-body"></div>
                 <div id="markdown-empty" style="color: var(--text-secondary); padding: 1rem;">No markdown content available</div>
             </div>
             
-             <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
-                 <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
+            <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
+                <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
                  <div class="markdown-convert-actions">
                      <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
                      <select id="markdown-convert-engine" class="markdown-convert-select">
@@ -162,26 +178,12 @@
                      </label>
                      <button id="markdown-convert-btn" class="btn btn-secondary" onclick="submitMarkdownConversion()">Convert From File</button>
                  </div>
-                 <div class="markdown-edit-actions">
-                     <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
-                     <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
-                     <span id="markdown-last-updated" class="markdown-timestamp"></span>
-                 </div>
-             </div>
-         </div>
-
-        <div class="actions-section">
-            <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
-            <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
-            <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
-            
-            {% if file.local_path %}
-            <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
-            {% else %}
-            <button class="btn btn-secondary" disabled>Download Unavailable</button>
-            {% endif %}
-            
-             <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+                <div class="markdown-edit-actions">
+                    <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
+                    <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
+                    <span id="markdown-last-updated" class="markdown-timestamp"></span>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -506,6 +508,7 @@
             if (data.success && data.markdown && data.markdown.markdown_content) {
                 currentMarkdownContent = data.markdown.markdown_content;
                 renderMarkdownView();
+                updateMarkdownMeta(data.markdown);
                 
                 // Update timestamp if available
                 if (data.markdown.markdown_updated_at) {
@@ -518,6 +521,7 @@
             } else {
                 // No markdown content (but request was successful)
                 currentMarkdownContent = '';
+                updateMarkdownMeta(null);
                 document.getElementById('markdown-rendered').innerHTML = '';
                 document.getElementById('markdown-empty').style.display = 'block';
             }
@@ -546,6 +550,39 @@
             rendered.innerHTML = '';
             rendered.style.display = 'none';
             document.getElementById('markdown-empty').style.display = 'block';
+        }
+
+        updateMarkdownHeightControls();
+    }
+
+    let markdownExpanded = false;
+
+    function toggleMarkdownHeight() {
+        markdownExpanded = !markdownExpanded;
+        updateMarkdownHeightControls();
+    }
+
+    function updateMarkdownHeightControls() {
+        const viewMode = document.getElementById('markdown-view-mode');
+        const btn = document.getElementById('markdown-expand-btn');
+        if (!viewMode || !btn) return;
+
+        // Only show expand/collapse when there is markdown and the view box is scrollable.
+        if (!currentMarkdownContent) {
+            btn.style.display = 'none';
+            markdownExpanded = false;
+            viewMode.classList.remove('expanded');
+            return;
+        }
+
+        // Always allow expand/collapse when content exists (the box is capped by CSS).
+        btn.style.display = 'inline-flex';
+        if (markdownExpanded) {
+            viewMode.classList.add('expanded');
+            btn.textContent = 'Collapse';
+        } else {
+            viewMode.classList.remove('expanded');
+            btn.textContent = 'Expand';
         }
     }
     
@@ -599,6 +636,11 @@
                     const timestamp = document.getElementById('markdown-last-updated');
                     timestamp.textContent = `Last updated: ${data.markdown.markdown_updated_at}`;
                 }
+
+                // Update meta (source/updated_at) in view header.
+                if (data.markdown) {
+                    updateMarkdownMeta(data.markdown);
+                }
                 
                 // Switch back to view mode
                 switchMarkdownTab('view');
@@ -630,7 +672,7 @@
                     file_urls: [fileUrl],
                     conversion_tool: engine,
                     overwrite_existing: overwrite,
-                    name: `Markdown Conversion (1 file)`
+                    name: `Markdown Conversion - engine ${engine} (1 file)`
                 })
             });
 
@@ -668,6 +710,26 @@
     
     // Start initialization
     initMarkdown();
+
+    function updateMarkdownMeta(markdown) {
+        const meta = document.getElementById('markdown-meta');
+        if (!meta) return;
+        if (!markdown) {
+            meta.style.display = 'none';
+            meta.textContent = '';
+            return;
+        }
+        const parts = [];
+        if (markdown.markdown_source) parts.push(`Source: ${markdown.markdown_source}`);
+        if (markdown.markdown_updated_at) parts.push(`Updated: ${markdown.markdown_updated_at}`);
+        if (!parts.length) {
+            meta.style.display = 'none';
+            meta.textContent = '';
+            return;
+        }
+        meta.style.display = 'block';
+        meta.textContent = parts.join(' | ');
+    }
     
     async function deleteFile(url) {
         // Create a custom modal for text confirmation
@@ -1002,6 +1064,23 @@
         border: 1px solid var(--border-color);
         border-radius: 4px;
         min-height: 200px;
+    }
+
+    .markdown-meta {
+        margin: -0.5rem 0 0.75rem 0;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+    }
+
+    /* Long markdown can make the page unwieldy; cap height and allow scroll by default. */
+    .markdown-view-box {
+        max-height: 70vh;
+        overflow: auto;
+    }
+
+    .markdown-view-box.expanded {
+        max-height: none;
+        overflow: visible;
     }
     
     .markdown-body {
