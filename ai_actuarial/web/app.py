@@ -1330,17 +1330,54 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return jsonify({"error": "Invalid JSON"}), 400
             
             collection_type = data.get("type")
-            valid_types = ["scheduled", "adhoc", "url", "file", "search", "catalog", "quick_check"]
+            valid_types = [
+                "scheduled",
+                "adhoc",
+                "url",
+                "file",
+                "search",
+                "catalog",
+                "quick_check",
+                "markdown_conversion",
+            ]
+
+            def _reject_request(reason: str, *, override_type: str | None = None):
+                """Reject a request and still persist a history record for visibility."""
+                req_type = override_type or (collection_type or "unknown")
+                task_id = f"rejected_{int(datetime.now().timestamp())}"
+                task_name = data.get("name", f"{req_type} (rejected)")
+                stamp = datetime.now().isoformat()
+                task_data = {
+                    "id": task_id,
+                    "name": task_name,
+                    "type": req_type,
+                    "status": "error",
+                    "progress": 100,
+                    "started_at": stamp,
+                    "completed_at": stamp,
+                    "current_activity": "Rejected",
+                    "items_processed": 0,
+                    "items_total": 0,
+                    "errors": [reason],
+                }
+                logger.warning("Rejecting collection request (type=%s): %s", req_type, reason)
+                with _task_lock:
+                    _task_history.append(task_data)
+                    _append_history_to_disk(task_data)
+                return jsonify({"error": reason}), 400
+
             if not collection_type or collection_type not in valid_types:
-                return jsonify({"error": f"Invalid collection type"}), 400
+                return _reject_request("Invalid collection type", override_type=collection_type)
 
             # Quick validation before starting background task
             if collection_type == "url" and not data.get("urls"):
-                 return jsonify({"error": "No URLs provided"}), 400
+                 return _reject_request("No URLs provided")
             if collection_type == "file":
                  path = data.get("directory_path")
                  if not path or not os.path.exists(path):
-                     return jsonify({"error": "Invalid directory path"}), 400
+                     return _reject_request("Invalid directory path")
+            if collection_type == "markdown_conversion" and not data.get("file_urls"):
+                 return _reject_request("No files selected for markdown conversion")
 
             task_id = f"task_{int(datetime.now().timestamp())}"
             task_name = data.get("name", f"{collection_type.capitalize()} Collection")
