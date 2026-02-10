@@ -1278,3 +1278,51 @@ class SearchAutocomplete {
 window.DataTable = DataTable;
 window.ModalManager = ModalManager;
 window.SearchAutocomplete = SearchAutocomplete;
+
+// Guest navigation helper: when a link is present but requires login, show a modal
+// instead of navigating to a 401/redirect.
+(function () {
+    function openAuthRequiredModal(dest) {
+        const modal = document.getElementById('auth-required-modal');
+        if (!modal) return;
+        modal.dataset.dest = dest || '/';
+        modal.style.display = 'block';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    function closeAuthRequiredModal() {
+        const modal = document.getElementById('auth-required-modal');
+        if (!modal) return;
+        modal.style.display = 'none';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const modal = document.getElementById('auth-required-modal');
+        if (!modal) return;
+
+        document.querySelectorAll('[data-auth-required="1"]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                const dest = el.getAttribute('data-dest') || '/';
+                openAuthRequiredModal(dest);
+            });
+        });
+
+        const backBtn = document.getElementById('auth-required-back');
+        const loginBtn = document.getElementById('auth-required-login');
+
+        if (backBtn) backBtn.addEventListener('click', closeAuthRequiredModal);
+        if (loginBtn) {
+            loginBtn.addEventListener('click', () => {
+                const dest = modal.dataset.dest || '/';
+                window.location.href = `/login?next=${encodeURIComponent(dest)}`;
+            });
+        }
+
+        // Click-outside closes the modal
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeAuthRequiredModal();
+        });
+    });
+})();

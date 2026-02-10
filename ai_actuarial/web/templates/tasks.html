@@ -4,9 +4,6 @@
 <div class="tasks-page">
     <div class="page-header">
         <h2>Task Center</h2>
-        <div class="header-actions">
-             <button class="btn btn-secondary" onclick="exportData()">Export Results</button>
-        </div>
     </div>
 
     <!-- Task Launch Grid -->
@@ -498,7 +495,6 @@
             <div class="form-group">
                 <label>Conversion Tool</label>
                 <select name="conversion_tool" id="conversion-tool-select">
-                    <option value="auto">Auto-detect best tool</option>
                     <option value="marker">Marker (PDF optimized)</option>
                     <option value="docling">Docling (Multi-format)</option>
                     <option value="mistral">Mistral OCR (API)</option>
@@ -1224,11 +1220,6 @@ function startTask(type, payload) {
         }
     })
     .catch(err => showNotification('Error: ' + err, 'error'));
-}
-
-function exportData() {
-    // Basic CSV export trigger
-    window.location.href = '/api/export?format=csv';
 }
 
 // --- Monitoring (Existing Logic Adapted) ---

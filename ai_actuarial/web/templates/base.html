@@ -26,10 +26,20 @@
                     <li><a href="{{ url_for('database') }}" class="nav-link">Database</a></li>
                     {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('tasks') }}" class="nav-link">Tasks</a></li>
+                    {% elif not auth_token %}
+                    <li><a href="#" class="nav-link nav-link-disabled" data-auth-required="1" data-dest="{{ url_for('tasks') }}">Tasks</a></li>
                     {% endif %}
-                    {% if auth_group == 'admin' %}
+
+                    {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('scheduled_tasks') }}" class="nav-link">Schedule</a></li>
+                    {% elif not auth_token %}
+                    <li><a href="#" class="nav-link nav-link-disabled" data-auth-required="1" data-dest="{{ url_for('scheduled_tasks') }}">Schedule</a></li>
+                    {% endif %}
+
+                    {% if auth_group == 'admin' %}
                     <li><a href="{{ url_for('settings') }}" class="nav-link">Settings</a></li>
+                    {% elif not auth_token %}
+                    <li><a href="#" class="nav-link nav-link-disabled" data-auth-required="1" data-dest="{{ url_for('settings') }}">Settings</a></li>
                     {% endif %}
                 </ul>
                 {% if auth_token %}
@@ -186,6 +196,18 @@
             <div class="confirm-buttons">
                 <button id="confirm-cancel" class="btn btn-secondary">Cancel</button>
                 <button id="confirm-ok" class="btn btn-primary">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Required Modal (guest navigation) -->
+    <div id="auth-required-modal" class="modal" style="display: none;">
+        <div class="modal-content confirm-dialog">
+            <h3>Login Required</h3>
+            <p>You must log in to access this page.</p>
+            <div class="confirm-buttons">
+                <button id="auth-required-back" class="btn btn-secondary">Back</button>
+                <button id="auth-required-login" class="btn btn-primary">Login</button>
             </div>
         </div>
     </div>

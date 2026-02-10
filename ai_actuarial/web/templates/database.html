@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set can_export_filelist = auth_group in ['admin', 'operator'] %}
+{% set can_bulk_delete = auth_group == 'admin' %}
 <div class="database-page">
     <div class="page-header">
         <h2>Database Management</h2>
@@ -130,7 +132,7 @@ function displayResults(data) {
     const container = document.getElementById('results-container');
     document.getElementById('results-count').textContent = `${data.total} files`;
 
-    if (data.files && data.files.length > 0) {
+        if (data.files && data.files.length > 0) {
         // Use Phase 3 DataTable component
         new DataTable(container, {
             data: data.files,
@@ -171,10 +173,10 @@ function displayResults(data) {
                 }
             ],
             sortable: true,
-            selectable: true,
+            selectable: {{ 'true' if can_bulk_delete else 'false' }},
             resizable: true,
-            exportable: true,
-            deleteable: true,
+            exportable: {{ 'true' if can_export_filelist else 'false' }},
+            deleteable: {{ 'true' if can_bulk_delete else 'false' }},
             exportFilename: 'database_files',
             onRowClick: (row) => {
                 // URLs are validated and sanitized server-side before storage
