@@ -145,15 +145,30 @@
                 <div id="markdown-empty" style="color: var(--text-secondary); padding: 1rem;">No markdown content available</div>
             </div>
             
-            <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
-                <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
-                <div class="markdown-edit-actions">
-                    <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
-                    <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
-                    <span id="markdown-last-updated" class="markdown-timestamp"></span>
-                </div>
-            </div>
-        </div>
+             <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
+                 <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
+                 <div class="markdown-convert-actions">
+                     <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
+                     <select id="markdown-convert-engine" class="markdown-convert-select">
+                         <option value="auto">Auto</option>
+                         <option value="marker">Marker</option>
+                         <option value="docling">Docling</option>
+                         <option value="mistral">Mistral OCR</option>
+                         <option value="deepseekocr">DeepSeek OCR</option>
+                     </select>
+                     <label class="markdown-convert-overwrite">
+                         <input type="checkbox" id="markdown-convert-overwrite" checked>
+                         Overwrite
+                     </label>
+                     <button id="markdown-convert-btn" class="btn btn-secondary" onclick="submitMarkdownConversion()">Convert From File</button>
+                 </div>
+                 <div class="markdown-edit-actions">
+                     <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
+                     <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
+                     <span id="markdown-last-updated" class="markdown-timestamp"></span>
+                 </div>
+             </div>
+         </div>
 
         <div class="actions-section">
             <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
@@ -600,6 +615,37 @@
         // Revert to current content and switch to view mode
         document.getElementById('markdown-editor').value = currentMarkdownContent;
         switchMarkdownTab('view');
+    }
+
+    async function submitMarkdownConversion() {
+        const engine = document.getElementById('markdown-convert-engine').value;
+        const overwrite = document.getElementById('markdown-convert-overwrite').checked;
+
+        try {
+            const response = await fetch('/api/collections/run', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    type: 'markdown_conversion',
+                    file_urls: [fileUrl],
+                    conversion_tool: engine,
+                    overwrite_existing: overwrite,
+                    name: `Markdown Conversion (1 file)`
+                })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                Toast.success('Conversion task submitted. Check Tasks for progress.');
+                // Exit edit mode immediately per UX requirement.
+                switchMarkdownTab('view');
+            } else {
+                Toast.error('Failed to submit conversion: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            Toast.error('Network error: ' + err.message);
+            console.error('Markdown conversion submit exception:', err);
+        }
     }
     
     // Initialize markdown when libraries are loaded
@@ -1083,6 +1129,36 @@
         align-items: center;
         gap: 0.5rem;
         margin-top: 1rem;
+    }
+
+    .markdown-convert-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+    }
+
+    .markdown-convert-label {
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+    }
+
+    .markdown-convert-select {
+        padding: 0.35rem 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+    }
+
+    .markdown-convert-overwrite {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        user-select: none;
     }
     
     .markdown-timestamp {
