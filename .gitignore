@@ -2,6 +2,9 @@
 .env
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 
 # Data directory - includes database and downloaded files
 # Note: Entire data/ directory is ignored except for .gitkeep
@@ -10,3 +13,33 @@ data/
 
 # Cache directory
 .cache/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+*.cover
+coverage.xml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Logs
+*.log
