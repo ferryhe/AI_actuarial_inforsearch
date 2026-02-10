@@ -30,60 +30,33 @@ _task_history = []
 _task_lock = threading.Lock()
 
 
-def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type: str) -> str | None:
-    """Convert a file to markdown format.
-    
-    This is a placeholder implementation that should be extended to integrate
-    with actual conversion tools like marker-pdf, docling, etc.
-    
+def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type: str) -> dict[str, str]:
+    """Convert a local file to markdown using `doc_to_md` engines.
+
     Args:
-        file_path: Path to the file to convert
-        conversion_tool: Tool to use ('marker', 'docling', 'auto')
-        content_type: MIME type of the file
-        
+        file_path: Local path to the file to convert.
+        conversion_tool: Engine name ('marker', 'docling', 'mistral', 'deepseekocr', 'auto').
+        content_type: MIME type (kept for logging/diagnostics).
+
     Returns:
-        Markdown content as string, or None if conversion failed
+        Dict with: markdown, engine, model
+
+    Raises:
+        RuntimeError: If conversion fails or engine dependencies are missing.
     """
+    logger.info("Converting %s using %s (content_type=%s)", file_path, conversion_tool, content_type)
+
     try:
-        logger.info(f"Converting {file_path} using {conversion_tool}")
-        
-        # Placeholder: Just create a basic markdown representation
-        # In a real implementation, this would call marker-pdf, docling, etc.
-        file_name = os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)
-        
-        # Simple placeholder markdown
-        markdown = f"""# {file_name}
+        from doc_to_md.registry import convert_path
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"doc_to_md package not available: {exc}") from exc
 
-**File Type:** {content_type}  
-**File Size:** {file_size} bytes  
-**Converted:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
-**Tool:** {conversion_tool}
+    output = convert_path(Path(file_path), engine=conversion_tool)  # type: ignore[arg-type]
+    markdown = (output.markdown or "").strip()
+    if not markdown:
+        raise RuntimeError("Engine returned empty markdown")
 
-## Content
-
-> **Note:** This is a placeholder. Actual file conversion requires integration with tools like:
-> - marker-pdf (for PDFs)
-> - docling (for multi-format documents)
-> - pandoc (for various formats)
-
-To enable real conversion, implement the integration with these tools in the `convert_file_to_markdown()` function.
-
-## File Information
-
-- Path: `[redacted]`
-- Type: {content_type}
-
----
-
-*Placeholder conversion. Real content extraction will be implemented in future updates.*
-"""
-        
-        return markdown
-        
-    except Exception as e:
-        logger.exception(f"Error converting file {file_path}: {e}")
-        return None
+    return {"markdown": markdown, "engine": output.engine, "model": output.model}
 
 
 def _get_sites_config_path() -> str:
@@ -1184,30 +1157,34 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             errors.append(f"File not available locally: {file_url}")
                             continue
                         
-                        # Convert file to markdown (placeholder - integrate with actual tools)
-                        markdown_content = convert_file_to_markdown(
-                            local_path, 
-                            conversion_tool, 
-                            file_info.get('content_type', '')
-                        )
-                        
-                        if markdown_content:
-                            # Save markdown to database
-                            success, error = storage.update_file_markdown(
-                                url=file_url,
-                                markdown_content=markdown_content,
-                                markdown_source=f"converted_{conversion_tool}"
+                        # Convert file to markdown using doc_to_md engines.
+                        try:
+                            conversion = convert_file_to_markdown(
+                                local_path,
+                                conversion_tool,
+                                file_info.get("content_type", ""),
                             )
-                            
-                            if success:
-                                converted_count += 1
-                                logger.info(f"Converted file to markdown: {file_url}")
-                            else:
-                                error_count += 1
-                                errors.append(f"Failed to save markdown for {file_url}: {error}")
+                        except Exception as exc:  # noqa: BLE001
+                            error_count += 1
+                            errors.append(f"{file_url}: conversion failed ({conversion_tool}): {exc}")
+                            continue
+
+                        markdown_content = conversion["markdown"]
+                        used_engine = conversion.get("engine") or conversion_tool
+
+                        # Save markdown to database
+                        success, error = storage.update_file_markdown(
+                            url=file_url,
+                            markdown_content=markdown_content,
+                            markdown_source=f"converted_{used_engine}",
+                        )
+
+                        if success:
+                            converted_count += 1
+                            logger.info("Converted file to markdown: %s (engine=%s)", file_url, used_engine)
                         else:
                             error_count += 1
-                            errors.append(f"Conversion failed for {file_url}")
+                            errors.append(f"Failed to save markdown for {file_url}: {error}")
                     
                     except Exception as e:
                         logger.exception(f"Error converting {file_url}")
