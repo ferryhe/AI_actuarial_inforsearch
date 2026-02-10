@@ -17,15 +17,16 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 - **Markdown content management** - view, edit, and convert documents to markdown
 - SQLite for local use and PostgreSQL for production
 - Web interface for search, export, and operational management
+- Per-task application logs and global operational logs
 
 ## Web Interface Capabilities
 
 - Database browser with sorting, selection, and CSV export
 - Site management with keyword and prefix exclusions
 - Task center for running and monitoring collections
-- **Markdown conversion** - convert PDFs and documents to markdown format
-- **File detail pages** - view and edit markdown content with live preview
-- Global logs for operational visibility
+- **Markdown conversion** - convert locally-available PDFs and documents to markdown format (batch + per-file)
+- **File detail pages** - view, edit, preview markdown, and submit conversion tasks
+- Global logs and per-task logs for operational visibility
 - Local file import with directory browsing
 
 ## Markdown Feature
@@ -37,24 +38,37 @@ The system supports viewing, editing, and converting documents to markdown forma
 - **Edit Mode**: Edit markdown directly in a textarea with monospace font
 - **Manual save**: Markdown edits are saved when you click **Save Markdown**, with timestamp tracking
 - **Source Tracking**: Tracks whether content is manual, converted, or original
+- **Long document UX**: Markdown view is height-capped with an Expand/Collapse toggle
+- **Conversion metadata**: Displays `markdown_source` and `markdown_updated_at` above the markdown section (when available)
 
 ### Markdown Conversion Task
-- Select multiple files from the database for batch conversion
-- Choose conversion tool: Marker (PDF-optimized), Docling (multi-format), or Auto-detect
-- Option to overwrite existing markdown content
-- Progress tracking and error reporting
-- Currently uses a placeholder implementation - integrate with [doc_to_md](https://github.com/ferryhe/doc_to_md) tools for production use
+- Batch conversion runs against **local files already downloaded/imported** (uses DB `local_path`, no re-download)
+- Choose conversion engine: `auto`, `marker`, `docling`, `mistral`, `deepseekocr`
+- Batch window controls: start index (newest first) + scan count
+- Skip already converted files, or overwrite existing markdown
+- Progress tracking, per-task application log, and error reporting
+- Conversion implementation is provided by the local `doc_to_md/` package (adapted from `ferryhe/doc_to_md`)
 
 ### Database Storage
 - Markdown content stored in `catalog_items` table
 - Fields: `markdown_content` (TEXT), `markdown_updated_at` (TEXT, SQLite `CURRENT_TIMESTAMP`), `markdown_source` (TEXT)
 - Accessible via Storage API: `get_file_markdown()`, `update_file_markdown()`
 
+## Conversion Engines
+
+The markdown conversion feature supports multiple engines. Some are heavy and/or require API keys.
+
+- `marker` (local PDF): requires `marker-pdf`
+- `docling` (local multi-format): requires `docling`
+- `mistral` (API): requires `MISTRAL_API_KEY`
+- `deepseekocr` (API via SiliconFlow): requires `SILICONFLOW_API_KEY` and optionally `SILICONFLOW_BASE_URL`
+- `auto`: picks a reasonable engine and falls back when dependencies are missing
+
 ## Project Structure (High-Level)
 
 - `ai_actuarial/` core package (crawler, catalog, storage, collectors, processors)
 - `ai_actuarial/web/` web application (Flask app, templates, assets)
-- `config/` site and category configuration
+- `config/` site/category YAML plus optional python settings package (`config/settings.py` for conversion engines)
 - `data/` downloaded files, catalogs, and database
 - `docs/` implementation notes and operational guidance
 
@@ -128,6 +142,7 @@ flowchart LR
 ## Configuration Notes
 
 - Web search keys: `BRAVE_API_KEY`, `SERPAPI_API_KEY`
+- Markdown conversion API keys: `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `SILICONFLOW_BASE_URL`
 - File deletion: set `ENABLE_FILE_DELETION=true` before starting the web service
 
 ## Documentation Index
@@ -144,6 +159,8 @@ flowchart LR
 - Index database at `data/index.db` (SQLite) or PostgreSQL backend
 - Incremental catalog outputs: `data/catalog.jsonl` and `data/catalog.md`
 - Update logs under `data/updates/`
+- Global application log: `data/app.log`
+- Per-task logs: `data/task_logs/*.log`
 
 ---
 
