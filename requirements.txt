@@ -17,3 +17,7 @@ mistralai>=1.0.0
 tiktoken>=0.5.0
 pypdfium2>=4.0.0
 Pillow>=10.0.0
+
+# Heavy optional engines (install when you want these conversion backends)
+docling>=2.0.0
+marker-pdf>=1.0.0
