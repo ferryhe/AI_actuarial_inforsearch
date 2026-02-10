@@ -3,6 +3,8 @@
 {% block extra_js %}
 <!-- Markdown rendering library -->
 <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<!-- DOMPurify for sanitizing HTML to prevent XSS -->
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -476,9 +478,17 @@
         try {
             const encodedUrl = encodeURIComponent(fileUrl);
             const response = await fetch(`/api/files/${encodedUrl}/markdown`);
+            
+            if (!response.ok) {
+                // Handle HTTP errors separately from empty content
+                console.error('Error loading markdown:', response.status, response.statusText);
+                Toast.error(`Failed to load markdown: ${response.statusText}`);
+                return;
+            }
+            
             const data = await response.json();
             
-            if (response.ok && data.success && data.markdown && data.markdown.markdown_content) {
+            if (data.success && data.markdown && data.markdown.markdown_content) {
                 currentMarkdownContent = data.markdown.markdown_content;
                 renderMarkdownView();
                 
@@ -491,7 +501,7 @@
                 // Hide empty message
                 document.getElementById('markdown-empty').style.display = 'none';
             } else {
-                // No markdown content
+                // No markdown content (but request was successful)
                 currentMarkdownContent = '';
                 document.getElementById('markdown-rendered').innerHTML = '';
                 document.getElementById('markdown-empty').style.display = 'block';
@@ -506,8 +516,11 @@
         const rendered = document.getElementById('markdown-rendered');
         if (currentMarkdownContent) {
             // Use marked.js for rendering if available, otherwise plain text
-            if (typeof marked !== 'undefined') {
-                rendered.innerHTML = marked.parse(currentMarkdownContent);
+            if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+                // Parse markdown and sanitize HTML to prevent XSS
+                const rawHtml = marked.parse(currentMarkdownContent);
+                const cleanHtml = DOMPurify.sanitize(rawHtml);
+                rendered.innerHTML = cleanHtml;
             } else {
                 // Fallback: simple text rendering with line breaks
                 rendered.textContent = currentMarkdownContent;
@@ -589,8 +602,19 @@
         switchMarkdownTab('view');
     }
     
-    // Load markdown content on page load
-    loadMarkdownContent();
+    // Initialize markdown when libraries are loaded
+    function initMarkdown() {
+        // Check if libraries are loaded
+        if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+            loadMarkdownContent();
+        } else {
+            // Wait a bit and try again
+            setTimeout(initMarkdown, 100);
+        }
+    }
+    
+    // Start initialization
+    initMarkdown();
     
     async function deleteFile(url) {
         // Create a custom modal for text confirmation
