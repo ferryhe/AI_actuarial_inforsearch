@@ -11,18 +11,18 @@
 
 本项目是一个设计良好的AI精算信息搜索系统，具有以下特点：
 - ✅ 模块化架构设计清晰
-- ✅ 使用SQLAlchemy ORM防护SQL注入
+- ✅ 使用参数化查询 + ORDER BY 列 allowlist 防护注入（默认 sqlite3；可选 SQLAlchemy backend）
 - ✅ 客户端XSS防护到位
-- ✅ CodeQL安全扫描通过（0个漏洞）
+- ✅ 提供安全工具配置模板（pre-commit / bandit / pytest 等；建议在 CI 中启用 CodeQL）
 - ⚠️ 缺少Web应用认证和授权机制
 - ⚠️ 缺少CSRF保护
 - ⚠️ 依赖项存在已知安全漏洞
 
 This is a well-designed AI actuarial information search system with:
 - ✅ Clear modular architecture
-- ✅ SQL injection protection via SQLAlchemy ORM
+- ✅ SQL injection mitigations via parameterized queries + allowlisted ORDER BY columns (default sqlite3; optional SQLAlchemy backend)
 - ✅ Client-side XSS protection in place
-- ✅ CodeQL security scan passed (0 vulnerabilities)
+- ✅ Security tooling templates included (pre-commit / bandit / pytest; recommend enabling CodeQL in CI)
 - ⚠️ Missing web application authentication/authorization
 - ⚠️ Missing CSRF protection
 - ⚠️ Known security vulnerabilities in dependencies
@@ -760,12 +760,12 @@ Please report security vulnerabilities to: security@example.com
 - FILE_DELETION_AUTH_TOKEN: Required for file deletion
 
 ### Rate Limiting
-- API endpoints are rate-limited to prevent abuse
-- Collection tasks limited to 5 per minute
+- Optional via Flask-Limiter (recommended for public deployments)
+- Configure per-endpoint rules for expensive operations (collections/export/logs)
 
 ### Input Validation
 - All user inputs are validated and sanitized
-- SQL injection protection via SQLAlchemy ORM
+- SQL injection mitigations via parameterized queries + allowlisted ORDER BY columns (default sqlite3; optional SQLAlchemy backend)
 - XSS protection via output escaping
 
 ## Deployment Security Checklist
