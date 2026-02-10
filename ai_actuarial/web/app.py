@@ -93,6 +93,25 @@ def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type:
     return {"markdown": markdown, "engine": output.engine, "model": output.model}
 
 
+def _is_convertible_content_type(content_type: str) -> bool:
+    ct = (content_type or "").lower()
+    if not ct:
+        return False
+    return (
+        ("pdf" in ct)
+        or ("word" in ct)
+        or ("powerpoint" in ct)
+        or ("presentation" in ct)
+        or ("document" in ct)
+        or ("image" in ct)
+    )
+
+
+def _is_convertible_filename(name: str) -> bool:
+    n = (name or "").lower()
+    return n.endswith((".pdf", ".docx", ".pptx", ".png", ".jpg", ".jpeg", ".webp", ".bmp"))
+
+
 def _get_sites_config_path() -> str:
     return os.getenv("CONFIG_PATH", "config/sites.yaml")
 
@@ -1094,13 +1113,98 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             elif collection_type == "catalog":
                 # New Catalog Task
                 from ..catalog_incremental import run_incremental_catalog
-                
+
+                retry_errors = bool(data.get("retry_errors", False))
+                raw_limit = data.get("scan_count")
+                if raw_limit in (None, "", "null"):
+                    raw_limit = data.get("max_items", 100)
+                try:
+                    limit = int(raw_limit)
+                except Exception:
+                    limit = 100
+                limit = max(1, min(limit, 2000))
+
+                raw_start = data.get("scan_start_index")
+                try:
+                    start_index = int(raw_start) if raw_start not in (None, "", "null") else 1
+                except Exception:
+                    start_index = 1
+                start_index = max(1, start_index)
+
+                # Map a "start index" in the newest-first local file list into a candidate offset.
+                candidate_offset = 0
+                catalog_version = "catalog_v1"
+                if start_index > 1:
+                    try:
+                        row = storage._conn.execute(
+                            """
+                            WITH ordered AS (
+                                SELECT
+                                    ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
+                                    CASE
+                                        WHEN c.file_url IS NULL
+                                          OR IFNULL(c.sha256,'') = ''
+                                          OR c.sha256 != f.sha256
+                                          OR IFNULL(c.pipeline_version,'') != ?
+                                          OR (? = 1 AND c.status = 'error')
+                                        THEN 1 ELSE 0
+                                    END AS is_candidate
+                                FROM files f
+                                LEFT JOIN catalog_items c ON c.file_url = f.url
+                                WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                                  AND f.deleted_at IS NULL
+                            )
+                            SELECT COALESCE(SUM(is_candidate), 0)
+                            FROM ordered
+                            WHERE rn < ?
+                            """,
+                            (catalog_version, 1 if retry_errors else 0, start_index),
+                        ).fetchone()
+                        candidate_offset = int(row[0]) if row else 0
+                    except Exception:
+                        # Fallback without window functions
+                        rows = storage._conn.execute(
+                            """
+                            SELECT f.sha256, c.sha256, c.pipeline_version, c.status, c.file_url
+                            FROM files f
+                            LEFT JOIN catalog_items c ON c.file_url = f.url
+                            WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                              AND f.deleted_at IS NULL
+                            ORDER BY f.id DESC
+                            LIMIT ?
+                            """,
+                            (start_index - 1,),
+                        ).fetchall()
+                        for r in rows:
+                            c_url = r[4]
+                            c_sha = r[1] or ""
+                            c_ver = r[2] or ""
+                            c_status = r[3] or ""
+                            f_sha = r[0] or ""
+                            is_candidate = (
+                                (c_url is None)
+                                or (not c_sha)
+                                or (c_sha != f_sha)
+                                or (c_ver != catalog_version)
+                                or (retry_errors and c_status == "error")
+                            )
+                            if is_candidate:
+                                candidate_offset += 1
+
+                _append_task_log(
+                    task_id,
+                    "INFO",
+                    f"Cataloging requested window: start_index={start_index}, scan_count={limit}, retry_errors={retry_errors}, candidate_offset={candidate_offset}",
+                )
+
                 stats = run_incremental_catalog(
                     db_path=db_path,
                     out_jsonl=Path("data/catalog.jsonl"),
                     out_md=Path("data/catalog.md"),
-                    limit=int(data.get("max_items", 100)),
-                    retry_errors=data.get("retry_errors", False),
+                    batch=min(200, limit),
+                    limit=limit,
+                    retry_errors=retry_errors,
+                    candidate_offset=candidate_offset,
                     progress_callback=progress_callback,
                 )
                 
@@ -1122,9 +1226,69 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
-                file_urls = data.get("file_urls", [])
+                file_urls = data.get("file_urls", []) or []
                 conversion_tool = data.get("conversion_tool", "auto")
                 overwrite_existing = data.get("overwrite_existing", False)
+                skip_existing = bool(data.get("skip_existing", True))
+                scan_start_index = data.get("scan_start_index")
+                scan_count = data.get("scan_count")
+
+                if overwrite_existing:
+                    # Overwrite implies we should not skip existing markdown.
+                    skip_existing = False
+
+                # If caller didn't specify explicit file URLs, build a batch window from the DB.
+                if not file_urls and scan_count not in (None, "", "null"):
+                    try:
+                        start_idx = int(scan_start_index) if scan_start_index not in (None, "", "null") else 1
+                    except Exception:
+                        start_idx = 1
+                    try:
+                        scan_n = int(scan_count) if scan_count not in (None, "", "null") else 50
+                    except Exception:
+                        scan_n = 50
+
+                    start_idx = max(1, start_idx)
+                    scan_n = max(1, min(scan_n, 2000))
+                    offset = start_idx - 1
+
+                    where = """
+                        f.local_path IS NOT NULL AND f.local_path != ''
+                        AND f.deleted_at IS NULL
+                        AND (
+                            LOWER(IFNULL(f.content_type,'')) LIKE '%pdf%'
+                            OR LOWER(IFNULL(f.content_type,'')) LIKE '%word%'
+                            OR LOWER(IFNULL(f.content_type,'')) LIKE '%powerpoint%'
+                            OR LOWER(IFNULL(f.content_type,'')) LIKE '%presentation%'
+                            OR LOWER(IFNULL(f.content_type,'')) LIKE '%document%'
+                            OR LOWER(IFNULL(f.content_type,'')) LIKE '%image%'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pdf'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.docx'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pptx'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.png'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpg'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpeg'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.webp'
+                            OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
+                        )
+                    """
+                    rows = storage._conn.execute(
+                        f"""
+                        SELECT f.url, c.markdown_content
+                        FROM files f
+                        LEFT JOIN catalog_items c ON c.file_url = f.url
+                        WHERE {where}
+                        ORDER BY f.id DESC
+                        LIMIT ? OFFSET ?
+                        """,
+                        (scan_n, offset),
+                    ).fetchall()
+                    file_urls = [r[0] for r in rows]
+                    _append_task_log(
+                        task_id,
+                        "INFO",
+                        f"Batch scan selected {len(file_urls)} file(s) (start_index={start_idx}, scan_count={scan_n}, skip_existing={skip_existing}, overwrite={overwrite_existing})",
+                    )
                 
                 logger.info(f"Starting markdown conversion for {len(file_urls)} files")
                 _append_task_log(task_id, "INFO", f"Markdown conversion started: files={len(file_urls)}, engine={conversion_tool}, overwrite={overwrite_existing}")
@@ -1153,7 +1317,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             continue
                         
                         # Skip if markdown already exists and not overwriting
-                        if not overwrite_existing and file_info.get('markdown_content'):
+                        if skip_existing and (not overwrite_existing) and file_info.get('markdown_content'):
                             logger.info(f"Skipping file with existing markdown: {file_url}")
                             _append_task_log(task_id, "INFO", f"Skipped (already has markdown): {file_url}")
                             skipped_count += 1
@@ -1429,8 +1593,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                  path = data.get("directory_path")
                  if not path or not os.path.exists(path):
                      return _reject_request("Invalid directory path")
-            if collection_type == "markdown_conversion" and not data.get("file_urls"):
-                 return _reject_request("No files selected for markdown conversion")
+            if collection_type == "markdown_conversion":
+                 has_urls = bool(data.get("file_urls"))
+                 has_scan = data.get("scan_count") not in (None, "", "null")
+                 if not has_urls and not has_scan:
+                     return _reject_request("No files selected for markdown conversion")
 
             task_id = f"task_{int(datetime.now().timestamp())}"
             task_name = data.get("name", f"{collection_type.capitalize()} Collection")
@@ -1503,6 +1670,196 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             # Sort by started_at desc
             tasks = sorted(_task_history, key=lambda x: x.get('started_at', ''), reverse=True)[:limit]
         return jsonify({"tasks": tasks})
+
+    @app.route("/api/markdown_conversion/stats")
+    def api_markdown_conversion_stats():
+        """Return stats for batch markdown conversion (convertible files only)."""
+        try:
+            storage = Storage(db_path)
+            conn = storage._conn
+            # Convertibility check (best effort): prefer MIME type, fall back to extension.
+            where = """
+                f.local_path IS NOT NULL AND f.local_path != ''
+                AND f.deleted_at IS NULL
+                AND (
+                    LOWER(IFNULL(f.content_type,'')) LIKE '%pdf%'
+                    OR LOWER(IFNULL(f.content_type,'')) LIKE '%word%'
+                    OR LOWER(IFNULL(f.content_type,'')) LIKE '%powerpoint%'
+                    OR LOWER(IFNULL(f.content_type,'')) LIKE '%presentation%'
+                    OR LOWER(IFNULL(f.content_type,'')) LIKE '%document%'
+                    OR LOWER(IFNULL(f.content_type,'')) LIKE '%image%'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pdf'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.docx'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pptx'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.png'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpg'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpeg'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.webp'
+                    OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
+                )
+            """
+
+            total = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM files f
+                LEFT JOIN catalog_items c ON c.file_url = f.url
+                WHERE {where}
+                """
+            ).fetchone()[0]
+
+            with_md = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM files f
+                LEFT JOIN catalog_items c ON c.file_url = f.url
+                WHERE {where}
+                  AND c.markdown_content IS NOT NULL
+                  AND c.markdown_content != ''
+                """
+            ).fetchone()[0]
+
+            first_missing = None
+            try:
+                row = conn.execute(
+                    f"""
+                    WITH ordered AS (
+                        SELECT
+                            ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
+                            c.markdown_content AS md
+                        FROM files f
+                        LEFT JOIN catalog_items c ON c.file_url = f.url
+                        WHERE {where}
+                    )
+                    SELECT rn
+                    FROM ordered
+                    WHERE md IS NULL OR md = ''
+                    ORDER BY rn
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if row:
+                    first_missing = int(row[0])
+            except Exception:
+                # Older SQLite without window functions: best-effort fallback.
+                first_missing = None
+
+            return jsonify(
+                {
+                    "success": True,
+                    "order": "id_desc",
+                    "total_convertible": int(total),
+                    "total_with_markdown": int(with_md),
+                    "first_without_markdown_index": first_missing,
+                }
+            )
+        except Exception as e:
+            logger.exception("Error computing markdown conversion stats")
+            return jsonify({"error": str(e)}), 500
+        finally:
+            try:
+                storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/catalog/stats")
+    def api_catalog_stats():
+        """Return stats for incremental cataloging."""
+        try:
+            storage = Storage(db_path)
+            conn = storage._conn
+
+            total_local = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM files f
+                WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                  AND f.deleted_at IS NULL
+                """
+            ).fetchone()[0]
+
+            total_ok = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM catalog_items c
+                WHERE c.status = 'ok'
+                """
+            ).fetchone()[0]
+
+            catalog_version = "catalog_v1"
+            # Candidate definition (aligned with catalog_incremental behavior, but using legacy columns too).
+            candidates_where = """
+                f.local_path IS NOT NULL AND f.local_path != ''
+                AND f.deleted_at IS NULL
+                AND (
+                    c.file_url IS NULL
+                    OR IFNULL(c.sha256, '') = ''
+                    OR c.sha256 != f.sha256
+                    OR IFNULL(c.pipeline_version,'') != ?
+                )
+            """
+
+            candidate_total = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM files f
+                LEFT JOIN catalog_items c ON c.file_url = f.url
+                WHERE {candidates_where}
+                """,
+                (catalog_version,),
+            ).fetchone()[0]
+
+            first_candidate_index = None
+            try:
+                row = conn.execute(
+                    f"""
+                    WITH ordered AS (
+                        SELECT
+                            ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
+                            c.file_url AS c_url,
+                            f.sha256 AS f_sha,
+                            c.sha256 AS c_sha,
+                            c.pipeline_version AS c_ver
+                        FROM files f
+                        LEFT JOIN catalog_items c ON c.file_url = f.url
+                        WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                          AND f.deleted_at IS NULL
+                    )
+                    SELECT rn
+                    FROM ordered
+                    WHERE c_url IS NULL
+                       OR IFNULL(c_sha,'') = ''
+                       OR c_sha != f_sha
+                       OR IFNULL(c_ver,'') != ?
+                    ORDER BY rn
+                    LIMIT 1
+                    """,
+                    (catalog_version,),
+                ).fetchone()
+                if row:
+                    first_candidate_index = int(row[0])
+            except Exception:
+                first_candidate_index = None
+
+            return jsonify(
+                {
+                    "success": True,
+                    "order": "id_desc",
+                    "total_local_files": int(total_local),
+                    "total_catalog_ok": int(total_ok),
+                    "candidate_total": int(candidate_total),
+                    "first_candidate_index": first_candidate_index,
+                    "catalog_version": catalog_version,
+                }
+            )
+        except Exception as e:
+            logger.exception("Error computing catalog stats")
+            return jsonify({"error": str(e)}), 500
+        finally:
+            try:
+                storage.close()
+            except Exception:
+                pass
 
     @app.route("/api/tasks/log/<task_id>")
     def api_task_log(task_id: str):
