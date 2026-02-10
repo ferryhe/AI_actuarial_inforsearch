@@ -47,7 +47,7 @@ The system supports viewing, editing, and converting documents to markdown forma
 
 ### Database Storage
 - Markdown content stored in `catalog_items` table
-- Fields: `markdown_content` (TEXT), `markdown_updated_at` (TIMESTAMP), `markdown_source` (TEXT)
+- Fields: `markdown_content` (TEXT), `markdown_updated_at` (TEXT, SQLite `CURRENT_TIMESTAMP`), `markdown_source` (TEXT)
 - Accessible via Storage API: `get_file_markdown()`, `update_file_markdown()`
 
 ## Project Structure (High-Level)
