@@ -116,6 +116,9 @@ class Storage:
                 "summary": "TEXT",
                 "category": "TEXT",
                 "updated_at": "TEXT",
+                "markdown_content": "TEXT",
+                "markdown_updated_at": "TEXT",
+                "markdown_source": "TEXT",
             },
         )
         self._migrate_catalog_items()
@@ -879,7 +882,8 @@ class Storage:
                    f.original_filename, f.local_path, f.bytes, f.content_type,
                    f.last_modified, f.etag, f.published_time, f.first_seen,
                    f.last_seen, f.crawl_time, f.deleted_at,
-                   c.category, c.summary, c.keywords, c.status
+                   c.category, c.summary, c.keywords, c.status,
+                   c.markdown_content, c.markdown_updated_at, c.markdown_source
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
             WHERE f.url = ?
@@ -911,6 +915,9 @@ class Storage:
             "summary": row[17],
             "keywords": json.loads(row[18]) if row[18] else [],
             "catalog_status": row[19],
+            "markdown_content": row[20],
+            "markdown_updated_at": row[21],
+            "markdown_source": row[22],
         }
     
     def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
@@ -979,6 +986,87 @@ class Storage:
             return (True, None)
         
         return (False, "no_updates")
+    
+    def update_file_markdown(self, url: str, markdown_content: str, markdown_source: str = "manual") -> tuple[bool, str | None]:
+        """Update markdown content for a file.
+        
+        Args:
+            url: File URL
+            markdown_content: Markdown content to save
+            markdown_source: Source of the markdown (manual/converted/original)
+            
+        Returns:
+            Tuple of (success: bool, error_reason: str | None)
+            - (True, None) if update succeeded
+            - (False, "file_not_found") if file doesn't exist
+        """
+        # Check if file exists
+        file_cur = self._conn.execute(
+            "SELECT url FROM files WHERE url = ?",
+            (url,)
+        )
+        if file_cur.fetchone() is None:
+            return (False, "file_not_found")
+        
+        # Check if catalog entry exists
+        cur = self._conn.execute(
+            "SELECT file_url FROM catalog_items WHERE file_url = ?",
+            (url,)
+        )
+        exists = cur.fetchone() is not None
+        
+        if not exists:
+            # Create a catalog entry if it doesn't exist
+            self._conn.execute(
+                """
+                INSERT INTO catalog_items (file_url, sha256, pipeline_version, status)
+                SELECT url, sha256, 'manual', 'ok' FROM files WHERE url = ?
+                """,
+                (url,)
+            )
+        
+        # Update markdown content
+        self._conn.execute(
+            """
+            UPDATE catalog_items 
+            SET markdown_content = ?, 
+                markdown_updated_at = CURRENT_TIMESTAMP,
+                markdown_source = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE file_url = ?
+            """,
+            (markdown_content, markdown_source, url)
+        )
+        self._maybe_commit()
+        return (True, None)
+    
+    def get_file_markdown(self, url: str) -> dict | None:
+        """Get markdown content for a file.
+        
+        Args:
+            url: File URL
+            
+        Returns:
+            Dict with markdown_content, markdown_updated_at, markdown_source or None
+        """
+        cur = self._conn.execute(
+            """
+            SELECT markdown_content, markdown_updated_at, markdown_source
+            FROM catalog_items
+            WHERE file_url = ?
+            """,
+            (url,)
+        )
+        row = cur.fetchone()
+        
+        if not row:
+            return None
+        
+        return {
+            "markdown_content": row[0],
+            "markdown_updated_at": row[1],
+            "markdown_source": row[2],
+        }
     
     def clear_local_path(self, url: str) -> None:
         """Clear the local_path for a file (for deletion tracking).
