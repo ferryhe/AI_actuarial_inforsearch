@@ -1148,7 +1148,35 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         
                         # Check if file has local_path
                         local_path = file_info.get('local_path')
-                        if not local_path or not os.path.exists(local_path):
+                        if not local_path:
+                            logger.warning(f"File has no local_path: {file_url}")
+                            error_count += 1
+                            errors.append(f"File not available locally: {file_url}")
+                            continue
+                        
+                        # Resolve relative paths to absolute paths (same as /api/download)
+                        if not os.path.isabs(local_path):
+                            relative_path = Path(local_path)
+                            # Use the parent of download_dir as base to resolve relative paths from the database
+                            base_dir = Path(download_dir).parent.resolve()
+                            candidate = (base_dir / relative_path).resolve()
+                            
+                            if candidate.exists():
+                                local_path = str(candidate)
+                            else:
+                                # Fallback: try resolving relative to download_dir itself
+                                fallback_base = Path(download_dir).resolve()
+                                fallback_candidate = (fallback_base / relative_path).resolve()
+                                if fallback_candidate.exists():
+                                    local_path = str(fallback_candidate)
+                                else:
+                                    logger.warning(f"Failed to resolve local_path for {file_url}")
+                                    error_count += 1
+                                    errors.append(f"File not found on disk: {file_url}")
+                                    continue
+                        
+                        # Check if resolved path exists
+                        if not os.path.exists(local_path):
                             logger.warning(f"File not available locally: {file_url}")
                             error_count += 1
                             errors.append(f"File not available locally: {file_url}")
