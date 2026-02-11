@@ -17,7 +17,7 @@ class TestSemanticChunker(unittest.TestCase):
         """Set up test fixtures."""
         self.chunker = SemanticChunker(
             max_tokens=800,
-            min_tokens=100,
+            min_tokens=10,
             preserve_headers=True,
             preserve_citations=True,
             include_hierarchy=True

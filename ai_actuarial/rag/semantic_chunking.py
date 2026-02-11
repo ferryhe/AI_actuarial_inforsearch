@@ -143,6 +143,7 @@ class SemanticChunker:
                                 sub_chunk.section_hierarchy = ' > '.join(current_hierarchy) if current_hierarchy else None
                                 chunks.append(sub_chunk)
                                 chunk_index += 1
+                            current_section = []
                         elif token_count >= self.min_tokens:
                             # Section is good size
                             chunk = Chunk(
@@ -154,9 +155,9 @@ class SemanticChunker:
                             )
                             chunks.append(chunk)
                             chunk_index += 1
+                            current_section = []
                         # If too small, it will be combined with next section
-                    
-                    current_section = []
+                        # by keeping it in current_section and not emitting a chunk yet.
                 
                 # Update hierarchy
                 header_level = len(header_match.group(1))
@@ -189,7 +190,8 @@ class SemanticChunker:
                         sub_chunk.section_hierarchy = ' > '.join(current_hierarchy) if current_hierarchy else None
                         chunks.append(sub_chunk)
                         chunk_index += 1
-                elif token_count >= self.min_tokens:
+                elif token_count >= self.min_tokens or (token_count > 0 and not chunks):
+                    # Emit if valid size OR if it's the only/last content (don't lose data)
                     chunk = Chunk(
                         content=section_text,
                         token_count=token_count,

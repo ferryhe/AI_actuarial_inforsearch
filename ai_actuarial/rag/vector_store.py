@@ -9,10 +9,9 @@ Supports:
 - Index persistence
 """
 
-import json
 import pickle
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import numpy as np
 
 try:
@@ -163,14 +162,14 @@ class VectorStore:
             
             # Build results
             results = []
-            for idx, score in zip(indices[0], similarities[0]):
+            for pos, (idx, score) in enumerate(zip(indices[0], similarities[0])):
                 if idx < len(self.metadata):  # Valid index
                     # Apply threshold if specified
                     if similarity_threshold is None or score >= similarity_threshold:
                         result = {
                             'metadata': self.metadata[idx],
                             'score': float(score),
-                            'distance': float(distances[0][len(results)]),
+                            'distance': float(distances[0][pos]),
                             'index': int(idx)
                         }
                         results.append(result)
