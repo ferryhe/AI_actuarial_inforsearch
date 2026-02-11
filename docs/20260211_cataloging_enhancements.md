@@ -8,6 +8,7 @@ This document describes cataloging improvements added after the token-auth/permi
   - `source` (extract text from the local file), or
   - `markdown` (use markdown stored in `catalog_items.markdown_content`, typically produced via Markdown Conversion in File Details).
 - Cataloging now supports:
+  - UI: one checkbox `overwrite_existing` (unchecked means `skip_existing=true`)
   - `skip_existing` (default): only process new/changed files (or version changes)
   - `overwrite_existing`: recatalog even if the file was already cataloged with the same pipeline version
 - Cataloging providers:
@@ -23,6 +24,14 @@ This document describes cataloging improvements added after the token-auth/permi
   - Choose provider: `Local` or `OpenAI (ChatGPT)` (if configured)
 - Single file: open a file in `Database` -> `File Details`
   - Click `Catalog (AI)` and submit a 1-file catalog task
+
+## File Details Metadata
+
+After catalog tasks run, File Details now shows catalog metadata under **Keywords**:
+
+- Data source: `Source file` or `Markdown`
+- Method: `local (KeyBERT)` or `OpenAI (ChatGPT)`
+- Updated time: from catalog processing timestamp
 
 ## OpenAI Configuration (.env)
 
