@@ -1,167 +1,164 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - AI Actuarial Info Search</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <style>
-        body {
-            background:
-                radial-gradient(1200px 600px at 20% 10%, rgba(59, 130, 246, 0.10), transparent 60%),
-                radial-gradient(900px 500px at 80% 20%, rgba(16, 185, 129, 0.10), transparent 55%),
-                radial-gradient(800px 500px at 50% 90%, rgba(245, 158, 11, 0.10), transparent 60%),
-                linear-gradient(180deg, var(--bg-color), var(--bg-color));
-        }
-        .login-wrap {
-            min-height: calc(100vh - 80px);
-            display: flex;
-            align-items: center;
-        }
-        .login-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 14px;
-            box-shadow: var(--shadow);
-            padding: 28px;
-        }
-        .login-title {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 6px;
-        }
-        .login-badge {
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            display: grid;
-            place-items: center;
-            background: linear-gradient(135deg, rgba(59,130,246,.20), rgba(16,185,129,.20));
-            border: 1px solid rgba(0,0,0,0.06);
-        }
-        [data-theme="dark"] .login-badge {
-            border: 1px solid rgba(255,255,255,0.10);
-        }
-        .login-badge svg {
-            width: 22px;
-            height: 22px;
-        }
-        .login-subtitle {
-            opacity: 0.85;
-            margin: 0 0 18px 0;
-        }
-        .token-row {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        .token-row input {
-            flex: 1;
-        }
-        .btn-ghost {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-        }
-        .btn-ghost:hover {
-            color: var(--text-primary);
-            border-color: var(--primary-color);
-        }
-        .login-footnote {
-            margin-top: 14px;
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            line-height: 1.4;
-        }
-        .login-footnote code {
-            background: rgba(0,0,0,0.05);
-            padding: 2px 6px;
-            border-radius: 6px;
-        }
-        [data-theme="dark"] .login-footnote code {
-            background: rgba(255,255,255,0.08);
-        }
-        .next-pill {
-            display: inline-block;
-            margin-top: 10px;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            border: 1px dashed var(--border-color);
-            border-radius: 999px;
-            padding: 6px 10px;
-        }
-    </style>
-</head>
-<body>
-    <main class="main-content">
-        <div class="container login-wrap" style="max-width: 760px;">
-            <div class="login-card" style="width: 100%;">
-                <div class="login-title">
-                    <div class="login-badge" aria-hidden="true">
-                        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                            <path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z"></path>
-                        </svg>
-                    </div>
-                    <div>
-                        <h2 style="margin: 0;">Token Login</h2>
-                        <div class="login-subtitle">Paste your API token to access the web UI.</div>
-                    </div>
-                </div>
+{% extends "base.html" %}
 
-                <form method="POST" action="{{ url_for('login', next=next) }}">
-                    <input type="hidden" name="next" value="{{ next }}">
-                    <div class="form-group">
-                        <label for="token">API Token</label>
-                        <div class="token-row">
-                            <input id="token" name="token" type="password" class="form-control" autocomplete="off" required placeholder="Bearer token">
-                            <button type="button" class="btn btn-ghost" id="toggle-token-visibility">Show</button>
-                            <button type="button" class="btn btn-ghost" id="paste-token">Paste</button>
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 10px; margin-top: 1rem; align-items: center;">
-                        <button type="submit" class="btn btn-primary">Login</button>
-                        <a href="/" class="btn btn-secondary">Home</a>
-                    </div>
-                </form>
+{% block title %}Login - AI Actuarial Info Search{% endblock %}
 
-                {% if next and next != '/' %}
-                <div class="next-pill">After login you will return to: <code>{{ next }}</code></div>
-                {% endif %}
+{% block extra_css %}
+<style>
+  body {
+    background:
+      radial-gradient(1200px 600px at 20% 10%, rgba(59, 130, 246, 0.10), transparent 60%),
+      radial-gradient(900px 500px at 80% 20%, rgba(16, 185, 129, 0.10), transparent 55%),
+      radial-gradient(800px 500px at 50% 90%, rgba(245, 158, 11, 0.10), transparent 60%),
+      linear-gradient(180deg, var(--bg-color), var(--bg-color));
+  }
+  .login-wrap {
+    min-height: calc(100vh - 180px);
+    display: flex;
+    align-items: center;
+  }
+  .login-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 28px;
+  }
+  .login-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .login-badge {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(135deg, rgba(59,130,246,.20), rgba(16,185,129,.20));
+    border: 1px solid rgba(0,0,0,0.06);
+  }
+  [data-theme="dark"] .login-badge {
+    border: 1px solid rgba(255,255,255,0.10);
+  }
+  .login-badge svg {
+    width: 22px;
+    height: 22px;
+  }
+  .login-subtitle {
+    opacity: 0.85;
+    margin: 0 0 18px 0;
+  }
+  .token-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .token-row input { flex: 1; }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+  }
+  .btn-ghost:hover {
+    color: var(--text-primary);
+    border-color: var(--primary-color);
+  }
+  .login-footnote {
+    margin-top: 14px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+  .login-footnote code {
+    background: rgba(0,0,0,0.05);
+    padding: 2px 6px;
+    border-radius: 6px;
+  }
+  [data-theme="dark"] .login-footnote code {
+    background: rgba(255,255,255,0.08);
+  }
+  .next-pill {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    border: 1px dashed var(--border-color);
+    border-radius: 999px;
+    padding: 6px 10px;
+  }
+</style>
+{% endblock %}
 
-                <div class="login-footnote">
-                    Security note: tokens grant the permissions of the assigned group. Do not share tokens, and rotate them if exposed.
-                </div>
-            </div>
+{% block content %}
+<div class="login-wrap" style="max-width: 760px; margin: 0 auto;">
+  <div class="login-card" style="width: 100%;">
+    <div class="login-title">
+      <div class="login-badge" aria-hidden="true">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z"></path>
+        </svg>
+      </div>
+      <div>
+        <h2 style="margin: 0;">Token Login</h2>
+        <div class="login-subtitle">Paste your API token to access the web UI.</div>
+      </div>
+    </div>
+
+    <form method="POST" action="{{ url_for('login', next=next) }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="form-group">
+        <label for="token">API Token</label>
+        <div class="token-row">
+          <input id="token" name="token" type="password" class="form-control" autocomplete="off" required placeholder="Bearer token">
+          <button type="button" class="btn btn-ghost" id="toggle-token-visibility">Show</button>
+          <button type="button" class="btn btn-ghost" id="paste-token">Paste</button>
         </div>
-    </main>
-    <script>
-        (function () {
-            const input = document.getElementById('token');
-            const toggle = document.getElementById('toggle-token-visibility');
-            const paste = document.getElementById('paste-token');
-            if (toggle && input) {
-                toggle.addEventListener('click', () => {
-                    const nextType = (input.type === 'password') ? 'text' : 'password';
-                    input.type = nextType;
-                    toggle.textContent = (nextType === 'password') ? 'Show' : 'Hide';
-                    input.focus();
-                });
-            }
-            if (paste && input && navigator.clipboard) {
-                paste.addEventListener('click', async () => {
-                    try {
-                        const text = await navigator.clipboard.readText();
-                        if (text) {
-                            input.value = text.trim();
-                            input.focus();
-                        }
-                    } catch (e) {
-                        // Clipboard access can be blocked by browser policy.
-                    }
-                });
-            }
-        })();
-    </script>
-</body>
-</html>
+      </div>
+      <div style="display: flex; gap: 10px; margin-top: 1rem; align-items: center;">
+        <button type="submit" class="btn btn-primary">Login</button>
+        <a href="/" class="btn btn-secondary">Home</a>
+      </div>
+    </form>
+
+    {% if next and next != '/' %}
+    <div class="next-pill">After login you will return to: <code>{{ next }}</code></div>
+    {% endif %}
+
+    <div class="login-footnote">
+      Security note: tokens grant the permissions of the assigned group. Do not share tokens, and rotate them if exposed.
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const input = document.getElementById('token');
+    const toggle = document.getElementById('toggle-token-visibility');
+    const paste = document.getElementById('paste-token');
+    if (toggle && input) {
+      toggle.addEventListener('click', () => {
+        const nextType = (input.type === 'password') ? 'text' : 'password';
+        input.type = nextType;
+        toggle.textContent = (nextType === 'password') ? 'Show' : 'Hide';
+        input.focus();
+      });
+    }
+    if (paste && input && navigator.clipboard) {
+      paste.addEventListener('click', async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            input.value = text.trim();
+            input.focus();
+          }
+        } catch (e) {
+          // Clipboard access can be blocked by browser policy.
+        }
+      });
+    }
+  })();
+</script>
+{% endblock %}
