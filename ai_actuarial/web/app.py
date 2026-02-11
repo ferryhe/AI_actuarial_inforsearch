@@ -1714,9 +1714,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
             elif collection_type == "catalog":
                 # New Catalog Task
-                from ..catalog_incremental import run_incremental_catalog
+                from ..catalog_incremental import run_catalog_for_urls, run_incremental_catalog
+                from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
 
                 retry_errors = bool(data.get("retry_errors", False))
+                provider = str(data.get("provider") or "local").strip().lower()
+                input_source = str(data.get("input_source") or "source").strip().lower()
+                overwrite_existing = bool(data.get("overwrite_existing", False))
+                skip_existing = bool(data.get("skip_existing", True))
+                if overwrite_existing:
+                    skip_existing = False
+
+                file_urls = data.get("file_urls") or []
+                if not isinstance(file_urls, list):
+                    file_urls = []
                 raw_limit = data.get("scan_count")
                 if raw_limit in (None, "", "null"):
                     raw_limit = data.get("max_items", 100)
@@ -1735,8 +1746,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                 # Map a "start index" in the newest-first local file list into a candidate offset.
                 candidate_offset = 0
-                catalog_version = "catalog_v1"
-                if start_index > 1:
+                catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
+                if (not skip_existing) and start_index > 1:
+                    candidate_offset = start_index - 1
+                elif start_index > 1:
                     try:
                         row = storage._conn.execute(
                             """
@@ -1745,9 +1758,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                                     ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
                                     CASE
                                         WHEN c.file_url IS NULL
-                                          OR IFNULL(c.sha256,'') = ''
-                                          OR c.sha256 != f.sha256
-                                          OR IFNULL(c.pipeline_version,'') != ?
+                                          OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
+                                          OR IFNULL(c.file_sha256, c.sha256) != f.sha256
+                                          OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version), '') != ?
                                           OR (? = 1 AND c.status = 'error')
                                         THEN 1 ELSE 0
                                     END AS is_candidate
@@ -1767,7 +1780,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         # Fallback without window functions
                         rows = storage._conn.execute(
                             """
-                            SELECT f.sha256, c.sha256, c.pipeline_version, c.status, c.file_url
+                            SELECT f.sha256,
+                                   IFNULL(c.file_sha256, c.sha256) AS c_sha,
+                                   IFNULL(c.catalog_version, c.pipeline_version) AS c_ver,
+                                   c.status,
+                                   c.file_url
                             FROM files f
                             LEFT JOIN catalog_items c ON c.file_url = f.url
                             WHERE f.local_path IS NOT NULL AND f.local_path != ''
@@ -1796,19 +1813,43 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 _append_task_log(
                     task_id,
                     "INFO",
-                    f"Cataloging requested window: start_index={start_index}, scan_count={limit}, retry_errors={retry_errors}, candidate_offset={candidate_offset}",
+                    (
+                        "Cataloging requested window: "
+                        f"start_index={start_index}, scan_count={limit}, retry_errors={retry_errors}, "
+                        f"skip_existing={skip_existing}, overwrite_existing={overwrite_existing}, "
+                        f"provider={provider}, input_source={input_source}, candidate_offset={candidate_offset}"
+                    ),
                 )
 
-                stats = run_incremental_catalog(
-                    db_path=db_path,
-                    out_jsonl=Path("data/catalog.jsonl"),
-                    out_md=Path("data/catalog.md"),
-                    batch=min(200, limit),
-                    limit=limit,
-                    retry_errors=retry_errors,
-                    candidate_offset=candidate_offset,
-                    progress_callback=progress_callback,
-                )
+                if file_urls:
+                    stats = run_catalog_for_urls(
+                        db_path=db_path,
+                        file_urls=file_urls,
+                        out_jsonl=Path("data/catalog.jsonl"),
+                        out_md=Path("data/catalog.md"),
+                        catalog_version=catalog_version,
+                        retry_errors=retry_errors,
+                        skip_existing=skip_existing,
+                        provider=provider,
+                        input_source=input_source,
+                        max_workers=min(5, max(1, len(file_urls))),
+                        progress_callback=progress_callback,
+                    )
+                else:
+                    stats = run_incremental_catalog(
+                        db_path=db_path,
+                        out_jsonl=Path("data/catalog.jsonl"),
+                        out_md=Path("data/catalog.md"),
+                        batch=min(200, limit),
+                        limit=limit,
+                        retry_errors=retry_errors,
+                        skip_existing=skip_existing,
+                        provider=provider,
+                        input_source=input_source,
+                        catalog_version=catalog_version,
+                        candidate_offset=candidate_offset,
+                        progress_callback=progress_callback,
+                    )
                 
                 # Mock result for catalog
                 class CatalogResult:
@@ -2401,16 +2442,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 """
             ).fetchone()[0]
 
-            catalog_version = "catalog_v1"
+            from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
+
+            provider = str(request.args.get("provider") or "local").strip().lower()
+            input_source = str(request.args.get("input_source") or "source").strip().lower()
+            catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
             # Candidate definition (aligned with catalog_incremental behavior, but using legacy columns too).
             candidates_where = """
                 f.local_path IS NOT NULL AND f.local_path != ''
                 AND f.deleted_at IS NULL
                 AND (
                     c.file_url IS NULL
-                    OR IFNULL(c.sha256, '') = ''
-                    OR c.sha256 != f.sha256
-                    OR IFNULL(c.pipeline_version,'') != ?
+                    OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
+                    OR IFNULL(c.file_sha256, c.sha256) != f.sha256
+                    OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version),'') != ?
                 )
             """
 
@@ -2430,26 +2475,26 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     f"""
                     WITH ordered AS (
                         SELECT
-                            ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
-                            c.file_url AS c_url,
-                            f.sha256 AS f_sha,
-                            c.sha256 AS c_sha,
-                            c.pipeline_version AS c_ver
-                        FROM files f
-                        LEFT JOIN catalog_items c ON c.file_url = f.url
-                        WHERE f.local_path IS NOT NULL AND f.local_path != ''
-                          AND f.deleted_at IS NULL
-                    )
-                    SELECT rn
-                    FROM ordered
-                    WHERE c_url IS NULL
-                       OR IFNULL(c_sha,'') = ''
-                       OR c_sha != f_sha
-                       OR IFNULL(c_ver,'') != ?
-                    ORDER BY rn
-                    LIMIT 1
-                    """,
-                    (catalog_version,),
+                             ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
+                             c.file_url AS c_url,
+                             f.sha256 AS f_sha,
+                             IFNULL(c.file_sha256, c.sha256) AS c_sha,
+                             IFNULL(c.catalog_version, c.pipeline_version) AS c_ver
+                         FROM files f
+                         LEFT JOIN catalog_items c ON c.file_url = f.url
+                         WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                           AND f.deleted_at IS NULL
+                     )
+                     SELECT rn
+                          FROM ordered
+                          WHERE c_url IS NULL
+                        OR IFNULL(c_sha,'') = ''
+                        OR c_sha != f_sha
+                        OR IFNULL(c_ver,'') != ?
+                        ORDER BY rn
+                        LIMIT 1
+                        """,
+                     (catalog_version,),
                 ).fetchone()
                 if row:
                     first_candidate_index = int(row[0])
