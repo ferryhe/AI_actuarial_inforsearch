@@ -3013,6 +3013,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error reading global logs")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    # ========================================================================
+    # RAG Knowledge Base Management API Routes
+    # ========================================================================
+    try:
+        from ai_actuarial.web.rag_routes import register_rag_routes
+        register_rag_routes(app, db_path, require_permissions)
+        logger.info("RAG API routes registered")
+    except ImportError as e:
+        logger.warning(f"RAG routes not available: {e}")
+    except Exception as e:
+        logger.error(f"Failed to register RAG routes: {e}")
+
     # Scheduler Initialization
     def init_scheduler():
         try:
