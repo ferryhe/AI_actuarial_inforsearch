@@ -11,17 +11,38 @@
       radial-gradient(800px 500px at 50% 90%, rgba(245, 158, 11, 0.10), transparent 60%),
       linear-gradient(180deg, var(--bg-color), var(--bg-color));
   }
+  [data-theme="dark"] body {
+    background:
+      radial-gradient(1200px 700px at 18% 8%, rgba(59, 130, 246, 0.18), transparent 62%),
+      radial-gradient(900px 600px at 82% 16%, rgba(16, 185, 129, 0.16), transparent 58%),
+      radial-gradient(900px 700px at 50% 95%, rgba(245, 158, 11, 0.14), transparent 64%),
+      linear-gradient(180deg, var(--bg-color), var(--bg-color));
+  }
+  .main-content {
+    padding-top: 0.25rem;
+    padding-bottom: 0;
+  }
+  .main-content > .container {
+    max-width: none;
+    padding-left: clamp(16px, 3vw, 40px);
+    padding-right: clamp(16px, 3vw, 40px);
+  }
+  .footer {
+    margin-top: 0;
+  }
   .login-wrap {
-    min-height: calc(100vh - 180px);
+    min-height: calc(100vh - 190px);
     display: flex;
     align-items: center;
+    justify-content: center;
+    padding: 1.5rem 0 2.5rem 0;
   }
   .login-card {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: 14px;
     box-shadow: var(--shadow);
-    padding: 28px;
+    padding: 30px;
   }
   .login-title {
     display: flex;
@@ -91,8 +112,8 @@
 {% endblock %}
 
 {% block content %}
-<div class="login-wrap" style="max-width: 760px; margin: 0 auto;">
-  <div class="login-card" style="width: 100%;">
+<div class="login-wrap" style="width: min(1120px, 100%); margin: 0 auto;">
+  <div class="login-card" style="width: min(980px, 100%);">
     <div class="login-title">
       <div class="login-badge" aria-hidden="true">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

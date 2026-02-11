@@ -345,13 +345,10 @@
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="skip_existing" id="catalog-skip-existing" checked> Skip already cataloged
+                    <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing">
+                    Overwrite existing content (recompute)
                 </label>
-            </div>
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing"> Overwrite existing content (recompute)
-                </label>
+                <small class="form-hint">Unchecked = Skip already cataloged</small>
             </div>
             <div class="form-group">
                 <label>AI Provider</label>
@@ -535,15 +532,10 @@
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="skip_existing" id="md-skip-existing" checked>
-                    Skip already converted
-                </label>
-            </div>
-            <div class="form-group">
-                <label>
                     <input type="checkbox" name="overwrite_existing" id="overwrite-existing">
-                    Overwrite existing markdown content
+                    Overwrite existing markdown content (recompute)
                 </label>
+                <small class="form-hint">Unchecked = Skip already converted</small>
             </div>
             <button type="submit" class="btn btn-primary" id="markdown-convert-btn">Convert Files</button>
         </form>
@@ -923,26 +915,17 @@ function openQuickCheckModal() { openModal('quick-check-modal'); }
 let _catalogModalBound = false;
 function _syncCatalogOverwrite() {
     const overwriteEl = document.getElementById('catalog-overwrite-existing');
-    const skipEl = document.getElementById('catalog-skip-existing');
-    if (!overwriteEl || !skipEl) return;
-    if (overwriteEl.checked) {
-        skipEl.checked = false;
-        skipEl.disabled = true;
-    } else {
-        skipEl.disabled = false;
-    }
+    if (!overwriteEl) return;
 }
 
 function _bindCatalogModal() {
     if (_catalogModalBound) return;
     _catalogModalBound = true;
     const overwriteEl = document.getElementById('catalog-overwrite-existing');
-    const skipEl = document.getElementById('catalog-skip-existing');
     const providerEl = document.querySelector('#catalog-form select[name="provider"]');
     const sourceEl = document.querySelector('#catalog-form select[name="input_source"]');
 
     if (overwriteEl) overwriteEl.addEventListener('change', _syncCatalogOverwrite);
-    if (skipEl) skipEl.addEventListener('change', () => loadCatalogStats());
     if (providerEl) providerEl.addEventListener('change', () => loadCatalogStats());
     if (sourceEl) sourceEl.addEventListener('change', () => loadCatalogStats());
 }
@@ -1058,7 +1041,7 @@ function startCatalog(e) {
     if (!validateForm(form)) return;
     const formData = new FormData(form);
     const overwrite = formData.get('overwrite_existing') === 'on';
-    const skipExisting = overwrite ? false : (formData.get('skip_existing') === 'on');
+    const skipExisting = !overwrite;
     
     startTask('catalog', {
         type: 'catalog',
@@ -1111,20 +1094,6 @@ let markdownConversionStats = null;
 function openMarkdownConversionModal() {
     openModal('markdown-conversion-modal');
     loadMarkdownConversionStats();
-    // Keep skip/overwrite mutually consistent
-    const overwrite = document.getElementById('overwrite-existing');
-    if (overwrite) {
-        overwrite.addEventListener('change', () => {
-            const skip = document.getElementById('md-skip-existing');
-            if (!skip) return;
-            if (overwrite.checked) {
-                skip.checked = false;
-                skip.disabled = true;
-            } else {
-                skip.disabled = false;
-            }
-        }, { once: true });
-    }
 }
 
 async function loadMarkdownConversionStats() {
@@ -1163,8 +1132,8 @@ function startMarkdownConversion(e) {
     const engine = formData.get('conversion_tool');
     const startIndex = parseInt(formData.get('scan_start_index') || '1');
     const scanCount = parseInt(formData.get('scan_count') || '50');
-    const skipExisting = formData.get('skip_existing') === 'on';
     const overwriteExisting = formData.get('overwrite_existing') === 'on';
+    const skipExisting = !overwriteExisting;
 
     if (!Number.isFinite(startIndex) || startIndex < 1) {
         showNotification('Start index must be >= 1', 'error');

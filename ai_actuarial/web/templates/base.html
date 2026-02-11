@@ -12,6 +12,23 @@
         })();
     </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Keep guest auth modal readable across page-level modal overrides. */
+        #auth-required-modal {
+            align-items: center !important;
+            justify-content: center !important;
+            z-index: 3000;
+        }
+        #auth-required-modal .confirm-dialog {
+            width: min(420px, 92vw);
+            background: #ffffff !important;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        [data-theme="dark"] #auth-required-modal .confirm-dialog {
+            background: var(--card-bg) !important;
+        }
+    </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
