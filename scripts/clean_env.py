@@ -1,6 +1,5 @@
 import argparse
 import datetime as _dt
-import os
 import re
 import secrets
 from pathlib import Path

@@ -498,8 +498,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             try:
                 if storage is not None:
                     storage.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("Failed to close storage during bootstrap admin token setup")
 
     # Load task history from disk
     history_file = Path('data/job_history.jsonl')
@@ -637,14 +637,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 try:
                     if token:
                         storage.touch_auth_token_last_used(int(token["id"]))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort: do not break the request if updating last_used_at fails.
+                    logger.debug("Failed to update auth token last_used_at: %s", exc)
         finally:
             try:
                 if storage is not None:
                     storage.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Best-effort: failures while closing storage should not break the request.
+                logger.debug("Failed to close storage: %s", exc)
         return None
 
     @app.context_processor
@@ -748,6 +750,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 pass
 
         next_url = request.args.get("next") or request.form.get("next") or "/"
+        # Validate next parameter to prevent open redirect
+        if next_url and not next_url.startswith("/"):
+            next_url = "/"
         return redirect(next_url)
 
     @app.route("/logout", methods=["POST"])
@@ -766,33 +771,42 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/api/auth/me")
     def api_auth_me():
         """Return current token identity and permissions."""
-        if not require_auth:
-            return jsonify({"success": True, "authenticated": False, "token": None, "permissions": []})
-
         storage = None
         try:
             storage = Storage(db_path)
             token, perms = _load_auth_from_request(storage)
-            if not token:
+            authenticated = bool(token)
+
+            # When auth is required and no valid token is present, keep returning 401.
+            if require_auth and not authenticated:
                 return _api_error("Unauthorized", status_code=401)
+
+            token_payload = (
+                {
+                    "id": token.get("id"),
+                    "subject": token.get("subject"),
+                    "group_name": token.get("group_name"),
+                }
+                if authenticated and isinstance(token, dict)
+                else None
+            )
+
             return jsonify(
                 {
                     "success": True,
-                    "authenticated": True,
-                    "token": {
-                        "id": token.get("id"),
-                        "subject": token.get("subject"),
-                        "group_name": token.get("group_name"),
-                    },
-                    "permissions": sorted(perms),
+                    "require_auth": bool(require_auth),
+                    "authenticated": authenticated,
+                    "token": token_payload,
+                    "permissions": sorted(perms) if authenticated else [],
                 }
             )
         finally:
             try:
                 if storage is not None:
                     storage.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Best-effort: failures while closing storage should not break the request.
+                logger.debug("Failed to close storage: %s", exc)
 
     @app.route("/api/auth/tokens", methods=["GET", "POST"])
     @require_permissions("tokens.manage")
@@ -1053,7 +1067,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """Get backend settings from sites.yaml and runtime environment."""
         try:
             config_data = _load_yaml(_get_sites_config_path(), default={})
-            return jsonify(_serialize_backend_settings(config_data))
+            settings = _serialize_backend_settings(config_data)
+            # Redact filesystem paths from runtime section to prevent information disclosure
+            if "runtime" in settings and isinstance(settings["runtime"], dict):
+                runtime = settings["runtime"]
+                # Replace full paths with just boolean flags
+                if "config_path" in runtime:
+                    runtime["config_path_set"] = bool(runtime.pop("config_path", None))
+                if "categories_config_path" in runtime:
+                    runtime["categories_config_path_set"] = bool(runtime.pop("categories_config_path", None))
+            return jsonify(settings)
         except Exception as e:
             logger.exception("Error getting backend settings")
             return _api_error("Internal server error", status_code=500, detail=str(e))
