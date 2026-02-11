@@ -843,7 +843,8 @@ function resetFormatSelector(modalId) {
 function openModal(id) {
     const modal = document.getElementById(id);
     if (!modal) return;
-    modal.style.display = 'block';
+    // `.modal` is a flex-centered backdrop; use flex so modals are centered.
+    modal.style.display = 'flex';
     if (window.syncModalState) window.syncModalState();
 }
 

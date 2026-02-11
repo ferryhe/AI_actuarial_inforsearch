@@ -59,9 +59,6 @@
         <div class="action-grid">
             {% if auth_group in ['admin', 'operator'] %}
             <div class="action-card" onclick="location.href='/tasks'">
-            {% else %}
-            <div class="action-card" data-auth-required="1" data-dest="/tasks">
-            {% endif %}
                 <div class="action-icon">
                     <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
                         <use xlink:href="#icon-refresh"></use>
@@ -70,11 +67,7 @@
                 <h4>Task Center</h4>
                 <p>Run collections and manage tasks</p>
             </div>
-            {% if auth_group in ['admin', 'operator'] %}
             <div class="action-card" onclick="location.href='/scheduled_tasks'">
-            {% else %}
-            <div class="action-card" data-auth-required="1" data-dest="/scheduled_tasks">
-            {% endif %}
                 <div class="action-icon">
                     <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
                         <use xlink:href="#icon-calendar"></use>
@@ -83,6 +76,7 @@
                 <h4>Scheduled Tasks</h4>
                 <p>Manage scheduled collections</p>
             </div>
+            {% endif %}
             <div class="action-card" onclick="location.href='/database'">
                 <div class="action-icon">
                     <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">

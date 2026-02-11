@@ -26,20 +26,14 @@
                     <li><a href="{{ url_for('database') }}" class="nav-link">Database</a></li>
                     {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('tasks') }}" class="nav-link">Tasks</a></li>
-                    {% elif not auth_token %}
-                    <li><a href="#" class="nav-link nav-link-disabled" data-auth-required="1" data-dest="{{ url_for('tasks') }}">Tasks</a></li>
                     {% endif %}
 
                     {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('scheduled_tasks') }}" class="nav-link">Schedule</a></li>
-                    {% elif not auth_token %}
-                    <li><a href="#" class="nav-link nav-link-disabled" data-auth-required="1" data-dest="{{ url_for('scheduled_tasks') }}">Schedule</a></li>
                     {% endif %}
 
                     {% if auth_group == 'admin' %}
                     <li><a href="{{ url_for('settings') }}" class="nav-link">Settings</a></li>
-                    {% elif not auth_token %}
-                    <li><a href="#" class="nav-link nav-link-disabled" data-auth-required="1" data-dest="{{ url_for('settings') }}">Settings</a></li>
                     {% endif %}
                 </ul>
                 {% if auth_token %}
@@ -53,7 +47,9 @@
                 </div>
                 {% else %}
                 <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
+                    {% if request.endpoint != 'login' %}
                     <a href="{{ url_for('login') }}" class="btn btn-secondary btn-sm">Login</a>
+                    {% endif %}
                 </div>
                 {% endif %}
                 <div class="theme-toggle">
