@@ -207,7 +207,9 @@
         </div>
         <div class="module-actions-view" style="display:flex; gap: 8px;">
           <button class="btn btn-secondary" type="button" onclick="historyReload()">Reload</button>
+          {% if auth_group == 'admin' %}
           <button class="btn" type="button" onclick="historyOpenGlobalLogs()">Global Logs</button>
+          {% endif %}
         </div>
       </div>
       <div class="card">
@@ -356,7 +358,9 @@ function historyShowLog(task) {
         <pre id="settings-task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
         <div style="margin-top: 8px; display: flex; gap: 8px;">
           <button class="btn-small" onclick="historyReloadTaskLog('${String(task.id || '')}')">Reload</button>
+          {% if auth_group == 'admin' %}
           <button class="btn-small" onclick="historyOpenGlobalLogs()">Global Logs</button>
+          {% endif %}
         </div>
       </div>
     </div>

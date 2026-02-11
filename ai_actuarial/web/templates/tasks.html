@@ -817,6 +817,7 @@
 </style>
 
 <script>
+const CAN_VIEW_GLOBAL_LOGS = {{ 'true' if auth_group == 'admin' else 'false' }};
 // --- File Format Selector Helper Functions ---
 // 获取选中的文件格式（带校验）
 function getSelectedFormats(formElement) {
@@ -1365,7 +1366,7 @@ function showLog(task) {
                 <pre id="task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
                 <div style="margin-top: 8px; display: flex; gap: 8px;">
                     <button class="btn-small" onclick="reloadTaskLog('${task.id}')">Reload</button>
-                    <button class="btn-small" onclick="openGlobalLogs()">Global Logs</button>
+                    ${CAN_VIEW_GLOBAL_LOGS ? `<button class="btn-small" onclick="openGlobalLogs()">Global Logs</button>` : ''}
                 </div>
             </div>
             ${task.message ? `<p><strong>Message:</strong> ${escapeHtml(task.message)}</p>` : ''}
