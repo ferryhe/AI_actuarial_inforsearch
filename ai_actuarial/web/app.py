@@ -649,11 +649,19 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.context_processor
     def _inject_auth_context():
         token = getattr(g, "_auth_token", None)
+        openai_configured = False
+        try:
+            from config.settings import get_settings
+
+            openai_configured = bool(get_settings().openai_api_key)
+        except Exception:
+            openai_configured = False
         return {
             "auth_token": token,
             "auth_group": (token or {}).get("group_name"),
             "auth_subject": (token or {}).get("subject"),
             "require_auth": require_auth,
+            "openai_configured": openai_configured,
         }
 
     # Register routes
