@@ -35,6 +35,10 @@ Add these in `.env` (see `.env.example`):
 
 If `OPENAI_API_KEY` is not set, the UI keeps the OpenAI provider option disabled.
 
+## Prompt Location
+
+The default OpenAI prompt and JSON parsing are implemented in `ai_actuarial/catalog_llm.py`.
+
 ## Notes On Recompute Behavior
 
 - Candidate selection is based on:
@@ -43,4 +47,3 @@ If `OPENAI_API_KEY` is not set, the UI keeps the OpenAI provider option disabled
   - pipeline version changed, OR
   - (optional) previous status was `error` and `retry_errors=true`
 - The pipeline version used by cataloging includes provider and input source, so switching providers (or source vs markdown) naturally triggers re-cataloging without needing `overwrite_existing`.
-
