@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Knowledge Base Detail{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/rag.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="rag-page" data-rag-page="detail" data-kb-id="{{ kb_id }}">
+    <div class="page-header rag-header">
+        <div>
+            <p><a href="{{ url_for('rag_management') }}">&larr; Back to Knowledge Bases</a></p>
+            <h2 id="rag-detail-title">Knowledge Base</h2>
+            <p id="rag-detail-description" class="text-muted"></p>
+        </div>
+        <div class="rag-header-actions">
+            <button id="rag-detail-refresh" class="btn btn-secondary">Refresh</button>
+            <button id="rag-detail-edit" class="btn btn-secondary">Edit</button>
+            <button id="rag-detail-reindex" class="btn btn-primary">Reindex</button>
+            <button id="rag-detail-delete" class="btn btn-secondary">Delete</button>
+        </div>
+    </div>
+
+    {% include "partials/kb_stats_card.html" %}
+
+    <section class="card rag-metadata-card">
+        <h3>Metadata</h3>
+        <div class="rag-meta-grid">
+            <div><strong>KB ID:</strong> <span id="rag-meta-kb-id">-</span></div>
+            <div><strong>Mode:</strong> <span id="rag-meta-mode">-</span></div>
+            <div><strong>Embedding:</strong> <span id="rag-meta-embedding">-</span></div>
+            <div><strong>Chunk Size:</strong> <span id="rag-meta-chunk-size">-</span></div>
+            <div><strong>Chunk Overlap:</strong> <span id="rag-meta-chunk-overlap">-</span></div>
+            <div><strong>Updated:</strong> <span id="rag-meta-updated">-</span></div>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="rag-tab-header">
+            <button class="rag-tab-btn active" data-tab="files">Files</button>
+            <button class="rag-tab-btn" data-tab="categories">Categories</button>
+            <button class="rag-tab-btn" data-tab="tasks">Indexing Tasks</button>
+        </div>
+
+        <div class="rag-tab-content active" id="rag-tab-files">
+            <div class="rag-toolbar">
+                <input type="text" id="rag-detail-file-search" placeholder="Search files">
+                <button id="rag-detail-add-files" class="btn btn-secondary">Add Files</button>
+            </div>
+            <div class="rag-table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Filename</th>
+                            <th>Category</th>
+                            <th>Status</th>
+                            <th>Chunks</th>
+                            <th>Indexed At</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rag-detail-files-body">
+                        <tr><td colspan="6">Loading files...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="rag-tab-content" id="rag-tab-categories">
+            <div class="rag-toolbar">
+                <select id="rag-detail-add-category-select">
+                    <option value="">Select category</option>
+                </select>
+                <button id="rag-detail-link-category" class="btn btn-secondary">Link Category</button>
+            </div>
+            <ul id="rag-detail-categories-list" class="rag-simple-list"></ul>
+        </div>
+
+        <div class="rag-tab-content" id="rag-tab-tasks">
+            <div id="rag-detail-active-tasks"></div>
+            <div class="rag-table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Task</th>
+                            <th>Status</th>
+                            <th>Started</th>
+                            <th>Processed</th>
+                            <th>Chunks</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rag-detail-tasks-body">
+                        <tr><td colspan="5">Loading tasks...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</div>
+
+{% include "modals/create_kb_modal.html" %}
+{% include "modals/edit_kb_modal.html" %}
+{% include "partials/file_selector.html" %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+window.RAG_PAGE_CONTEXT = { page: 'detail', kbId: {{ kb_id|tojson }} };
+</script>
+<script src="{{ url_for('static', filename='js/rag.js') }}"></script>
+{% endblock %}

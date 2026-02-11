@@ -1,0 +1,77 @@
+<div id="rag-create-kb-modal" class="modal" style="display:none;">
+    <div class="modal-content modal-lg">
+        <span class="close" data-close-modal="rag-create-kb-modal">&times;</span>
+        <h3>Create Knowledge Base</h3>
+        <form id="rag-create-kb-form">
+            <div class="form-row">
+                <div class="form-group half">
+                    <label>KB ID</label>
+                    <input type="text" name="kb_id" required pattern="[A-Za-z0-9_-]{2,64}" placeholder="pricing_risk_kb">
+                </div>
+                <div class="form-group half">
+                    <label>Name</label>
+                    <input type="text" name="name" required placeholder="Pricing & Risk KB">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea name="description" rows="2" placeholder="Optional description"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Mode</label>
+                <div class="rag-mode-toggle">
+                    <label><input type="radio" name="kb_mode" value="category" checked> Category Mode</label>
+                    <label><input type="radio" name="kb_mode" value="manual"> Manual Mode</label>
+                </div>
+            </div>
+
+            <div id="rag-create-category-fields">
+                <div class="form-group">
+                    <label>Categories</label>
+                    <select name="categories" id="rag-create-categories" multiple size="8"></select>
+                    <small>Hold Ctrl/Cmd to select multiple categories.</small>
+                </div>
+            </div>
+
+            <div id="rag-create-manual-fields" style="display:none;">
+                <div class="form-group">
+                    <label>Selected Files</label>
+                    <div class="rag-selected-files-header">
+                        <span id="rag-create-selected-files-count">0 files selected</span>
+                        <button type="button" id="rag-open-file-selector" class="btn btn-secondary btn-sm">Select Files</button>
+                    </div>
+                    <div id="rag-create-selected-files" class="rag-selected-files-list"></div>
+                </div>
+            </div>
+
+            <details class="rag-advanced-settings">
+                <summary>Advanced Settings</summary>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Embedding Model</label>
+                        <select name="embedding_model">
+                            <option value="text-embedding-3-large">text-embedding-3-large</option>
+                            <option value="text-embedding-3-small">text-embedding-3-small</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Chunk Size</label>
+                        <input type="number" name="chunk_size" min="100" max="4000" value="800">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Chunk Overlap</label>
+                        <input type="number" name="chunk_overlap" min="0" max="800" value="100">
+                    </div>
+                </div>
+            </details>
+
+            <div class="rag-modal-actions">
+                <button type="button" class="btn btn-secondary" data-close-modal="rag-create-kb-modal">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create</button>
+                <button type="button" id="rag-create-and-index-btn" class="btn btn-primary">Create & Index</button>
+            </div>
+        </form>
+    </div>
+</div>
