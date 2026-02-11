@@ -23,3 +23,7 @@ Pillow>=10.2.0
 # Heavy optional engines (install when you want these conversion backends)
 docling>=2.0.0
 marker-pdf>=1.0.0
+
+# RAG (Retrieval-Augmented Generation) dependencies
+faiss-cpu>=1.7.4
+numpy>=1.24.0
