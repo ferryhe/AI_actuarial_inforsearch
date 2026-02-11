@@ -10,6 +10,9 @@ from typing import Iterable
 
 
 class Storage:
+    # Allowlist for schema/migration helpers that interpolate table names into PRAGMA.
+    _SCHEMA_TABLES = frozenset({"files", "pages", "blobs", "catalog_items", "auth_tokens", "audit_events"})
+
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
@@ -90,6 +93,48 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_catalog_items_status ON catalog_items(status)
             """
         )
+
+        # auth_tokens: token-based authentication for public deployments
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                id INTEGER PRIMARY KEY,
+                subject TEXT NOT NULL,
+                group_name TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT,
+                last_used_at TEXT,
+                revoked_at TEXT,
+                expires_at TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_auth_tokens_active ON auth_tokens(is_active)
+            """
+        )
+
+        # audit_events: security/audit log for sensitive operations (optional)
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY,
+                token_id INTEGER,
+                event_type TEXT NOT NULL,
+                resource TEXT,
+                detail TEXT,
+                ip TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)
+            """
+        )
         self._conn.commit()
         self._ensure_columns(
             "files",
@@ -107,7 +152,9 @@ class Storage:
         self._ensure_columns(
             "catalog_items",
             {
+                "file_sha256": "TEXT",
                 "sha256": "TEXT",
+                "catalog_version": "TEXT",
                 "pipeline_version": "TEXT",
                 "processed_at": "TEXT",
                 "status": "TEXT DEFAULT 'ok'",
@@ -123,7 +170,36 @@ class Storage:
         )
         self._migrate_catalog_items()
 
+        # Minimal auth schema migrations (future-proofing)
+        self._ensure_columns(
+            "auth_tokens",
+            {
+                "subject": "TEXT",
+                "group_name": "TEXT",
+                "token_hash": "TEXT",
+                "is_active": "INTEGER",
+                "created_at": "TEXT",
+                "last_used_at": "TEXT",
+                "revoked_at": "TEXT",
+                "expires_at": "TEXT",
+            },
+        )
+
+        self._ensure_columns(
+            "audit_events",
+            {
+                "token_id": "INTEGER",
+                "event_type": "TEXT",
+                "resource": "TEXT",
+                "detail": "TEXT",
+                "ip": "TEXT",
+                "created_at": "TEXT",
+            },
+        )
+
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
+        if table not in self._SCHEMA_TABLES:
+            raise ValueError(f"Invalid table name for schema migration: {table!r}")
         cur = self._conn.execute(f"PRAGMA table_info({table})")
         existing = {row[1] for row in cur.fetchall()}
         for name, col_type in columns.items():
@@ -207,6 +283,148 @@ class Storage:
 
     def close(self) -> None:
         self._conn.close()
+
+    # -----------------------------
+    # Auth tokens (public deployments)
+    # -----------------------------
+
+    def get_auth_token_by_id(self, token_id: int) -> dict | None:
+        cur = self._conn.execute(
+            """
+            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at
+            FROM auth_tokens
+            WHERE id = ?
+            """,
+            (int(token_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "subject": row[1],
+            "group_name": row[2],
+            "is_active": bool(row[3]),
+            "created_at": row[4],
+            "last_used_at": row[5],
+            "revoked_at": row[6],
+            "expires_at": row[7],
+        }
+
+    def get_auth_token_by_hash(self, token_hash: str) -> dict | None:
+        cur = self._conn.execute(
+            """
+            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at
+            FROM auth_tokens
+            WHERE token_hash = ?
+            """,
+            (str(token_hash),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "subject": row[1],
+            "group_name": row[2],
+            "is_active": bool(row[3]),
+            "created_at": row[4],
+            "last_used_at": row[5],
+            "revoked_at": row[6],
+            "expires_at": row[7],
+        }
+
+    def list_auth_tokens(self) -> list[dict]:
+        cur = self._conn.execute(
+            """
+            SELECT id, subject, group_name, is_active, created_at, last_used_at, revoked_at, expires_at
+            FROM auth_tokens
+            ORDER BY id DESC
+            """
+        )
+        out: list[dict] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "id": row[0],
+                    "subject": row[1],
+                    "group_name": row[2],
+                    "is_active": bool(row[3]),
+                    "created_at": row[4],
+                    "last_used_at": row[5],
+                    "revoked_at": row[6],
+                    "expires_at": row[7],
+                }
+            )
+        return out
+
+    def create_auth_token(
+        self,
+        *,
+        subject: str,
+        group_name: str,
+        token_hash: str,
+        expires_at: str | None = None,
+    ) -> int:
+        ts = self.now()
+        cur = self._conn.execute(
+            """
+            INSERT INTO auth_tokens (subject, group_name, token_hash, is_active, created_at, expires_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            """,
+            (str(subject), str(group_name), str(token_hash), ts, expires_at),
+        )
+        self._maybe_commit()
+        return int(cur.lastrowid)
+
+    def upsert_auth_token_by_hash(
+        self,
+        *,
+        subject: str,
+        group_name: str,
+        token_hash: str,
+        is_active: bool = True,
+    ) -> int:
+        ts = self.now()
+        self._conn.execute(
+            """
+            INSERT INTO auth_tokens (subject, group_name, token_hash, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(token_hash) DO UPDATE SET
+                subject=excluded.subject,
+                group_name=excluded.group_name,
+                is_active=excluded.is_active
+            """,
+            (str(subject), str(group_name), str(token_hash), 1 if is_active else 0, ts),
+        )
+        self._maybe_commit()
+        # Fetch id
+        token = self.get_auth_token_by_hash(token_hash)
+        if not token:
+            raise RuntimeError("Failed to upsert auth token")
+        return int(token["id"])
+
+    def revoke_auth_token(self, token_id: int) -> bool:
+        ts = self.now()
+        cur = self._conn.execute(
+            """
+            UPDATE auth_tokens
+            SET is_active = 0,
+                revoked_at = ?
+            WHERE id = ?
+            """,
+            (ts, int(token_id)),
+        )
+        self._maybe_commit()
+        return cur.rowcount > 0
+
+    def touch_auth_token_last_used(self, token_id: int) -> None:
+        ts = self.now()
+        self._conn.execute(
+            "UPDATE auth_tokens SET last_used_at = ? WHERE id = ?",
+            (ts, int(token_id)),
+        )
+        self._maybe_commit()
 
     def file_exists_by_hash(self, sha256: str) -> bool:
         """Check if a file with the given hash already exists in the database.
@@ -883,7 +1101,8 @@ class Storage:
                    f.last_modified, f.etag, f.published_time, f.first_seen,
                    f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords, c.status,
-                   c.markdown_content, c.markdown_updated_at, c.markdown_source
+                   c.markdown_content, c.markdown_updated_at, c.markdown_source,
+                   c.catalog_version, c.processed_at, c.updated_at
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
             WHERE f.url = ?
@@ -918,6 +1137,9 @@ class Storage:
             "markdown_content": row[20],
             "markdown_updated_at": row[21],
             "markdown_source": row[22],
+            "catalog_version": row[23],
+            "catalog_processed_at": row[24],
+            "catalog_updated_at": row[25],
         }
     
     def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:

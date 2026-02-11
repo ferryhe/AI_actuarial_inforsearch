@@ -193,6 +193,11 @@ class TestMarkdownAPI(unittest.TestCase):
         
         # Set environment variable for config path
         os.environ['CONFIG_PATH'] = self.config_path
+        # Bootstrap an admin token for protected write endpoints (markdown.write).
+        self._orig_bootstrap = os.environ.get("BOOTSTRAP_ADMIN_TOKEN")
+        self._orig_flask_secret = os.environ.get("FLASK_SECRET_KEY")
+        os.environ["BOOTSTRAP_ADMIN_TOKEN"] = "test-bootstrap-admin-token"
+        os.environ["FLASK_SECRET_KEY"] = "test-flask-secret-key"
         
         # Import and create app
         from ai_actuarial.web.app import create_app
@@ -220,6 +225,14 @@ class TestMarkdownAPI(unittest.TestCase):
         os.unlink(self.config_path)
         if 'CONFIG_PATH' in os.environ:
             del os.environ['CONFIG_PATH']
+        if self._orig_bootstrap is None:
+            os.environ.pop("BOOTSTRAP_ADMIN_TOKEN", None)
+        else:
+            os.environ["BOOTSTRAP_ADMIN_TOKEN"] = self._orig_bootstrap
+        if self._orig_flask_secret is None:
+            os.environ.pop("FLASK_SECRET_KEY", None)
+        else:
+            os.environ["FLASK_SECRET_KEY"] = self._orig_flask_secret
     
     def test_get_markdown_empty(self):
         """Test GET markdown when no content exists."""
@@ -267,7 +280,8 @@ class TestMarkdownAPI(unittest.TestCase):
             json={
                 'markdown_content': markdown_content,
                 'markdown_source': 'manual'
-            }
+            },
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
         )
         
         self.assertEqual(response.status_code, 200)
@@ -294,7 +308,8 @@ class TestMarkdownAPI(unittest.TestCase):
             json={
                 'markdown_content': new_content,
                 'markdown_source': 'manual'
-            }
+            },
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
         )
         
         self.assertEqual(response.status_code, 200)
@@ -315,7 +330,8 @@ class TestMarkdownAPI(unittest.TestCase):
             json={
                 'markdown_content': markdown_content,
                 'markdown_source': 'converted_marker'
-            }
+            },
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
         )
         self.assertEqual(post_response.status_code, 200)
         
@@ -354,7 +370,8 @@ class TestMarkdownAPI(unittest.TestCase):
             json={
                 'markdown_source': 'manual'
                 # Missing markdown_content
-            }
+            },
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
         )
         
         self.assertEqual(response.status_code, 400)
@@ -391,7 +408,8 @@ class TestMarkdownAPI(unittest.TestCase):
             json={
                 'markdown_content': markdown_content,
                 'markdown_source': 'manual'
-            }
+            },
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
         )
         
         self.assertEqual(post_response.status_code, 200)

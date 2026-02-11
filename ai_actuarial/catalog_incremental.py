@@ -72,6 +72,10 @@ CATALOG_OPTIONAL_COLUMNS = {
     "processed_at": "TEXT",
     "status": "TEXT",
     "error": "TEXT",
+    # Optional markdown cache (populated by markdown conversion / manual edits).
+    "markdown_content": "TEXT",
+    "markdown_updated_at": "TEXT",
+    "markdown_source": "TEXT",
 }
 
 
@@ -177,6 +181,7 @@ def _fetch_candidates(
     site_filter: Optional[str],
     catalog_version: str,
     retry_errors: bool = False,
+    skip_existing: bool = True,
 ) -> list[sqlite3.Row]:
     """
     Select files that are:
@@ -192,6 +197,20 @@ def _fetch_candidates(
 
     # Sort newest first (descending ID) so we process recent content first.
     # Deterministic order: files.id DESC.
+    candidate_pred = ""
+    candidate_params: list[object] = []
+    if skip_existing:
+        candidate_pred = f"""
+        AND (
+            c.file_url IS NULL
+            OR c.file_sha256 IS NULL
+            OR c.file_sha256 != f.sha256
+            OR c.catalog_version != ?
+            {status_cond}
+        )
+        """
+        candidate_params = [catalog_version]
+
     sql = f"""
     SELECT
         f.id,
@@ -210,20 +229,12 @@ def _fetch_candidates(
     WHERE
         f.local_path IS NOT NULL
         AND f.local_path != ''
-        AND (
-            c.file_url IS NULL
-            OR c.file_sha256 IS NULL
-            OR c.file_sha256 != f.sha256
-            OR c.catalog_version != ?
-            {status_cond}
-        )
+        {candidate_pred}
         {where_extra}
-    -- ORDER BY f.id DESC processes newest files first for better UX
-    -- (Alternative: ASC for oldest-first incremental processing)
     ORDER BY f.id DESC
     LIMIT ? OFFSET ?
     """
-    cur = conn.execute(sql, [catalog_version, batch, max(0, int(offset or 0))] + params)
+    cur = conn.execute(sql, candidate_params + params + [batch, max(0, int(offset or 0))])
     return list(cur.fetchall())
 
 
@@ -253,8 +264,22 @@ def _count_candidates(
     site_filter: Optional[str],
     catalog_version: str,
     retry_errors: bool = False,
+    skip_existing: bool = True,
 ) -> int:
     where_extra, params, status_cond = _candidate_filter_sql(site_filter, retry_errors)
+    candidate_pred = ""
+    candidate_params: list[object] = []
+    if skip_existing:
+        candidate_pred = f"""
+        AND (
+            c.file_url IS NULL
+            OR c.file_sha256 IS NULL
+            OR c.file_sha256 != f.sha256
+            OR c.catalog_version != ?
+            {status_cond}
+        )
+        """
+        candidate_params = [catalog_version]
     sql = f"""
     SELECT COUNT(*)
     FROM files f
@@ -263,16 +288,10 @@ def _count_candidates(
     WHERE
         f.local_path IS NOT NULL
         AND f.local_path != ''
-        AND (
-            c.file_url IS NULL
-            OR c.file_sha256 IS NULL
-            OR c.file_sha256 != f.sha256
-            OR c.catalog_version != ?
-            {status_cond}
-        )
+        {candidate_pred}
         {where_extra}
     """
-    cur = conn.execute(sql, [catalog_version] + params)
+    cur = conn.execute(sql, candidate_params + params)
     row = cur.fetchone()
     return int(row[0]) if row else 0
 
@@ -391,10 +410,43 @@ def _resolve_path(path_str: str, base_dirs: list[Path] | None = None) -> Path:
     return p
 
 
+_thread_local = threading.local()
+
+
+def _thread_db_conn(db_path: str) -> sqlite3.Connection:
+    """Thread-local SQLite connection for read-only lookups (e.g. markdown_content)."""
+    conn = getattr(_thread_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        _thread_local.conn = conn
+    return conn
+
+
+def _load_markdown_text(db_path: str, file_url: str, max_chars: int) -> str:
+    conn = _thread_db_conn(db_path)
+    row = conn.execute(
+        "SELECT markdown_content FROM catalog_items WHERE file_url = ?",
+        (file_url,),
+    ).fetchone()
+    text = ""
+    if row:
+        text = (row[0] or "").strip()
+    if not text:
+        return ""
+    if max_chars and max_chars > 0 and len(text) > max_chars:
+        return text[:max_chars]
+    return text
+
+
 def _process_single_row(
     row_data: dict, 
     ai_only: bool, 
-    max_chars: int
+    max_chars: int,
+    *,
+    db_path: str,
+    provider: str,
+    input_source: str,
 ) -> tuple[dict, CatalogItem, str]:
     """Process a single row in a worker thread.
     Returns: (row_data, result_item, status)
@@ -406,32 +458,67 @@ def _process_single_row(
     local_path = row_data["local_path"]
     
     try:
-        resolved_path = _resolve_path(local_path)
-        text = extract_text(resolved_path, max_chars=max_chars)
+        provider_norm = (provider or "local").strip().lower()
+        if provider_norm not in {"local", "openai"}:
+            raise RuntimeError(f"unsupported catalog provider: {provider}")
+
+        source_norm = (input_source or "source").strip().lower()
+        if source_norm not in {"source", "markdown"}:
+            raise RuntimeError(f"unsupported catalog input_source: {input_source}")
+
+        text = ""
+        if source_norm == "markdown":
+            text = _load_markdown_text(db_path, file_url, max_chars=max_chars)
+            if not text.strip():
+                raise RuntimeError("missing markdown content")
+        else:
+            resolved_path = _resolve_path(local_path)
+            text = extract_text(resolved_path, max_chars=max_chars)
         if not text.strip():
             # If still empty check if exist
-            if not resolved_path.exists():
+            if source_norm == "source" and not resolved_path.exists():
                 raise RuntimeError(f"File not found: {resolved_path} (orig: {local_path})")
             raise RuntimeError("empty extracted text")
             
-        keywords = extract_keywords(text, title=title)
-        
-        if ai_only and not is_ai_related(text, keywords, title=title):
-            # Skipped
-            item = CatalogItem(
-                source_site=source_site,
-                title=title,
-                original_filename=original_filename,
-                url=file_url,
-                local_path=local_path,
-                keywords=keywords,
-                summary="",
-                category="(filtered: non-AI)",
-            )
-            return (row_data, item, "skipped")
-            
-        summary = summarize(text, keywords)
-        category = categorize(title, text, keywords)
+        if provider_norm == "local":
+            keywords = extract_keywords(text, title=title)
+
+            if ai_only and not is_ai_related(text, keywords, title=title):
+                item = CatalogItem(
+                    source_site=source_site,
+                    title=title,
+                    original_filename=original_filename,
+                    url=file_url,
+                    local_path=local_path,
+                    keywords=keywords,
+                    summary="",
+                    category="(filtered: non-AI)",
+                )
+                return (row_data, item, "skipped")
+
+            summary = summarize(text, keywords)
+            category = categorize(title, text, keywords)
+        else:
+            from .catalog_llm import catalog_with_openai
+
+            llm = catalog_with_openai(title=title, content=text)
+            keywords = llm.keywords
+
+            if ai_only and not is_ai_related(text, keywords, title=title):
+                item = CatalogItem(
+                    source_site=source_site,
+                    title=title,
+                    original_filename=original_filename,
+                    url=file_url,
+                    local_path=local_path,
+                    keywords=keywords,
+                    summary="",
+                    category="(filtered: non-AI)",
+                )
+                return (row_data, item, "skipped")
+
+            summary = llm.summary
+            category = llm.category
         
         item = CatalogItem(
             source_site=source_site,
@@ -473,6 +560,9 @@ def run_incremental_catalog(
     catalog_version: str = "catalog_v1",
     max_chars: int = 20000,
     retry_errors: bool = False,
+    skip_existing: bool = True,
+    provider: str = "local",
+    input_source: str = "source",
     max_workers: int = 5,
     limit: int = 0,
     candidate_offset: int = 0,
@@ -518,6 +608,7 @@ def run_incremental_catalog(
         site_filter=site_filter,
         catalog_version=catalog_version,
         retry_errors=retry_errors,
+        skip_existing=skip_existing,
     )
     if candidate_offset > 0:
         total_candidates = max(0, total_candidates - int(candidate_offset))
@@ -548,6 +639,7 @@ def run_incremental_catalog(
             site_filter=site_filter,
             catalog_version=catalog_version,
             retry_errors=retry_errors,
+            skip_existing=skip_existing,
         )
         remaining_offset = 0
         
@@ -576,7 +668,15 @@ def run_incremental_catalog(
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_url = {
-                executor.submit(_process_single_row, r, ai_only, max_chars): r['url'] 
+                executor.submit(
+                    _process_single_row,
+                    r,
+                    ai_only,
+                    max_chars,
+                    db_path=db_path,
+                    provider=provider,
+                    input_source=input_source,
+                ): r["url"]
                 for r in row_dicts
             }
             
@@ -691,6 +791,185 @@ def run_incremental_catalog(
         progress_callback(
             max(total_candidates, completed, 1),
             max(total_candidates, completed, 1),
+            f"Catalog finished: processed={stats['processed']} skipped={stats['skipped_ai']} errors={stats['errors']}",
+        )
+    return stats
+
+
+def run_catalog_for_urls(
+    *,
+    db_path: str,
+    file_urls: list[str],
+    out_jsonl: Path,
+    out_md: Path,
+    ai_only: bool = False,
+    catalog_version: str = "catalog_v1",
+    max_chars: int = 20000,
+    retry_errors: bool = False,
+    skip_existing: bool = True,
+    provider: str = "local",
+    input_source: str = "source",
+    max_workers: int = 5,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+) -> dict:
+    """Catalog a specific list of file URLs (used by File Details actions)."""
+    conn = _connect(db_path)
+
+    out_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    out_md.parent.mkdir(parents=True, exist_ok=True)
+
+    stats = {
+        "scanned": 0,
+        "processed": 0,
+        "written": 0,
+        "skipped_ai": 0,
+        "errors": 0,
+        "missing_files": 0,
+        "error_samples": [],
+    }
+
+    urls = [u for u in (file_urls or []) if isinstance(u, str) and u.strip()]
+    urls = [u.strip() for u in urls]
+    if not urls:
+        conn.close()
+        return stats
+
+    placeholders = ", ".join(["?"] * len(urls))
+    rows = conn.execute(
+        f"""
+        SELECT
+            f.id,
+            f.url,
+            f.sha256,
+            f.title,
+            f.source_site,
+            f.original_filename,
+            f.local_path,
+            c.file_url AS c_url,
+            c.file_sha256 AS c_sha256,
+            c.catalog_version AS c_version,
+            c.status AS c_status
+        FROM files f
+        LEFT JOIN catalog_items c ON c.file_url = f.url
+        WHERE f.url IN ({placeholders})
+          AND f.deleted_at IS NULL
+        """,
+        urls,
+    ).fetchall()
+
+    by_url = {r["url"]: dict(r) for r in rows}
+    ordered_rows = []
+    for u in urls:
+        r = by_url.get(u)
+        if r:
+            ordered_rows.append(r)
+        else:
+            stats["errors"] += 1
+            if len(stats["error_samples"]) < 20:
+                stats["error_samples"].append(f"File not found in DB: {u}")
+
+    def is_candidate(r: dict) -> bool:
+        if not skip_existing:
+            return True
+        c_url = r.get("c_url")
+        c_sha = (r.get("c_sha256") or "").strip()
+        c_ver = (r.get("c_version") or "").strip()
+        c_status = (r.get("c_status") or "").strip()
+        f_sha = (r.get("sha256") or "").strip()
+        return (
+            (c_url is None)
+            or (not c_sha)
+            or (c_sha != f_sha)
+            or (c_ver != catalog_version)
+            or (retry_errors and c_status == "error")
+        )
+
+    candidates = [r for r in ordered_rows if is_candidate(r)]
+    stats["scanned"] = len(candidates)
+
+    if progress_callback:
+        progress_callback(0, max(len(candidates), 1), f"Catalog candidates: {len(candidates)}")
+
+    batch_items: list[CatalogItem] = []
+    batch_jsonl: list[dict] = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_url = {
+            executor.submit(
+                _process_single_row,
+                r,
+                ai_only,
+                max_chars,
+                db_path=db_path,
+                provider=provider,
+                input_source=input_source,
+            ): r["url"]
+            for r in candidates
+        }
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                r_data, item, status = future.result()
+                processed_at = datetime.now(timezone.utc).isoformat()
+                file_sha256 = (r_data.get("sha256") or "").strip()
+                if status == "ok":
+                    stats["processed"] += 1
+                    batch_items.append(item)
+                    batch_jsonl.append(asdict(item))
+                    _upsert_catalog_row(
+                        conn,
+                        item=item,
+                        file_sha256=file_sha256,
+                        catalog_version=catalog_version,
+                        status="ok",
+                        processed_at=processed_at,
+                    )
+                elif status == "skipped":
+                    stats["skipped_ai"] += 1
+                    _upsert_catalog_row(
+                        conn,
+                        item=item,
+                        file_sha256=file_sha256,
+                        catalog_version=catalog_version,
+                        status="skipped",
+                        processed_at=processed_at,
+                    )
+                elif status.startswith("error:"):
+                    stats["errors"] += 1
+                    err_msg = status[6:]
+                    if len(stats["error_samples"]) < 20:
+                        stats["error_samples"].append(err_msg)
+                    if "File not found" in err_msg:
+                        stats["missing_files"] += 1
+                    _upsert_catalog_row(
+                        conn,
+                        item=item,
+                        file_sha256=file_sha256,
+                        catalog_version=catalog_version,
+                        status="error",
+                        processed_at=processed_at,
+                        error=err_msg,
+                    )
+                if progress_callback:
+                    completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
+                    progress_callback(completed, max(len(candidates), completed, 1), f"Cataloging {completed}/{max(len(candidates), 1)}")
+            except Exception as e:
+                logger.exception("Worker thread crashed for %s", url)
+                stats["errors"] += 1
+                if len(stats["error_samples"]) < 20:
+                    stats["error_samples"].append(str(e))
+
+    if batch_items:
+        _append_jsonl(out_jsonl, batch_jsonl)
+        write_catalog_md(out_md, batch_items, append=out_md.exists())
+        stats["written"] += len(batch_items)
+
+    conn.close()
+    if progress_callback:
+        completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
+        progress_callback(
+            max(len(candidates), completed, 1),
+            max(len(candidates), completed, 1),
             f"Catalog finished: processed={stats['processed']} skipped={stats['skipped_ai']} errors={stats['errors']}",
         )
     return stats

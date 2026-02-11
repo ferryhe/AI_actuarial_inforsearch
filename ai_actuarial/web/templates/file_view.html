@@ -131,18 +131,30 @@
             {% endif %}
         </div>
 
+        <div id="catalog-meta" class="catalog-meta-text" style="display:none;"></div>
+
+        {% set can_write_catalog = auth_group in ['admin', 'operator'] %}
+        {% set can_write_markdown = auth_group in ['admin', 'operator'] %}
+        {% set can_delete_file = auth_group in ['admin', 'operator'] %}
+        {% set can_download_file = auth_group in ['admin', 'operator', 'reader'] %}
+
         <div class="actions-section">
+            {% if can_write_catalog %}
             <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
             <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
             <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
+            <button id="catalog-btn" class="btn btn-secondary" onclick="openFileCatalogModal()">Catalog (AI)</button>
+            {% endif %}
             
-            {% if file.local_path %}
+            {% if can_download_file and file.local_path %}
             <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
-            {% else %}
+            {% elif can_download_file %}
             <button class="btn btn-secondary" disabled>Download Unavailable</button>
             {% endif %}
-             
-              <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+              
+            {% if can_delete_file %}
+            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+            {% endif %}
         </div>
 
         <div class="markdown-section">
@@ -150,7 +162,9 @@
                 <h4>Markdown Content</h4>
                 <div class="markdown-tabs">
                     <button id="markdown-view-tab" class="markdown-tab active" onclick="switchMarkdownTab('view')">View</button>
+                    {% if can_write_markdown %}
                     <button id="markdown-edit-tab" class="markdown-tab" onclick="switchMarkdownTab('edit')">Edit</button>
+                    {% endif %}
                     <button id="markdown-expand-btn" class="markdown-tab" onclick="toggleMarkdownHeight()" style="display:none;">Expand</button>
                 </div>
             </div>
@@ -161,45 +175,196 @@
                 <div id="markdown-empty" style="color: var(--text-secondary); padding: 1rem;">No markdown content available</div>
             </div>
             
+            {% if can_write_markdown %}
             <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
                 <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
                  <div class="markdown-convert-actions">
-                     <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
-                     <select id="markdown-convert-engine" class="markdown-convert-select">
-                         <option value="auto">Auto</option>
+                      <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
+                      <select id="markdown-convert-engine" class="markdown-convert-select">
                          <option value="marker">Marker</option>
-                         <option value="docling">Docling</option>
-                         <option value="mistral">Mistral OCR</option>
-                         <option value="deepseekocr">DeepSeek OCR</option>
-                     </select>
+                          <option value="docling">Docling</option>
+                          <option value="mistral">Mistral OCR</option>
+                          <option value="deepseekocr">DeepSeek OCR</option>
+                      </select>
                      <label class="markdown-convert-overwrite">
-                         <input type="checkbox" id="markdown-convert-overwrite" checked>
-                         Overwrite
-                     </label>
+                          <input type="checkbox" id="markdown-convert-overwrite" checked>
+                         Overwrite (unchecked = skip existing markdown)
+                      </label>
                      <button id="markdown-convert-btn" class="btn btn-secondary" onclick="submitMarkdownConversion()">Convert From File</button>
                  </div>
                 <div class="markdown-edit-actions">
                     <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
                     <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
-                    <span id="markdown-last-updated" class="markdown-timestamp"></span>
-                </div>
+                     <span id="markdown-last-updated" class="markdown-timestamp"></span>
+                 </div>
             </div>
+            {% endif %}
         </div>
     </div>
 </div>
 
+{% if can_write_catalog %}
+<div id="file-catalog-modal" class="modal" style="display:none;">
+  <div class="modal-content catalog-task-modal">
+    <span class="close" onclick="closeFileCatalogModal()">&times;</span>
+    <h3>
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <use xlink:href="#icon-tag"></use>
+      </svg>
+      Catalog This File
+    </h3>
+    <p class="hint">Generate summary, keywords, and category for this file.</p>
+    <form id="file-catalog-form" onsubmit="submitFileCatalog(event)">
+      <div class="form-group">
+        <label>Catalog From</label>
+        <select name="input_source" id="file-catalog-input-source">
+          <option value="source">Source file</option>
+          <option value="markdown">Markdown</option>
+        </select>
+        <small class="form-hint">Markdown uses converted/edited markdown content (if available).</small>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="overwrite_existing" id="file-catalog-overwrite-existing"> Overwrite existing content (recompute)
+        </label>
+        <small class="form-hint">Unchecked = Skip already cataloged</small>
+      </div>
+      <div class="form-group">
+        <label>AI Provider</label>
+        <select name="provider" id="file-catalog-provider">
+          <option value="local">Local (KeyBERT)</option>
+          <option value="openai" {% if not openai_configured %}disabled{% endif %}>
+            OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
+          </option>
+        </select>
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="closeFileCatalogModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Submit Catalog Task</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <script>
     let editMode = false;
     const fileUrl = {{ file.url|tojson }};
+    const initialCatalogVersion = {{ (file.catalog_version or '')|tojson }};
+    const initialCatalogProcessedAt = {{ (file.catalog_processed_at or file.catalog_updated_at or '')|tojson }};
     let categoryOptionsLoaded = false;
     let categoryOptions = [];
     let selectedCategories = [];
+    let _fileCatalogBound = false;
+
+    function _bindFileCatalogModal() {
+        if (_fileCatalogBound) return;
+        _fileCatalogBound = true;
+    }
+
+    function openFileCatalogModal() {
+        const modal = document.getElementById('file-catalog-modal');
+        if (!modal) return;
+        _bindFileCatalogModal();
+        modal.style.display = 'flex';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    function closeFileCatalogModal() {
+        const modal = document.getElementById('file-catalog-modal');
+        if (!modal) return;
+        modal.style.display = 'none';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    async function submitFileCatalog(e) {
+        e.preventDefault();
+        const form = document.getElementById('file-catalog-form');
+        if (!form) return;
+
+        const provider = document.getElementById('file-catalog-provider')?.value || 'local';
+        const inputSource = document.getElementById('file-catalog-input-source')?.value || 'source';
+        const overwrite = document.getElementById('file-catalog-overwrite-existing')?.checked || false;
+        const skipExisting = !overwrite;
+
+        try {
+            const response = await fetch('/api/collections/run', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    type: 'catalog',
+                    file_urls: [fileUrl],
+                    provider: provider,
+                    input_source: inputSource,
+                    skip_existing: skipExisting,
+                    overwrite_existing: overwrite,
+                    name: `Catalog - ${provider} (${inputSource}) (1 file)`
+                })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                Toast.success('Catalog task submitted. Check Tasks for progress.');
+                closeFileCatalogModal();
+                // Return to non-edit state to avoid conflicting edits while async task is running.
+                if (editMode) cancelEdit();
+                switchMarkdownTab('view');
+            } else {
+                Toast.error('Failed to submit catalog: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            Toast.error('Network error: ' + err.message);
+            console.error('Catalog submit exception:', err);
+        }
+    }
 
     function parseCategoryString(rawValue) {
         return (rawValue || '')
             .split(';')
             .map(v => v.trim())
             .filter(Boolean);
+    }
+
+    function mapCatalogSourceLabel(source) {
+        const s = String(source || '').trim().toLowerCase();
+        if (s === 'markdown') return 'Markdown';
+        return 'Source file';
+    }
+
+    function mapCatalogProviderLabel(provider) {
+        const p = String(provider || '').trim().toLowerCase();
+        if (p === 'openai') return 'OpenAI (ChatGPT)';
+        if (p === 'local') return 'local (KeyBERT)';
+        return provider || 'local (KeyBERT)';
+    }
+
+    function parseCatalogVersion(version) {
+        const raw = String(version || '').trim();
+        if (!raw) {
+            return { source: 'source', provider: 'local' };
+        }
+        const parts = raw.split(':').map(v => v.trim()).filter(Boolean);
+        if (parts.length >= 3) {
+            return { provider: parts[1], source: parts[2] };
+        }
+        const lower = raw.toLowerCase();
+        if (lower.includes('openai')) return { source: 'source', provider: 'openai' };
+        if (lower.includes('markdown')) return { source: 'markdown', provider: 'local' };
+        return { source: 'source', provider: 'local' };
+    }
+
+    function renderCatalogMeta(version, updatedAt) {
+        const el = document.getElementById('catalog-meta');
+        if (!el) return;
+        const timestamp = String(updatedAt || '').trim();
+        const parsed = parseCatalogVersion(version);
+        if (!version && !timestamp) {
+            el.style.display = 'none';
+            el.textContent = '';
+            return;
+        }
+        el.textContent = `${mapCatalogSourceLabel(parsed.source)} | ${mapCatalogProviderLabel(parsed.provider)} | Updated: ${timestamp || '-'}`;
+        el.style.display = 'block';
     }
 
     function categoryListToString(list) {
@@ -443,6 +608,13 @@
                     tag.textContent = keyword;
                     keywordsDisplay.appendChild(tag);
                 });
+
+                if (data.file) {
+                    renderCatalogMeta(
+                        data.file.catalog_version || '',
+                        data.file.catalog_processed_at || data.file.catalog_updated_at || ''
+                    );
+                }
                 
                 // Exit edit mode
                 cancelEdit();
@@ -486,6 +658,7 @@
 
     // Load categories early so the first edit interaction is instant.
     ensureCategoryOptions();
+    renderCatalogMeta(initialCatalogVersion, initialCatalogProcessedAt);
     
     // ===== Markdown functionality =====
     let currentMarkdownContent = '';
@@ -921,6 +1094,84 @@
         margin-top: 2rem;
         border-top: 1px solid var(--border-color);
         padding-top: 1rem;
+    }
+
+    .catalog-meta-text {
+        margin-top: 0.65rem;
+        margin-bottom: 0.25rem;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+
+    .catalog-task-modal {
+        width: min(640px, 92vw);
+        padding: 24px;
+        position: relative;
+    }
+
+    .catalog-task-modal h3 {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 8px 0;
+    }
+
+    .catalog-task-modal h3 svg {
+        width: 22px;
+        height: 22px;
+        color: var(--primary-500);
+    }
+
+    .catalog-task-modal .hint {
+        color: var(--text-secondary);
+        font-size: 0.9em;
+        margin: 10px 0 18px 0;
+        padding: 8px 12px;
+        background: var(--gray-100);
+        border-left: 3px solid var(--primary-color);
+        border-radius: 4px;
+    }
+
+    [data-theme="dark"] .catalog-task-modal .hint {
+        background: var(--gray-800);
+    }
+
+    .catalog-task-modal .form-group {
+        margin-bottom: 14px;
+    }
+
+    .catalog-task-modal .form-group > label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+
+    .catalog-task-modal input[type="text"],
+    .catalog-task-modal input[type="number"],
+    .catalog-task-modal select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+    }
+
+    .catalog-task-modal input[type="checkbox"] {
+        width: auto;
+    }
+
+    .catalog-task-modal .checkbox-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+    }
+
+    .catalog-task-modal .form-hint {
+        color: var(--text-secondary);
+        font-size: 0.82rem;
     }
     
     /* Edit mode styles */

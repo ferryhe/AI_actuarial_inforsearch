@@ -12,6 +12,23 @@
         })();
     </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Keep guest auth modal readable across page-level modal overrides. */
+        #auth-required-modal {
+            align-items: center !important;
+            justify-content: center !important;
+            z-index: 3000;
+        }
+        #auth-required-modal .confirm-dialog {
+            width: min(420px, 92vw);
+            background: #ffffff !important;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        [data-theme="dark"] #auth-required-modal .confirm-dialog {
+            background: var(--card-bg) !important;
+        }
+    </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
@@ -24,10 +41,34 @@
                 <ul class="navbar-menu">
                     <li><a href="{{ url_for('index') }}" class="nav-link">Dashboard</a></li>
                     <li><a href="{{ url_for('database') }}" class="nav-link">Database</a></li>
+                    {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('tasks') }}" class="nav-link">Tasks</a></li>
+                    {% endif %}
+
+                    {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('scheduled_tasks') }}" class="nav-link">Schedule</a></li>
+                    {% endif %}
+
+                    {% if auth_group == 'admin' %}
                     <li><a href="{{ url_for('settings') }}" class="nav-link">Settings</a></li>
+                    {% endif %}
                 </ul>
+                {% if auth_token %}
+                <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
+                    <span style="font-size: 0.9rem; opacity: 0.85;">
+                        {{ auth_subject or 'Unknown' }} ({{ auth_group or 'n/a' }})
+                    </span>
+                    <form method="POST" action="{{ url_for('logout') }}" style="margin: 0;">
+                        <button type="submit" class="btn btn-secondary btn-sm">Logout</button>
+                    </form>
+                </div>
+                {% else %}
+                <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
+                    {% if request.endpoint != 'login' %}
+                    <a href="{{ url_for('login') }}" class="btn btn-secondary btn-sm">Login</a>
+                    {% endif %}
+                </div>
+                {% endif %}
                 <div class="theme-toggle">
                     <button id="theme-toggle-btn" class="btn-icon" aria-label="Toggle dark mode" title="Toggle dark mode">
                         <svg class="icon-md theme-icon sun-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -168,6 +209,18 @@
             <div class="confirm-buttons">
                 <button id="confirm-cancel" class="btn btn-secondary">Cancel</button>
                 <button id="confirm-ok" class="btn btn-primary">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Required Modal (guest navigation) -->
+    <div id="auth-required-modal" class="modal" style="display: none;">
+        <div class="modal-content confirm-dialog">
+            <h3>Login Required</h3>
+            <p>You must log in to access this page.</p>
+            <div class="confirm-buttons">
+                <button id="auth-required-back" class="btn btn-secondary">Back</button>
+                <button id="auth-required-login" class="btn btn-primary">Login</button>
             </div>
         </div>
     </div>

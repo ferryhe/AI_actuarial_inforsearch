@@ -118,6 +118,25 @@ body.modal-open {
     z-index: 1000;
     align-items: center;
     justify-content: center;
+    /* Prevent scroll chaining to the page when scrolling inside modal content. */
+    overscroll-behavior: contain;
+}
+
+/* Default modal panel styling (light mode). */
+.modal-content {
+    background: var(--card-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    max-height: 92vh;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+.modal-content pre,
+.log-viewer {
+    overscroll-behavior: contain;
 }
 
 .container {
@@ -163,6 +182,17 @@ body.modal-open {
 
 .nav-link:hover {
     color: var(--primary-color);
+}
+
+.nav-link.nav-link-disabled {
+    opacity: 0.6;
+    cursor: pointer;
+}
+
+.nav-link.nav-link-disabled:hover {
+    color: var(--text-secondary);
+    text-decoration: underline;
+    text-decoration-style: dotted;
 }
 
 /* Main Content */

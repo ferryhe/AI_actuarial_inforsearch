@@ -207,6 +207,44 @@ const API = {
     }
 };
 
+// Global fetch wrapper:
+// - On 401, redirect browser users to /login (preserving next=...)
+// - When CSRF cookie exists (Flask-SeaSurf), attach X-CSRFToken for mutating requests
+(function () {
+    if (!window.fetch) return;
+
+    function getCookie(name) {
+        const parts = (`; ${document.cookie}`).split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+        init = init || {};
+        const method = (init.method || 'GET').toUpperCase();
+
+        // Attach CSRF header for mutating requests when cookie exists.
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+            const csrf = getCookie('csrf_token');
+            if (csrf) {
+                const headers = new Headers(init.headers || {});
+                if (!headers.has('X-CSRFToken')) {
+                    headers.set('X-CSRFToken', csrf);
+                }
+                init.headers = headers;
+            }
+        }
+
+        const resp = await originalFetch(input, init);
+        if (resp.status === 401 && window.location.pathname !== '/login') {
+            const next = encodeURIComponent(window.location.pathname + window.location.search);
+            window.location.href = `/login?next=${next}`;
+        }
+        return resp;
+    };
+})();
+
 // Export for use in templates
 window.escapeHtml = escapeHtml;
 window.formatDate = formatDate;
@@ -1240,3 +1278,52 @@ class SearchAutocomplete {
 window.DataTable = DataTable;
 window.ModalManager = ModalManager;
 window.SearchAutocomplete = SearchAutocomplete;
+
+// Guest navigation helper: when a link is present but requires login, show a modal
+// instead of navigating to a 401/redirect.
+(function () {
+    function openAuthRequiredModal(dest) {
+        const modal = document.getElementById('auth-required-modal');
+        if (!modal) return;
+        modal.dataset.dest = dest || '/';
+        // `.modal` is a flex-centered backdrop; use flex so the dialog is centered.
+        modal.style.display = 'flex';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    function closeAuthRequiredModal() {
+        const modal = document.getElementById('auth-required-modal');
+        if (!modal) return;
+        modal.style.display = 'none';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const modal = document.getElementById('auth-required-modal');
+        if (!modal) return;
+
+        document.querySelectorAll('[data-auth-required="1"]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                const dest = el.getAttribute('data-dest') || '/';
+                openAuthRequiredModal(dest);
+            });
+        });
+
+        const backBtn = document.getElementById('auth-required-back');
+        const loginBtn = document.getElementById('auth-required-login');
+
+        if (backBtn) backBtn.addEventListener('click', closeAuthRequiredModal);
+        if (loginBtn) {
+            loginBtn.addEventListener('click', () => {
+                const dest = modal.dataset.dest || '/';
+                window.location.href = `/login?next=${encodeURIComponent(dest)}`;
+            });
+        }
+
+        // Click-outside closes the modal
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeAuthRequiredModal();
+        });
+    });
+})();
