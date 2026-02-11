@@ -3,7 +3,29 @@
 **Issue**: AI chatbot with RAG knowledge base  
 **Date**: 2026-02-11  
 **Status**: Planning Phase  
-**Reference Project**: https://github.com/ferryhe/AI_Knowledge_Base
+**Reference Project**: https://github.com/ferryhe/AI_Knowledge_Base  
+**Last Updated**: 2026-02-11 (Revised based on stakeholder feedback)
+
+---
+
+## 📌 IMPORTANT: Revised Priorities (Feb 11, 2026)
+
+Based on stakeholder feedback, the following adjustments have been made:
+
+### Critical Changes
+1. **✅ Semantic Chunking (HIGH PRIORITY)**: Changed from simple token-based (500/80) to structure-aware semantic chunking that preserves document hierarchy, sections, and citations. Ideal for legal/academic documents.
+
+2. **✅ Incremental Updates (HIGH PRIORITY)**: Emphasized as critical feature - ability to add new files to existing knowledge bases without full rebuild. FAISS supports this natively.
+
+3. **✅ Multi-KB Query (MOVED UP)**: Moved from Phase 2.4 to Phase 2.3 due to high stakeholder interest in cross-document queries.
+
+4. **⚠️ GraphRAG (DEFERRED)**: Moved from Phase 2+ to Phase 4+ (optional enhancement only). Not suitable for MVP given project's well-structured documents.
+
+5. **✅ Embedding Model Clarified**: OpenAI text-embedding-3-large confirmed as primary choice for technical/multilingual content quality.
+
+### See Also
+- **Detailed Clarifications**: `docs/20260211_RAG_IMPLEMENTATION_CLARIFICATIONS.md`
+- **Original Roadmap**: `AI_CHATBOT_PROJECT_ROADMAP.md`
 
 ---
 
@@ -43,9 +65,9 @@ This document outlines a comprehensive implementation plan for building an AI ch
   
 - [ ] **1.1.3 Select RAG Architecture**
   - [ ] Choose primary RAG approach: Traditional FAISS-based vector search (recommended for MVP)
-  - [ ] Select embedding model: OpenAI text-embedding-3-large (compatible with reference)
-  - [ ] Define chunking strategy: 500 tokens with 80 token overlap
-  - [ ] Plan for future GraphRAG experimentation (Phase 2+)
+  - [ ] Select embedding model: OpenAI text-embedding-3-large (best for technical/multilingual content)
+  - [ ] Define chunking strategy: **Semantic structure-aware** (section/paragraph-based, NOT just token-based)
+  - [ ] Plan for future GraphRAG experimentation (Phase 4+ only, NOT MVP priority)
   
 - [ ] **1.1.4 Design Database Schema**
   - [ ] Extend `catalog_items` table with RAG-specific fields:
@@ -79,6 +101,8 @@ This document outlines a comprehensive implementation plan for building an AI ch
     - `chunk_index` (INTEGER) - position in file
     - `content` (TEXT) - chunk text content
     - `token_count` (INTEGER) - number of tokens
+    - `embedding_hash` (TEXT) - detect if chunk changed (for incremental updates)
+    - `section_hierarchy` (TEXT) - document structure context (e.g., "Article 5 > Section 2.1")
     - `created_at` (TEXT) - indexing timestamp
     - INDEX on (kb_id, file_url)
 
@@ -98,14 +122,16 @@ This document outlines a comprehensive implementation plan for building an AI ch
   - [ ] Create `config.py` for RAG configuration
   - [ ] Create `exceptions.py` for RAG-specific exceptions
   
-- [ ] **1.2.2 Implement Chunking Engine**
-  - [ ] Create `ai_actuarial/rag/chunking.py`
-  - [ ] Implement token-based chunking with tiktoken
-  - [ ] Add overlap handling (16% overlap = 80 tokens for 500 token chunks)
-  - [ ] Add markdown-aware chunking (preserve headers, code blocks)
-  - [ ] Implement empty chunk filtering
-  - [ ] Add validation for minimum chunk size
-  - [ ] Write unit tests for chunking logic
+- [ ] **1.2.2 Implement Semantic Chunking Engine** ⭐ HIGH PRIORITY
+  - [ ] Create `ai_actuarial/rag/semantic_chunking.py`
+  - [ ] **Primary: Section-based chunking** (preserve markdown headers ##, ###, ####)
+  - [ ] **Secondary: Paragraph-based chunking** (for long sections, maintain semantic boundaries)
+  - [ ] **Fallback: Sentence-based splitting** (only when paragraphs exceed limits)
+  - [ ] **Metadata enrichment**: track document hierarchy, citations, page numbers
+  - [ ] Preserve document structure: tables, lists, citation blocks, cross-references
+  - [ ] Token-based splitting as last resort only (with tiktoken)
+  - [ ] Add validation: min 100 tokens, max 800 tokens per chunk
+  - [ ] Write unit tests with real actuarial document examples
   
 - [ ] **1.2.3 Implement Embedding Engine**
   - [ ] Create `ai_actuarial/rag/embeddings.py`
@@ -128,14 +154,16 @@ This document outlines a comprehensive implementation plan for building an AI ch
   - [ ] Add index versioning and migration support
   - [ ] Write unit tests for vector store operations
   
-- [ ] **1.2.5 Implement Knowledge Base Manager**
+- [ ] **1.2.5 Implement Knowledge Base Manager** ⭐ HIGH PRIORITY
   - [ ] Create `ai_actuarial/rag/knowledge_base.py`
   - [ ] Implement KB CRUD operations (create, read, update, delete)
   - [ ] Add file-to-KB association management
-  - [ ] Implement incremental indexing (add files without full rebuild)
-  - [ ] Add KB statistics (file count, chunk count, last updated)
+  - [ ] **Implement incremental indexing** (add files without full rebuild) - CRITICAL FEATURE
+  - [ ] **Smart update detection** (detect when files need reindexing based on markdown_updated_at)
+  - [ ] **Partial updates** (remove old chunks, add new chunks for modified files)
+  - [ ] Add KB statistics (file count, chunk count, last updated, pending files)
   - [ ] Implement KB export/import for backup
-  - [ ] Write unit tests for KB management
+  - [ ] Write unit tests for KB management and incremental updates
   
 - [ ] **1.2.6 Implement Indexing Pipeline**
   - [ ] Create `ai_actuarial/rag/indexing.py`
@@ -429,11 +457,13 @@ This document outlines a comprehensive implementation plan for building an AI ch
   - [ ] Identify query scope (single document vs. broad topic)
   - [ ] Use intent to optimize retrieval and generation
   
-- [ ] **2.4.2 Implement Multi-KB Query**
+- [ ] **2.4.2 Implement Multi-KB Query** ⭐ MOVE TO PHASE 2.3 (HIGH PRIORITY)
   - [ ] Support querying multiple KBs in single request
   - [ ] Merge and rank results from multiple KBs
-  - [ ] Track source KB in citations
+  - [ ] Track source KB in citations (color-coded badges)
   - [ ] Add conflict resolution for contradictory information
+  - [ ] UI: Multi-select KB dropdown, "Query All KBs" option
+  - [ ] Diversify results to ensure representation from each KB
   
 - [ ] **2.4.3 Implement Response Quality Checks**
   - [ ] Detect potential hallucinations
