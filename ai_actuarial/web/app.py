@@ -8,16 +8,47 @@ import os
 import re
 import threading
 import time
+import hashlib
+import secrets
+from functools import wraps
 from pathlib import Path
 from typing import Any
 from datetime import datetime
 
 # Flask will be an optional dependency for now
 try:
-    from flask import Flask, render_template, request, jsonify, send_file, Response
+    from flask import (
+        Flask,
+        render_template,
+        request,
+        jsonify,
+        send_file,
+        Response,
+        session,
+        redirect,
+        url_for,
+        g,
+    )
     FLASK_AVAILABLE = True
 except ImportError:
     FLASK_AVAILABLE = False
+
+# Optional: rate limiting (Flask-Limiter)
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    FLASK_LIMITER_AVAILABLE = True
+except ImportError:
+    FLASK_LIMITER_AVAILABLE = False
+
+# Optional: CSRF protection (Flask-SeaSurf)
+try:
+    from flask_seasurf import SeaSurf
+
+    FLASK_SEASURF_AVAILABLE = True
+except ImportError:
+    FLASK_SEASURF_AVAILABLE = False
 
 import csv
 import io
@@ -64,12 +95,134 @@ def _tail_text_file(path: Path, max_lines: int = 400) -> str:
         return ""
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _expose_error_details() -> bool:
+    # Never enable by default when exposed to the public Internet.
+    return _env_flag("EXPOSE_ERROR_DETAILS", False) or _env_flag("FLASK_DEBUG", False)
+
+
+def _parse_int_clamped(
+    value: object,
+    *,
+    default: int,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except Exception:
+        n = default
+    if min_value is not None:
+        n = max(min_value, n)
+    if max_value is not None:
+        n = min(max_value, n)
+    return n
+
+
+def _api_error(message: str, *, status_code: int, detail: str | None = None):
+    payload: dict[str, Any] = {"error": message}
+    if detail and _expose_error_details():
+        payload["detail"] = detail
+    return jsonify(payload), status_code
+
+
+_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "stats.read",
+        "files.read",
+        "files.download",
+        "files.delete",
+        "catalog.read",
+        "catalog.write",
+        "markdown.read",
+        "markdown.write",
+        "config.read",
+        "config.write",
+        "schedule.write",
+        "tasks.view",
+        "tasks.run",
+        "tasks.stop",
+        "logs.task.read",
+        "logs.system.read",
+        "export.read",
+        "tokens.manage",
+    }
+)
+
+# When REQUIRE_AUTH=false, we still run the app in a "public read-only" mode:
+# endpoints that require any permission outside this allowlist will require a token.
+_PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
+    {
+        "stats.read",
+        "files.read",
+        "markdown.read",
+    }
+)
+
+_GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
+    "reader": frozenset(
+        {
+            "stats.read",
+            "files.read",
+            "files.download",
+            "catalog.read",
+            "markdown.read",
+        }
+    ),
+    "operator": frozenset(
+        {
+            "stats.read",
+            "files.read",
+            "files.download",
+            "files.delete",
+            "catalog.read",
+            "catalog.write",
+            "markdown.read",
+            "markdown.write",
+            "schedule.write",
+            "tasks.view",
+            "tasks.run",
+            "tasks.stop",
+            "logs.task.read",
+        }
+    ),
+    "admin": frozenset(_PERMISSIONS),
+}
+
+
+def _hash_token(token: str) -> str:
+    # Baseline: sha256(token) hex. (Never store plaintext tokens in DB.)
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _extract_bearer_token() -> str | None:
+    auth = request.headers.get("Authorization", "") or ""
+    m = re.match(r"^Bearer\s+(.+)$", auth.strip(), flags=re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # Compatibility header (optional)
+    x = request.headers.get("X-API-Token")
+    if x:
+        return x.strip()
+    return None
+
+
+def _permissions_for_group(group_name: str) -> frozenset[str]:
+    return _GROUP_PERMISSIONS.get((group_name or "").strip().lower(), frozenset())
+
+
 def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type: str) -> dict[str, str]:
     """Convert a local file to markdown using `doc_to_md` engines.
 
     Args:
         file_path: Local path to the file to convert.
-        conversion_tool: Engine name ('marker', 'docling', 'mistral', 'deepseekocr', 'auto').
+        conversion_tool: Engine name ('marker', 'docling', 'mistral', 'deepseekocr').
         content_type: MIME type (kept for logging/diagnostics).
 
     Returns:
@@ -78,6 +231,10 @@ def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type:
     Raises:
         RuntimeError: If conversion fails or engine dependencies are missing.
     """
+    # 'auto' used to exist but is intentionally disabled in UI (too slow).
+    # For compatibility with older clients, treat it as marker.
+    if (conversion_tool or "").strip().lower() == "auto":
+        conversion_tool = "marker"
     logger.info("Converting %s using %s (content_type=%s)", file_path, conversion_tool, content_type)
 
     try:
@@ -186,9 +343,19 @@ def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "queries": search.get("queries", []),
         },
         "runtime": {
+            "config_path": _get_sites_config_path(),
+            "categories_config_path": _get_categories_config_path(),
+            "require_auth": _env_flag("REQUIRE_AUTH", False),
+            "flask_secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
+            "bootstrap_admin_token_set": bool(os.getenv("BOOTSTRAP_ADMIN_TOKEN")),
             "file_deletion_enabled": os.getenv("ENABLE_FILE_DELETION") == "true",
             "file_deletion_auth_required": bool(os.getenv("FILE_DELETION_AUTH_TOKEN")),
             "config_write_auth_required": bool(os.getenv("CONFIG_WRITE_AUTH_TOKEN")),
+            "enable_global_logs_api": _env_flag("ENABLE_GLOBAL_LOGS_API", False),
+            "logs_read_auth_required": bool(os.getenv("LOGS_READ_AUTH_TOKEN")),
+            "enable_rate_limiting": _env_flag("ENABLE_RATE_LIMITING", False),
+            "enable_csrf": _env_flag("ENABLE_CSRF", False),
+            "enable_security_headers": _env_flag("ENABLE_SECURITY_HEADERS", True),
         },
     }
 
@@ -215,7 +382,79 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     
     if config:
         app.config.update(config)
-    
+
+    # Auth / session configuration
+    require_auth = bool(app.config.get("REQUIRE_AUTH", _env_flag("REQUIRE_AUTH", False)))
+    app.config["REQUIRE_AUTH"] = require_auth
+
+    # Secret key is required for sessions (web UI token login) and CSRF.
+    secret = app.config.get("SECRET_KEY") or os.getenv("FLASK_SECRET_KEY")
+    if secret:
+        app.secret_key = secret
+    elif app.config.get("TESTING") or app.debug:
+        # Keep tests/dev working without requiring env setup.
+        app.secret_key = "dev-secret-key"
+    elif require_auth:
+        raise RuntimeError("FLASK_SECRET_KEY must be set when REQUIRE_AUTH=true")
+    else:
+        # Best-effort fallback to keep the app running in local-only mode.
+        app.secret_key = secrets.token_urlsafe(32)
+
+    # Cookie defaults (Phase 4 hardening will enforce stricter public settings)
+    app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
+    app.config.setdefault("SESSION_COOKIE_SAMESITE", os.getenv("SESSION_COOKIE_SAMESITE", "Lax"))
+    app.config.setdefault("SESSION_COOKIE_SECURE", _env_flag("SESSION_COOKIE_SECURE", False))
+
+    # Optional security headers (recommended for public deployments)
+    enable_security_headers = _env_flag("ENABLE_SECURITY_HEADERS", True)
+    if enable_security_headers:
+
+        @app.after_request
+        def _add_security_headers(resp):
+            resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+            resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+            resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+            resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+            resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+            # CSP is optional and should be tuned for actual assets and any CDN usage.
+            csp = os.getenv("CONTENT_SECURITY_POLICY", "").strip()
+            if csp:
+                resp.headers.setdefault("Content-Security-Policy", csp)
+            return resp
+
+    # Optional rate limiting (disabled by default; recommended for public deployments)
+    limiter = None
+
+    def _limit(rule: str):
+        def decorator(func):
+            if limiter is None:
+                return func
+            return limiter.limit(rule)(func)
+
+        return decorator
+
+    if _env_flag("ENABLE_RATE_LIMITING", False):
+        if not FLASK_LIMITER_AVAILABLE:
+            logger.warning("ENABLE_RATE_LIMITING=true but Flask-Limiter is not installed; skipping")
+        else:
+            raw_defaults = os.getenv("RATE_LIMIT_DEFAULTS", "200 per hour, 50 per minute")
+            default_limits = [s.strip() for s in re.split(r"[,;]", raw_defaults) if s.strip()]
+            storage_uri = os.getenv("RATE_LIMIT_STORAGE_URI", "memory://")
+            limiter = Limiter(
+                key_func=get_remote_address,
+                app=app,
+                default_limits=default_limits,
+                storage_uri=storage_uri,
+            )
+
+    # Optional CSRF protection (recommended when using cookie sessions)
+    csrf = None
+    if _env_flag("ENABLE_CSRF", False):
+        if not FLASK_SEASURF_AVAILABLE:
+            logger.warning("ENABLE_CSRF=true but Flask-SeaSurf is not installed; skipping")
+        else:
+            csrf = SeaSurf(app)
+
     # Load configuration
     config_path = _get_sites_config_path()
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -238,7 +477,30 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     from ..collectors.url import URLCollector
     from ..collectors.file import FileCollector
     from ..collectors.scheduled import ScheduledCollector
-    
+
+    # Bootstrap admin token (one-time initial setup for public deployments)
+    bootstrap_token = os.getenv("BOOTSTRAP_ADMIN_TOKEN")
+    if bootstrap_token:
+        storage = None
+        try:
+            subject = os.getenv("BOOTSTRAP_ADMIN_SUBJECT", "bootstrap-admin")
+            storage = Storage(db_path)
+            storage.upsert_auth_token_by_hash(
+                subject=subject,
+                group_name="admin",
+                token_hash=_hash_token(bootstrap_token),
+                is_active=True,
+            )
+            logger.info("Bootstrap admin token ensured for subject=%s", subject)
+        except Exception:
+            logger.exception("Failed to bootstrap admin token")
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception as exc:
+                logger.exception("Failed to close storage during bootstrap admin token setup")
+
     # Load task history from disk
     history_file = Path('data/job_history.jsonl')
     if history_file.exists():
@@ -254,43 +516,362 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         except Exception as e:
             logger.error(f"Failed to load job history: {e}")
 
+    def _is_api_request() -> bool:
+        return request.path.startswith("/api/")
+
+    def _unauthorized_response():
+        if _is_api_request():
+            return _api_error("Unauthorized", status_code=401)
+        next_url = request.full_path
+        if next_url.endswith("?"):
+            next_url = next_url[:-1]
+        return redirect(url_for("login", next=next_url))
+
+    def _forbidden_response():
+        if _is_api_request():
+            return _api_error("Forbidden", status_code=403)
+        return ("Forbidden", 403)
+
+    def _validate_token_record(token: dict | None) -> dict | None:
+        if not token:
+            return None
+        if not token.get("is_active"):
+            return None
+        expires_at = token.get("expires_at")
+        if expires_at:
+            try:
+                dt = datetime.fromisoformat(str(expires_at))
+                now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+                if dt <= now:
+                    return None
+            except Exception:
+                # If expires_at is malformed, treat token as invalid.
+                return None
+        return token
+
+    def _load_auth_from_request(storage: Storage) -> tuple[dict | None, frozenset[str]]:
+        # Cached per-request
+        cached = getattr(g, "_auth_token", None)
+        cached_perms = getattr(g, "_auth_perms", None)
+        if cached_perms is not None:
+            return cached, cached_perms
+
+        token: dict | None = None
+
+        # 1) Session-based auth (web UI)
+        token_id = session.get("auth_token_id")
+        if token_id is not None:
+            try:
+                token = storage.get_auth_token_by_id(int(token_id))
+            except Exception:
+                token = None
+
+        # 2) Header token (automation, or API clients)
+        if not token:
+            presented = _extract_bearer_token()
+            if presented:
+                token = storage.get_auth_token_by_hash(_hash_token(presented))
+
+        token = _validate_token_record(token)
+        perms = _permissions_for_group((token or {}).get("group_name", ""))
+
+        g._auth_token = token
+        g._auth_perms = perms
+        return token, perms
+
+    def require_permissions(*required: str):
+        for p in required:
+            if p not in _PERMISSIONS:
+                raise ValueError(f"Unknown permission: {p}")
+
+        def decorator(func):
+            @wraps(func)
+            def wrapped(*args, **kwargs):
+                if not require_auth:
+                    # Optional-auth mode: allow "public read-only" permissions without a token,
+                    # but keep everything else protected.
+                    if all(p in _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED for p in required):
+                        return func(*args, **kwargs)
+                perms = getattr(g, "_auth_perms", frozenset())
+                token = getattr(g, "_auth_token", None)
+                if not token:
+                    return _unauthorized_response()
+                for p in required:
+                    if p not in perms:
+                        return _forbidden_response()
+                return func(*args, **kwargs)
+
+            return wrapped
+
+        return decorator
+
+    @app.before_request
+    def _enforce_auth_and_cache_perms():
+        # Public endpoints
+        if request.path.startswith("/static/"):
+            return None
+        if request.path in {"/login", "/logout"}:
+            return None
+        # Allow health endpoint (if present)
+        if request.path == "/health":
+            return None
+
+        # Optional-auth mode fast path: if no session/header token is presented,
+        # avoid opening the DB and treat the request as "guest".
+        if not require_auth:
+            token_id = session.get("auth_token_id")
+            presented = _extract_bearer_token()
+            if token_id is None and not presented:
+                g._auth_token = None
+                g._auth_perms = frozenset()
+                return None
+
+        storage = None
+        try:
+            storage = Storage(db_path)
+            token, _perms = _load_auth_from_request(storage)
+            if require_auth and not token:
+                return _unauthorized_response()
+            # Optional: touch last_used_at (off by default to avoid write amplification)
+            if _env_flag("TOUCH_TOKEN_LAST_USED", False):
+                try:
+                    if token:
+                        storage.touch_auth_token_last_used(int(token["id"]))
+                except Exception as exc:
+                    # Best-effort: do not break the request if updating last_used_at fails.
+                    logger.debug("Failed to update auth token last_used_at: %s", exc)
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception as exc:
+                # Best-effort: failures while closing storage should not break the request.
+                logger.debug("Failed to close storage: %s", exc)
+        return None
+
+    @app.context_processor
+    def _inject_auth_context():
+        token = getattr(g, "_auth_token", None)
+        openai_configured = False
+        try:
+            from config.settings import get_settings
+
+            openai_configured = bool(get_settings().openai_api_key)
+        except Exception:
+            openai_configured = False
+        return {
+            "auth_token": token,
+            "auth_group": (token or {}).get("group_name"),
+            "auth_subject": (token or {}).get("subject"),
+            "require_auth": require_auth,
+            "openai_configured": openai_configured,
+        }
+
     # Register routes
     @app.route("/")
+    @require_permissions("stats.read")
     def index():
         """Main dashboard page."""
         return render_template("index.html")
     
     @app.route("/database")
+    @require_permissions("files.read")
     def database():
         """Database search and management page."""
         return render_template("database.html")
     
     @app.route("/tasks")
+    @require_permissions("tasks.view")
     def tasks():
         """Task progress monitoring page."""
         return render_template("tasks.html")
     
     @app.route("/scheduled_tasks")
+    @require_permissions("tasks.view")
     def scheduled_tasks():
         """Scheduled task management page."""
         return render_template("scheduled_tasks.html")
 
     @app.route("/settings")
+    @require_permissions("config.read")
     def settings():
         """Backend settings management page."""
         return render_template("settings.html")
     
     @app.route("/collection/url")
+    @require_permissions("tasks.run")
     def collection_url():
         """URL collection form."""
         return render_template("collection_url.html")
 
     @app.route("/collection/file")
+    @require_permissions("tasks.run")
     def collection_file():
         """File import form."""
         return render_template("collection_file.html")
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        """Token login for the web UI (creates a cookie session)."""
+        if request.method == "GET":
+            return render_template("login.html", next=request.args.get("next", ""))
+
+        # POST: validate token and set session
+        token_text = None
+        if request.is_json:
+            body = request.get_json(silent=True) or {}
+            if isinstance(body, dict):
+                token_text = body.get("token")
+        if token_text is None:
+            token_text = request.form.get("token")
+        token_text = (token_text or "").strip()
+        if not token_text:
+            return _api_error("Token required", status_code=400) if _is_api_request() else ("Token required", 400)
+
+        storage = None
+        try:
+            storage = Storage(db_path)
+            token = storage.get_auth_token_by_hash(_hash_token(token_text))
+            token = _validate_token_record(token)
+            if not token:
+                return _api_error("Invalid token", status_code=401) if _is_api_request() else ("Invalid token", 401)
+
+            session["auth_token_id"] = int(token["id"])
+            session["auth_group_name"] = token.get("group_name")
+            try:
+                storage.touch_auth_token_last_used(int(token["id"]))
+            except Exception:
+                pass
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+        next_url = request.args.get("next") or request.form.get("next") or "/"
+        # Validate next parameter to prevent open redirect
+        if next_url and not next_url.startswith("/"):
+            next_url = "/"
+        return redirect(next_url)
+
+    @app.route("/logout", methods=["POST"])
+    def logout():
+        """Logout (clear cookie session)."""
+        session.pop("auth_token_id", None)
+        session.pop("auth_group_name", None)
+        return redirect(url_for("index"))
+
+    if csrf is not None:
+        # Token login/logout are special: login happens before a client can reliably
+        # attach CSRF headers; logout is low-risk and should remain usable.
+        csrf.exempt(login)
+        csrf.exempt(logout)
+
+    @app.route("/api/auth/me")
+    def api_auth_me():
+        """Return current token identity and permissions."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            token, perms = _load_auth_from_request(storage)
+            authenticated = bool(token)
+
+            # When auth is required and no valid token is present, keep returning 401.
+            if require_auth and not authenticated:
+                return _api_error("Unauthorized", status_code=401)
+
+            token_payload = (
+                {
+                    "id": token.get("id"),
+                    "subject": token.get("subject"),
+                    "group_name": token.get("group_name"),
+                }
+                if authenticated and isinstance(token, dict)
+                else None
+            )
+
+            return jsonify(
+                {
+                    "success": True,
+                    "require_auth": bool(require_auth),
+                    "authenticated": authenticated,
+                    "token": token_payload,
+                    "permissions": sorted(perms) if authenticated else [],
+                }
+            )
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception as exc:
+                # Best-effort: failures while closing storage should not break the request.
+                logger.debug("Failed to close storage: %s", exc)
+
+    @app.route("/api/auth/tokens", methods=["GET", "POST"])
+    @require_permissions("tokens.manage")
+    def api_auth_tokens():
+        """List/create auth tokens (admin)."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            if request.method == "GET":
+                return jsonify({"success": True, "tokens": storage.list_auth_tokens()})
+
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+            subject = str(data.get("subject") or "").strip()
+            group_name = str(data.get("group_name") or "").strip().lower()
+            if not subject:
+                return _api_error("subject required", status_code=400)
+            if group_name not in _GROUP_PERMISSIONS:
+                return _api_error("invalid group_name", status_code=400)
+
+            # Generate a new plaintext token and store only the hash.
+            plaintext = secrets.token_urlsafe(32)
+            token_id = storage.create_auth_token(
+                subject=subject,
+                group_name=group_name,
+                token_hash=_hash_token(plaintext),
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "token": {
+                        "id": token_id,
+                        "subject": subject,
+                        "group_name": group_name,
+                        "token": plaintext,  # shown only once to the caller
+                    },
+                }
+            )
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/auth/tokens/<int:token_id>/revoke", methods=["POST"])
+    @require_permissions("tokens.manage")
+    def api_auth_tokens_revoke(token_id: int):
+        storage = None
+        try:
+            storage = Storage(db_path)
+            ok = storage.revoke_auth_token(int(token_id))
+            if not ok:
+                return _api_error("Not found", status_code=404)
+            return jsonify({"success": True})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
     
     @app.route("/api/stats")
+    @require_permissions("stats.read")
     def api_stats():
         """Get dashboard statistics."""
         try:
@@ -314,17 +895,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             })
         except Exception as e:
             logger.exception("Error getting stats")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/files")
+    @require_permissions("files.read")
     def api_files():
         """List collected files with filtering and pagination."""
         try:
             storage = Storage(db_path)
             
             # Get query parameters
-            limit = int(request.args.get('limit', 20))
-            offset = int(request.args.get('offset', 0))
+            limit = _parse_int_clamped(request.args.get("limit", 20), default=20, min_value=1, max_value=1000)
+            offset = _parse_int_clamped(request.args.get("offset", 0), default=0, min_value=0, max_value=1_000_000)
             order_by = request.args.get('order_by', 'last_seen')
             order_dir = request.args.get('order_dir', 'desc')
             query = request.args.get('query', '')
@@ -354,9 +936,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             })
         except Exception as e:
             logger.exception("Error listing files")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/sources")
+    @require_permissions("files.read")
     def api_sources():
         """Get list of unique sources."""
         try:
@@ -366,9 +949,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"sources": sources})
         except Exception as e:
             logger.exception("Error getting sources")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/categories")
+    @require_permissions("files.read")
     def api_categories():
         """Get list of available categories."""
         try:
@@ -394,9 +978,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"categories": categories})
         except Exception as e:
             logger.exception("Error getting categories")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/categories")
+    @require_permissions("config.read")
     def api_config_categories():
         """Get full category configuration."""
         try:
@@ -422,9 +1007,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error loading categories config")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/categories", methods=["POST"])
+    @require_permissions("config.write")
     def api_config_categories_update():
         """Update category configuration in categories.yaml.
         
@@ -473,19 +1059,30 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             logger.exception("Error updating categories config")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/backend-settings")
+    @require_permissions("config.read")
     def api_config_backend_settings():
         """Get backend settings from sites.yaml and runtime environment."""
         try:
             config_data = _load_yaml(_get_sites_config_path(), default={})
-            return jsonify(_serialize_backend_settings(config_data))
+            settings = _serialize_backend_settings(config_data)
+            # Redact filesystem paths from runtime section to prevent information disclosure
+            if "runtime" in settings and isinstance(settings["runtime"], dict):
+                runtime = settings["runtime"]
+                # Replace full paths with just boolean flags
+                if "config_path" in runtime:
+                    runtime["config_path_set"] = bool(runtime.pop("config_path", None))
+                if "categories_config_path" in runtime:
+                    runtime["categories_config_path_set"] = bool(runtime.pop("categories_config_path", None))
+            return jsonify(settings)
         except Exception as e:
             logger.exception("Error getting backend settings")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/search-defaults")
+    @require_permissions("tasks.view")
     def api_config_search_defaults():
         """Get search defaults used by Task Center web-search module."""
         try:
@@ -507,9 +1104,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error getting search defaults")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/backend-settings", methods=["POST"])
+    @require_permissions("config.write")
     def api_config_backend_settings_update():
         """Update editable backend settings in sites.yaml.
         
@@ -611,9 +1209,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             logger.exception("Error updating backend settings")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/config/sites")
+    @require_permissions("tasks.view")
     def api_config_sites():
         """Get configured sites."""
         try:
@@ -638,9 +1237,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"sites": sites})
         except Exception as e:
             logger.exception("Error getting sites config")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/add", methods=["POST"])
+    @require_permissions("schedule.write")
     def api_config_sites_add():
         """Add a new site to configuration."""
         nonlocal site_config
@@ -686,9 +1286,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error adding site")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/update", methods=["POST"])
+    @require_permissions("schedule.write")
     def api_config_sites_update():
         """Update an existing site in configuration."""
         nonlocal site_config
@@ -743,9 +1344,40 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error updating site")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/sites/delete", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_sites_delete():
+        """Delete a configured site by name."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            name = str(data.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "Site name is required"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            sites = list(config_data.get("sites") or [])
+            new_sites = [s for s in sites if str(s.get("name") or "") != name]
+            if len(new_sites) == len(sites):
+                return jsonify({"error": "Site not found"}), 404
+
+            config_data["sites"] = new_sites
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting site")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/utils/browse-folder")
+    @require_permissions("tasks.run")
     def api_browse_folder():
         """Open system dialog to select a folder (Local usage only)."""
         try:
@@ -785,13 +1417,15 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # Try simple matching if exact match failed (e.g. trailing slash issues)
                 # or maybe the URL in DB is http but request is https or vice versa if proxied?
                 # For now, just return 404
-                return f"File not found: {file_url}", 404
+                return "File not found", 404
             
             return render_template("file_view.html", file=file_data)
             
         except Exception as e:
             logger.exception("Error viewing file")
-            return f"Error: {str(e)}", 500
+            if _expose_error_details():
+                return f"Error: {e}", 500
+            return "Error viewing file", 500
     
     def execute_collection_task(task_id, collection_type, data):
         """Background task execution logic."""
@@ -1112,9 +1746,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
             elif collection_type == "catalog":
                 # New Catalog Task
-                from ..catalog_incremental import run_incremental_catalog
+                from ..catalog_incremental import run_catalog_for_urls, run_incremental_catalog
+                from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
 
                 retry_errors = bool(data.get("retry_errors", False))
+                provider = str(data.get("provider") or "local").strip().lower()
+                input_source = str(data.get("input_source") or "source").strip().lower()
+                overwrite_existing = bool(data.get("overwrite_existing", False))
+                skip_existing = bool(data.get("skip_existing", True))
+                if overwrite_existing:
+                    skip_existing = False
+
+                file_urls = data.get("file_urls") or []
+                if not isinstance(file_urls, list):
+                    file_urls = []
                 raw_limit = data.get("scan_count")
                 if raw_limit in (None, "", "null"):
                     raw_limit = data.get("max_items", 100)
@@ -1133,8 +1778,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                 # Map a "start index" in the newest-first local file list into a candidate offset.
                 candidate_offset = 0
-                catalog_version = "catalog_v1"
-                if start_index > 1:
+                catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
+                if (not skip_existing) and start_index > 1:
+                    candidate_offset = start_index - 1
+                elif start_index > 1:
                     try:
                         row = storage._conn.execute(
                             """
@@ -1143,9 +1790,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                                     ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
                                     CASE
                                         WHEN c.file_url IS NULL
-                                          OR IFNULL(c.sha256,'') = ''
-                                          OR c.sha256 != f.sha256
-                                          OR IFNULL(c.pipeline_version,'') != ?
+                                          OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
+                                          OR IFNULL(c.file_sha256, c.sha256) != f.sha256
+                                          OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version), '') != ?
                                           OR (? = 1 AND c.status = 'error')
                                         THEN 1 ELSE 0
                                     END AS is_candidate
@@ -1165,7 +1812,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         # Fallback without window functions
                         rows = storage._conn.execute(
                             """
-                            SELECT f.sha256, c.sha256, c.pipeline_version, c.status, c.file_url
+                            SELECT f.sha256,
+                                   IFNULL(c.file_sha256, c.sha256) AS c_sha,
+                                   IFNULL(c.catalog_version, c.pipeline_version) AS c_ver,
+                                   c.status,
+                                   c.file_url
                             FROM files f
                             LEFT JOIN catalog_items c ON c.file_url = f.url
                             WHERE f.local_path IS NOT NULL AND f.local_path != ''
@@ -1194,19 +1845,43 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 _append_task_log(
                     task_id,
                     "INFO",
-                    f"Cataloging requested window: start_index={start_index}, scan_count={limit}, retry_errors={retry_errors}, candidate_offset={candidate_offset}",
+                    (
+                        "Cataloging requested window: "
+                        f"start_index={start_index}, scan_count={limit}, retry_errors={retry_errors}, "
+                        f"skip_existing={skip_existing}, overwrite_existing={overwrite_existing}, "
+                        f"provider={provider}, input_source={input_source}, candidate_offset={candidate_offset}"
+                    ),
                 )
 
-                stats = run_incremental_catalog(
-                    db_path=db_path,
-                    out_jsonl=Path("data/catalog.jsonl"),
-                    out_md=Path("data/catalog.md"),
-                    batch=min(200, limit),
-                    limit=limit,
-                    retry_errors=retry_errors,
-                    candidate_offset=candidate_offset,
-                    progress_callback=progress_callback,
-                )
+                if file_urls:
+                    stats = run_catalog_for_urls(
+                        db_path=db_path,
+                        file_urls=file_urls,
+                        out_jsonl=Path("data/catalog.jsonl"),
+                        out_md=Path("data/catalog.md"),
+                        catalog_version=catalog_version,
+                        retry_errors=retry_errors,
+                        skip_existing=skip_existing,
+                        provider=provider,
+                        input_source=input_source,
+                        max_workers=min(5, max(1, len(file_urls))),
+                        progress_callback=progress_callback,
+                    )
+                else:
+                    stats = run_incremental_catalog(
+                        db_path=db_path,
+                        out_jsonl=Path("data/catalog.jsonl"),
+                        out_md=Path("data/catalog.md"),
+                        batch=min(200, limit),
+                        limit=limit,
+                        retry_errors=retry_errors,
+                        skip_existing=skip_existing,
+                        provider=provider,
+                        input_source=input_source,
+                        catalog_version=catalog_version,
+                        candidate_offset=candidate_offset,
+                        progress_callback=progress_callback,
+                    )
                 
                 # Mock result for catalog
                 class CatalogResult:
@@ -1227,7 +1902,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
                 file_urls = data.get("file_urls", []) or []
-                conversion_tool = data.get("conversion_tool", "auto")
+                conversion_tool = data.get("conversion_tool", "marker")
+                if (conversion_tool or "").strip().lower() == "auto":
+                    conversion_tool = "marker"
                 overwrite_existing = data.get("overwrite_existing", False)
                 skip_existing = bool(data.get("skip_existing", True))
                 scan_start_index = data.get("scan_start_index")
@@ -1374,7 +2051,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             )
                         except Exception as exc:  # noqa: BLE001
                             error_count += 1
-                            errors.append(f"{file_url}: conversion failed ({conversion_tool}): {exc}")
+                            errors.append(f"{file_url}: conversion failed ({conversion_tool})")
                             _append_task_log(task_id, "ERROR", f"Conversion failed: {file_url} engine={conversion_tool} error={exc}")
                             continue
 
@@ -1400,7 +2077,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     except Exception as e:
                         logger.exception(f"Error converting {file_url}")
                         error_count += 1
-                        errors.append(f"{file_url}: {str(e)}")
+                        errors.append(f"{file_url}: conversion failed")
                         _append_task_log(task_id, "ERROR", f"Unhandled exception converting {file_url}: {e}")
                 
                 # Create result object
@@ -1454,12 +2131,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "status": "error",
                         "completed_at": datetime.now().isoformat(),
                         "progress": 100,
-                        "errors": [str(e)]
+                        "errors": ["Task failed"]
                     })
                     _task_history.append(task_data)
                     _append_history_to_disk(task_data)
 
     @app.route("/api/export")
+    @require_permissions("export.read")
+    @_limit("10 per hour")
     def export_data():
         """Export catalog data as CSV/JSON."""
         format_type = request.args.get('format', 'csv')
@@ -1533,9 +2212,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
         except Exception as e:
             logger.exception("Export failed")
-            return f"Export failed: {str(e)}", 500
+            if _expose_error_details():
+                return f"Export failed: {e}", 500
+            return "Export failed", 500
 
     @app.route("/api/collections/run", methods=["POST"])
+    @require_permissions("tasks.run")
+    @_limit("10 per minute")
     def run_collection():
         """Start a collection operation."""
         try:
@@ -1633,7 +2316,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
         except Exception as e:
             logger.exception("Error starting collection")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     def _append_history_to_disk(task_data):
         """Append a task record to the persistent history file."""
@@ -1646,6 +2329,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.error(f"Failed to save task history: {e}")
 
     @app.route("/api/tasks/stop/<task_id>", methods=["POST"])
+    @require_permissions("tasks.stop")
     def api_tasks_stop(task_id):
         """Request to stop a running task."""
         with _task_lock:
@@ -1656,6 +2340,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"error": "Task not found or not active"}), 404
 
     @app.route("/api/tasks/active")
+    @require_permissions("tasks.view")
     def api_tasks_active():
         """Get active tasks."""
         with _task_lock:
@@ -1663,15 +2348,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         return jsonify({"tasks": tasks})
     
     @app.route("/api/tasks/history")
+    @require_permissions("tasks.view")
     def api_tasks_history():
         """Get task history."""
-        limit = int(request.args.get('limit', 10))
+        limit = _parse_int_clamped(request.args.get("limit", 10), default=10, min_value=1, max_value=200)
         with _task_lock:
             # Sort by started_at desc
             tasks = sorted(_task_history, key=lambda x: x.get('started_at', ''), reverse=True)[:limit]
         return jsonify({"tasks": tasks})
 
     @app.route("/api/markdown_conversion/stats")
+    @require_permissions("tasks.view")
     def api_markdown_conversion_stats():
         """Return stats for batch markdown conversion (convertible files only)."""
         try:
@@ -1755,7 +2442,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error computing markdown conversion stats")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
         finally:
             try:
                 storage.close()
@@ -1763,6 +2450,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 pass
 
     @app.route("/api/catalog/stats")
+    @require_permissions("tasks.view")
     def api_catalog_stats():
         """Return stats for incremental cataloging."""
         try:
@@ -1786,16 +2474,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 """
             ).fetchone()[0]
 
-            catalog_version = "catalog_v1"
+            from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
+
+            provider = str(request.args.get("provider") or "local").strip().lower()
+            input_source = str(request.args.get("input_source") or "source").strip().lower()
+            catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
             # Candidate definition (aligned with catalog_incremental behavior, but using legacy columns too).
             candidates_where = """
                 f.local_path IS NOT NULL AND f.local_path != ''
                 AND f.deleted_at IS NULL
                 AND (
                     c.file_url IS NULL
-                    OR IFNULL(c.sha256, '') = ''
-                    OR c.sha256 != f.sha256
-                    OR IFNULL(c.pipeline_version,'') != ?
+                    OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
+                    OR IFNULL(c.file_sha256, c.sha256) != f.sha256
+                    OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version),'') != ?
                 )
             """
 
@@ -1815,26 +2507,26 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     f"""
                     WITH ordered AS (
                         SELECT
-                            ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
-                            c.file_url AS c_url,
-                            f.sha256 AS f_sha,
-                            c.sha256 AS c_sha,
-                            c.pipeline_version AS c_ver
-                        FROM files f
-                        LEFT JOIN catalog_items c ON c.file_url = f.url
-                        WHERE f.local_path IS NOT NULL AND f.local_path != ''
-                          AND f.deleted_at IS NULL
-                    )
-                    SELECT rn
-                    FROM ordered
-                    WHERE c_url IS NULL
-                       OR IFNULL(c_sha,'') = ''
-                       OR c_sha != f_sha
-                       OR IFNULL(c_ver,'') != ?
-                    ORDER BY rn
-                    LIMIT 1
-                    """,
-                    (catalog_version,),
+                             ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
+                             c.file_url AS c_url,
+                             f.sha256 AS f_sha,
+                             IFNULL(c.file_sha256, c.sha256) AS c_sha,
+                             IFNULL(c.catalog_version, c.pipeline_version) AS c_ver
+                         FROM files f
+                         LEFT JOIN catalog_items c ON c.file_url = f.url
+                         WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                           AND f.deleted_at IS NULL
+                     )
+                     SELECT rn
+                          FROM ordered
+                          WHERE c_url IS NULL
+                        OR IFNULL(c_sha,'') = ''
+                        OR c_sha != f_sha
+                        OR IFNULL(c_ver,'') != ?
+                        ORDER BY rn
+                        LIMIT 1
+                        """,
+                     (catalog_version,),
                 ).fetchone()
                 if row:
                     first_candidate_index = int(row[0])
@@ -1854,7 +2546,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             )
         except Exception as e:
             logger.exception("Error computing catalog stats")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
         finally:
             try:
                 storage.close()
@@ -1862,6 +2554,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 pass
 
     @app.route("/api/tasks/log/<task_id>")
+    @require_permissions("logs.task.read")
     def api_task_log(task_id: str):
         """Get per-task application logs (tail)."""
         try:
@@ -1869,11 +2562,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if not safe_id:
                 return jsonify({"error": "Invalid task id"}), 400
 
-            try:
-                tail = int(request.args.get("tail", 400))
-            except Exception:
-                tail = 400
-            tail = max(1, min(tail, 5000))
+            tail = _parse_int_clamped(request.args.get("tail", 400), default=400, min_value=1, max_value=5000)
 
             path = _task_log_path(safe_id)
             content = _tail_text_file(path, max_lines=tail)
@@ -1882,9 +2571,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True, "log": content, "log_file": str(path)})
         except Exception as e:
             logger.exception("Error reading task log")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/collections/history")
+    @require_permissions("tasks.view")
     def api_collections_history():
         """Get collection history."""
         try:
@@ -1919,9 +2609,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"history": history})
         except Exception as e:
             logger.exception("Error getting collection history")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/download")
+    @require_permissions("files.download")
+    @_limit("60 per minute")
     def api_download():
         """Download a file."""
         try:
@@ -1985,9 +2677,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return send_file(local_path, as_attachment=True, download_name=filename)
         except Exception as e:
             logger.exception("Error downloading file")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
     
     @app.route("/api/files/delete", methods=["POST"])
+    @require_permissions("files.delete")
     def api_files_delete():
         """Soft delete a file and optionally delete its stored copy.
         
@@ -2123,9 +2816,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             })
         except Exception as e:
             logger.exception(f"Error deleting file: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/files/update", methods=["POST"])
+    @require_permissions("catalog.write")
     def api_files_update():
         """Update file catalog information (category, summary, keywords)."""
         try:
@@ -2192,9 +2886,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
         except Exception as e:
             logger.exception(f"Error updating file: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/files/<path:file_url>/markdown", methods=["GET"])
+    @require_permissions("markdown.read")
     def api_files_get_markdown(file_url):
         """Get markdown content for a file."""
         try:
@@ -2224,9 +2919,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
         except Exception as e:
             logger.exception(f"Error fetching markdown content: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/files/<path:file_url>/markdown", methods=["POST"])
+    @require_permissions("markdown.write")
     def api_files_update_markdown(file_url):
         """Update markdown content for a file."""
         try:
@@ -2276,12 +2972,24 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
         except Exception as e:
             logger.exception(f"Error updating markdown: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/logs/global")
+    @require_permissions("logs.system.read")
+    @_limit("30 per minute")
     def api_logs_global():
         """Get global application logs."""
         try:
+            if not _env_flag("ENABLE_GLOBAL_LOGS_API", False):
+                return jsonify({"error": "Forbidden"}), 403
+
+            expected_token = os.getenv("LOGS_READ_AUTH_TOKEN")
+            if expected_token:
+                provided_token = request.headers.get("X-Auth-Token")
+                if not provided_token or provided_token != expected_token:
+                    logger.warning("Global log read attempt rejected: authentication failed")
+                    return jsonify({"error": "Forbidden"}), 403
+
             log_dir = Path("data")
             log_file = log_dir / "app.log"
             
@@ -2302,7 +3010,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
             return jsonify({"logs": "".join(lines)})
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            logger.exception("Error reading global logs")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     # Scheduler Initialization
     def init_scheduler():

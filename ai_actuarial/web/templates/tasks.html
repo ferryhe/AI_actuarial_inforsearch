@@ -4,9 +4,6 @@
 <div class="tasks-page">
     <div class="page-header">
         <h2>Task Center</h2>
-        <div class="header-actions">
-             <button class="btn btn-secondary" onclick="exportData()">Export Results</button>
-        </div>
     </div>
 
     <!-- Task Launch Grid -->
@@ -339,9 +336,27 @@
                 </label>
             </div>
             <div class="form-group">
+                <label>Catalog From</label>
+                <select name="input_source" id="catalog-input-source">
+                    <option value="source">Source file</option>
+                    <option value="markdown">Markdown</option>
+                </select>
+                <small class="form-hint">Markdown uses converted/edited markdown content from File Details (if available).</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing">
+                    Overwrite existing content (recompute)
+                </label>
+                <small class="form-hint">Unchecked = Skip already cataloged</small>
+            </div>
+            <div class="form-group">
                 <label>AI Provider</label>
                 <select name="provider">
-                    <option value="openai">OpenAI (Default)</option>
+                    <option value="local">Local (KeyBERT, Default)</option>
+                    <option value="openai" {% if not openai_configured %}disabled{% endif %}>
+                        OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
+                    </option>
                     <option value="anthropic" disabled>Anthropic (Coming Soon)</option>
                 </select>
             </div>
@@ -498,7 +513,6 @@
             <div class="form-group">
                 <label>Conversion Tool</label>
                 <select name="conversion_tool" id="conversion-tool-select">
-                    <option value="auto">Auto-detect best tool</option>
                     <option value="marker">Marker (PDF optimized)</option>
                     <option value="docling">Docling (Multi-format)</option>
                     <option value="mistral">Mistral OCR (API)</option>
@@ -518,15 +532,10 @@
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="skip_existing" id="md-skip-existing" checked>
-                    Skip already converted
-                </label>
-            </div>
-            <div class="form-group">
-                <label>
                     <input type="checkbox" name="overwrite_existing" id="overwrite-existing">
-                    Overwrite existing markdown content
+                    Overwrite existing markdown content (recompute)
                 </label>
+                <small class="form-hint">Unchecked = Skip already converted</small>
             </div>
             <button type="submit" class="btn btn-primary" id="markdown-convert-btn">Convert Files</button>
         </form>
@@ -821,6 +830,7 @@
 </style>
 
 <script>
+const CAN_VIEW_GLOBAL_LOGS = {{ 'true' if auth_group == 'admin' else 'false' }};
 // --- File Format Selector Helper Functions ---
 // 获取选中的文件格式（带校验）
 function getSelectedFormats(formElement) {
@@ -847,7 +857,8 @@ function resetFormatSelector(modalId) {
 function openModal(id) {
     const modal = document.getElementById(id);
     if (!modal) return;
-    modal.style.display = 'block';
+    // `.modal` is a flex-centered backdrop; use flex so modals are centered.
+    modal.style.display = 'flex';
     if (window.syncModalState) window.syncModalState();
 }
 
@@ -901,8 +912,21 @@ async function openWebSearchModal() {
     if (cb) toggleSearchDefaults(cb.checked);
 }
 function openQuickCheckModal() { openModal('quick-check-modal'); }
+let _catalogModalBound = false;
+
+function _bindCatalogModal() {
+    if (_catalogModalBound) return;
+    _catalogModalBound = true;
+    const providerEl = document.querySelector('#catalog-form select[name="provider"]');
+    const sourceEl = document.querySelector('#catalog-form select[name="input_source"]');
+
+    if (providerEl) providerEl.addEventListener('change', () => loadCatalogStats());
+    if (sourceEl) sourceEl.addEventListener('change', () => loadCatalogStats());
+}
+
 function openCatalogModal() {
     openModal('catalog-modal');
+    _bindCatalogModal();
     loadCatalogStats();
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
@@ -1009,12 +1033,17 @@ function startCatalog(e) {
     const form = e.target;
     if (!validateForm(form)) return;
     const formData = new FormData(form);
+    const overwrite = formData.get('overwrite_existing') === 'on';
+    const skipExisting = !overwrite;
     
     startTask('catalog', {
         type: 'catalog',
         scan_start_index: parseInt(formData.get('scan_start_index') || '1'),
         scan_count: parseInt(formData.get('scan_count') || '50'),
         retry_errors: formData.get('retry_errors') === 'on',
+        input_source: formData.get('input_source') || 'source',
+        skip_existing: skipExisting,
+        overwrite_existing: overwrite,
         provider: formData.get('provider'),
         name: `Cataloging (start ${formData.get('scan_start_index') || 1}, scan ${formData.get('scan_count') || 50})`
     });
@@ -1026,7 +1055,10 @@ async function loadCatalogStats() {
     const startEl = document.getElementById('catalog-scan-start-index');
     if (statsEl) statsEl.textContent = 'Loading stats...';
     try {
-        const resp = await fetch('/api/catalog/stats');
+        const form = document.getElementById('catalog-form');
+        const provider = form ? (form.querySelector('select[name=\"provider\"]')?.value || 'local') : 'local';
+        const inputSource = form ? (form.querySelector('select[name=\"input_source\"]')?.value || 'source') : 'source';
+        const resp = await fetch(`/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
@@ -1055,20 +1087,6 @@ let markdownConversionStats = null;
 function openMarkdownConversionModal() {
     openModal('markdown-conversion-modal');
     loadMarkdownConversionStats();
-    // Keep skip/overwrite mutually consistent
-    const overwrite = document.getElementById('overwrite-existing');
-    if (overwrite) {
-        overwrite.addEventListener('change', () => {
-            const skip = document.getElementById('md-skip-existing');
-            if (!skip) return;
-            if (overwrite.checked) {
-                skip.checked = false;
-                skip.disabled = true;
-            } else {
-                skip.disabled = false;
-            }
-        }, { once: true });
-    }
 }
 
 async function loadMarkdownConversionStats() {
@@ -1107,8 +1125,8 @@ function startMarkdownConversion(e) {
     const engine = formData.get('conversion_tool');
     const startIndex = parseInt(formData.get('scan_start_index') || '1');
     const scanCount = parseInt(formData.get('scan_count') || '50');
-    const skipExisting = formData.get('skip_existing') === 'on';
     const overwriteExisting = formData.get('overwrite_existing') === 'on';
+    const skipExisting = !overwriteExisting;
 
     if (!Number.isFinite(startIndex) || startIndex < 1) {
         showNotification('Start index must be >= 1', 'error');
@@ -1224,11 +1242,6 @@ function startTask(type, payload) {
         }
     })
     .catch(err => showNotification('Error: ' + err, 'error'));
-}
-
-function exportData() {
-    // Basic CSV export trigger
-    window.location.href = '/api/export?format=csv';
 }
 
 // --- Monitoring (Existing Logic Adapted) ---
@@ -1373,7 +1386,7 @@ function showLog(task) {
                 <pre id="task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
                 <div style="margin-top: 8px; display: flex; gap: 8px;">
                     <button class="btn-small" onclick="reloadTaskLog('${task.id}')">Reload</button>
-                    <button class="btn-small" onclick="openGlobalLogs()">Global Logs</button>
+                    ${CAN_VIEW_GLOBAL_LOGS ? `<button class="btn-small" onclick="openGlobalLogs()">Global Logs</button>` : ''}
                 </div>
             </div>
             ${task.message ? `<p><strong>Message:</strong> ${escapeHtml(task.message)}</p>` : ''}

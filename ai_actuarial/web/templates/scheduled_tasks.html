@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set can_edit_sites = auth_group in ['admin', 'operator'] %}
 <div class="scheduled-tasks-page">
     <div class="page-header">
         <h2>Scheduled Task Management</h2>
@@ -10,14 +11,19 @@
     <div class="tabs">
         <button class="tab-link active" onclick="openTab(event, 'configured-sites')">Configured Sites</button>
         <button class="tab-link" onclick="openTab(event, 'manual-trigger')">Manual Trigger</button>
-        <button class="tab-link" onclick="openTab(event, 'history')">Task History</button>
     </div>
 
     <!-- Tab Content: Configured Sites -->
     <div id="configured-sites" class="tab-content" style="display: block;">
         <div class="toolbar">
             <input type="text" id="site-search" placeholder="Search sites..." onkeyup="filterSites()" />
+            {% if can_edit_sites %}
             <button onclick="openAddSiteModal()" class="btn btn-primary">+ Add Site</button>
+            {% else %}
+            <div style="margin-left:auto; color: var(--text-secondary); display:flex; align-items:center;">
+                Read-only (operator/admin required to edit sites)
+            </div>
+            {% endif %}
         </div>
         
         <div id="sites-container">
@@ -51,18 +57,10 @@
         </div>
     </div>
 
-    <!-- Tab Content: History -->
-    <div id="history" class="tab-content">
-        <div class="toolbar" style="justify-content: flex-end; margin-bottom: 10px;">
-             <button onclick="viewGlobalLog()" class="btn">View Global Application Log</button>
-        </div>
-        <div id="history-container">
-            <p class="loading">Loading history...</p>
-        </div>
-    </div>
 </div>
 
 <!-- Add/Edit Site Modal -->
+{% if can_edit_sites %}
 <div id="site-modal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal()">&times;</span>
@@ -104,15 +102,7 @@
         <button onclick="saveSite()" class="btn btn-primary">Save Site</button>
     </div>
 </div>
-
-<!-- Log View Modal -->
-<div id="log-modal" class="modal">
-    <div class="modal-content large-modal">
-        <span class="close" onclick="closeLogModal()">&times;</span>
-        <h3>Task Log</h3>
-        <pre id="log-content" class="log-viewer">Loading...</pre>
-    </div>
-</div>
+{% endif %}
 
 <style>
 /* Tab Styles */
@@ -247,6 +237,7 @@
 
 <script>
 let allSites = [];
+const CAN_EDIT_SITES = {{ 'true' if can_edit_sites else 'false' }};
 
 const TOOLTIPS = {
     'max-pages': "Maximum number of pages to crawl per execution. Prevents infinite loops on large sites.",
@@ -323,7 +314,8 @@ function renderSites(sites) {
                             ${site.exclude_prefixes && site.exclude_prefixes.length ? `<br><small style="color:#d9534f" title="${site.exclude_prefixes.join(', ')}">Excl Pfx: ${site.exclude_prefixes.length} items</small>` : ''}
                         </td>
                         <td>
-                            <button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">Edit</button>
+                            ${CAN_EDIT_SITES ? `<button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">Edit</button>` : ''}
+                            ${CAN_EDIT_SITES ? `<button onclick="deleteSite('${escapeHtml(site.name)}')" class="btn-small btn-danger">Delete</button>` : ''}
                             <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">Run</button>
                         </td>
                     </tr>
@@ -359,6 +351,10 @@ function filterSites() {
 
 // Modal Logic
 function openAddSiteModal() {
+    if (!CAN_EDIT_SITES) {
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
+        return;
+    }
     document.getElementById('modal-title').innerText = 'Add New Site';
     document.getElementById('original-site-name').value = '';
     document.getElementById('modal-name').value = '';
@@ -373,6 +369,10 @@ function openAddSiteModal() {
 }
 
 function editSite(name) {
+    if (!CAN_EDIT_SITES) {
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
+        return;
+    }
     const site = allSites.find(s => s.name === name);
     if (!site) return;
 
@@ -395,6 +395,10 @@ function closeModal() {
 }
 
 function saveSite() {
+    if (!CAN_EDIT_SITES) {
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
+        return;
+    }
     const originalName = document.getElementById('original-site-name').value;
     const isEdit = !!originalName;
     
@@ -434,6 +438,34 @@ function saveSite() {
     });
 }
 
+async function deleteSite(name) {
+    if (!CAN_EDIT_SITES) {
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
+        return;
+    }
+    const confirmed = await customConfirm(
+        `Delete site "${name}" from schedule configuration?`,
+        'Delete Site'
+    );
+    if (!confirmed) return;
+
+    fetch('/api/config/sites/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name })
+    })
+    .then(response => response.json().then(j => ({ ok: response.ok, j })))
+    .then(({ ok, j }) => {
+        if (ok && j.success) {
+            loadSites();
+            showNotification('Site deleted.', 'success');
+        } else {
+            showNotification('Error: ' + (j.error || 'unknown'), 'error');
+        }
+    })
+    .catch(error => showNotification('Error deleting site: ' + error, 'error'));
+}
+
 // Manual Trigger
 function startScheduledCollection() {
     const site = document.getElementById('site-select').value;
@@ -455,11 +487,7 @@ function startScheduledCollection() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            showNotification('Task started! ID: ' + data.job_id, 'success');
-            // Switch to history tab
-            const historyTab = document.querySelector('.tab-link[onclick*="history"]');
-            if(historyTab) historyTab.click();
-            loadHistory();
+            showNotification('Task started! Check Task Center -> Task History for logs.', 'success');
         } else {
             showNotification('Error: ' + data.error, 'error');
         }
@@ -493,91 +521,6 @@ async function runSingleSite(name) {
     .catch(err => showNotification('Error: ' + err, 'error'));
 }
 
-// History & Logs
-function loadHistory() {
-    fetch('/api/tasks/history?limit=20') 
-        .then(response => response.json())
-        .then(data => {
-            const container = document.getElementById('history-container');
-            if (data.tasks && data.tasks.length > 0) {
-                const table = document.createElement('table');
-                table.className = 'history-table';
-                table.innerHTML = `
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Name</th>
-                            <th>Status</th>
-                            <th>Items</th>
-                            <th>Log</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${data.tasks.map(task => `
-                            <tr>
-                                <td>${formatDate(task.started_at)}</td>
-                                <td>${escapeHtml(task.name)}</td>
-                                <td><span class="status-badge status-${task.status}">${task.status}</span></td>
-                                <td>${task.items_processed || 0}</td>
-                                <td><button class="btn-small" onclick='viewLog(${JSON.stringify(task).replace(/'/g, "&#39;")})'>View Log</button></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                `;
-                container.innerHTML = '';
-                container.appendChild(table);
-            } else {
-                container.innerHTML = '<p>No history available</p>';
-            }
-        });
-}
-
-function viewLog(task) {
-    const logContent = document.getElementById('log-content');
-    let content = `Task: ${task.name}\nID: ${task.id}\nStatus: ${task.status}\nStarted: ${formatDate(task.started_at)}\nCompleted: ${formatDate(task.completed_at)}\n\n`;
-    
-    if (task.errors && task.errors.length > 0) {
-        content += "--- ERRORS ---\n";
-        content += task.errors.join('\n') + "\n\n";
-    }
-    
-    if (task.metadata) {
-         content += "--- METADATA ---\n";
-         content += JSON.stringify(task.metadata, null, 2) + "\n\n";
-    }
-    
-    content += "--- SUMMARY ---\n";
-    content += `Items Found: ${task.items_processed || 0}\n`;
-    content += `Items Downloaded: ${task.items_downloaded || 0}\n`;
-    
-    logContent.innerText = content;
-    document.getElementById('log-modal').style.display = "block";
-    if (window.syncModalState) window.syncModalState();
-}
-
-function closeLogModal() {
-    document.getElementById('log-modal').style.display = "none";
-    if (window.syncModalState) window.syncModalState();
-}
-
-function viewGlobalLog() {
-    fetch('/api/logs/global')
-        .then(response => response.json())
-        .then(data => {
-            const logContent = document.getElementById('log-content');
-            if (data.logs) {
-                logContent.innerText = data.logs;
-            } else if (data.error) {
-                 logContent.innerText = "Error reading logs: " + data.error;
-            } else {
-                 logContent.innerText = "No logs available.";
-            }
-            document.getElementById('log-modal').style.display = "block";
-            if (window.syncModalState) window.syncModalState();
-        })
-        .catch(err => showNotification("Error: " + err, 'error'));
-}
-
 // Helper
 function escapeHtml(text) {
     if (!text) return text;
@@ -596,6 +539,5 @@ function formatDate(dateStr) {
 
 // Init
 loadSites();
-loadHistory();
 </script>
 {% endblock %}

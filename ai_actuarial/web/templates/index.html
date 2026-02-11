@@ -57,6 +57,7 @@
     <div class="quick-actions">
         <h3>Quick Actions</h3>
         <div class="action-grid">
+            {% if auth_group in ['admin', 'operator'] %}
             <div class="action-card" onclick="location.href='/tasks'">
                 <div class="action-icon">
                     <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
@@ -75,6 +76,7 @@
                 <h4>Scheduled Tasks</h4>
                 <p>Manage scheduled collections</p>
             </div>
+            {% endif %}
             <div class="action-card" onclick="location.href='/database'">
                 <div class="action-icon">
                     <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
