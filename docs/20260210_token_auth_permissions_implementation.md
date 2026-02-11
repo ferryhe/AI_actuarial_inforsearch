@@ -23,6 +23,7 @@ Permission IDs (implemented in `ai_actuarial/web/app.py`):
 - `catalog.read`, `catalog.write`
 - `markdown.read`, `markdown.write`
 - `config.read`, `config.write`
+- `schedule.write`
 - `tasks.view`, `tasks.run`, `tasks.stop`
 - `logs.task.read`, `logs.system.read`
 - `export.read`
@@ -31,7 +32,7 @@ Permission IDs (implemented in `ai_actuarial/web/app.py`):
 Group mapping:
 
 - `reader`: read-only browsing/downloading/markdown viewing
-- `operator`: reader + run/stop tasks + edit catalog/markdown + view task logs
+- `operator`: reader + run/stop tasks + edit catalog/markdown + manage schedule sites + view task logs
 - `admin`: full permissions
 
 ## Key Endpoints
