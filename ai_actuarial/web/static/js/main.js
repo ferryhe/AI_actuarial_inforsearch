@@ -1286,7 +1286,8 @@ window.SearchAutocomplete = SearchAutocomplete;
         const modal = document.getElementById('auth-required-modal');
         if (!modal) return;
         modal.dataset.dest = dest || '/';
-        modal.style.display = 'block';
+        // `.modal` is a flex-centered backdrop; use flex so the dialog is centered.
+        modal.style.display = 'flex';
         if (window.syncModalState) window.syncModalState();
     }
 

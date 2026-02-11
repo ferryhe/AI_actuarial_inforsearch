@@ -363,7 +363,7 @@ function historyShowLog(task) {
   `;
   const modal = document.getElementById('settings-history-log-modal');
   if (modal) {
-    modal.style.display = 'block';
+    modal.style.display = 'flex';
     if (window.syncModalState) window.syncModalState();
   }
   historyReloadTaskLog(String(task.id || ''));
@@ -401,14 +401,14 @@ function historyOpenGlobalLogs() {
     .then(({ ok, j }) => {
       if (pre) pre.textContent = ok ? (j.logs || '(no logs)') : ('Failed to load global logs: ' + (j.error || 'unknown'));
       if (modal) {
-        modal.style.display = 'block';
+        modal.style.display = 'flex';
         if (window.syncModalState) window.syncModalState();
       }
     })
     .catch(e => {
       if (pre) pre.textContent = 'Failed to load global logs: ' + e.message;
       if (modal) {
-        modal.style.display = 'block';
+        modal.style.display = 'flex';
         if (window.syncModalState) window.syncModalState();
       }
     });
