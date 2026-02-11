@@ -18,6 +18,26 @@ Phase 1.3 implements the complete web user interface and REST API for managing R
 4. **Category Integration**: UI for category-based and manual KB creation
 5. **Testing**: Integration testing with real documents
 
+## Implementation Update (2026-02-11)
+
+Completed in this iteration:
+
+- Phase 1.3.2-1.3.3 (Web Pages)
+  - `ai_actuarial/web/templates/rag_management.html`
+  - `ai_actuarial/web/templates/rag_detail.html`
+  - `ai_actuarial/web/app.py` routes: `/rag`, `/rag/<kb_id>`
+- Phase 1.3.4-1.3.6 (UI Components)
+  - Modals: `templates/modals/create_kb_modal.html`, `templates/modals/edit_kb_modal.html`
+  - Partials: `templates/partials/file_selector.html`, `templates/partials/category_sidebar.html`, `templates/partials/kb_stats_card.html`
+  - Frontend assets: `static/js/rag.js`, `static/css/rag.css`
+- Phase 1.3.7 (Task Integration)
+  - `rag_routes.py`: real background task creation for `POST /api/rag/knowledge-bases/<kb_id>/index`
+  - `rag_routes.py`: task listing endpoint `GET /api/rag/knowledge-bases/<kb_id>/tasks`
+  - `app.py`: `execute_collection_task` support for `collection_type == "rag_indexing"`
+- Phase 1.3.8 (Integration Testing)
+  - Web/API integration test: `tests/test_rag_web_integration.py`
+  - Real-doc integration runner: `scripts/run_rag_real_doc_integration.py`
+
 ---
 
 ## 🗂️ Implementation Checklist
