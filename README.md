@@ -38,6 +38,25 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
   - Guests cannot download stored files or run/edit tasks.
   - Tasks / Schedule / Settings and all write operations require a token.
 
+## AI Chatbot (Planned)
+
+A comprehensive AI-powered chatbot with RAG (Retrieval-Augmented Generation) capabilities is planned for implementation:
+
+### Planned Features
+- **Knowledge Base Management**: Create and manage multiple RAG-based knowledge bases from markdown documents
+- **Intelligent Q&A**: Ask questions and get accurate answers with citations from source documents
+- **Multiple Chatbot Modes**: Expert, Summary, Tutorial, and Comparison modes for different use cases
+- **Conversation History**: Persistent multi-turn conversations with context awareness
+- **Smart Routing**: Automatic knowledge base selection based on query analysis
+
+### Implementation Plan
+- Detailed planning documents available in repository
+- 3-phase implementation: (1) RAG Database, (2) AI Chatbot, (3) System Integration
+- Estimated timeline: 10-13 weeks for full implementation
+- Reference project: [AI_Knowledge_Base](https://github.com/ferryhe/AI_Knowledge_Base)
+- See `AI_CHATBOT_PROJECT_ROADMAP.md` for quick overview
+- See `docs/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md` for detailed plan
+
 ## Markdown Feature
 
 The system supports viewing, editing, and converting documents to markdown format:
@@ -160,6 +179,7 @@ flowchart LR
 - Reference: `QUICK_REFERENCE.md`
 - Database backend guide: `DATABASE_BACKEND_GUIDE.md`
 - Modular system guide: `MODULAR_SYSTEM_GUIDE.md`
+- **AI chatbot & RAG implementation plan**: `AI_CHATBOT_PROJECT_ROADMAP.md` and `docs/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md`
 - Implementation and summaries: `docs/`
 
 ## Output Artifacts
