@@ -913,19 +913,13 @@ async function openWebSearchModal() {
 }
 function openQuickCheckModal() { openModal('quick-check-modal'); }
 let _catalogModalBound = false;
-function _syncCatalogOverwrite() {
-    const overwriteEl = document.getElementById('catalog-overwrite-existing');
-    if (!overwriteEl) return;
-}
 
 function _bindCatalogModal() {
     if (_catalogModalBound) return;
     _catalogModalBound = true;
-    const overwriteEl = document.getElementById('catalog-overwrite-existing');
     const providerEl = document.querySelector('#catalog-form select[name="provider"]');
     const sourceEl = document.querySelector('#catalog-form select[name="input_source"]');
 
-    if (overwriteEl) overwriteEl.addEventListener('change', _syncCatalogOverwrite);
     if (providerEl) providerEl.addEventListener('change', () => loadCatalogStats());
     if (sourceEl) sourceEl.addEventListener('change', () => loadCatalogStats());
 }
@@ -933,7 +927,6 @@ function _bindCatalogModal() {
 function openCatalogModal() {
     openModal('catalog-modal');
     _bindCatalogModal();
-    _syncCatalogOverwrite();
     loadCatalogStats();
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }

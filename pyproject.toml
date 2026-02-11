@@ -52,9 +52,4 @@ exclude = [
 exclude_dirs = ["tests", "test_*.py", ".venv", "venv"]
 skips = ["B101", "B601"]  # Skip assert warnings and shell injection warnings for safe usage
 
-[tool.pytest.ini_options]
-testpaths = [".", "tests"]
-python_files = "test_*.py"
-python_classes = "Test*"
-python_functions = "test_*"
-addopts = "-v --tb=short"
+# Pytest configuration is in pytest.ini to avoid duplication and confusion
