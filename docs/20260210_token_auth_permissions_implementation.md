@@ -32,7 +32,7 @@ Permission IDs (implemented in `ai_actuarial/web/app.py`):
 Group mapping:
 
 - `reader`: read-only browsing/downloading/markdown viewing
-- `operator`: reader + run/stop tasks + edit catalog/markdown + manage schedule sites + view task logs
+- `operator`: reader + delete files + run/stop tasks + edit catalog/markdown + manage schedule sites + view task logs
 - `admin`: full permissions
 
 ## Key Endpoints

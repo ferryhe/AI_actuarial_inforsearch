@@ -68,6 +68,7 @@ class TestTokenAuth(unittest.TestCase):
         os.environ["CONFIG_PATH"] = self.cfg_path
         os.environ["REQUIRE_AUTH"] = "true"
         os.environ["FLASK_SECRET_KEY"] = "test-secret"
+        os.environ["ENABLE_FILE_DELETION"] = "true"
 
         self.app = create_app({"TESTING": True, "DEBUG": True})
         self.client = self.app.test_client()
@@ -132,6 +133,23 @@ class TestTokenAuth(unittest.TestCase):
         )
         self.assertEqual(delete.status_code, 200)
         self.assertTrue(delete.get_json().get("success"))
+
+    def test_operator_can_use_delete_file_api(self):
+        # Permission gate: operator should pass authz and reach business validation.
+        resp = self.client.post(
+            "/api/files/delete",
+            json={},
+            headers={"Authorization": f"Bearer {self.operator_token}"},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_reader_forbidden_on_delete_file_api(self):
+        resp = self.client.post(
+            "/api/files/delete",
+            json={},
+            headers={"Authorization": f"Bearer {self.reader_token}"},
+        )
+        self.assertEqual(resp.status_code, 403)
 
     def test_admin_can_access_config(self):
         resp = self.client.get(

@@ -180,6 +180,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "stats.read",
             "files.read",
             "files.download",
+            "files.delete",
             "catalog.read",
             "catalog.write",
             "markdown.read",
