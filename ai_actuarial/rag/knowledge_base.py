@@ -16,14 +16,12 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
-import numpy as np
+from typing import List, Dict, Any, Optional
 
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import KnowledgeBaseException
-from ai_actuarial.rag.semantic_chunking import SemanticChunker, Chunk
+from ai_actuarial.rag.semantic_chunking import SemanticChunker
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
-from ai_actuarial.rag.vector_store import VectorStore
 
 
 class KnowledgeBase:
@@ -196,7 +194,7 @@ class KnowledgeBaseManager:
         # Add RAG columns to catalog_items if not present
         try:
             conn.execute("SELECT rag_indexed FROM catalog_items LIMIT 1")
-        except:
+        except Exception:
             conn.execute("""
                 ALTER TABLE catalog_items 
                 ADD COLUMN rag_indexed INTEGER DEFAULT 0
@@ -204,7 +202,7 @@ class KnowledgeBaseManager:
         
         try:
             conn.execute("SELECT rag_indexed_at FROM catalog_items LIMIT 1")
-        except:
+        except Exception:
             conn.execute("""
                 ALTER TABLE catalog_items 
                 ADD COLUMN rag_indexed_at TEXT
@@ -212,7 +210,7 @@ class KnowledgeBaseManager:
         
         try:
             conn.execute("SELECT rag_chunk_count FROM catalog_items LIMIT 1")
-        except:
+        except Exception:
             conn.execute("""
                 ALTER TABLE catalog_items 
                 ADD COLUMN rag_chunk_count INTEGER DEFAULT 0
@@ -265,7 +263,7 @@ class KnowledgeBaseManager:
             kb_mode=kb_mode,
             embedding_model=embedding_model or self.config.embedding_model,
             chunk_size=chunk_size or self.config.max_chunk_tokens,
-            chunk_overlap=chunk_overlap or (self.config.max_chunk_tokens - self.config.min_chunk_tokens),
+            chunk_overlap=chunk_overlap or 100,
             index_type=index_type or self.config.index_type
         )
         
@@ -501,7 +499,7 @@ class KnowledgeBaseManager:
         conn = self.storage._conn
         cursor = conn.execute("""
             SELECT kf.file_url, kf.added_at, kf.chunk_count, kf.indexed_at,
-                   f.title, f.source_site, c.markdown_updated_at
+                   f.title, f.source_site, c.markdown_updated_at, c.category
             FROM rag_kb_files kf
             JOIN files f ON kf.file_url = f.url
             LEFT JOIN catalog_items c ON kf.file_url = c.file_url
@@ -519,6 +517,7 @@ class KnowledgeBaseManager:
                 'title': row[4],
                 'source_site': row[5],
                 'markdown_updated_at': row[6],
+                'category': row[7],
                 'needs_reindex': row[6] and row[3] and row[6] > row[3]
             })
         
@@ -615,7 +614,7 @@ class KnowledgeBaseManager:
             raise KnowledgeBaseException(f"Knowledge base not found: {kb_id}")
         
         # Get all files in KB
-        kb_files = self.list_kb_files(kb_id)
+        kb_files = self.get_kb_files(kb_id)
         total_files = len(kb_files)
         
         # Get files needing indexing (new or modified)
@@ -739,7 +738,7 @@ class KnowledgeBaseManager:
         # Ensure category mapping table exists
         self._ensure_category_mapping_table()
         
-        timestamp = self._get_timestamp()
+        timestamp = KnowledgeBase._get_timestamp()
         for category in categories:
             self.storage._conn.execute("""
                 INSERT OR REPLACE INTO rag_kb_category_mappings 

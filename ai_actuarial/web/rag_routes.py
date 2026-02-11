@@ -99,7 +99,6 @@ def register_rag_routes(app: Flask, db_path: str, require_permissions) -> None:
         
         try:
             storage = Storage(db_path)
-            storage = Storage(db_path)
             kb_manager = KnowledgeBaseManager(storage)
             
             # Get query parameters
@@ -215,27 +214,33 @@ def register_rag_routes(app: Flask, db_path: str, require_permissions) -> None:
                 if not categories:
                     return _api_error("categories required for category mode", status_code=400)
                 
-                kb = kb_manager.create_kb_from_category(
+                kb = kb_manager.create_kb(
                     kb_id=kb_id,
                     name=name,
-                    category_names=categories,
                     description=description,
+                    kb_mode="category",
                     embedding_model=embedding_model,
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
                 )
+                
+                # Link to categories
+                kb_manager.link_kb_to_categories(kb_id, categories)
             else:  # manual mode
                 file_urls = data.get("file_urls", [])
                 
-                kb = kb_manager.create_manual_kb(
+                kb = kb_manager.create_kb(
                     kb_id=kb_id,
                     name=name,
-                    file_urls=file_urls,
                     description=description,
+                    kb_mode="manual",
                     embedding_model=embedding_model,
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
                 )
+                
+                if file_urls:
+                    kb_manager.add_files_to_kb(kb_id, file_urls)
             
             return _api_success(
                 {
@@ -355,15 +360,11 @@ def register_rag_routes(app: Flask, db_path: str, require_permissions) -> None:
                 updates["name"] = data["name"].strip()
             if "description" in data:
                 updates["description"] = data["description"].strip() or None
-            if "embedding_model" in data:
-                updates["embedding_model"] = data["embedding_model"]
-            if "chunk_size" in data:
-                updates["chunk_size"] = int(data["chunk_size"])
-            if "chunk_overlap" in data:
-                updates["chunk_overlap"] = int(data["chunk_overlap"])
+            
+            # embedding_model, chunk_size, chunk_overlap update not supported by manager yet
             
             if not updates:
-                return _api_error("No valid update fields provided", status_code=400)
+                return _api_error("No valid update fields provided (name, description)", status_code=400)
             
             kb_manager.update_kb(kb_id, **updates)
             
@@ -416,9 +417,9 @@ def register_rag_routes(app: Flask, db_path: str, require_permissions) -> None:
             
             kb_manager.delete_kb(kb_id, delete_vector_store=True)
             
-            return _api_success(
-                message=f"Knowledge base '{kb_id}' deleted successfully"
-            )
+            # get param 'delete_files' is unused as manager deletes entire KB content
+            
+            kb_manager.delete_kb(kb_id
             
         except Exception as e:
             logger.exception(f"Error deleting knowledge base {kb_id}")
@@ -456,29 +457,20 @@ def register_rag_routes(app: Flask, db_path: str, require_permissions) -> None:
             if not kb:
                 return _api_error(f"Knowledge base '{kb_id}' not found", status_code=404)
             
-            # List all files
-            file_urls = kb_manager.list_kb_files(kb_id)
+            # List all KB file records (already includes status)
+            kb_files = kb_manager.get_kb_files(kb_id)
             
             # Get file details with indexing status
             files = []
-            for file_url in file_urls:
-                # Get file info from storage
-                storage = Storage(db_path)
-                file_info = storage.get_file(file_url)
-                if not file_info:
-                    continue
-                
-                # Get indexing status
-                kb_file = kb_manager._get_kb_file_record(kb_id, file_url)
-                
+            for kb_file in kb_files:
                 files.append({
-                    "file_url": file_url,
-                    "title": file_info.get("title", ""),
-                    "category": file_info.get("category", ""),
-                    "indexed": kb_file.get("indexed_at") is not None if kb_file else False,
-                    "indexed_at": kb_file.get("indexed_at") if kb_file else None,
-                    "chunk_count": kb_file.get("chunk_count", 0) if kb_file else 0,
-                    "error": kb_file.get("error") if kb_file else None,
+                    "file_url": kb_file["file_url"],
+                    "title": kb_file.get("title", ""),
+                    "category": kb_file.get("category", ""),
+                    "indexed": kb_file.get("indexed_at") is not None,
+                    "indexed_at": kb_file.get("indexed_at"),
+                    "chunk_count": kb_file.get("chunk_count", 0),
+                    "error": None,
                 })
             
             # Apply status filter
@@ -629,14 +621,11 @@ def register_rag_routes(app: Flask, db_path: str, require_permissions) -> None:
             
             # Get file counts for each category
             categories_with_counts = []
-            for category_name in unmapped:
-                # Query files in this category
-                storage = Storage(db_path)
-                files = storage.search_files(category=category_name, limit=1000)
-                
+            for item in unmapped:
+                # item is dict {category, file_count}
                 categories_with_counts.append({
-                    "name": category_name,
-                    "file_count": len(files),
+                    "name": item["category"],
+                    "file_count": item["file_count"],
                 })
             
             return _api_success({

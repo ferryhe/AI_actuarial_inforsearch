@@ -15,10 +15,8 @@ Features:
 import time
 import hashlib
 import json
-import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Literal
-import numpy as np
+from typing import List, Optional
 
 from openai import OpenAI, APITimeoutError, RateLimitError, APIError
 

@@ -18,8 +18,7 @@ import numpy as np
 
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import RAGException
-from ai_actuarial.rag.semantic_chunking import SemanticChunker, Chunk
-from ai_actuarial.rag.embeddings import EmbeddingGenerator
+from ai_actuarial.rag.semantic_chunking import Chunk
 from ai_actuarial.rag.vector_store import VectorStore
 from ai_actuarial.rag.knowledge_base import KnowledgeBase, KnowledgeBaseManager
 
@@ -91,18 +90,16 @@ class IndexingPipeline:
         # Get embedding dimension
         embedding_dim = self.embedding_generator.get_embedding_dimension()
         
-        if index_path.exists() and not force_reindex:
-            vector_store = VectorStore(
-                dimension=embedding_dim,
-                config=self.config,
-                index_path=str(index_path)
-            )
-        else:
-            vector_store = VectorStore(
-                dimension=embedding_dim,
-                config=self.config,
-                index_path=str(index_path)
-            )
+        # If force_reindex is requested, ensure any existing index file is removed
+        # so that the VectorStore starts from a clean state instead of appending.
+        if force_reindex and index_path.exists():
+            index_path.unlink()
+        
+        vector_store = VectorStore(
+            dimension=embedding_dim,
+            config=self.config,
+            index_path=str(index_path)
+        )
         
         # Process files
         stats = {

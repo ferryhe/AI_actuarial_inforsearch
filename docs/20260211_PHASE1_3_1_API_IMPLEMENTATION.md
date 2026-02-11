@@ -8,7 +8,7 @@
 
 ## 📋 Summary
 
-Successfully implemented all 16 REST API endpoints for RAG knowledge base management, following existing Flask application patterns.
+Successfully implemented all 15 REST API endpoints for RAG knowledge base management, following existing Flask application patterns.
 
 ## ✅ Completed Components
 
