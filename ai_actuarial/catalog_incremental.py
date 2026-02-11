@@ -459,7 +459,7 @@ def _process_single_row(
     
     try:
         provider_norm = (provider or "local").strip().lower()
-        if provider_norm not in {"local"}:
+        if provider_norm not in {"local", "openai"}:
             raise RuntimeError(f"unsupported catalog provider: {provider}")
 
         source_norm = (input_source or "source").strip().lower()
@@ -480,24 +480,45 @@ def _process_single_row(
                 raise RuntimeError(f"File not found: {resolved_path} (orig: {local_path})")
             raise RuntimeError("empty extracted text")
             
-        keywords = extract_keywords(text, title=title)
-        
-        if ai_only and not is_ai_related(text, keywords, title=title):
-            # Skipped
-            item = CatalogItem(
-                source_site=source_site,
-                title=title,
-                original_filename=original_filename,
-                url=file_url,
-                local_path=local_path,
-                keywords=keywords,
-                summary="",
-                category="(filtered: non-AI)",
-            )
-            return (row_data, item, "skipped")
-            
-        summary = summarize(text, keywords)
-        category = categorize(title, text, keywords)
+        if provider_norm == "local":
+            keywords = extract_keywords(text, title=title)
+
+            if ai_only and not is_ai_related(text, keywords, title=title):
+                item = CatalogItem(
+                    source_site=source_site,
+                    title=title,
+                    original_filename=original_filename,
+                    url=file_url,
+                    local_path=local_path,
+                    keywords=keywords,
+                    summary="",
+                    category="(filtered: non-AI)",
+                )
+                return (row_data, item, "skipped")
+
+            summary = summarize(text, keywords)
+            category = categorize(title, text, keywords)
+        else:
+            from .catalog_llm import catalog_with_openai
+
+            llm = catalog_with_openai(title=title, content=text)
+            keywords = llm.keywords
+
+            if ai_only and not is_ai_related(text, keywords, title=title):
+                item = CatalogItem(
+                    source_site=source_site,
+                    title=title,
+                    original_filename=original_filename,
+                    url=file_url,
+                    local_path=local_path,
+                    keywords=keywords,
+                    summary="",
+                    category="(filtered: non-AI)",
+                )
+                return (row_data, item, "skipped")
+
+            summary = llm.summary
+            category = llm.category
         
         item = CatalogItem(
             source_site=source_site,

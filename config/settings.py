@@ -33,12 +33,16 @@ class Settings(BaseSettings):
     # API keys
     mistral_api_key: str | None = Field(default=None, alias="MISTRAL_API_KEY")
     siliconflow_api_key: str | None = Field(default=None, alias="SILICONFLOW_API_KEY")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
 
     # Engine defaults
     default_engine: EngineName = Field(default="local", alias="DEFAULT_ENGINE")
     mistral_default_model: str = Field(default="mistral-ocr-latest", alias="MISTRAL_DEFAULT_MODEL")
     siliconflow_default_model: str = Field(default="deepseek-ai/DeepSeek-OCR", alias="SILICONFLOW_DEFAULT_MODEL")
     siliconflow_base_url: str = Field(default="https://api.siliconflow.cn/v1", alias="SILICONFLOW_BASE_URL")
+    openai_base_url: str = Field(default="https://api.openai.com/v1", alias="OPENAI_BASE_URL")
+    openai_default_model: str = Field(default="gpt-4o-mini", alias="OPENAI_DEFAULT_MODEL")
+    openai_timeout_seconds: float = Field(default=60.0, alias="OPENAI_TIMEOUT_SECONDS")
 
     # Mistral OCR tuning
     mistral_timeout_seconds: float = Field(default=60.0, alias="MISTRAL_TIMEOUT_SECONDS")
