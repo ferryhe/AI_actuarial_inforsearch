@@ -60,6 +60,30 @@ def _parse_json_object(text: str) -> dict[str, Any]:
             return {}
 
 
+def _clean_categories(items: Any, *, allowed: list[str], max_items: int = 3) -> list[str]:
+    out: list[str] = []
+    if isinstance(items, str):
+        parts = re.split(r"[,\n;|]+", items)
+        items = [p.strip() for p in parts if p.strip()]
+    if not isinstance(items, list):
+        return out
+    allowed_lut = {a.lower(): a for a in allowed}
+    for raw in items:
+        if not isinstance(raw, str):
+            continue
+        key = raw.strip().lower()
+        if not key:
+            continue
+        canonical = allowed_lut.get(key)
+        if not canonical:
+            continue
+        if canonical not in out:
+            out.append(canonical)
+        if len(out) >= max_items:
+            break
+    return out
+
+
 def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
     """Use OpenAI Chat Completions to generate summary/keywords/category.
 
@@ -89,8 +113,9 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
         "Your job: read the document content and output a STRICT JSON object with:\n"
         "- summary: concise, factual, 3-5 bullet points or a short paragraph (<= 120 words)\n"
         "- keywords: 8-12 keyphrases (strings), no duplicates\n"
-        "- category: pick exactly one category from the provided list\n"
-        "Rules: do not invent facts. If content is insufficient, use category=\"Other\" and keep summary short."
+        "- categories: pick several mostly related categories in order from most to less relevant "
+        "(array with 1-3 items from the provided list)\n"
+        "Rules: do not invent facts. If content is insufficient, return categories=[\"Other\"] and keep summary short."
     )
 
     cat_lines: list[str] = []
@@ -106,14 +131,14 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
             cat_lines.append(f"- {c}")
 
     user_prompt = (
-        "Categories (choose exactly one):\n"
+        "Categories (choose 1-3 and order by relevance):\n"
         + "\n".join(cat_lines)
         + "\n\n"
         + f"Title:\n{safe_title}\n\n"
         + "Content:\n"
         + safe_content
         + "\n\n"
-        + "Return JSON only."
+        + "Return JSON only, with keys: summary, keywords, categories."
     )
 
     completion = client.chat.completions.create(
@@ -136,8 +161,12 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
     payload = _parse_json_object(content_text)
     summary = str(payload.get("summary") or "").strip()
     keywords = _clean_keywords(payload.get("keywords"), max_items=12)
-    category = str(payload.get("category") or "Other").strip() or "Other"
-    if category not in categories:
-        category = "Other"
+    raw_categories = payload.get("categories")
+    if raw_categories is None:
+        raw_categories = payload.get("category")
+    selected = _clean_categories(raw_categories, allowed=categories, max_items=3)
+    if not selected:
+        selected = ["Other"]
+    category = "; ".join(selected[:3])
 
     return LlmCatalogResult(summary=summary, keywords=keywords, category=category, model=model)

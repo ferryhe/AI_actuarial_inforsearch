@@ -152,7 +152,9 @@ class Storage:
         self._ensure_columns(
             "catalog_items",
             {
+                "file_sha256": "TEXT",
                 "sha256": "TEXT",
+                "catalog_version": "TEXT",
                 "pipeline_version": "TEXT",
                 "processed_at": "TEXT",
                 "status": "TEXT DEFAULT 'ok'",
@@ -1099,7 +1101,8 @@ class Storage:
                    f.last_modified, f.etag, f.published_time, f.first_seen,
                    f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords, c.status,
-                   c.markdown_content, c.markdown_updated_at, c.markdown_source
+                   c.markdown_content, c.markdown_updated_at, c.markdown_source,
+                   c.catalog_version, c.processed_at, c.updated_at
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
             WHERE f.url = ?
@@ -1134,6 +1137,9 @@ class Storage:
             "markdown_content": row[20],
             "markdown_updated_at": row[21],
             "markdown_source": row[22],
+            "catalog_version": row[23],
+            "catalog_processed_at": row[24],
+            "catalog_updated_at": row[25],
         }
     
     def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
