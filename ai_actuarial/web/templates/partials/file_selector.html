@@ -1,0 +1,39 @@
+<div id="rag-file-selector-modal" class="modal" style="display:none;">
+    <div class="modal-content modal-lg rag-file-selector-modal-content">
+        <span class="close" data-close-modal="rag-file-selector-modal">&times;</span>
+        <h3>Select Files</h3>
+        <div class="rag-selector-toolbar">
+            <input type="text" id="rag-file-selector-search" placeholder="Search filename or title">
+            <select id="rag-file-selector-category">
+                <option value="">All Categories</option>
+            </select>
+            <button type="button" id="rag-file-selector-refresh" class="btn btn-secondary btn-sm">Refresh</button>
+        </div>
+        <div class="rag-selector-table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="rag-file-selector-check-all"></th>
+                        <th>Filename</th>
+                        <th>Category</th>
+                        <th>Source</th>
+                        <th>Size</th>
+                        <th>Updated</th>
+                    </tr>
+                </thead>
+                <tbody id="rag-file-selector-body">
+                    <tr><td colspan="6">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="rag-selector-footer">
+            <div id="rag-file-selector-summary">0 files selected</div>
+            <div class="rag-selector-footer-actions">
+                <button type="button" id="rag-file-selector-prev" class="btn btn-secondary btn-sm">Prev</button>
+                <button type="button" id="rag-file-selector-next" class="btn btn-secondary btn-sm">Next</button>
+                <button type="button" id="rag-file-selector-clear" class="btn btn-secondary btn-sm">Clear</button>
+                <button type="button" id="rag-file-selector-apply" class="btn btn-primary btn-sm">Apply</button>
+            </div>
+        </div>
+    </div>
+</div>
