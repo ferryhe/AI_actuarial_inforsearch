@@ -36,6 +36,7 @@ class KnowledgeBase:
         kb_id: str,
         name: str,
         description: str = "",
+        kb_mode: str = "category",  # "category" (auto-sync) or "manual" (explicit selection)
         embedding_model: str = "text-embedding-3-large",
         chunk_size: int = 800,
         chunk_overlap: int = 100,
@@ -49,6 +50,7 @@ class KnowledgeBase:
         self.kb_id = kb_id
         self.name = name
         self.description = description
+        self.kb_mode = kb_mode
         self.embedding_model = embedding_model
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -69,6 +71,7 @@ class KnowledgeBase:
             'kb_id': self.kb_id,
             'name': self.name,
             'description': self.description,
+            'kb_mode': self.kb_mode,
             'embedding_model': self.embedding_model,
             'chunk_size': self.chunk_size,
             'chunk_overlap': self.chunk_overlap,
@@ -134,6 +137,7 @@ class KnowledgeBaseManager:
                 kb_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT,
+                kb_mode TEXT DEFAULT 'category',
                 embedding_model TEXT NOT NULL,
                 chunk_size INTEGER NOT NULL,
                 chunk_overlap INTEGER NOT NULL,
@@ -223,6 +227,7 @@ class KnowledgeBaseManager:
         kb_id: str,
         name: str,
         description: str = "",
+        kb_mode: str = "category",
         embedding_model: Optional[str] = None,
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
@@ -235,6 +240,7 @@ class KnowledgeBaseManager:
             kb_id: Unique identifier for KB
             name: Human-readable name
             description: Optional description
+            kb_mode: "category" (auto-sync) or "manual" (explicit selection)
             embedding_model: Embedding model to use
             chunk_size: Max tokens per chunk
             chunk_overlap: Overlap between chunks
@@ -256,6 +262,7 @@ class KnowledgeBaseManager:
             kb_id=kb_id,
             name=name,
             description=description,
+            kb_mode=kb_mode,
             embedding_model=embedding_model or self.config.embedding_model,
             chunk_size=chunk_size or self.config.max_chunk_tokens,
             chunk_overlap=chunk_overlap or (self.config.max_chunk_tokens - self.config.min_chunk_tokens),
@@ -270,12 +277,12 @@ class KnowledgeBaseManager:
         conn = self.storage._conn
         conn.execute("""
             INSERT INTO rag_knowledge_bases 
-            (kb_id, name, description, embedding_model, chunk_size, chunk_overlap, 
+            (kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap, 
              index_type, created_at, updated_at, file_count, chunk_count,
              index_path, metadata_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            kb.kb_id, kb.name, kb.description, kb.embedding_model,
+            kb.kb_id, kb.name, kb.description, kb.kb_mode, kb.embedding_model,
             kb.chunk_size, kb.chunk_overlap, kb.index_type,
             kb.created_at, kb.updated_at, kb.file_count, kb.chunk_count,
             str(kb_dir / "index.faiss"),
@@ -289,7 +296,7 @@ class KnowledgeBaseManager:
         """Get knowledge base by ID."""
         conn = self.storage._conn
         cursor = conn.execute("""
-            SELECT kb_id, name, description, embedding_model, chunk_size, chunk_overlap,
+            SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             WHERE kb_id = ?
@@ -301,16 +308,17 @@ class KnowledgeBaseManager:
         
         return KnowledgeBase(
             kb_id=row[0], name=row[1], description=row[2],
-            embedding_model=row[3], chunk_size=row[4], chunk_overlap=row[5],
-            index_type=row[6], created_at=row[7], updated_at=row[8],
-            file_count=row[9], chunk_count=row[10]
+            kb_mode=row[3] or "category",  # Default to "category" for existing KBs
+            embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
+            index_type=row[7], created_at=row[8], updated_at=row[9],
+            file_count=row[10], chunk_count=row[11]
         )
     
     def list_kbs(self) -> List[KnowledgeBase]:
         """List all knowledge bases."""
         conn = self.storage._conn
         cursor = conn.execute("""
-            SELECT kb_id, name, description, embedding_model, chunk_size, chunk_overlap,
+            SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
@@ -320,9 +328,10 @@ class KnowledgeBaseManager:
         for row in cursor.fetchall():
             kbs.append(KnowledgeBase(
                 kb_id=row[0], name=row[1], description=row[2],
-                embedding_model=row[3], chunk_size=row[4], chunk_overlap=row[5],
-                index_type=row[6], created_at=row[7], updated_at=row[8],
-                file_count=row[9], chunk_count=row[10]
+                kb_mode=row[3] or "category",  # Default to "category" for existing KBs
+                embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
+                index_type=row[7], created_at=row[8], updated_at=row[9],
+                file_count=row[10], chunk_count=row[11]
             ))
         
         return kbs
@@ -581,3 +590,359 @@ class KnowledgeBaseManager:
             'chunk_size': kb.chunk_size,
             'index_type': kb.index_type
         }
+
+    # ========== NEW: Task Management & Category Methods ==========
+    
+    def get_rag_task_metadata(
+        self, 
+        kb_id: str,
+        categories: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Get metadata for RAG indexing task UI display.
+        
+        Shows files needing indexing with statistics for task confirmation.
+        
+        Args:
+            kb_id: Knowledge base ID
+            categories: Optional category filter for pending files
+            
+        Returns:
+            Dictionary with task metadata for UI display
+        """
+        kb = self.get_kb(kb_id)
+        if not kb:
+            raise KnowledgeBaseException(f"Knowledge base not found: {kb_id}")
+        
+        # Get all files in KB
+        kb_files = self.list_kb_files(kb_id)
+        total_files = len(kb_files)
+        
+        # Get files needing indexing (new or modified)
+        pending_files = self.get_files_needing_index(kb_id)
+        
+        # Apply category filter if provided
+        if categories:
+            pending_files = self._filter_files_by_categories(pending_files, categories)
+        
+        # Build pending details
+        pending_details = []
+        earliest_timestamp = None
+        
+        for file_url in pending_files[:20]:  # Limit to 20 for display
+            # Get file info from catalog_items
+            cursor = self.storage._conn.execute("""
+                SELECT 
+                    ci.updated_at as modified_at,
+                    kf.indexed_at,
+                    kf.added_at
+                FROM rag_kb_files kf
+                LEFT JOIN catalog_items ci ON kf.file_url = ci.file_url
+                WHERE kf.kb_id = ? AND kf.file_url = ?
+            """, (kb_id, file_url))
+            
+            row = cursor.fetchone()
+            if row:
+                modified_at = row[0]
+                indexed_at = row[1]
+                added_at = row[2]
+                reason = "new" if not indexed_at else "modified"
+                
+                pending_details.append({
+                    "file_url": file_url,
+                    "reason": reason,
+                    "modified_at": modified_at,
+                    "indexed_at": indexed_at,
+                    "added_at": added_at
+                })
+                
+                # Track earliest
+                timestamp = modified_at or added_at
+                if timestamp and (not earliest_timestamp or timestamp < earliest_timestamp):
+                    earliest_timestamp = timestamp
+        
+        # Get statistics
+        stats = self.get_kb_stats(kb_id)
+        
+        # Estimate processing
+        estimated_chunks_per_file = 15  # Average from testing
+        estimated_seconds_per_file = 3  # Average: chunk + embed + index
+        
+        return {
+            "kb_id": kb_id,
+            "kb_name": kb.name,
+            "total_files_in_kb": total_files,
+            "indexed_files": stats['indexed_files'],
+            "pending_files": len(pending_files),
+            "pending_details": pending_details,
+            "earliest_pending": earliest_timestamp,
+            "chunk_count_current": stats['total_chunks'],
+            "estimated_new_chunks": len(pending_files) * estimated_chunks_per_file,
+            "estimated_time_seconds": len(pending_files) * estimated_seconds_per_file,
+            "categories_filter": categories
+        }
+    
+    def _filter_files_by_categories(
+        self, 
+        file_urls: List[str], 
+        categories: List[str]
+    ) -> List[str]:
+        """
+        Filter file URLs by categories (supports multi-category files).
+        
+        Args:
+            file_urls: List of file URLs to filter
+            categories: List of category names to filter by
+            
+        Returns:
+            Filtered list of file URLs
+        """
+        if not file_urls or not categories:
+            return file_urls
+        
+        # Build category filter SQL
+        category_conditions = []
+        params = []
+        for cat in categories:
+            # Match: exact, prefix, suffix, or middle (semicolon-separated)
+            category_conditions.append(
+                "(ci.category = ? OR ci.category LIKE ? OR ci.category LIKE ? OR ci.category LIKE ?)"
+            )
+            params.extend([cat, f"{cat};%", f"%; {cat}", f"%; {cat};%"])
+        
+        placeholders = " OR ".join(category_conditions)
+        file_url_placeholders = ",".join(["?" for _ in file_urls])
+        
+        cursor = self.storage._conn.execute(f"""
+            SELECT DISTINCT ci.file_url
+            FROM catalog_items ci
+            WHERE ci.file_url IN ({file_url_placeholders})
+            AND ({placeholders})
+        """, file_urls + params)
+        
+        return [row[0] for row in cursor.fetchall()]
+    
+    def link_kb_to_categories(
+        self, 
+        kb_id: str, 
+        categories: List[str],
+        auto_sync: bool = True
+    ):
+        """
+        Link a KB to one or more categories for automatic file discovery.
+        
+        Args:
+            kb_id: Knowledge base ID
+            categories: List of category names
+            auto_sync: Whether to auto-add files from these categories
+        """
+        # Ensure category mapping table exists
+        self._ensure_category_mapping_table()
+        
+        timestamp = self._get_timestamp()
+        for category in categories:
+            self.storage._conn.execute("""
+                INSERT OR REPLACE INTO rag_kb_category_mappings 
+                (kb_id, category, auto_sync, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (kb_id, category, 1 if auto_sync else 0, timestamp))
+        
+        self.storage._conn.commit()
+        
+        # If auto_sync enabled, automatically add all matching files
+        if auto_sync:
+            self._sync_category_files(kb_id, categories)
+    
+    def _sync_category_files(self, kb_id: str, categories: List[str]):
+        """
+        Automatically add all files from specified categories to KB.
+        
+        Args:
+            kb_id: Knowledge base ID
+            categories: List of category names
+        """
+        # Build query to find all files matching categories
+        category_conditions = []
+        params = []
+        for cat in categories:
+            category_conditions.append(
+                "(ci.category = ? OR ci.category LIKE ? OR ci.category LIKE ? OR ci.category LIKE ?)"
+            )
+            params.extend([cat, f"{cat};%", f"%; {cat}", f"%; {cat};%"])
+        
+        placeholders = " OR ".join(category_conditions)
+        
+        cursor = self.storage._conn.execute(f"""
+            SELECT DISTINCT ci.file_url
+            FROM catalog_items ci
+            WHERE ({placeholders})
+            AND ci.status = 'ok'
+        """, params)
+        
+        file_urls = [row[0] for row in cursor.fetchall()]
+        
+        # Add to KB (silently skip if already added)
+        if file_urls:
+            self.add_files_to_kb(kb_id, file_urls)
+    
+    def get_kb_categories(self, kb_id: str) -> List[str]:
+        """
+        Get categories linked to a KB.
+        
+        Args:
+            kb_id: Knowledge base ID
+            
+        Returns:
+            List of category names
+        """
+        self._ensure_category_mapping_table()
+        cursor = self.storage._conn.execute("""
+            SELECT category FROM rag_kb_category_mappings
+            WHERE kb_id = ?
+            ORDER BY category
+        """, (kb_id,))
+        return [row[0] for row in cursor.fetchall()]
+    
+    def get_category_kbs(self, category: str) -> List[str]:
+        """
+        Get KBs linked to a category.
+        
+        Args:
+            category: Category name
+            
+        Returns:
+            List of KB IDs
+        """
+        self._ensure_category_mapping_table()
+        cursor = self.storage._conn.execute("""
+            SELECT kb_id FROM rag_kb_category_mappings
+            WHERE category = ?
+            ORDER BY kb_id
+        """, (category,))
+        return [row[0] for row in cursor.fetchall()]
+    
+    def get_unmapped_categories(self) -> List[Dict[str, Any]]:
+        """
+        Get categories that have files but no associated KB.
+        
+        Returns:
+            List of dicts with category name and file count
+        """
+        self._ensure_category_mapping_table()
+        
+        # Get all categories from catalog
+        all_categories = self.storage.get_unique_categories()
+        
+        # Get categories with KB mappings
+        cursor = self.storage._conn.execute("""
+            SELECT DISTINCT category FROM rag_kb_category_mappings
+        """)
+        mapped_categories = {row[0] for row in cursor.fetchall()}
+        
+        # Find unmapped
+        unmapped = []
+        for cat in all_categories:
+            if cat not in mapped_categories:
+                # Get file count for this category
+                cursor = self.storage._conn.execute("""
+                    SELECT COUNT(DISTINCT file_url)
+                    FROM catalog_items
+                    WHERE category = ? OR category LIKE ? OR category LIKE ? OR category LIKE ?
+                """, (cat, f"{cat};%", f"%; {cat}", f"%; {cat};%"))
+                
+                file_count = cursor.fetchone()[0]
+                unmapped.append({
+                    "category": cat,
+                    "file_count": file_count
+                })
+        
+        return sorted(unmapped, key=lambda x: x['file_count'], reverse=True)
+    
+    def create_kb_from_category(
+        self,
+        category: str,
+        kb_name: Optional[str] = None,
+        auto_sync: bool = True
+    ) -> KnowledgeBase:
+        """
+        Convenience method: Create KB and link to category in one step.
+        
+        Args:
+            category: Category name
+            kb_name: KB name (defaults to category name)
+            auto_sync: Whether to auto-sync files from category
+            
+        Returns:
+            Created KnowledgeBase instance
+        """
+        # Generate KB ID from category
+        kb_id = category.lower().replace(" ", "_").replace(";", "_")
+        kb_name = kb_name or f"{category} Knowledge Base"
+        
+        # Create KB
+        kb = self.create_kb(
+            kb_id=kb_id,
+            name=kb_name,
+            description=f"Knowledge base for {category} category",
+            kb_mode="category"
+        )
+        
+        # Link to category
+        self.link_kb_to_categories(kb_id, [category], auto_sync=auto_sync)
+        
+        return kb
+    
+    def create_manual_kb(
+        self,
+        kb_id: str,
+        name: str,
+        file_urls: List[str],
+        description: str = ""
+    ) -> KnowledgeBase:
+        """
+        Create a KB with manually selected files (no category binding).
+        
+        Args:
+            kb_id: Knowledge base ID
+            name: KB name
+            file_urls: List of specific file URLs to include
+            description: KB description
+            
+        Returns:
+            Created KnowledgeBase instance
+        """
+        # Create KB in manual mode
+        kb = self.create_kb(
+            kb_id=kb_id,
+            name=name,
+            description=description,
+            kb_mode="manual"
+        )
+        
+        # Add selected files
+        if file_urls:
+            self.add_files_to_kb(kb_id, file_urls)
+        
+        return kb
+    
+    def _ensure_category_mapping_table(self):
+        """Initialize category-to-KB mapping table."""
+        self.storage._conn.execute("""
+            CREATE TABLE IF NOT EXISTS rag_kb_category_mappings (
+                kb_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                auto_sync INTEGER DEFAULT 1,
+                created_at TEXT,
+                PRIMARY KEY (kb_id, category),
+                FOREIGN KEY (kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+            )
+        """)
+        self.storage._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rag_kb_category_kb 
+            ON rag_kb_category_mappings(kb_id)
+        """)
+        self.storage._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rag_kb_category_cat 
+            ON rag_kb_category_mappings(category)
+        """)
+        self.storage._conn.commit()
