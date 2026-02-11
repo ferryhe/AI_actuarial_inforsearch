@@ -336,10 +336,30 @@
                 </label>
             </div>
             <div class="form-group">
+                <label>Catalog From</label>
+                <select name="input_source" id="catalog-input-source">
+                    <option value="source">Source file</option>
+                    <option value="markdown">Markdown</option>
+                </select>
+                <small class="form-hint">Markdown uses converted/edited markdown content from File Details (if available).</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="skip_existing" id="catalog-skip-existing" checked> Skip already cataloged
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing"> Overwrite existing content (recompute)
+                </label>
+            </div>
+            <div class="form-group">
                 <label>AI Provider</label>
                 <select name="provider">
                     <option value="local">Local (KeyBERT, Default)</option>
-                    <option value="openai" disabled>OpenAI (Configure OPENAI_API_KEY)</option>
+                    <option value="openai" {% if not openai_configured %}disabled{% endif %}>
+                        OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
+                    </option>
                     <option value="anthropic" disabled>Anthropic (Coming Soon)</option>
                 </select>
             </div>
@@ -900,8 +920,37 @@ async function openWebSearchModal() {
     if (cb) toggleSearchDefaults(cb.checked);
 }
 function openQuickCheckModal() { openModal('quick-check-modal'); }
+let _catalogModalBound = false;
+function _syncCatalogOverwrite() {
+    const overwriteEl = document.getElementById('catalog-overwrite-existing');
+    const skipEl = document.getElementById('catalog-skip-existing');
+    if (!overwriteEl || !skipEl) return;
+    if (overwriteEl.checked) {
+        skipEl.checked = false;
+        skipEl.disabled = true;
+    } else {
+        skipEl.disabled = false;
+    }
+}
+
+function _bindCatalogModal() {
+    if (_catalogModalBound) return;
+    _catalogModalBound = true;
+    const overwriteEl = document.getElementById('catalog-overwrite-existing');
+    const skipEl = document.getElementById('catalog-skip-existing');
+    const providerEl = document.querySelector('#catalog-form select[name="provider"]');
+    const sourceEl = document.querySelector('#catalog-form select[name="input_source"]');
+
+    if (overwriteEl) overwriteEl.addEventListener('change', _syncCatalogOverwrite);
+    if (skipEl) skipEl.addEventListener('change', () => loadCatalogStats());
+    if (providerEl) providerEl.addEventListener('change', () => loadCatalogStats());
+    if (sourceEl) sourceEl.addEventListener('change', () => loadCatalogStats());
+}
+
 function openCatalogModal() {
     openModal('catalog-modal');
+    _bindCatalogModal();
+    _syncCatalogOverwrite();
     loadCatalogStats();
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
@@ -1008,12 +1057,17 @@ function startCatalog(e) {
     const form = e.target;
     if (!validateForm(form)) return;
     const formData = new FormData(form);
+    const overwrite = formData.get('overwrite_existing') === 'on';
+    const skipExisting = overwrite ? false : (formData.get('skip_existing') === 'on');
     
     startTask('catalog', {
         type: 'catalog',
         scan_start_index: parseInt(formData.get('scan_start_index') || '1'),
         scan_count: parseInt(formData.get('scan_count') || '50'),
         retry_errors: formData.get('retry_errors') === 'on',
+        input_source: formData.get('input_source') || 'source',
+        skip_existing: skipExisting,
+        overwrite_existing: overwrite,
         provider: formData.get('provider'),
         name: `Cataloging (start ${formData.get('scan_start_index') || 1}, scan ${formData.get('scan_count') || 50})`
     });
@@ -1025,7 +1079,10 @@ async function loadCatalogStats() {
     const startEl = document.getElementById('catalog-scan-start-index');
     if (statsEl) statsEl.textContent = 'Loading stats...';
     try {
-        const resp = await fetch('/api/catalog/stats');
+        const form = document.getElementById('catalog-form');
+        const provider = form ? (form.querySelector('select[name=\"provider\"]')?.value || 'local') : 'local';
+        const inputSource = form ? (form.querySelector('select[name=\"input_source\"]')?.value || 'source') : 'source';
+        const resp = await fetch(`/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
