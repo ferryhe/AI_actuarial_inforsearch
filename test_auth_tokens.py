@@ -39,6 +39,7 @@ class TestTokenAuth(unittest.TestCase):
 
         # Create tokens
         self.reader_token = "reader_" + os.urandom(16).hex()
+        self.operator_token = "operator_" + os.urandom(16).hex()
         self.admin_token = "admin_" + os.urandom(16).hex()
 
         storage = Storage(self.db_path)
@@ -46,6 +47,12 @@ class TestTokenAuth(unittest.TestCase):
             subject="reader",
             group_name="reader",
             token_hash=_hash_token(self.reader_token),
+            is_active=True,
+        )
+        storage.upsert_auth_token_by_hash(
+            subject="operator",
+            group_name="operator",
+            token_hash=_hash_token(self.operator_token),
             is_active=True,
         )
         storage.upsert_auth_token_by_hash(
@@ -90,6 +97,41 @@ class TestTokenAuth(unittest.TestCase):
             headers={"Authorization": f"Bearer {self.reader_token}"},
         )
         self.assertEqual(resp.status_code, 403)
+
+    def test_operator_forbidden_on_admin_config(self):
+        resp = self.client.get(
+            "/api/config/categories",
+            headers={"Authorization": f"Bearer {self.operator_token}"},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_operator_can_edit_scheduled_sites(self):
+        # Add site
+        add = self.client.post(
+            "/api/config/sites/add",
+            json={"name": "TestSite", "url": "https://example.com"},
+            headers={"Authorization": f"Bearer {self.operator_token}"},
+        )
+        self.assertEqual(add.status_code, 200)
+        self.assertTrue(add.get_json().get("success"))
+
+        # Update site
+        update = self.client.post(
+            "/api/config/sites/update",
+            json={"original_name": "TestSite", "name": "TestSite2", "url": "https://example.com/x"},
+            headers={"Authorization": f"Bearer {self.operator_token}"},
+        )
+        self.assertEqual(update.status_code, 200)
+        self.assertTrue(update.get_json().get("success"))
+
+        # Delete site
+        delete = self.client.post(
+            "/api/config/sites/delete",
+            json={"name": "TestSite2"},
+            headers={"Authorization": f"Bearer {self.operator_token}"},
+        )
+        self.assertEqual(delete.status_code, 200)
+        self.assertTrue(delete.get_json().get("success"))
 
     def test_admin_can_access_config(self):
         resp = self.client.get(

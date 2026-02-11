@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-{% set can_edit_sites = auth_group == 'admin' %}
+{% set can_edit_sites = auth_group in ['admin', 'operator'] %}
 <div class="scheduled-tasks-page">
     <div class="page-header">
         <h2>Scheduled Task Management</h2>
@@ -21,7 +21,7 @@
             <button onclick="openAddSiteModal()" class="btn btn-primary">+ Add Site</button>
             {% else %}
             <div style="margin-left:auto; color: var(--text-secondary); display:flex; align-items:center;">
-                Read-only (admin required to edit sites)
+                Read-only (operator/admin required to edit sites)
             </div>
             {% endif %}
         </div>
@@ -315,6 +315,7 @@ function renderSites(sites) {
                         </td>
                         <td>
                             ${CAN_EDIT_SITES ? `<button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">Edit</button>` : ''}
+                            ${CAN_EDIT_SITES ? `<button onclick="deleteSite('${escapeHtml(site.name)}')" class="btn-small btn-danger">Delete</button>` : ''}
                             <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">Run</button>
                         </td>
                     </tr>
@@ -351,7 +352,7 @@ function filterSites() {
 // Modal Logic
 function openAddSiteModal() {
     if (!CAN_EDIT_SITES) {
-        showNotification('Admin required to edit scheduled sites.', 'error');
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
         return;
     }
     document.getElementById('modal-title').innerText = 'Add New Site';
@@ -369,7 +370,7 @@ function openAddSiteModal() {
 
 function editSite(name) {
     if (!CAN_EDIT_SITES) {
-        showNotification('Admin required to edit scheduled sites.', 'error');
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
         return;
     }
     const site = allSites.find(s => s.name === name);
@@ -395,7 +396,7 @@ function closeModal() {
 
 function saveSite() {
     if (!CAN_EDIT_SITES) {
-        showNotification('Admin required to edit scheduled sites.', 'error');
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
         return;
     }
     const originalName = document.getElementById('original-site-name').value;
@@ -435,6 +436,34 @@ function saveSite() {
     .catch(error => {
         showNotification('Error saving site: ' + error, 'error');
     });
+}
+
+async function deleteSite(name) {
+    if (!CAN_EDIT_SITES) {
+        showNotification('Operator/admin required to edit scheduled sites.', 'error');
+        return;
+    }
+    const confirmed = await customConfirm(
+        `Delete site "${name}" from schedule configuration?`,
+        'Delete Site'
+    );
+    if (!confirmed) return;
+
+    fetch('/api/config/sites/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name })
+    })
+    .then(response => response.json().then(j => ({ ok: response.ok, j })))
+    .then(({ ok, j }) => {
+        if (ok && j.success) {
+            loadSites();
+            showNotification('Site deleted.', 'success');
+        } else {
+            showNotification('Error: ' + (j.error || 'unknown'), 'error');
+        }
+    })
+    .catch(error => showNotification('Error deleting site: ' + error, 'error'));
 }
 
 // Manual Trigger

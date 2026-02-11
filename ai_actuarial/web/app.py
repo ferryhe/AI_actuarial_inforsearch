@@ -144,6 +144,7 @@ _PERMISSIONS: frozenset[str] = frozenset(
         "markdown.write",
         "config.read",
         "config.write",
+        "schedule.write",
         "tasks.view",
         "tasks.run",
         "tasks.stop",
@@ -183,6 +184,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "catalog.write",
             "markdown.read",
             "markdown.write",
+            "schedule.write",
             "tasks.view",
             "tasks.run",
             "tasks.stop",
@@ -1206,7 +1208,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/add", methods=["POST"])
-    @require_permissions("config.write")
+    @require_permissions("schedule.write")
     def api_config_sites_add():
         """Add a new site to configuration."""
         nonlocal site_config
@@ -1255,7 +1257,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/update", methods=["POST"])
-    @require_permissions("config.write")
+    @require_permissions("schedule.write")
     def api_config_sites_update():
         """Update an existing site in configuration."""
         nonlocal site_config
@@ -1310,6 +1312,36 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error updating site")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/sites/delete", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_sites_delete():
+        """Delete a configured site by name."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            name = str(data.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "Site name is required"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            sites = list(config_data.get("sites") or [])
+            new_sites = [s for s in sites if str(s.get("name") or "") != name]
+            if len(new_sites) == len(sites):
+                return jsonify({"error": "Site not found"}), 404
+
+            config_data["sites"] = new_sites
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting site")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/utils/browse-folder")
