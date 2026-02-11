@@ -93,9 +93,21 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
         "Rules: do not invent facts. If content is insufficient, use category=\"Other\" and keep summary short."
     )
 
+    cat_lines: list[str] = []
+    for c in categories:
+        if c == "Other":
+            cat_lines.append("- Other")
+            continue
+        terms = list((CATEGORY_RULES or {}).get(c) or [])
+        hint = ", ".join(str(t) for t in terms[:8] if t)
+        if hint:
+            cat_lines.append(f"- {c} (examples: {hint})")
+        else:
+            cat_lines.append(f"- {c}")
+
     user_prompt = (
         "Categories (choose exactly one):\n"
-        + "\n".join(f"- {c}" for c in categories)
+        + "\n".join(cat_lines)
         + "\n\n"
         + f"Title:\n{safe_title}\n\n"
         + "Content:\n"
@@ -129,4 +141,3 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
         category = "Other"
 
     return LlmCatalogResult(summary=summary, keywords=keywords, category=category, model=model)
-
