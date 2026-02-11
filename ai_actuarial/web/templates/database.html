@@ -2,7 +2,7 @@
 
 {% block content %}
 {% set can_export_filelist = auth_group in ['admin', 'operator'] %}
-{% set can_bulk_delete = auth_group == 'admin' %}
+{% set can_bulk_delete = auth_group in ['admin', 'operator'] %}
 <div class="database-page">
     <div class="page-header">
         <h2>Database Management</h2>
