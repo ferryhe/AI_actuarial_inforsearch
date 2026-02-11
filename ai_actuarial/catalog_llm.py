@@ -111,7 +111,7 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
     system_prompt = (
         "You are a careful document cataloging assistant for an actuarial/insurance knowledge base. "
         "Your job: read the document content and output a STRICT JSON object with:\n"
-        "- summary: concise, factual, 3-5 bullet points or a short paragraph (<= 120 words)\n"
+        "- summary: concise, factual, 3-5 bullet points or a short paragraph (<= 300 words)\n"
         "- keywords: 8-12 keyphrases (strings), no duplicates\n"
         "- categories: pick several mostly related categories in order from most to less relevant "
         "(array with 1-3 items from the provided list)\n"
