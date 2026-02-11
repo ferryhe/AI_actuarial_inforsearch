@@ -141,6 +141,7 @@
             <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
             <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
             <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
+            <button id="catalog-btn" class="btn btn-secondary" onclick="openFileCatalogModal()">Catalog (AI)</button>
             {% endif %}
             
             {% if can_download_file and file.local_path %}
@@ -200,12 +201,129 @@
     </div>
 </div>
 
+{% if can_write_catalog %}
+<div id="file-catalog-modal" class="modal" style="display:none;">
+  <div class="modal-content modal-md">
+    <span class="close" onclick="closeFileCatalogModal()">&times;</span>
+    <h3>Catalog This File</h3>
+    <p class="hint">Generate summary, keywords, and category for this file.</p>
+    <form id="file-catalog-form" onsubmit="submitFileCatalog(event)">
+      <div class="form-group">
+        <label>Catalog From</label>
+        <select name="input_source" id="file-catalog-input-source">
+          <option value="source">Source file</option>
+          <option value="markdown">Markdown</option>
+        </select>
+        <small class="form-hint">Markdown uses converted/edited markdown content (if available).</small>
+      </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" name="skip_existing" id="file-catalog-skip-existing" checked> Skip already cataloged
+        </label>
+      </div>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" name="overwrite_existing" id="file-catalog-overwrite-existing"> Overwrite existing content (recompute)
+        </label>
+      </div>
+      <div class="form-group">
+        <label>AI Provider</label>
+        <select name="provider" id="file-catalog-provider">
+          <option value="local">Local (KeyBERT)</option>
+          <option value="openai" {% if not openai_configured %}disabled{% endif %}>
+            OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
+          </option>
+        </select>
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="closeFileCatalogModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Submit Catalog Task</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <script>
     let editMode = false;
     const fileUrl = {{ file.url|tojson }};
     let categoryOptionsLoaded = false;
     let categoryOptions = [];
     let selectedCategories = [];
+    let _fileCatalogBound = false;
+
+    function _syncFileCatalogOverwrite() {
+        const overwriteEl = document.getElementById('file-catalog-overwrite-existing');
+        const skipEl = document.getElementById('file-catalog-skip-existing');
+        if (!overwriteEl || !skipEl) return;
+        if (overwriteEl.checked) {
+            skipEl.checked = false;
+            skipEl.disabled = true;
+        } else {
+            skipEl.disabled = false;
+        }
+    }
+
+    function _bindFileCatalogModal() {
+        if (_fileCatalogBound) return;
+        _fileCatalogBound = true;
+        const overwriteEl = document.getElementById('file-catalog-overwrite-existing');
+        if (overwriteEl) overwriteEl.addEventListener('change', _syncFileCatalogOverwrite);
+    }
+
+    function openFileCatalogModal() {
+        const modal = document.getElementById('file-catalog-modal');
+        if (!modal) return;
+        _bindFileCatalogModal();
+        _syncFileCatalogOverwrite();
+        modal.style.display = 'flex';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    function closeFileCatalogModal() {
+        const modal = document.getElementById('file-catalog-modal');
+        if (!modal) return;
+        modal.style.display = 'none';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    async function submitFileCatalog(e) {
+        e.preventDefault();
+        const form = document.getElementById('file-catalog-form');
+        if (!form) return;
+
+        const provider = document.getElementById('file-catalog-provider')?.value || 'local';
+        const inputSource = document.getElementById('file-catalog-input-source')?.value || 'source';
+        const overwrite = document.getElementById('file-catalog-overwrite-existing')?.checked || false;
+        const skipExisting = overwrite ? false : (document.getElementById('file-catalog-skip-existing')?.checked || false);
+
+        try {
+            const response = await fetch('/api/collections/run', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    type: 'catalog',
+                    file_urls: [fileUrl],
+                    provider: provider,
+                    input_source: inputSource,
+                    skip_existing: skipExisting,
+                    overwrite_existing: overwrite,
+                    name: `Catalog - ${provider} (${inputSource}) (1 file)`
+                })
+            });
+
+            const data = await response.json();
+            if (response.ok && data.success) {
+                Toast.success('Catalog task submitted. Check Tasks for progress.');
+                closeFileCatalogModal();
+            } else {
+                Toast.error('Failed to submit catalog: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            Toast.error('Network error: ' + err.message);
+            console.error('Catalog submit exception:', err);
+        }
+    }
 
     function parseCategoryString(rawValue) {
         return (rawValue || '')
