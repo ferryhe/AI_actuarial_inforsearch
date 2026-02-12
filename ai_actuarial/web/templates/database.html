@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 
 {% block extra_css %}
 <style>
@@ -170,13 +170,22 @@ function displayResults(data) {
     const container = document.getElementById('results-container');
     document.getElementById('results-count').textContent = `${data.total} files`;
 
-        if (data.files && data.files.length > 0) {
+    if (data.files && data.files.length > 0) {
         // Use Phase 3 DataTable component
-        const isAdminOrOperator = {{ 'true' if auth_group in ['admin', 'operator'] else 'false' }};
-        
+        const rowsWithSequence = data.files.map((row, index) => ({
+            ...row,
+            row_number: Number(data.offset || 0) + index + 1
+        }));
+
         new DataTable(container, {
-            data: data.files,
+            data: rowsWithSequence,
             columns: [
+                {
+                    key: 'row_number',
+                    label: '#',
+                    sortable: false,
+                    render: (value) => String(value || '')
+                },
                 {
                     key: 'title',
                     label: 'Title / Summary',
@@ -205,23 +214,9 @@ function displayResults(data) {
                     sortable: false,
                     render: (value, row) => {
                         if (row.markdown_content && row.markdown_content.length > 0) {
-                            return '<span class="status-badge status-success" title="Markdown available">✓</span>';
-                        } else {
-                            return '<span class="status-badge status-missing" title="No markdown">−</span>';
+                            return '<span class="status-badge status-success" title="Markdown available">Y</span>';
                         }
-                    }
-                },
-                {
-                    key: 'chunk_status',
-                    label: 'Chunks',
-                    sortable: false,
-                    render: (value, row) => {
-                        const count = row.rag_chunk_count || 0;
-                        if (count > 0) {
-                            return `<span class="status-badge status-success" title="${count} chunks">${count}</span>`;
-                        } else {
-                            return '<span class="status-badge status-missing" title="No chunks">−</span>';
-                        }
+                        return '<span class="status-badge status-missing" title="No markdown">-</span>';
                     }
                 },
                 {
@@ -241,21 +236,8 @@ function displayResults(data) {
                     label: 'Actions',
                     sortable: false,
                     render: (value, row) => {
-                        // Escape for HTML attribute context: escape both quotes and backslashes
                         const safeUrl = escapeHtml(row.url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                        let buttons = `<button class="btn btn-small btn-primary" onclick="previewFile('${safeUrl}'); event.stopPropagation();">Preview</button>`;
-                        
-                        // Add RAG action buttons for admin/operator
-                        if (isAdminOrOperator) {
-                            const hasMarkdown = row.markdown_content && row.markdown_content.length > 0;
-                            const hasChunks = (row.rag_chunk_count || 0) > 0;
-                            
-                            if (hasMarkdown && !hasChunks) {
-                                buttons += ` <button class="btn btn-small btn-secondary" onclick="generateChunks('${safeUrl}'); event.stopPropagation();" title="Generate chunks from markdown">Gen Chunks</button>`;
-                            }
-                        }
-                        
-                        return buttons;
+                        return `<button class="btn btn-small btn-primary" onclick="previewFile('${safeUrl}'); event.stopPropagation();">Preview</button>`;
                     }
                 }
             ],
@@ -400,27 +382,6 @@ function debounceSearch() {
     window.searchTimeout = setTimeout(() => searchFiles(1), 500);
 }
 
-// Generate chunks for a file (admin/operator only)
-async function generateChunks(fileUrl) {
-    if (!confirm('Generate chunks from markdown for this file?\n\nThis will create text chunks suitable for RAG indexing.')) {
-        return;
-    }
-    
-    try {
-        // In the future, this could call a dedicated API to generate chunks
-        // For now, we show a message that chunks are generated when added to a KB
-        Toast.info('Chunks are generated when you add files to a Knowledge Base in the RAG page.');
-        
-        // Navigate to RAG management page
-        setTimeout(() => {
-            window.location.href = '/rag';
-        }, 2000);
-    } catch (error) {
-        console.error('Error generating chunks:', error);
-        Toast.error('Failed to generate chunks: ' + error.message);
-    }
-}
-
 // Initialize Phase 3 Search Autocomplete
 document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('search-query');
@@ -462,3 +423,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </script>
 {% endblock %}
+

@@ -135,6 +135,7 @@
 
         {% set can_write_catalog = auth_group in ['admin', 'operator'] %}
         {% set can_write_markdown = auth_group in ['admin', 'operator'] %}
+        {% set can_run_rag_tasks = auth_group in ['admin', 'operator'] %}
         {% set can_delete_file = auth_group in ['admin', 'operator'] %}
         {% set can_download_file = auth_group in ['admin', 'operator', 'reader'] %}
 
@@ -158,6 +159,19 @@
         </div>
 
         <div class="markdown-section">
+            <div class="rag-status-panel">
+                <div id="chunk-meta" class="markdown-meta rag-meta" style="display:none;"></div>
+                <div id="index-meta" class="markdown-meta rag-meta" style="display:none;"></div>
+                {% if can_run_rag_tasks %}
+                <div id="rag-index-actions" class="rag-index-actions" style="display:none;">
+                    <label for="rag-kb-select">KB</label>
+                    <select id="rag-kb-select" class="rag-kb-select"></select>
+                    <button id="rag-submit-btn" class="btn btn-secondary" onclick="submitChunkIndexTask()">
+                        Submit Chunk+Index Task
+                    </button>
+                </div>
+                {% endif %}
+            </div>
             <div class="markdown-header">
                 <h4>Markdown Content</h4>
                 <div class="markdown-tabs">
@@ -252,6 +266,10 @@
     const fileUrl = {{ file.url|tojson }};
     const initialCatalogVersion = {{ (file.catalog_version or '')|tojson }};
     const initialCatalogProcessedAt = {{ (file.catalog_processed_at or file.catalog_updated_at or '')|tojson }};
+    const initialRagChunkCount = {{ (file.rag_chunk_count or 0)|tojson }};
+    const initialRagIndexedAt = {{ (file.rag_indexed_at or '')|tojson }};
+    const ragKbEntries = {{ (rag_kb_entries or [])|tojson }};
+    const canRunRagTasks = {{ 'true' if can_run_rag_tasks else 'false' }};
     let categoryOptionsLoaded = false;
     let categoryOptions = [];
     let selectedCategories = [];
@@ -331,6 +349,13 @@
         return 'Source file';
     }
 
+    function mapMarkdownSourceLabel(source) {
+        const s = String(source || '').trim();
+        if (!s) return 'Unknown';
+        if (s.toLowerCase() === 'manual') return 'Manual';
+        return s;
+    }
+
     function mapCatalogProviderLabel(provider) {
         const p = String(provider || '').trim().toLowerCase();
         if (p === 'openai') return 'OpenAI (ChatGPT)';
@@ -353,6 +378,21 @@
         return { source: 'source', provider: 'local' };
     }
 
+    function formatLocalTimestamp(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return '-';
+        const parsed = new Date(raw);
+        if (isNaN(parsed.getTime())) return raw;
+        return parsed.toLocaleString(undefined, {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+    }
+
     function renderCatalogMeta(version, updatedAt) {
         const el = document.getElementById('catalog-meta');
         if (!el) return;
@@ -363,8 +403,147 @@
             el.textContent = '';
             return;
         }
-        el.textContent = `${mapCatalogSourceLabel(parsed.source)} | ${mapCatalogProviderLabel(parsed.provider)} | Updated: ${timestamp || '-'}`;
+        el.textContent = `${mapCatalogSourceLabel(parsed.source)} | ${mapCatalogProviderLabel(parsed.provider)} | Updated: ${formatLocalTimestamp(timestamp)}`;
         el.style.display = 'block';
+    }
+
+    function getPrimaryRagEntry() {
+        if (!Array.isArray(ragKbEntries) || ragKbEntries.length === 0) return null;
+        return ragKbEntries[0];
+    }
+
+    function fillRagKbSelect(options, preferredKbId = '') {
+        const kbSelect = document.getElementById('rag-kb-select');
+        if (!kbSelect) return;
+        kbSelect.innerHTML = '';
+        options.forEach((item) => {
+            const opt = document.createElement('option');
+            opt.value = item.kb_id;
+            const label = item.kb_name || item.kb_id;
+            const model = item.embedding_model ? ` (${item.embedding_model})` : '';
+            opt.textContent = `${label}${model}`;
+            kbSelect.appendChild(opt);
+        });
+        if (preferredKbId) {
+            kbSelect.value = preferredKbId;
+        }
+    }
+
+    async function ensureRagKbSelectOptions() {
+        const existing = Array.isArray(ragKbEntries)
+            ? ragKbEntries.map((item) => ({
+                kb_id: item.kb_id,
+                kb_name: item.kb_name || item.kb_id,
+                embedding_model: item.embedding_model || ''
+            }))
+            : [];
+        if (existing.length > 0) {
+            fillRagKbSelect(existing, existing[0].kb_id);
+            return true;
+        }
+
+        try {
+            const resp = await fetch('/api/rag/knowledge-bases');
+            const payload = await resp.json();
+            if (!resp.ok || !payload.success || !Array.isArray(payload.data) || payload.data.length === 0) {
+                return false;
+            }
+            const options = payload.data.map((kb) => ({
+                kb_id: kb.kb_id,
+                kb_name: kb.name || kb.kb_id,
+                embedding_model: kb.embedding_model || ''
+            }));
+            fillRagKbSelect(options, options[0].kb_id);
+            return true;
+        } catch (err) {
+            console.error('Failed loading KB options:', err);
+            return false;
+        }
+    }
+
+    async function renderRagStatusMeta() {
+        const chunkMeta = document.getElementById('chunk-meta');
+        const indexMeta = document.getElementById('index-meta');
+        const ragActions = document.getElementById('rag-index-actions');
+        if (!chunkMeta || !indexMeta) return;
+
+        const primary = getPrimaryRagEntry();
+        const model = (primary && primary.embedding_model) || 'Unknown';
+        const chunkCount = Math.max(Number(initialRagChunkCount || 0), Number((primary && primary.chunk_count) || 0));
+        const indexedAt = String(initialRagIndexedAt || ((primary && primary.indexed_at) || '')).trim();
+        const hasChunk = chunkCount > 0;
+        const hasIndex = !!indexedAt;
+
+        if (hasChunk) {
+            const chunkUpdatedAt = indexedAt || ((primary && primary.added_at) || '');
+            chunkMeta.textContent = `Chunk | ${model} | Updated: ${formatLocalTimestamp(chunkUpdatedAt)} | Chunks: ${chunkCount}`;
+            chunkMeta.style.display = 'block';
+        } else {
+            chunkMeta.style.display = 'none';
+            chunkMeta.textContent = '';
+        }
+
+        if (hasIndex) {
+            indexMeta.textContent = `Index | ${model} | Updated: ${formatLocalTimestamp(indexedAt)}`;
+            indexMeta.style.display = 'block';
+        } else {
+            indexMeta.style.display = 'none';
+            indexMeta.textContent = '';
+        }
+
+        if (ragActions && canRunRagTasks) {
+            const showTaskButton = !hasChunk && !hasIndex;
+            if (showTaskButton) {
+                ragActions.style.display = 'flex';
+                await ensureRagKbSelectOptions();
+            } else {
+                ragActions.style.display = 'none';
+            }
+        }
+    }
+
+    async function submitChunkIndexTask() {
+        const kbSelect = document.getElementById('rag-kb-select');
+        const submitBtn = document.getElementById('rag-submit-btn');
+        const kbId = (kbSelect && kbSelect.value ? kbSelect.value : '').trim();
+        if (!kbId) {
+            Toast.error('Please select a Knowledge Base first.');
+            return;
+        }
+
+        if (submitBtn) submitBtn.disabled = true;
+        try {
+            const addResp = await fetch(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({file_urls: [fileUrl]})
+            });
+            const addPayload = await addResp.json();
+            if (!addResp.ok || !addPayload.success) {
+                throw new Error(addPayload.error || 'Failed to add file to KB');
+            }
+
+            const indexResp = await fetch(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    file_urls: [fileUrl],
+                    force_reindex: false,
+                    incremental: false
+                })
+            });
+            const indexPayload = await indexResp.json();
+            if (!indexResp.ok || !indexPayload.success) {
+                throw new Error(indexPayload.error || 'Failed to submit index task');
+            }
+
+            Toast.success(`Chunk+Index task submitted: ${indexPayload.data?.job_id || '-'}`);
+        } catch (err) {
+            Toast.error(`Failed to submit Chunk+Index task: ${err.message}`);
+            console.error('submitChunkIndexTask error:', err);
+        } finally {
+            if (submitBtn) submitBtn.disabled = false;
+        }
     }
 
     function categoryListToString(list) {
@@ -659,6 +838,7 @@
     // Load categories early so the first edit interaction is instant.
     ensureCategoryOptions();
     renderCatalogMeta(initialCatalogVersion, initialCatalogProcessedAt);
+    renderRagStatusMeta();
     
     // ===== Markdown functionality =====
     let currentMarkdownContent = '';
@@ -686,7 +866,7 @@
                 // Update timestamp if available
                 if (data.markdown.markdown_updated_at) {
                     const timestamp = document.getElementById('markdown-last-updated');
-                    timestamp.textContent = `Last updated: ${data.markdown.markdown_updated_at}`;
+                    timestamp.textContent = `Last updated: ${formatLocalTimestamp(data.markdown.markdown_updated_at)}`;
                 }
                 
                 // Hide empty message
@@ -807,7 +987,7 @@
                 // Update timestamp
                 if (data.markdown && data.markdown.markdown_updated_at) {
                     const timestamp = document.getElementById('markdown-last-updated');
-                    timestamp.textContent = `Last updated: ${data.markdown.markdown_updated_at}`;
+                    timestamp.textContent = `Last updated: ${formatLocalTimestamp(data.markdown.markdown_updated_at)}`;
                 }
 
                 // Update meta (source/updated_at) in view header.
@@ -892,9 +1072,9 @@
             meta.textContent = '';
             return;
         }
-        const parts = [];
-        if (markdown.markdown_source) parts.push(`Source: ${markdown.markdown_source}`);
-        if (markdown.markdown_updated_at) parts.push(`Updated: ${markdown.markdown_updated_at}`);
+        const parts = ['Markdown'];
+        if (markdown.markdown_source) parts.push(mapMarkdownSourceLabel(markdown.markdown_source));
+        if (markdown.markdown_updated_at) parts.push(`Updated: ${formatLocalTimestamp(markdown.markdown_updated_at)}`);
         if (!parts.length) {
             meta.style.display = 'none';
             meta.textContent = '';
@@ -1321,6 +1501,31 @@
         margin: -0.5rem 0 0.75rem 0;
         color: var(--text-secondary);
         font-size: 0.9rem;
+    }
+
+    .rag-status-panel {
+        margin-bottom: 0.9rem;
+    }
+
+    .rag-meta {
+        margin: 0 0 0.4rem 0;
+    }
+
+    .rag-index-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin: 0.3rem 0 0.8rem 0;
+        flex-wrap: wrap;
+    }
+
+    .rag-kb-select {
+        min-width: 260px;
+        padding: 0.35rem 0.45rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
     }
 
     /* Long markdown can make the page unwieldy; cap height and allow scroll by default. */
