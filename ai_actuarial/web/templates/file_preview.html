@@ -48,15 +48,21 @@
 {% endblock %}
 
 {% block extra_js %}
-<!-- PDF.js library -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- PDF.js library with SRI -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" 
+        integrity="sha512-lv0HTMdMxEBo8Fy/Uy5h3b3chz0mLqTiZvNHwJe8eHMMcQqVVYOFDzVmRm8K+7U1k8F6thBdMjqCTUi1fDlDvA==" 
+        crossorigin="anonymous" 
+        referrerpolicy="no-referrer"></script>
 <script>
     // Configure PDF.js worker
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 </script>
 
-<!-- Marked.js for markdown rendering -->
-<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<!-- Marked.js for markdown rendering with SRI -->
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" 
+        integrity="sha512-cPSVF/rjFrPRCHVQXqBxvR4yMpBqQzx71i6dCkUxYP1XXW8GOSXJPg+OIq0pONGAA49Ao9+WpFzwI2eNJbHqgA==" 
+        crossorigin="anonymous" 
+        referrerpolicy="no-referrer"></script>
 
 <!-- File preview script -->
 <script src="{{ url_for('static', filename='js/file_preview.js') }}"></script>
