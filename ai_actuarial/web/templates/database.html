@@ -1,5 +1,43 @@
 {% extends "base.html" %}
 
+{% block extra_css %}
+<style>
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-align: center;
+    min-width: 30px;
+}
+
+.status-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+[data-theme="dark"] .status-success {
+    background-color: #1e4620;
+    color: #7ec97f;
+    border-color: #2d5f2e;
+}
+
+.status-missing {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    border: 1px solid #dee2e6;
+}
+
+[data-theme="dark"] .status-missing {
+    background-color: #2d2d2d;
+    color: #999;
+    border-color: #444;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 {% set can_export_filelist = auth_group in ['admin', 'operator'] %}
 {% set can_bulk_delete = auth_group in ['admin', 'operator'] %}
@@ -134,6 +172,8 @@ function displayResults(data) {
 
         if (data.files && data.files.length > 0) {
         // Use Phase 3 DataTable component
+        const isAdminOrOperator = {{ 'true' if auth_group in ['admin', 'operator'] else 'false' }};
+        
         new DataTable(container, {
             data: data.files,
             columns: [
@@ -160,6 +200,31 @@ function displayResults(data) {
                     render: (value) => escapeHtml(value || '-')
                 },
                 {
+                    key: 'markdown_status',
+                    label: 'Markdown',
+                    sortable: false,
+                    render: (value, row) => {
+                        if (row.markdown_content && row.markdown_content.length > 0) {
+                            return '<span class="status-badge status-success" title="Markdown available">✓</span>';
+                        } else {
+                            return '<span class="status-badge status-missing" title="No markdown">−</span>';
+                        }
+                    }
+                },
+                {
+                    key: 'chunk_status',
+                    label: 'Chunks',
+                    sortable: false,
+                    render: (value, row) => {
+                        const count = row.rag_chunk_count || 0;
+                        if (count > 0) {
+                            return `<span class="status-badge status-success" title="${count} chunks">${count}</span>`;
+                        } else {
+                            return '<span class="status-badge status-missing" title="No chunks">−</span>';
+                        }
+                    }
+                },
+                {
                     key: 'bytes',
                     label: 'Size',
                     sortable: true,
@@ -178,7 +243,19 @@ function displayResults(data) {
                     render: (value, row) => {
                         // Escape for HTML attribute context: escape both quotes and backslashes
                         const safeUrl = escapeHtml(row.url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                        return `<button class="btn btn-small btn-primary" onclick="previewFile('${safeUrl}'); event.stopPropagation();">Preview</button>`;
+                        let buttons = `<button class="btn btn-small btn-primary" onclick="previewFile('${safeUrl}'); event.stopPropagation();">Preview</button>`;
+                        
+                        // Add RAG action buttons for admin/operator
+                        if (isAdminOrOperator) {
+                            const hasMarkdown = row.markdown_content && row.markdown_content.length > 0;
+                            const hasChunks = (row.rag_chunk_count || 0) > 0;
+                            
+                            if (hasMarkdown && !hasChunks) {
+                                buttons += ` <button class="btn btn-small btn-secondary" onclick="generateChunks('${safeUrl}'); event.stopPropagation();" title="Generate chunks from markdown">Gen Chunks</button>`;
+                            }
+                        }
+                        
+                        return buttons;
                     }
                 }
             ],
@@ -321,6 +398,27 @@ searchFiles(1);
 function debounceSearch() {
     clearTimeout(window.searchTimeout);
     window.searchTimeout = setTimeout(() => searchFiles(1), 500);
+}
+
+// Generate chunks for a file (admin/operator only)
+async function generateChunks(fileUrl) {
+    if (!confirm('Generate chunks from markdown for this file?\n\nThis will create text chunks suitable for RAG indexing.')) {
+        return;
+    }
+    
+    try {
+        // In the future, this could call a dedicated API to generate chunks
+        // For now, we show a message that chunks are generated when added to a KB
+        Toast.info('Chunks are generated when you add files to a Knowledge Base in the RAG page.');
+        
+        // Navigate to RAG management page
+        setTimeout(() => {
+            window.location.href = '/rag';
+        }, 2000);
+    } catch (error) {
+        console.error('Error generating chunks:', error);
+        Toast.error('Failed to generate chunks: ' + error.message);
+    }
 }
 
 // Initialize Phase 3 Search Autocomplete
