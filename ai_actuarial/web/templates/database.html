@@ -95,8 +95,45 @@
 let currentPage = 1;
 const pageSize = 20;
 
+function readPageStateFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const page = parseInt(params.get('page') || '1', 10);
+    const query = params.get('query') || '';
+    const source = params.get('source') || '';
+    const category = params.get('category') || '';
+    const includeDeleted = params.get('include_deleted') === 'true';
+    const sortBy = params.get('sort_by') || 'last_seen';
+    return {
+        page: Number.isFinite(page) && page > 0 ? page : 1,
+        query,
+        source,
+        category,
+        includeDeleted,
+        sortBy
+    };
+}
+
+function writePageStateToUrl(page) {
+    const params = new URLSearchParams();
+    const query = document.getElementById('search-query').value;
+    const source = document.getElementById('source-filter').value;
+    const category = document.getElementById('category-filter').value;
+    const includeDeleted = document.getElementById('include-deleted').checked;
+    const sortBy = document.getElementById('sort-by').value;
+
+    params.set('page', String(page));
+    params.set('sort_by', sortBy);
+    if (query) params.set('query', query);
+    if (source) params.set('source', source);
+    if (category) params.set('category', category);
+    if (includeDeleted) params.set('include_deleted', 'true');
+
+    const next = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', next);
+}
+
 // Load sources and categories for filters
-fetch('/api/sources')
+const sourceFilterPromise = fetch('/api/sources')
     .then(response => response.json())
     .then(data => {
         const select = document.getElementById('source-filter');
@@ -108,7 +145,7 @@ fetch('/api/sources')
         });
     });
 
-fetch('/api/categories?mode=used')
+const categoryFilterPromise = fetch('/api/categories?mode=used')
     .then(response => response.json())
     .then(data => {
         const select = document.getElementById('category-filter');
@@ -152,6 +189,8 @@ function searchFiles(page = 1) {
     if (source) params.append('source', source);
     if (category) params.append('category', category);
     if (includeDeleted) params.append('include_deleted', 'true');
+
+    writePageStateToUrl(page);
 
     document.getElementById('results-container').innerHTML = '<p class="loading">Loading...</p>';
 
@@ -349,13 +388,13 @@ function resetFilters() {
 
 function viewFile(url) {
     // Properly encode URL for path parameter
-    window.location = `/file/${encodeURIComponent(url)}`;
+    const returnTo = `${window.location.pathname}${window.location.search || ''}`;
+    window.location = `/file/${encodeURIComponent(url)}?return_to=${encodeURIComponent(returnTo)}`;
 }
 
 function previewFile(url) {
-    // Open preview in new tab
     const previewUrl = `/file_preview?file_url=${encodeURIComponent(url)}`;
-    window.open(previewUrl, '_blank');
+    window.location = previewUrl;
 }
 
 function downloadFile(url) {
@@ -375,7 +414,23 @@ function downloadFile(url) {
 }
 
 // Load initial results
-searchFiles(1);
+const initialState = readPageStateFromUrl();
+document.getElementById('search-query').value = initialState.query;
+document.getElementById('include-deleted').checked = initialState.includeDeleted;
+document.getElementById('sort-by').value = initialState.sortBy;
+currentPage = initialState.page;
+
+function applyDeferredFilterDefaults() {
+    const sourceFilter = document.getElementById('source-filter');
+    const categoryFilter = document.getElementById('category-filter');
+    if (initialState.source) sourceFilter.value = initialState.source;
+    if (initialState.category) categoryFilter.value = initialState.category;
+    searchFiles(currentPage);
+}
+
+Promise.allSettled([sourceFilterPromise, categoryFilterPromise]).then(() => {
+    applyDeferredFilterDefaults();
+});
 
 function debounceSearch() {
     clearTimeout(window.searchTimeout);
