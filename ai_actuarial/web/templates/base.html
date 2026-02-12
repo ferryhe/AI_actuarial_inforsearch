@@ -48,6 +48,9 @@
                     {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('scheduled_tasks') }}" class="nav-link">Schedule</a></li>
                     {% endif %}
+                    {% if auth_group in ['admin', 'operator', 'reader'] %}
+                    <li><a href="{{ url_for('rag_management') }}" class="nav-link">Knowledge Bases</a></li>
+                    {% endif %}
 
                     {% if auth_group == 'admin' %}
                     <li><a href="{{ url_for('settings') }}" class="nav-link">Settings</a></li>
