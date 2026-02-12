@@ -166,6 +166,8 @@ class Storage:
                 "markdown_content": "TEXT",
                 "markdown_updated_at": "TEXT",
                 "markdown_source": "TEXT",
+                "rag_chunk_count": "INTEGER DEFAULT 0",
+                "rag_indexed_at": "TEXT",
             },
         )
         self._migrate_catalog_items()

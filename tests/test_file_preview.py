@@ -162,7 +162,7 @@ class TestFilePreview(unittest.TestCase):
         if response.status_code == 503:
             self.skipTest("RAG functionality not available (missing dependencies)")
         
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 404)
         
         data = json.loads(response.data)
         self.assertFalse(data["success"])
@@ -178,7 +178,7 @@ class TestFilePreview(unittest.TestCase):
         if response.status_code == 503:
             self.skipTest("RAG functionality not available (missing dependencies)")
         
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         
         data = json.loads(response.data)
         self.assertFalse(data["success"])

@@ -890,7 +890,7 @@ def register_rag_routes(
         try:
             def _run(kb_manager, storage):
                 # Get file metadata
-                file_info = storage.get_file(file_url)
+                file_info = storage.get_file_by_url(file_url)
                 if not file_info:
                     return _api_error("File not found", status_code=404)
                 
