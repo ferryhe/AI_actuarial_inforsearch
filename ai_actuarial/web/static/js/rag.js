@@ -12,6 +12,9 @@
         currentCategory: '',
         currentKb: null,
         detailFiles: [],
+        detailFileSelection: new Set(),
+        detailPage: 1,
+        detailPageSize: 20,
         selectedCreateFiles: new Map(),
         selectedDetailFiles: new Map(),
         fileSelector: {
@@ -172,6 +175,7 @@
         document.querySelectorAll('.modal').forEach((modal) => {
             modal.addEventListener('click', (e) => {
                 if (e.target === modal) {
+                    if (modal.dataset.staticModal === 'true') return;
                     modal.style.display = 'none';
                     if (window.syncModalState) window.syncModalState();
                 }
@@ -229,27 +233,24 @@
         });
     }
 
-    function slugifyKbName(name) {
-        const cleaned = String(name || '')
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '_')
-            .replace(/^_+|_+$/g, '');
-        return cleaned || 'knowledge_base';
+    function buildKbDatePrefix() {
+        const now = new Date();
+        const yyyy = String(now.getFullYear());
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        return `KB_${yyyy}${mm}${dd}_`;
     }
 
-    function generateNextKbId(nameHint) {
+    function generateNextKbId(_nameHint) {
         const existing = new Set(state.kbs.map((kb) => kb.kb_id));
-        const baseRaw = slugifyKbName(nameHint);
-        const base = baseRaw.endsWith('_kb') ? baseRaw : `${baseRaw}_kb`;
-        if (!existing.has(base)) return base;
+        const prefix = buildKbDatePrefix();
         let index = 1;
         while (index < 10000) {
-            const candidate = `${base}_${String(index).padStart(3, '0')}`;
+            const candidate = `${prefix}${String(index).padStart(4, '0')}`;
             if (!existing.has(candidate)) return candidate;
             index += 1;
         }
-        return `${base}_${Date.now()}`;
+        return `${prefix}${Date.now()}`;
     }
 
     function syncCreateKbId() {
@@ -462,7 +463,11 @@
             },
             true
         );
-        return payload.data || null;
+        const data = payload.data || null;
+        if (data && Number(data.skipped_no_markdown || 0) > 0) {
+            notify(`Skipped ${data.skipped_no_markdown} file(s) without markdown`, 'warning');
+        }
+        return data;
     }
 
     async function deleteKb(kbId) {
@@ -930,25 +935,83 @@
         state.detailFiles = rows;
         const search = (document.getElementById('rag-detail-file-search')?.value || '').toLowerCase();
         const filtered = rows.filter((f) => !search || (f.title || f.file_url || '').toLowerCase().includes(search));
+        const filteredUrls = new Set(filtered.map((f) => f.file_url));
+        state.detailFileSelection = new Set(
+            Array.from(state.detailFileSelection).filter((url) => filteredUrls.has(url))
+        );
+
+        const totalPages = Math.max(1, Math.ceil(filtered.length / state.detailPageSize));
+        if (state.detailPage > totalPages) state.detailPage = totalPages;
+        const start = (state.detailPage - 1) * state.detailPageSize;
+        const paged = filtered.slice(start, start + state.detailPageSize);
+
         const body = document.getElementById('rag-detail-files-body');
-        if (!filtered.length) {
-            body.innerHTML = '<tr><td colspan="6">No files found.</td></tr>';
+        if (!paged.length) {
+            body.innerHTML = '<tr><td colspan="7">No files found.</td></tr>';
+            renderDetailFilesPagination(filtered.length, totalPages);
+            updateDetailBulkRemoveButton();
             return;
         }
-        body.innerHTML = filtered
+
+        body.innerHTML = paged
             .map(
                 (f) => `
                 <tr>
+                    <td><input type="checkbox" data-detail-file-check="${esc(f.file_url)}" ${state.detailFileSelection.has(f.file_url) ? 'checked' : ''}></td>
                     <td>${esc(f.title || f.file_url)}</td>
                     <td>${esc(f.category || '-')}</td>
                     <td><span class="rag-status ${esc(f.status || 'pending')}">${esc(f.status || 'pending')}</span></td>
                     <td>${f.chunk_count || 0}</td>
                     <td>${esc(formatDate(f.indexed_at))}</td>
-                    <td><button class="btn btn-secondary btn-sm" data-remove-detail-file="${esc(f.file_url)}">Remove</button></td>
+                    <td>
+                        <div class="rag-actions">
+                            ${(Number(f.chunk_count || 0) <= 0 || f.status === 'pending' || f.status === 'stale')
+                                ? `<button class="btn btn-secondary btn-sm" data-index-detail-file="${esc(f.file_url)}">Index</button>`
+                                : ''}
+                            <button class="btn btn-secondary btn-sm" data-remove-detail-file="${esc(f.file_url)}">Remove</button>
+                        </div>
+                    </td>
                 </tr>
             `
             )
             .join('');
+
+        const checkAll = document.getElementById('rag-detail-files-check-all');
+        if (checkAll) {
+            checkAll.checked = paged.length > 0 && paged.every((f) => state.detailFileSelection.has(f.file_url));
+        }
+
+        body.querySelectorAll('[data-detail-file-check]').forEach((cb) => {
+            cb.addEventListener('change', () => {
+                const fileUrl = cb.getAttribute('data-detail-file-check');
+                if (!fileUrl) return;
+                if (cb.checked) state.detailFileSelection.add(fileUrl);
+                else state.detailFileSelection.delete(fileUrl);
+                if (checkAll) {
+                    checkAll.checked = paged.length > 0 && paged.every((f) => state.detailFileSelection.has(f.file_url));
+                }
+                updateDetailBulkRemoveButton();
+            });
+        });
+
+        body.querySelectorAll('[data-index-detail-file]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const fileUrl = btn.getAttribute('data-index-detail-file');
+                if (!fileUrl) return;
+                try {
+                    const resp = await triggerIndex(context.kbId, {
+                        fileUrls: [fileUrl],
+                        confirmMessage: 'Create indexing task for this file now?',
+                    });
+                    if (!resp) return;
+                    notify(`Index task created: ${resp.job_id || '-'}`, 'success');
+                    await Promise.all([loadDetailTasks(), loadDetailHeader()]);
+                } catch (err) {
+                    notify(`Index failed: ${formatError(err)}`, 'error');
+                }
+            });
+        });
+
         body.querySelectorAll('[data-remove-detail-file]').forEach((btn) => {
             btn.addEventListener('click', async () => {
                 const fileUrl = btn.getAttribute('data-remove-detail-file');
@@ -966,6 +1029,43 @@
                 }
             });
         });
+
+        renderDetailFilesPagination(filtered.length, totalPages);
+        updateDetailBulkRemoveButton();
+    }
+
+    function renderDetailFilesPagination(totalItems, totalPages) {
+        const wrap = document.getElementById('rag-detail-files-pagination');
+        if (!wrap) return;
+        const page = state.detailPage;
+        if (totalItems <= state.detailPageSize) {
+            wrap.innerHTML = `<span class="text-muted">${totalItems} files</span>`;
+            return;
+        }
+        wrap.innerHTML = `
+            <div class="text-muted">${totalItems} files</div>
+            <div class="rag-pagination-actions">
+                <button type="button" class="btn btn-secondary btn-sm" id="rag-detail-files-prev" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                <span class="text-muted">Page ${page} / ${totalPages}</span>
+                <button type="button" class="btn btn-secondary btn-sm" id="rag-detail-files-next" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+            </div>
+        `;
+        document.getElementById('rag-detail-files-prev')?.addEventListener('click', () => {
+            state.detailPage = Math.max(1, state.detailPage - 1);
+            loadDetailFiles();
+        });
+        document.getElementById('rag-detail-files-next')?.addEventListener('click', () => {
+            state.detailPage = Math.min(totalPages, state.detailPage + 1);
+            loadDetailFiles();
+        });
+    }
+
+    function updateDetailBulkRemoveButton() {
+        const btn = document.getElementById('rag-detail-bulk-remove');
+        if (!btn) return;
+        const count = state.detailFileSelection.size;
+        btn.textContent = `Bulk Remove (${count})`;
+        btn.disabled = count <= 0;
     }
 
     async function loadDetailCategories() {
@@ -1017,7 +1117,39 @@
         });
         document.getElementById('rag-detail-delete')?.addEventListener('click', () => deleteKb(context.kbId));
         document.getElementById('rag-detail-add-files')?.addEventListener('click', () => openFileSelector('detail'));
-        document.getElementById('rag-detail-file-search')?.addEventListener('input', () => loadDetailFiles());
+        document.getElementById('rag-detail-file-search')?.addEventListener('input', () => {
+            state.detailPage = 1;
+            loadDetailFiles();
+        });
+        document.getElementById('rag-detail-files-check-all')?.addEventListener('change', (e) => {
+            const checked = !!e.target.checked;
+            document.querySelectorAll('[data-detail-file-check]').forEach((cb) => {
+                if (cb.checked === checked) return;
+                cb.checked = checked;
+                cb.dispatchEvent(new Event('change'));
+            });
+        });
+        document.getElementById('rag-detail-bulk-remove')?.addEventListener('click', async () => {
+            const selected = Array.from(state.detailFileSelection);
+            if (!selected.length) return;
+            const ok = await confirmDeleteWithText(
+                'Bulk Remove Files',
+                `You are removing ${selected.length} file(s) from this KB.`
+            );
+            if (!ok) return;
+            let removed = 0;
+            for (const fileUrl of selected) {
+                try {
+                    await apiDelete(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files/${encodeURIComponent(fileUrl)}`);
+                    removed += 1;
+                } catch (_err) {
+                    // Continue processing remaining rows.
+                }
+            }
+            state.detailFileSelection.clear();
+            notify(`Removed ${removed}/${selected.length} files`, removed > 0 ? 'success' : 'warning');
+            await refreshDetailPage();
+        });
         document.getElementById('rag-detail-link-category')?.addEventListener('click', async () => {
             const sel = document.getElementById('rag-detail-add-category-select');
             if (!sel || !sel.value) {
@@ -1025,9 +1157,29 @@
                 return;
             }
             try {
+                const statsResp = await apiPost(
+                    '/api/rag/categories/stats',
+                    { categories: [sel.value], kb_id: context.kbId },
+                    false
+                );
+                const stats = statsResp.data || {};
+                const addable = Math.max(
+                    0,
+                    Number(stats.unique_markdown_files || 0) - Number(stats.in_kb_markdown_files || 0)
+                );
+                if (addable <= 0) {
+                    notify('No new markdown files to add for this category', 'info');
+                    return;
+                }
+                const ok = window.customConfirm
+                    ? await window.customConfirm(
+                        `Category "${sel.value}" will add ${addable} markdown file(s) to this KB. Continue?`,
+                        'Link Category'
+                    )
+                    : window.confirm(`Add ${addable} markdown file(s) from category "${sel.value}" to this KB?`);
+                if (!ok) return;
                 await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/categories`, { categories: [sel.value] }, true);
-                await loadDetailCategories();
-                await loadDetailHeader();
+                await refreshDetailPage();
             } catch (err) {
                 notify(`Link failed: ${formatError(err)}`, 'error');
             }
