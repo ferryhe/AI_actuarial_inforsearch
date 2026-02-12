@@ -62,7 +62,10 @@
         }
         if (!resp.ok) {
             const msg = (payload && (payload.error || payload.message)) || `HTTP ${resp.status}`;
-            throw new Error(msg);
+            const err = new Error(msg);
+            err.status = resp.status;
+            err.payload = payload;
+            throw err;
         }
         return payload || {};
     }
@@ -72,26 +75,68 @@
     }
 
     async function apiPost(url, body, write) {
-        return api(url, {
+        const buildOptions = () => ({
             method: 'POST',
             headers: write ? getWriteHeaders() : { 'Content-Type': 'application/json' },
             body: JSON.stringify(body || {}),
         });
+        try {
+            return await api(url, buildOptions());
+        } catch (err) {
+            if (write && err.status === 403 && (err.message || '').toLowerCase().includes('forbidden')) {
+                const updated = await promptWriteTokenAndStore();
+                if (updated) return api(url, buildOptions());
+            }
+            throw err;
+        }
     }
 
     async function apiPut(url, body) {
-        return api(url, {
+        const buildOptions = () => ({
             method: 'PUT',
             headers: getWriteHeaders(),
             body: JSON.stringify(body || {}),
         });
+        try {
+            return await api(url, buildOptions());
+        } catch (err) {
+            if (err.status === 403 && (err.message || '').toLowerCase().includes('forbidden')) {
+                const updated = await promptWriteTokenAndStore();
+                if (updated) return api(url, buildOptions());
+            }
+            throw err;
+        }
     }
 
     async function apiDelete(url) {
-        return api(url, {
+        const buildOptions = () => ({
             method: 'DELETE',
             headers: getWriteHeaders(),
         });
+        try {
+            return await api(url, buildOptions());
+        } catch (err) {
+            if (err.status === 403 && (err.message || '').toLowerCase().includes('forbidden')) {
+                const updated = await promptWriteTokenAndStore();
+                if (updated) return api(url, buildOptions());
+            }
+            throw err;
+        }
+    }
+
+    async function promptWriteTokenAndStore() {
+        const current =
+            localStorage.getItem('config_write_token') ||
+            sessionStorage.getItem('config_write_token') ||
+            '';
+        const promptText =
+            '该操作需要 CONFIG_WRITE_AUTH_TOKEN（X-Auth-Token）。\n请输入写入 Token（仅本浏览器会话保存）：';
+        const input = window.prompt(promptText, current);
+        if (input === null) return false;
+        const token = (input || '').trim();
+        if (!token) return false;
+        sessionStorage.setItem('config_write_token', token);
+        return true;
     }
 
     function openModal(id) {
