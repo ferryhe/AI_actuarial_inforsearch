@@ -41,15 +41,15 @@
                 <ul class="navbar-menu">
                     <li><a href="{{ url_for('index') }}" class="nav-link">Dashboard</a></li>
                     <li><a href="{{ url_for('database') }}" class="nav-link">Database</a></li>
-                    {% if auth_group in ['admin', 'operator', 'reader'] %}
-                    <li><a href="{{ url_for('rag_management') }}" class="nav-link">Knowledge Bases</a></li>
-                    {% endif %}
                     {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('tasks') }}" class="nav-link">Tasks</a></li>
                     {% endif %}
 
                     {% if auth_group in ['admin', 'operator'] %}
                     <li><a href="{{ url_for('scheduled_tasks') }}" class="nav-link">Schedule</a></li>
+                    {% endif %}
+                    {% if auth_group in ['admin', 'operator', 'reader'] %}
+                    <li><a href="{{ url_for('rag_management') }}" class="nav-link">Knowledge Bases</a></li>
                     {% endif %}
 
                     {% if auth_group == 'admin' %}
