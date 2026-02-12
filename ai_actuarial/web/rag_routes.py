@@ -753,18 +753,23 @@ def register_rag_routes(
                 skipped_no_markdown = 0
                 if not user_requested:
                     # Auto mode: index only files with markdown content.
-                    placeholders = ",".join(["?" for _ in files_to_index])
-                    markdown_rows = _storage._conn.execute(
-                        f"""
-                            SELECT DISTINCT file_url
-                            FROM catalog_items
-                            WHERE file_url IN ({placeholders})
-                              AND markdown_content IS NOT NULL
-                              AND markdown_content != ''
-                        """,
-                        files_to_index,
-                    ).fetchall()
-                    markdown_urls = {row[0] for row in markdown_rows if row and row[0]}
+                    # Use batching to avoid SQLite parameter limit (999 by default).
+                    markdown_urls = set()
+                    batch_size = 900  # Stay well under 999 parameter limit
+                    for i in range(0, len(files_to_index), batch_size):
+                        batch = files_to_index[i:i + batch_size]
+                        placeholders = ",".join(["?" for _ in batch])
+                        markdown_rows = _storage._conn.execute(
+                            f"""
+                                SELECT DISTINCT file_url
+                                FROM catalog_items
+                                WHERE file_url IN ({placeholders})
+                                  AND markdown_content IS NOT NULL
+                                  AND markdown_content != ''
+                            """,
+                            batch,
+                        ).fetchall()
+                        markdown_urls.update(row[0] for row in markdown_rows if row and row[0])
                     original_count = len(files_to_index)
                     files_to_index = [url for url in files_to_index if url in markdown_urls]
                     skipped_no_markdown = max(0, original_count - len(files_to_index))
