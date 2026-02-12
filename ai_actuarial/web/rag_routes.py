@@ -441,6 +441,36 @@ def register_rag_routes(
             logger.exception("Error getting KB composition status %s", kb_id)
             return _api_error("Internal server error", status_code=500, detail=str(exc))
 
+    @app.route("/api/chunk-sets/cleanup", methods=["POST"])
+    @require_permissions("config.write")
+    def api_chunk_sets_cleanup():
+        if (r := _check_rag_available()) is not None:
+            return r
+        if (r := _check_config_write_auth()) is not None:
+            return r
+        try:
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+            older_than_days = int(data.get("older_than_days") or 30)
+            dry_run = bool(data.get("dry_run", False))
+            limit = int(data.get("limit") or 5000)
+
+            def _run(storage):
+                result = storage.cleanup_orphan_chunk_sets(
+                    older_than_days=max(1, older_than_days),
+                    limit=max(1, min(limit, 20000)),
+                    dry_run=dry_run,
+                )
+                return _api_success(result)
+
+            return _with_storage(_run)
+        except ValueError as exc:
+            return _api_error(str(exc), status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error cleaning orphan chunk sets")
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
     @app.route("/api/rag/knowledge-bases", methods=["GET"])
     @require_permissions("catalog.read")
     def api_rag_list_kbs():

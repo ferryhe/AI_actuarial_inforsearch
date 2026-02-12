@@ -38,6 +38,40 @@
     </section>
 
     <section class="card">
+        <h3>Chunk Composition</h3>
+        <p id="rag-composition-summary" class="text-muted">Loading composition status...</p>
+        <div class="rag-table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Profile</th>
+                        <th>Binding Mode</th>
+                        <th>Chunk Set</th>
+                        <th>Updated</th>
+                        <th>Version State</th>
+                    </tr>
+                </thead>
+                <tbody id="rag-composition-bindings-body">
+                    <tr><td colspan="6">Loading bindings...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card">
+        <h3>Chunk Maintenance</h3>
+        <p id="rag-sync-status-summary" class="text-muted">Loading sync state...</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="rag-detail-cleanup-chunks" class="btn btn-secondary">Cleanup Unbound Chunks (>30d)</button>
+            <button id="rag-detail-cleanup-chunks-dry-run" class="btn btn-secondary">Preview Cleanup</button>
+        </div>
+        <p class="text-muted" style="margin-top:8px;">
+            Deletes chunk sets not bound to any KB and older than 30 days. Index versions keep only the latest record per KB.
+        </p>
+    </section>
+
+    <section class="card">
         <div class="rag-tab-header">
             <button class="rag-tab-btn active" data-tab="files">Files</button>
             <button class="rag-tab-btn" data-tab="categories">Categories</button>

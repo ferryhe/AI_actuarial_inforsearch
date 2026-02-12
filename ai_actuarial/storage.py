@@ -5,7 +5,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 import hashlib
@@ -1520,6 +1520,20 @@ class Storage:
     def _utcnow_iso() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    @staticmethod
+    def _parse_iso_to_utc(value: str | None) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        text = raw.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(text)
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     def create_chunk_profile(
         self,
         *,
@@ -2148,6 +2162,27 @@ class Storage:
         ).fetchone()
         follow_latest_count = int((mode_counts[0] or 0) if mode_counts else 0)
         pin_count = int((mode_counts[1] or 0) if mode_counts else 0)
+        outdated_binding_count = int(
+            self._conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM kb_chunk_bindings b
+                LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                WHERE b.kb_id = ?
+                  AND s.profile_id IS NOT NULL
+                  AND b.chunk_set_id != (
+                    SELECT s2.chunk_set_id
+                    FROM file_chunk_sets s2
+                    WHERE s2.file_url = b.file_url
+                      AND s2.profile_id = s.profile_id
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    LIMIT 1
+                  )
+                """,
+                (kb_id,),
+            ).fetchone()[0]
+            or 0
+        )
         has_index = bool(latest)
         latest_index_time = (latest[4] or latest[5]) if latest else None
         needs_reindex = bool(file_count > 0 and (not has_index or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)))
@@ -2161,6 +2196,8 @@ class Storage:
                 "follow_latest": follow_latest_count,
                 "pin": pin_count,
             },
+            "outdated_binding_count": outdated_binding_count,
+            "new_chunk_versions_available": outdated_binding_count > 0,
             "needs_reindex": needs_reindex,
             "latest_index": {
                 "embedding_model": latest[0],
@@ -2185,10 +2222,21 @@ class Storage:
                 b.binding_mode,
                 b.target_profile_id,
                 s.profile_id,
+                p.name AS profile_name,
                 s.chunk_count,
-                s.markdown_hash
+                s.markdown_hash,
+                s.updated_at AS chunk_set_updated_at,
+                (
+                    SELECT s2.chunk_set_id
+                    FROM file_chunk_sets s2
+                    WHERE s2.file_url = b.file_url
+                      AND s2.profile_id = s.profile_id
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    LIMIT 1
+                ) AS latest_chunk_set_id
             FROM kb_chunk_bindings b
             LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+            LEFT JOIN chunk_profiles p ON p.profile_id = s.profile_id
             WHERE b.kb_id = ?
             ORDER BY b.bound_at DESC
             """,
@@ -2206,8 +2254,12 @@ class Storage:
                     "binding_mode": row[5] or "pin",
                     "target_profile_id": row[6] or "",
                     "profile_id": row[7],
-                    "chunk_count": row[8] or 0,
-                    "markdown_hash": row[9] or "",
+                    "profile_name": row[8] or "",
+                    "chunk_count": row[9] or 0,
+                    "markdown_hash": row[10] or "",
+                    "chunk_set_updated_at": row[11],
+                    "latest_chunk_set_id": row[12] or "",
+                    "is_latest_for_profile": (row[12] or "") == (row[2] or ""),
                 }
             )
         return out
@@ -2228,6 +2280,22 @@ class Storage:
         index_version_id = f"idxv_{uuid.uuid4().hex}"
         built_time = built_at or now
         with self.transaction():
+            # Keep only the latest index version record per KB.
+            old_ids = [
+                str(r[0])
+                for r in self._conn.execute(
+                    "SELECT index_version_id FROM kb_index_versions WHERE kb_id = ?",
+                    (kb_id,),
+                ).fetchall()
+            ]
+            if old_ids:
+                for old_id in old_ids:
+                    self._conn.execute(
+                        "DELETE FROM kb_index_items WHERE index_version_id = ?",
+                        (old_id,),
+                    )
+                self._conn.execute("DELETE FROM kb_index_versions WHERE kb_id = ?", (kb_id,))
+
             self._conn.execute(
                 """
                 INSERT INTO kb_index_versions (
@@ -2267,6 +2335,88 @@ class Storage:
             "chunk_count": int(chunk_count),
             "built_at": built_time,
             "created_at": now,
+        }
+
+    def cleanup_orphan_chunk_sets(
+        self,
+        *,
+        older_than_days: int = 30,
+        limit: int = 5000,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        days = max(1, int(older_than_days))
+        max_rows = max(1, min(int(limit), 20000))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        rows = self._conn.execute(
+            """
+            SELECT s.chunk_set_id, s.file_url, s.profile_id, s.created_at, s.updated_at,
+                   COALESCE((SELECT COUNT(*) FROM global_chunks g WHERE g.chunk_set_id = s.chunk_set_id), 0) AS chunk_count
+            FROM file_chunk_sets s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM kb_chunk_bindings b WHERE b.chunk_set_id = s.chunk_set_id
+            )
+            ORDER BY COALESCE(s.updated_at, s.created_at) ASC
+            LIMIT ?
+            """,
+            (max_rows,),
+        ).fetchall()
+
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            updated_at = row[4] or row[3]
+            updated_dt = self._parse_iso_to_utc(updated_at)
+            if not updated_dt or updated_dt >= cutoff:
+                continue
+            candidates.append(
+                {
+                    "chunk_set_id": row[0],
+                    "file_url": row[1],
+                    "profile_id": row[2],
+                    "created_at": row[3],
+                    "updated_at": row[4],
+                    "chunk_count": int(row[5] or 0),
+                }
+            )
+
+        total_chunks = sum(int(item.get("chunk_count") or 0) for item in candidates)
+        if dry_run or not candidates:
+            return {
+                "older_than_days": days,
+                "dry_run": bool(dry_run),
+                "deleted_chunk_sets": 0,
+                "deleted_chunks": 0,
+                "candidates": len(candidates),
+                "candidate_chunk_sets": candidates,
+            }
+
+        with self.transaction():
+            for item in candidates:
+                chunk_set_id = str(item["chunk_set_id"])
+                # Remove index references first (safe even when SQLite FK is disabled).
+                self._conn.execute(
+                    "DELETE FROM kb_index_items WHERE chunk_id LIKE ?",
+                    (f"{chunk_set_id}:%",),
+                )
+                self._conn.execute(
+                    """
+                    DELETE FROM chunk_embeddings
+                    WHERE chunk_id IN (
+                        SELECT chunk_id FROM global_chunks WHERE chunk_set_id = ?
+                    )
+                    """,
+                    (chunk_set_id,),
+                )
+                self._conn.execute("DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,))
+                self._conn.execute("DELETE FROM file_chunk_sets WHERE chunk_set_id = ?", (chunk_set_id,))
+
+        return {
+            "older_than_days": days,
+            "dry_run": False,
+            "deleted_chunk_sets": len(candidates),
+            "deleted_chunks": total_chunks,
+            "candidates": len(candidates),
+            "candidate_chunk_sets": candidates[:50],
         }
     
     def clear_local_path(self, url: str) -> None:

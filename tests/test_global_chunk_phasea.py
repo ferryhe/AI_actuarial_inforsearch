@@ -6,6 +6,7 @@ import tempfile
 import time
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 import yaml
@@ -270,6 +271,109 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
         self.assertTrue(any(b.get("chunk_set_id") == second_chunk_set_id for b in bindings))
         self.assertTrue(any((b.get("binding_mode") or "") == "follow_latest" for b in bindings))
         self.assertFalse(any(b.get("chunk_set_id") == first_chunk_set_id for b in bindings))
+
+    def test_cleanup_orphan_chunk_sets_endpoint(self):
+        profile_resp = self.client.post(
+            "/api/chunk/profiles",
+            headers=self.auth_header,
+            json={
+                "name": "Cleanup Profile",
+                "chunk_size": 256,
+                "chunk_overlap": 32,
+                "splitter": "semantic",
+                "tokenizer": "cl100k_base",
+                "version": "v1",
+            },
+        )
+        if profile_resp.status_code == 503:
+            self.skipTest("RAG functionality not available")
+        self.assertEqual(profile_resp.status_code, 201)
+        profile_id = profile_resp.get_json()["data"]["profile_id"]
+
+        encoded_file_url = quote(self.file_url, safe="")
+        gen_resp = self.client.post(
+            f"/api/files/{encoded_file_url}/chunk-sets/generate",
+            headers=self.auth_header,
+            json={"profile_id": profile_id, "overwrite_same_profile": True},
+        )
+        self.assertIn(gen_resp.status_code, [200, 201])
+        chunk_set_id = gen_resp.get_json()["data"]["chunk_set_id"]
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+        self.storage._conn.execute(
+            "UPDATE file_chunk_sets SET updated_at = ?, created_at = ? WHERE chunk_set_id = ?",
+            (old_ts, old_ts, chunk_set_id),
+        )
+        self.storage._conn.commit()
+
+        preview_resp = self.client.post(
+            "/api/chunk-sets/cleanup",
+            headers=self.auth_header,
+            json={"older_than_days": 30, "dry_run": True},
+        )
+        self.assertEqual(preview_resp.status_code, 200)
+        preview_data = preview_resp.get_json()["data"]
+        self.assertGreaterEqual(int(preview_data["candidates"]), 1)
+
+        run_resp = self.client.post(
+            "/api/chunk-sets/cleanup",
+            headers=self.auth_header,
+            json={"older_than_days": 30, "dry_run": False},
+        )
+        self.assertEqual(run_resp.status_code, 200)
+        run_data = run_resp.get_json()["data"]
+        self.assertGreaterEqual(int(run_data["deleted_chunk_sets"]), 1)
+
+        exists = self.storage._conn.execute(
+            "SELECT 1 FROM file_chunk_sets WHERE chunk_set_id = ? LIMIT 1",
+            (chunk_set_id,),
+        ).fetchone()
+        self.assertIsNone(exists)
+
+    def test_create_kb_index_version_keeps_latest_only(self):
+        kb_id = "kb_index_retention_test"
+        create_kb_resp = self.client.post(
+            "/api/rag/knowledge-bases",
+            headers=self.auth_header,
+            json={
+                "kb_id": kb_id,
+                "name": "IndexRetention KB",
+                "kb_mode": "manual",
+                "chunk_size": 300,
+                "chunk_overlap": 50,
+                "embedding_model": "text-embedding-3-small",
+            },
+        )
+        if create_kb_resp.status_code == 503:
+            self.skipTest("RAG functionality not available")
+        self.assertEqual(create_kb_resp.status_code, 201)
+
+        first = self.storage.create_kb_index_version(
+            kb_id=kb_id,
+            embedding_model="text-embedding-3-small",
+            index_type="Flat",
+            chunk_count=10,
+            status="ready",
+            artifact_path="index1.faiss",
+        )
+        second = self.storage.create_kb_index_version(
+            kb_id=kb_id,
+            embedding_model="text-embedding-3-small",
+            index_type="Flat",
+            chunk_count=12,
+            status="ready",
+            artifact_path="index2.faiss",
+        )
+        self.assertNotEqual(first["index_version_id"], second["index_version_id"])
+
+        count = int(
+            self.storage._conn.execute(
+                "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()[0]
+            or 0
+        )
+        self.assertEqual(count, 1)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@
         currentCategory: '',
         currentKb: null,
         detailFiles: [],
+        detailComposition: null,
+        detailPendingFiles: 0,
         detailFileSelection: new Set(),
         detailPage: 1,
         detailPageSize: 20,
@@ -56,6 +58,13 @@
     function formatBytes(bytes) {
         if (window.formatBytes) return window.formatBytes(bytes);
         return bytes || 0;
+    }
+
+    function shortId(value, head = 12, tail = 8) {
+        const text = String(value || '');
+        if (!text) return '-';
+        if (text.length <= head + tail + 3) return text;
+        return `${text.slice(0, head)}...${text.slice(-tail)}`;
     }
 
     function parseChunkProfileConfig(profile) {
@@ -1051,6 +1060,114 @@
         renderKbTable();
     }
 
+    function updateDetailReindexButton() {
+        const reindexBtn = document.getElementById('rag-detail-reindex');
+        if (!reindexBtn) return;
+        const pendingFiles = Number(state.detailPendingFiles || 0);
+        const composition = state.detailComposition || {};
+        const needsReindex = !!composition.needs_reindex;
+        const outdatedBindingCount = Number(composition.outdated_binding_count || 0);
+        const showBtn = pendingFiles > 0 || needsReindex;
+        if (!showBtn) {
+            reindexBtn.style.display = 'none';
+            reindexBtn.removeAttribute('data-pending-files');
+            reindexBtn.removeAttribute('data-needs-reindex');
+            return;
+        }
+        reindexBtn.style.display = '';
+        reindexBtn.setAttribute('data-pending-files', String(pendingFiles));
+        reindexBtn.setAttribute('data-needs-reindex', needsReindex ? '1' : '0');
+        if (pendingFiles > 0) {
+            reindexBtn.textContent = `Reindex (${pendingFiles})`;
+        } else if (outdatedBindingCount > 0) {
+            reindexBtn.textContent = `Rebuild Index (${outdatedBindingCount} outdated binding${outdatedBindingCount > 1 ? 's' : ''})`;
+        } else {
+            reindexBtn.textContent = 'Rebuild Index';
+        }
+    }
+
+    function renderDetailComposition() {
+        const composition = state.detailComposition || {};
+        const summaryEl = document.getElementById('rag-composition-summary');
+        const syncSummaryEl = document.getElementById('rag-sync-status-summary');
+        const body = document.getElementById('rag-composition-bindings-body');
+        if (!summaryEl || !syncSummaryEl || !body) return;
+
+        const modeCounts = composition.binding_mode_counts || {};
+        const followLatest = Number(modeCounts.follow_latest || 0);
+        const pin = Number(modeCounts.pin || 0);
+        const outdated = Number(composition.outdated_binding_count || 0);
+        const needsReindex = !!composition.needs_reindex;
+        const hasIndex = !!composition.has_index;
+        const latestIndex = composition.latest_index || null;
+        const latestIndexBuiltAt = latestIndex ? formatDate(latestIndex.built_at || latestIndex.created_at || '') : '-';
+
+        summaryEl.textContent =
+            `Files: ${Number(composition.file_count || 0)} | Chunk Sets: ${Number(composition.chunk_set_count || 0)} | ` +
+            `Follow Latest: ${followLatest} | Pin: ${pin} | Outdated Bindings: ${outdated}`;
+
+        syncSummaryEl.textContent =
+            `Index: ${hasIndex ? 'Available' : 'Missing'} | Latest Built: ${latestIndexBuiltAt} | ` +
+            `Needs Reindex: ${needsReindex ? 'Yes' : 'No'}`;
+
+        const bindings = Array.isArray(composition.bindings) ? composition.bindings : [];
+        if (!bindings.length) {
+            body.innerHTML = '<tr><td colspan="6">No chunk bindings for this KB.</td></tr>';
+            return;
+        }
+
+        body.innerHTML = bindings
+            .map((b) => {
+                const fileUrl = String(b.file_url || '');
+                const fileName = fileUrl ? fileUrl.split('/').pop() || fileUrl : '-';
+                const bindingMode = String(b.binding_mode || 'pin');
+                const chunkSetId = String(b.chunk_set_id || '');
+                const latestChunkSetId = String(b.latest_chunk_set_id || '');
+                const isLatest = !!b.is_latest_for_profile;
+                const versionState = isLatest
+                    ? 'Latest'
+                    : (bindingMode === 'follow_latest' ? 'Switch pending' : 'Pinned old version');
+                const versionClass = isLatest ? 'indexed' : 'stale';
+                return `
+                    <tr>
+                        <td title="${esc(fileUrl)}">${esc(fileName)}</td>
+                        <td>${esc(b.profile_name || b.profile_id || '-')}</td>
+                        <td>${esc(bindingMode)}</td>
+                        <td title="${esc(chunkSetId)}">${esc(shortId(chunkSetId))}</td>
+                        <td>${esc(formatDate(b.chunk_set_updated_at || b.bound_at || ''))}</td>
+                        <td>
+                            <span class="rag-status ${esc(versionClass)}">${esc(versionState)}</span>
+                            ${
+                                !isLatest && latestChunkSetId
+                                    ? `<div class="text-muted" style="font-size:12px;">Latest: ${esc(shortId(latestChunkSetId))}</div>`
+                                    : ''
+                            }
+                        </td>
+                    </tr>
+                `;
+            })
+            .join('');
+    }
+
+    async function loadDetailComposition() {
+        try {
+            const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/composition/status?limit=300`);
+            state.detailComposition = payload.data || {};
+        } catch (err) {
+            state.detailComposition = null;
+            const summaryEl = document.getElementById('rag-composition-summary');
+            const syncSummaryEl = document.getElementById('rag-sync-status-summary');
+            const body = document.getElementById('rag-composition-bindings-body');
+            if (summaryEl) summaryEl.textContent = `Failed to load composition: ${formatError(err)}`;
+            if (syncSummaryEl) syncSummaryEl.textContent = 'Unable to determine sync status.';
+            if (body) body.innerHTML = '<tr><td colspan="6">Failed to load chunk bindings.</td></tr>';
+            updateDetailReindexButton();
+            return;
+        }
+        renderDetailComposition();
+        updateDetailReindexButton();
+    }
+
     async function loadDetailHeader() {
         const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}`);
         const kb = payload.data || {};
@@ -1066,22 +1183,12 @@
 
         const stats = kb.stats || {};
         const pendingFiles = Number(stats.pending_files ?? 0);
+        state.detailPendingFiles = pendingFiles;
         document.getElementById('rag-stat-total-files').textContent = stats.total_files ?? kb.file_count ?? 0;
         document.getElementById('rag-stat-indexed-files').textContent = stats.indexed_files ?? 0;
         document.getElementById('rag-stat-pending-files').textContent = pendingFiles;
         document.getElementById('rag-stat-total-chunks').textContent = stats.total_chunks ?? kb.chunk_count ?? 0;
-
-        const reindexBtn = document.getElementById('rag-detail-reindex');
-        if (reindexBtn) {
-            if (pendingFiles > 0) {
-                reindexBtn.style.display = '';
-                reindexBtn.textContent = `Reindex (${pendingFiles})`;
-                reindexBtn.setAttribute('data-pending-files', String(pendingFiles));
-            } else {
-                reindexBtn.style.display = 'none';
-                reindexBtn.removeAttribute('data-pending-files');
-            }
-        }
+        updateDetailReindexButton();
     }
 
     async function loadDetailFiles() {
@@ -1277,7 +1384,49 @@
     }
 
     async function refreshDetailPage() {
-        await Promise.all([loadDetailHeader(), loadDetailFiles(), loadDetailCategories(), loadDetailTasks(), loadCategories()]);
+        await Promise.all([
+            loadDetailHeader(),
+            loadDetailComposition(),
+            loadDetailFiles(),
+            loadDetailCategories(),
+            loadDetailTasks(),
+            loadCategories(),
+        ]);
+    }
+
+    async function runChunkCleanup(dryRun) {
+        const days = 30;
+        if (!dryRun) {
+            const ok = window.customConfirm
+                ? await window.customConfirm(
+                    `Delete unbound chunk sets older than ${days} days? This action cannot be undone.`,
+                    'Cleanup Chunks'
+                )
+                : window.confirm(`Delete unbound chunk sets older than ${days} days?`);
+            if (!ok) return;
+        }
+        try {
+            const payload = await apiPost(
+                '/api/chunk-sets/cleanup',
+                { older_than_days: days, dry_run: !!dryRun },
+                true
+            );
+            const data = payload.data || {};
+            if (dryRun) {
+                notify(
+                    `Cleanup preview: candidates=${data.candidates || 0}, chunks=${data.deleted_chunks || 0}`,
+                    'info'
+                );
+            } else {
+                notify(
+                    `Cleanup done: deleted_chunk_sets=${data.deleted_chunk_sets || 0}, deleted_chunks=${data.deleted_chunks || 0}`,
+                    'success'
+                );
+                await loadDetailComposition();
+            }
+        } catch (err) {
+            notify(`Chunk cleanup failed: ${formatError(err)}`, 'error');
+        }
     }
 
     function bindDetailEvents() {
@@ -1287,18 +1436,29 @@
         document.getElementById('rag-detail-reindex')?.addEventListener('click', async (e) => {
             const btn = e.currentTarget;
             const pending = Number(btn.getAttribute('data-pending-files') || 0);
-            if (pending <= 0) return;
+            const needsReindex = btn.getAttribute('data-needs-reindex') === '1';
+            if (pending <= 0 && !needsReindex) return;
             try {
+                const reindexAll = pending <= 0 && needsReindex;
+                const msg = pending > 0
+                    ? `Start indexing ${pending} pending file(s) for this KB?`
+                    : 'Chunk bindings changed. Rebuild full KB index now?';
                 const resp = await triggerIndex(context.kbId, {
-                    reindexAll: false,
-                    confirmMessage: `Start indexing ${pending} pending file(s) for this KB?`,
+                    reindexAll,
+                    confirmMessage: msg,
                 });
                 if (!resp) return;
                 notify(`Index task created: ${resp.job_id || '-'}`, 'success');
-                await loadDetailTasks();
+                await Promise.all([loadDetailTasks(), loadDetailComposition(), loadDetailHeader()]);
             } catch (err) {
                 notify(`Failed to start indexing: ${formatError(err)}`, 'error');
             }
+        });
+        document.getElementById('rag-detail-cleanup-chunks')?.addEventListener('click', async () => {
+            await runChunkCleanup(false);
+        });
+        document.getElementById('rag-detail-cleanup-chunks-dry-run')?.addEventListener('click', async () => {
+            await runChunkCleanup(true);
         });
         document.getElementById('rag-detail-delete')?.addEventListener('click', () => deleteKb(context.kbId));
         document.getElementById('rag-detail-add-files')?.addEventListener('click', () => openFileSelector('detail'));
