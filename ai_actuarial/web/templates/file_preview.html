@@ -29,18 +29,12 @@
             </div>
         </div>
         
-        <!-- Right pane: Markdown and Chunks -->
-        <div class="preview-pane" id="markdown-pane">
-            <h3 class="pane-title">Markdown Content</h3>
-            <div id="markdown-content-container">
-                <div class="loading-spinner">Loading markdown...</div>
-            </div>
-            
-            <div id="chunks-container" style="margin-top: 2rem;">
-                <h3 class="pane-title">Chunks</h3>
-                <div id="chunks-list">
-                    <div class="loading-spinner">Loading chunks...</div>
-                </div>
+        <!-- Right pane: Chunks -->
+        <div class="preview-pane" id="chunks-pane">
+            <h3 class="pane-title">Chunks</h3>
+            <div id="chunk-set-controls" style="margin-bottom: 1rem;"></div>
+            <div id="chunks-list">
+                <div class="loading-spinner">Loading chunks...</div>
             </div>
         </div>
     </div>
@@ -63,15 +57,6 @@
     }
 </script>
 
-<!-- Marked.js for markdown rendering with SRI -->
-<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" 
-        crossorigin="anonymous" 
-        referrerpolicy="no-referrer"></script>
-<script>
-    window.__MARKED_PRIMARY_SRC = 'https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js';
-    window.__MARKED_FALLBACK_SRC = 'https://unpkg.com/marked@11.1.1/marked.min.js';
-</script>
-
 <!-- File preview script -->
 <script src="{{ url_for('static', filename='js/file_preview.js') }}"></script>
 
@@ -80,13 +65,14 @@
     const urlParams = new URLSearchParams(window.location.search);
     const fileUrl = urlParams.get('file_url');
     const kbId = urlParams.get('kb_id');
+    const chunkSetId = urlParams.get('chunk_set_id');
     
     if (fileUrl) {
-        window.FilePreview.init(fileUrl, kbId);
+        window.FilePreview.init(fileUrl, kbId, chunkSetId);
     } else {
         document.getElementById('file-title').textContent = 'Error: No file specified';
         document.getElementById('original-viewer-container').innerHTML = '<p>No file URL provided</p>';
-        document.getElementById('markdown-content-container').innerHTML = '<p>No file URL provided</p>';
+        document.getElementById('chunk-set-controls').innerHTML = '';
         document.getElementById('chunks-list').innerHTML = '<p>No file URL provided</p>';
     }
 </script>

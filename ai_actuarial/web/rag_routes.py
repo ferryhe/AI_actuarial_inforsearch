@@ -1175,22 +1175,23 @@ def register_rag_routes(
     @require_permissions("files.read")
     def api_rag_file_preview():
         """
-        Get file preview data including original file info, markdown content, and chunks.
+        Get file preview data including original file info and chunk sets.
         
         Query params:
             file_url: URL of the file to preview
-            kb_id: (optional) Knowledge base ID to get chunks from specific KB
+            chunk_set_id: (optional) Select a specific chunk set version for this file
         
         Returns:
             - file_info: Basic file metadata
-            - markdown_content: Markdown content if available
+            - chunk_sets: List of available chunk versions for this file
+            - active_chunk_set_id: The chunk_set currently used for chunks
             - chunks: List of chunks with their content and metadata
         """
         if (r := _check_rag_available()) is not None:
             return r
         
         file_url = request.args.get("file_url", "").strip()
-        kb_id = request.args.get("kb_id", "").strip()
+        chunk_set_id = request.args.get("chunk_set_id", "").strip()
         
         if not file_url:
             return _api_error("file_url parameter is required", status_code=400)
@@ -1208,35 +1209,41 @@ def register_rag_routes(
                 markdown_source = markdown_data.get("markdown_source", "") if markdown_data else ""
                 markdown_updated_at = markdown_data.get("markdown_updated_at", "") if markdown_data else ""
                 
-                # Get chunks if KB ID provided
+                # Get global chunk sets for this file.
+                chunk_sets = storage.list_file_chunk_sets(file_url)
+                selected_chunk_set_id = ""
+                if chunk_sets:
+                    available_ids = {str(item.get("chunk_set_id") or "") for item in chunk_sets}
+                    if chunk_set_id and chunk_set_id in available_ids:
+                        selected_chunk_set_id = chunk_set_id
+                    else:
+                        selected_chunk_set_id = str(chunk_sets[0].get("chunk_set_id") or "")
+
                 chunks = []
-                if kb_id:
-                    try:
-                        kid = _kb_id(kb_id)
-                        # Query chunks from database
-                        chunk_rows = storage._conn.execute(
-                            """
-                            SELECT chunk_id, chunk_index, content, token_count, 
-                                   section_hierarchy, created_at
-                            FROM rag_chunks
-                            WHERE kb_id = ? AND file_url = ?
-                            ORDER BY chunk_index
-                            """,
-                            (kid, file_url)
-                        ).fetchall()
-                        
-                        for row in chunk_rows:
-                            chunks.append({
+                if selected_chunk_set_id:
+                    chunk_rows = storage._conn.execute(
+                        """
+                        SELECT chunk_id, chunk_index, content, token_count,
+                               section_hierarchy, created_at
+                        FROM global_chunks
+                        WHERE chunk_set_id = ?
+                        ORDER BY chunk_index
+                        """,
+                        (selected_chunk_set_id,),
+                    ).fetchall()
+
+                    for row in chunk_rows:
+                        chunks.append(
+                            {
                                 "chunk_id": row[0],
                                 "chunk_index": row[1],
                                 "content": row[2],
                                 "token_count": row[3],
                                 "section_hierarchy": row[4],
-                                "created_at": row[5]
-                            })
-                    except ValueError:
-                        # Invalid KB ID, just skip chunks
-                        pass
+                                "created_at": row[5],
+                                "chunk_set_id": selected_chunk_set_id,
+                            }
+                        )
                 
                 return _api_success({
                     "file_info": {
@@ -1254,6 +1261,8 @@ def register_rag_routes(
                         "source": markdown_source,
                         "updated_at": markdown_updated_at
                     },
+                    "chunk_sets": chunk_sets,
+                    "active_chunk_set_id": selected_chunk_set_id,
                     "chunks": chunks
                 })
             
