@@ -1508,6 +1508,7 @@ class Storage:
         upsert: bool = True,
     ) -> dict[str, Any]:
         """Create (or reuse) a chunk profile."""
+        normalized_name = str(name or "").strip()
         payload = {
             "chunk_size": int(chunk_size),
             "chunk_overlap": int(chunk_overlap),
@@ -1518,6 +1519,36 @@ class Storage:
         }
         config_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         config_hash = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+
+        # Enforce unique profile names (case-insensitive).
+        if normalized_name:
+            same_name = self._conn.execute(
+                """
+                SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
+                       config_hash, config_json, created_at, updated_at
+                FROM chunk_profiles
+                WHERE LOWER(name) = LOWER(?)
+                LIMIT 1
+                """,
+                (normalized_name,),
+            ).fetchone()
+            if same_name:
+                if same_name[7] != config_hash:
+                    raise ValueError(f"chunk profile name already exists: {normalized_name}")
+                return {
+                    "profile_id": same_name[0],
+                    "name": same_name[1],
+                    "chunk_size": same_name[2],
+                    "chunk_overlap": same_name[3],
+                    "splitter": same_name[4],
+                    "tokenizer": same_name[5],
+                    "version": same_name[6],
+                    "config_hash": same_name[7],
+                    "config_json": same_name[8],
+                    "created_at": same_name[9],
+                    "updated_at": same_name[10],
+                }
+
         existing = self._conn.execute(
             """
             SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
@@ -1529,14 +1560,6 @@ class Storage:
             (config_hash,),
         ).fetchone()
         if existing:
-            if upsert and name and existing[1] != name:
-                now = self._utcnow_iso()
-                self._conn.execute(
-                    "UPDATE chunk_profiles SET name = ?, updated_at = ? WHERE profile_id = ?",
-                    (name, now, existing[0]),
-                )
-                self._maybe_commit()
-                existing = (*existing[:1], name, *existing[2:10], now)
             return {
                 "profile_id": existing[0],
                 "name": existing[1],
@@ -1563,7 +1586,7 @@ class Storage:
             """,
             (
                 profile_id,
-                str(name or "").strip() or profile_id,
+                normalized_name or profile_id,
                 config_hash,
                 config_json,
                 payload["chunk_size"],
@@ -1578,7 +1601,7 @@ class Storage:
         self._maybe_commit()
         return {
             "profile_id": profile_id,
-            "name": str(name or "").strip() or profile_id,
+            "name": normalized_name or profile_id,
             "chunk_size": payload["chunk_size"],
             "chunk_overlap": payload["chunk_overlap"],
             "splitter": payload["splitter"],

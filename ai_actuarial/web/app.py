@@ -1430,7 +1430,6 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             # Use a JOIN to get file info + catalog info in one go
             # Use abstraction method
             file_data = storage.get_file_with_catalog(file_url)
-            rag_kb_entries = storage.get_file_rag_kb_entries(file_url)
             storage.close()
             
             if not file_data:
@@ -1439,7 +1438,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # For now, just return 404
                 return "File not found", 404
             
-            return render_template("file_view.html", file=file_data, rag_kb_entries=rag_kb_entries)
+            return_to = str(request.args.get("return_to") or "").strip()
+            if not return_to.startswith("/") or return_to.startswith("//"):
+                return_to = "/database"
+            return render_template("file_view.html", file=file_data, return_to=return_to)
             
         except Exception as e:
             logger.exception("Error viewing file")
@@ -1770,8 +1772,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
 
                 retry_errors = bool(data.get("retry_errors", False))
-                provider = str(data.get("provider") or "local").strip().lower()
-                input_source = str(data.get("input_source") or "source").strip().lower()
+                provider = str(data.get("provider") or "openai").strip().lower()
+                input_source = str(data.get("input_source") or "markdown").strip().lower()
                 overwrite_existing = bool(data.get("overwrite_existing", False))
                 skip_existing = bool(data.get("skip_existing", True))
                 if overwrite_existing:
@@ -1922,9 +1924,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
                 file_urls = data.get("file_urls", []) or []
-                conversion_tool = data.get("conversion_tool", "marker")
+                conversion_tool = data.get("conversion_tool", "docling")
                 if (conversion_tool or "").strip().lower() == "auto":
-                    conversion_tool = "marker"
+                    conversion_tool = "docling"
                 overwrite_existing = data.get("overwrite_existing", False)
                 skip_existing = bool(data.get("skip_existing", True))
                 scan_start_index = data.get("scan_start_index")
@@ -2184,6 +2186,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     )
                     splitter = str(data.get("splitter") or "semantic").strip().lower() or "semantic"
                     tokenizer = str(data.get("tokenizer") or "cl100k_base").strip() or "cl100k_base"
+                    chunk_model = str(data.get("chunk_model") or "gpt-4").strip() or "gpt-4"
                     version = str(data.get("version") or "v1").strip() or "v1"
                     profile = storage.create_chunk_profile(
                         name=profile_name,
@@ -2192,9 +2195,25 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         splitter=splitter,
                         tokenizer=tokenizer,
                         version=version,
-                        metadata={},
+                        metadata={"chunk_model": chunk_model},
                         upsert=True,
                     )
+
+                profile_config: dict[str, Any] = {}
+                raw_config = str(profile.get("config_json") or "").strip()
+                if raw_config:
+                    try:
+                        parsed = json.loads(raw_config)
+                        if isinstance(parsed, dict):
+                            profile_config = parsed
+                    except Exception:
+                        profile_config = {}
+                profile_metadata = profile_config.get("metadata", {})
+                if not isinstance(profile_metadata, dict):
+                    profile_metadata = {}
+                chunk_model = str(profile_metadata.get("chunk_model") or "gpt-4").strip() or "gpt-4"
+                splitter = str(profile.get("splitter") or "semantic").strip().lower() or "semantic"
+                tokenizer = str(profile.get("tokenizer") or "cl100k_base").strip() or "cl100k_base"
 
                 overwrite_same_profile = bool(data.get("overwrite_same_profile", False))
                 created_count = 0
@@ -2211,6 +2230,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     (
                         "Chunk generation started: "
                         f"files={total_files}, profile={profile.get('profile_id')}, "
+                        f"chunk_model={chunk_model}, splitter={splitter}, tokenizer={tokenizer}, "
                         f"overwrite_same_profile={overwrite_same_profile}"
                     ),
                 )
@@ -2252,13 +2272,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                         max_tokens = int(profile.get("chunk_size") or 800)
                         min_tokens = max(20, min(100, max_tokens // 4))
+                        if splitter != "semantic":
+                            _append_task_log(
+                                task_id,
+                                "WARNING",
+                                f"Unsupported splitter '{splitter}', falling back to semantic",
+                            )
                         chunker = SemanticChunker(
                             max_tokens=max_tokens,
                             min_tokens=min_tokens,
                             preserve_headers=True,
                             preserve_citations=True,
                             include_hierarchy=True,
-                            model="gpt-4",
+                            model=chunk_model,
+                            tokenizer_name=tokenizer,
                         )
                         chunks = chunker.chunk_document(markdown_content, metadata={"file_url": file_url})
                         payload_chunks = [

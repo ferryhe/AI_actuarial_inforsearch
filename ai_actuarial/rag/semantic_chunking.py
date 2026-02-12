@@ -44,7 +44,8 @@ class SemanticChunker:
         preserve_headers: bool = True,
         preserve_citations: bool = True,
         include_hierarchy: bool = True,
-        model: str = "gpt-4"
+        model: str = "gpt-4",
+        tokenizer_name: Optional[str] = None,
     ):
         """
         Initialize semantic chunker.
@@ -56,6 +57,7 @@ class SemanticChunker:
             preserve_citations: Whether to keep citations intact
             include_hierarchy: Whether to add parent section context
             model: Tokenizer model to use
+            tokenizer_name: Explicit tokenizer encoding name (takes precedence over model)
         """
         self.max_tokens = max_tokens
         self.min_tokens = min_tokens
@@ -63,6 +65,15 @@ class SemanticChunker:
         self.preserve_citations = preserve_citations
         self.include_hierarchy = include_hierarchy
         
+        explicit_tokenizer = str(tokenizer_name or "").strip()
+        if explicit_tokenizer:
+            try:
+                self.tokenizer = tiktoken.get_encoding(explicit_tokenizer)
+                return
+            except KeyError:
+                # Fall through to model-based detection.
+                pass
+
         try:
             self.tokenizer = tiktoken.encoding_for_model(model)
         except KeyError:

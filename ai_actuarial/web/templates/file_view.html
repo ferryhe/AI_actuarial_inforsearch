@@ -10,7 +10,7 @@
 {% block content %}
 <div class="file-view-page">
     <div class="page-header">
-        <button onclick="history.back()" class="btn btn-secondary">&larr; Back</button>
+        <a href="{{ return_to or '/database' }}" class="btn btn-secondary">&larr; Back</a>
         <h2>File Details</h2>
     </div>
 
@@ -160,14 +160,17 @@
 
         <div class="markdown-section">
             <div class="rag-status-panel">
+                <a id="file-preview-link"
+                   class="btn btn-secondary btn-small"
+                   href="/file_preview?file_url={{ file.url|urlencode }}"
+                   style="margin-bottom: 0.6rem;">
+                    File Preview
+                </a>
                 <div id="chunk-meta" class="markdown-meta rag-meta" style="display:none;"></div>
-                <div id="index-meta" class="markdown-meta rag-meta" style="display:none;"></div>
                 {% if can_run_rag_tasks %}
-                <div id="rag-index-actions" class="rag-index-actions" style="display:none;">
-                    <label for="rag-kb-select">KB</label>
-                    <select id="rag-kb-select" class="rag-kb-select"></select>
-                    <button id="rag-submit-btn" class="btn btn-secondary" onclick="submitChunkIndexTask()">
-                        Submit Chunk+Index Task
+                <div id="chunk-actions" class="rag-index-actions" style="display:none;">
+                    <button id="chunk-modify-btn" class="btn btn-secondary" onclick="openChunkTaskModal()">
+                        Modify Chunk
                     </button>
                 </div>
                 {% endif %}
@@ -193,10 +196,10 @@
             <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
                 <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
                  <div class="markdown-convert-actions">
-                      <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
-                      <select id="markdown-convert-engine" class="markdown-convert-select">
-                         <option value="marker">Marker</option>
+                     <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
+                     <select id="markdown-convert-engine" class="markdown-convert-select">
                           <option value="docling">Docling</option>
+                         <option value="marker">Marker</option>
                           <option value="mistral">Mistral OCR</option>
                           <option value="deepseekocr">DeepSeek OCR</option>
                       </select>
@@ -232,8 +235,8 @@
       <div class="form-group">
         <label>Catalog From</label>
         <select name="input_source" id="file-catalog-input-source">
+          <option value="markdown" selected>Markdown</option>
           <option value="source">Source file</option>
-          <option value="markdown">Markdown</option>
         </select>
         <small class="form-hint">Markdown uses converted/edited markdown content (if available).</small>
       </div>
@@ -246,10 +249,10 @@
       <div class="form-group">
         <label>AI Provider</label>
         <select name="provider" id="file-catalog-provider">
-          <option value="local">Local (KeyBERT)</option>
-          <option value="openai" {% if not openai_configured %}disabled{% endif %}>
+          <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
             OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
           </option>
+          <option value="local" {% if not openai_configured %}selected{% endif %}>Local (KeyBERT)</option>
         </select>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
@@ -261,15 +264,47 @@
 </div>
 {% endif %}
 
+{% if can_run_rag_tasks %}
+<div id="file-chunk-task-modal" class="modal" style="display:none;">
+  <div class="modal-content catalog-task-modal">
+    <span class="close" onclick="closeChunkTaskModal()">&times;</span>
+    <h3>
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <use xlink:href="#icon-tag"></use>
+      </svg>
+      Modify Chunk (This File)
+    </h3>
+    <p class="hint">Submit a single-file chunk generation task. Choose a profile and overwrite policy.</p>
+    <form id="file-chunk-task-form" onsubmit="submitChunkTask(event)">
+      <div class="form-group">
+        <label>Chunk Profile</label>
+        <select name="profile_id" id="file-chunk-profile-select" required></select>
+        <small class="form-hint">Same profile + overwrite = replace current chunk set. Different profile = add a new chunk set.</small>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="overwrite_same_profile" id="file-chunk-overwrite-same-profile"> Overwrite same-profile chunk set
+        </label>
+        <small class="form-hint">Unchecked = keep existing same-profile chunk and reuse it.</small>
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="closeChunkTaskModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Submit Chunk Task</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <script>
     let editMode = false;
     const fileUrl = {{ file.url|tojson }};
     const initialCatalogVersion = {{ (file.catalog_version or '')|tojson }};
     const initialCatalogProcessedAt = {{ (file.catalog_processed_at or file.catalog_updated_at or '')|tojson }};
-    const initialRagChunkCount = {{ (file.rag_chunk_count or 0)|tojson }};
-    const initialRagIndexedAt = {{ (file.rag_indexed_at or '')|tojson }};
-    const ragKbEntries = {{ (rag_kb_entries or [])|tojson }};
     const canRunRagTasks = {{ 'true' if can_run_rag_tasks else 'false' }};
+    let hasMarkdownForChunk = false;
+    let fileChunkSets = [];
+    let fileChunkProfiles = [];
     let categoryOptionsLoaded = false;
     let categoryOptions = [];
     let selectedCategories = [];
@@ -300,8 +335,8 @@
         const form = document.getElementById('file-catalog-form');
         if (!form) return;
 
-        const provider = document.getElementById('file-catalog-provider')?.value || 'local';
-        const inputSource = document.getElementById('file-catalog-input-source')?.value || 'source';
+        const provider = document.getElementById('file-catalog-provider')?.value || 'openai';
+        const inputSource = document.getElementById('file-catalog-input-source')?.value || 'markdown';
         const overwrite = document.getElementById('file-catalog-overwrite-existing')?.checked || false;
         const skipExisting = !overwrite;
 
@@ -366,7 +401,7 @@
     function parseCatalogVersion(version) {
         const raw = String(version || '').trim();
         if (!raw) {
-            return { source: 'source', provider: 'local' };
+            return { source: 'markdown', provider: 'openai' };
         }
         const parts = raw.split(':').map(v => v.trim()).filter(Boolean);
         if (parts.length >= 3) {
@@ -375,7 +410,7 @@
         const lower = raw.toLowerCase();
         if (lower.includes('openai')) return { source: 'source', provider: 'openai' };
         if (lower.includes('markdown')) return { source: 'markdown', provider: 'local' };
-        return { source: 'source', provider: 'local' };
+        return { source: 'markdown', provider: 'openai' };
     }
 
     function formatLocalTimestamp(value) {
@@ -407,142 +442,171 @@
         el.style.display = 'block';
     }
 
-    function getPrimaryRagEntry() {
-        if (!Array.isArray(ragKbEntries) || ragKbEntries.length === 0) return null;
-        return ragKbEntries[0];
+    function _extractApiData(payload) {
+        if (payload && typeof payload === 'object' && payload.data !== undefined) {
+            return payload.data;
+        }
+        return payload;
     }
 
-    function fillRagKbSelect(options, preferredKbId = '') {
-        const kbSelect = document.getElementById('rag-kb-select');
-        if (!kbSelect) return;
-        kbSelect.innerHTML = '';
+    function _parseProfileConfig(profile) {
+        const raw = profile && profile.config_json ? profile.config_json : '';
+        if (!raw) return {};
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_e) {
+            return {};
+        }
+    }
+
+    function _getChunkModel(profile) {
+        const cfg = _parseProfileConfig(profile);
+        const metadata = cfg && typeof cfg.metadata === 'object' ? cfg.metadata : {};
+        return metadata && metadata.chunk_model ? String(metadata.chunk_model) : 'gpt-4';
+    }
+
+    function fillChunkProfileSelect(options, preferredProfileId = '') {
+        const select = document.getElementById('file-chunk-profile-select');
+        if (!select) return;
+        select.innerHTML = '';
         options.forEach((item) => {
             const opt = document.createElement('option');
-            opt.value = item.kb_id;
-            const label = item.kb_name || item.kb_id;
-            const model = item.embedding_model ? ` (${item.embedding_model})` : '';
-            opt.textContent = `${label}${model}`;
-            kbSelect.appendChild(opt);
+            opt.value = item.profile_id;
+            const model = _getChunkModel(item);
+            opt.textContent = `${item.name || item.profile_id} | model=${model} | size=${item.chunk_size}, overlap=${item.chunk_overlap}`;
+            select.appendChild(opt);
         });
-        if (preferredKbId) {
-            kbSelect.value = preferredKbId;
+        if (preferredProfileId && options.some((item) => item.profile_id === preferredProfileId)) {
+            select.value = preferredProfileId;
         }
     }
 
-    async function ensureRagKbSelectOptions() {
-        const existing = Array.isArray(ragKbEntries)
-            ? ragKbEntries.map((item) => ({
-                kb_id: item.kb_id,
-                kb_name: item.kb_name || item.kb_id,
-                embedding_model: item.embedding_model || ''
-            }))
-            : [];
-        if (existing.length > 0) {
-            fillRagKbSelect(existing, existing[0].kb_id);
-            return true;
-        }
-
+    async function loadFileChunkProfiles() {
         try {
-            const resp = await fetch('/api/rag/knowledge-bases');
+            const resp = await fetch('/api/chunk/profiles');
             const payload = await resp.json();
-            if (!resp.ok || !payload.success || !Array.isArray(payload.data) || payload.data.length === 0) {
-                return false;
+            if (!resp.ok || !payload.success) {
+                throw new Error(payload.error || 'Failed loading chunk profiles');
             }
-            const options = payload.data.map((kb) => ({
-                kb_id: kb.kb_id,
-                kb_name: kb.name || kb.kb_id,
-                embedding_model: kb.embedding_model || ''
-            }));
-            fillRagKbSelect(options, options[0].kb_id);
+            const data = _extractApiData(payload) || {};
+            fileChunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+
+            let preferred = '';
+            if (fileChunkSets.length > 0) {
+                preferred = String(fileChunkSets[0].profile_id || '');
+            }
+            fillChunkProfileSelect(fileChunkProfiles, preferred);
+        } catch (err) {
+            console.error('Failed loading chunk profile options:', err);
+            fileChunkProfiles = [];
+        }
+    }
+
+    async function loadFileChunkSets() {
+        try {
+            const resp = await fetch(`/api/files/${encodeURIComponent(fileUrl)}/chunk-sets`);
+            const payload = await resp.json();
+            if (!resp.ok || !payload.success) {
+                throw new Error(payload.error || 'Failed loading chunk status');
+            }
+            const data = _extractApiData(payload) || {};
+            fileChunkSets = Array.isArray(data.chunk_sets) ? data.chunk_sets : [];
             return true;
         } catch (err) {
-            console.error('Failed loading KB options:', err);
+            console.error('Failed loading file chunk sets:', err);
+            fileChunkSets = [];
             return false;
         }
     }
 
-    async function renderRagStatusMeta() {
+    function renderChunkStatusMeta() {
         const chunkMeta = document.getElementById('chunk-meta');
-        const indexMeta = document.getElementById('index-meta');
-        const ragActions = document.getElementById('rag-index-actions');
-        if (!chunkMeta || !indexMeta) return;
+        const chunkActions = document.getElementById('chunk-actions');
+        if (!chunkMeta) return;
 
-        const primary = getPrimaryRagEntry();
-        const model = (primary && primary.embedding_model) || 'Unknown';
-        const chunkCount = Math.max(Number(initialRagChunkCount || 0), Number((primary && primary.chunk_count) || 0));
-        const indexedAt = String(initialRagIndexedAt || ((primary && primary.indexed_at) || '')).trim();
-        const hasChunk = chunkCount > 0;
-        const hasIndex = !!indexedAt;
-
+        const hasChunk = Array.isArray(fileChunkSets) && fileChunkSets.length > 0;
         if (hasChunk) {
-            const chunkUpdatedAt = indexedAt || ((primary && primary.added_at) || '');
-            chunkMeta.textContent = `Chunk | ${model} | Updated: ${formatLocalTimestamp(chunkUpdatedAt)} | Chunks: ${chunkCount}`;
+            const latest = fileChunkSets[0];
+            const updatedAt = latest.updated_at || latest.created_at || '';
+            const profileLabel = latest.profile_name || latest.profile_id || 'Unknown profile';
+            const chunkCount = Number(latest.chunk_count || 0);
+            const totalSets = fileChunkSets.length;
+            const setsExtra = totalSets > 1 ? ` | Profiles: ${totalSets}` : '';
+            chunkMeta.textContent = `Chunk | ${profileLabel} | Updated: ${formatLocalTimestamp(updatedAt)} | Chunks: ${chunkCount}${setsExtra}`;
             chunkMeta.style.display = 'block';
         } else {
             chunkMeta.style.display = 'none';
             chunkMeta.textContent = '';
         }
 
-        if (hasIndex) {
-            indexMeta.textContent = `Index | ${model} | Updated: ${formatLocalTimestamp(indexedAt)}`;
-            indexMeta.style.display = 'block';
-        } else {
-            indexMeta.style.display = 'none';
-            indexMeta.textContent = '';
-        }
-
-        if (ragActions && canRunRagTasks) {
-            const showTaskButton = !hasChunk && !hasIndex;
-            if (showTaskButton) {
-                ragActions.style.display = 'flex';
-                await ensureRagKbSelectOptions();
-            } else {
-                ragActions.style.display = 'none';
-            }
+        if (chunkActions && canRunRagTasks) {
+            const showModifyChunk = hasMarkdownForChunk;
+            chunkActions.style.display = showModifyChunk ? 'flex' : 'none';
         }
     }
 
-    async function submitChunkIndexTask() {
-        const kbSelect = document.getElementById('rag-kb-select');
-        const submitBtn = document.getElementById('rag-submit-btn');
-        const kbId = (kbSelect && kbSelect.value ? kbSelect.value : '').trim();
-        if (!kbId) {
-            Toast.error('Please select a Knowledge Base first.');
+    async function openChunkTaskModal() {
+        if (!hasMarkdownForChunk) {
+            Toast.error('This file has no markdown yet. Generate markdown first.');
             return;
         }
+        await loadFileChunkProfiles();
+        if (!Array.isArray(fileChunkProfiles) || fileChunkProfiles.length === 0) {
+            Toast.error('No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
+            return;
+        }
+        const preferredProfile = fileChunkSets.length > 0 ? String(fileChunkSets[0].profile_id || '') : '';
+        fillChunkProfileSelect(fileChunkProfiles, preferredProfile);
+        const modal = document.getElementById('file-chunk-task-modal');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        if (window.syncModalState) window.syncModalState();
+    }
 
-        if (submitBtn) submitBtn.disabled = true;
+    function closeChunkTaskModal() {
+        const modal = document.getElementById('file-chunk-task-modal');
+        if (!modal) return;
+        modal.style.display = 'none';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    async function submitChunkTask(e) {
+        e.preventDefault();
+        const form = document.getElementById('file-chunk-task-form');
+        if (!form) return;
+        const profileId = String(document.getElementById('file-chunk-profile-select')?.value || '').trim();
+        const overwriteSame = !!document.getElementById('file-chunk-overwrite-same-profile')?.checked;
+        if (!profileId) {
+            Toast.error('Please select a chunk profile.');
+            return;
+        }
         try {
-            const addResp = await fetch(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({file_urls: [fileUrl]})
-            });
-            const addPayload = await addResp.json();
-            if (!addResp.ok || !addPayload.success) {
-                throw new Error(addPayload.error || 'Failed to add file to KB');
-            }
-
-            const indexResp = await fetch(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`, {
+            const resp = await fetch('/api/collections/run', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
+                    type: 'chunk_generation',
                     file_urls: [fileUrl],
-                    force_reindex: false,
-                    incremental: false
+                    profile_id: profileId,
+                    overwrite_same_profile: overwriteSame,
+                    name: `Chunk Generation (${profileId}) - single file`
                 })
             });
-            const indexPayload = await indexResp.json();
-            if (!indexResp.ok || !indexPayload.success) {
-                throw new Error(indexPayload.error || 'Failed to submit index task');
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                throw new Error(data.error || 'Failed to submit chunk task');
             }
-
-            Toast.success(`Chunk+Index task submitted: ${indexPayload.data?.job_id || '-'}`);
+            Toast.success(`Chunk task submitted: ${data.job_id || '-'}`);
+            closeChunkTaskModal();
+            setTimeout(() => {
+                loadFileChunkSets().then(() => {
+                    loadFileChunkProfiles().then(() => renderChunkStatusMeta());
+                });
+            }, 800);
         } catch (err) {
-            Toast.error(`Failed to submit Chunk+Index task: ${err.message}`);
-            console.error('submitChunkIndexTask error:', err);
-        } finally {
-            if (submitBtn) submitBtn.disabled = false;
+            Toast.error(`Failed to submit chunk task: ${err.message}`);
+            console.error('submitChunkTask error:', err);
         }
     }
 
@@ -838,7 +902,11 @@
     // Load categories early so the first edit interaction is instant.
     ensureCategoryOptions();
     renderCatalogMeta(initialCatalogVersion, initialCatalogProcessedAt);
-    renderRagStatusMeta();
+    loadFileChunkSets().then(() => {
+        loadFileChunkProfiles().then(() => {
+            renderChunkStatusMeta();
+        });
+    });
     
     // ===== Markdown functionality =====
     let currentMarkdownContent = '';
@@ -860,6 +928,7 @@
             
             if (data.success && data.markdown && data.markdown.markdown_content) {
                 currentMarkdownContent = data.markdown.markdown_content;
+                hasMarkdownForChunk = true;
                 renderMarkdownView();
                 updateMarkdownMeta(data.markdown);
                 
@@ -874,13 +943,17 @@
             } else {
                 // No markdown content (but request was successful)
                 currentMarkdownContent = '';
+                hasMarkdownForChunk = false;
                 updateMarkdownMeta(null);
                 document.getElementById('markdown-rendered').innerHTML = '';
                 document.getElementById('markdown-empty').style.display = 'block';
             }
+            renderChunkStatusMeta();
         } catch (err) {
             console.error('Error loading markdown:', err);
             Toast.error('Failed to load markdown content');
+            hasMarkdownForChunk = false;
+            renderChunkStatusMeta();
         }
     }
     
@@ -1517,15 +1590,6 @@
         gap: 0.6rem;
         margin: 0.3rem 0 0.8rem 0;
         flex-wrap: wrap;
-    }
-
-    .rag-kb-select {
-        min-width: 260px;
-        padding: 0.35rem 0.45rem;
-        border: 1px solid var(--border-color);
-        border-radius: 4px;
-        background: var(--card-bg);
-        color: var(--text-primary);
     }
 
     /* Long markdown can make the page unwieldy; cap height and allow scroll by default. */

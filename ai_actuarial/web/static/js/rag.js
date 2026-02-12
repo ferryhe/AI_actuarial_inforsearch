@@ -6,6 +6,7 @@
 
     const state = {
         kbs: [],
+        chunkProfiles: [],
         kbCategories: {},
         categories: [],
         unmapped: [],
@@ -55,6 +56,29 @@
     function formatBytes(bytes) {
         if (window.formatBytes) return window.formatBytes(bytes);
         return bytes || 0;
+    }
+
+    function parseChunkProfileConfig(profile) {
+        const raw = profile && profile.config_json ? profile.config_json : '';
+        if (!raw) return {};
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_err) {
+            return {};
+        }
+    }
+
+    function getChunkProfileModel(profile) {
+        const cfg = parseChunkProfileConfig(profile);
+        const metadata = cfg && typeof cfg.metadata === 'object' ? cfg.metadata : {};
+        return metadata && metadata.chunk_model ? String(metadata.chunk_model) : 'gpt-4';
+    }
+
+    function formatChunkProfileSummary(profile) {
+        if (!profile) return '';
+        const model = getChunkProfileModel(profile);
+        return `Profile: ${profile.name || profile.profile_id} | model=${model} | size=${profile.chunk_size} | overlap=${profile.chunk_overlap} | ${profile.splitter}/${profile.tokenizer}`;
     }
 
     function getWriteHeaders() {
@@ -340,6 +364,82 @@
     async function loadKbs() {
         const payload = await apiGet('/api/rag/knowledge-bases');
         state.kbs = payload.data || [];
+    }
+
+    function renderCreateChunkProfileOptions() {
+        const select = document.getElementById('rag-create-chunk-profile');
+        if (!select) return;
+        const oldValue = select.value;
+        let html = '<option value="" selected disabled>Select existing chunk profile</option>';
+        for (const profile of state.chunkProfiles) {
+            html += `<option value="${esc(profile.profile_id)}">${esc(profile.name || profile.profile_id)} | ${esc(getChunkProfileModel(profile))} | size=${profile.chunk_size}, overlap=${profile.chunk_overlap}</option>`;
+        }
+        if (!state.chunkProfiles.length) {
+            html += '<option value="" disabled>No chunk profiles found - create one in Chunk Profiles</option>';
+        }
+        select.innerHTML = html;
+        if (oldValue && state.chunkProfiles.some((p) => p.profile_id === oldValue)) {
+            select.value = oldValue;
+        }
+    }
+
+    function syncCreateChunkProfileMode() {
+        const select = document.getElementById('rag-create-chunk-profile');
+        const summary = document.getElementById('rag-create-selected-profile-summary');
+        if (!select || !summary) return;
+
+        const profileId = String(select.value || '').trim();
+        if (!profileId) {
+            summary.style.display = 'none';
+            summary.textContent = '';
+            return;
+        }
+
+        const profile = state.chunkProfiles.find((p) => p.profile_id === profileId);
+        if (!profile) {
+            summary.style.display = 'none';
+            summary.textContent = '';
+            return;
+        }
+
+        summary.textContent = formatChunkProfileSummary(profile);
+        summary.style.display = 'block';
+    }
+
+    function renderChunkProfileTable() {
+        const body = document.getElementById('rag-chunk-profile-table-body');
+        if (!body) return;
+        if (!state.chunkProfiles.length) {
+            body.innerHTML = '<tr><td colspan="7">No chunk profiles yet.</td></tr>';
+            return;
+        }
+        body.innerHTML = state.chunkProfiles
+            .map((profile) => {
+                const model = getChunkProfileModel(profile);
+                return `<tr>
+                    <td>${esc(profile.name || profile.profile_id)}</td>
+                    <td>${esc(model)}</td>
+                    <td>${profile.chunk_size || 0}</td>
+                    <td>${profile.chunk_overlap || 0}</td>
+                    <td>${esc(profile.splitter || '-')}</td>
+                    <td>${esc(profile.tokenizer || '-')}</td>
+                    <td>${esc(formatDate(profile.updated_at || profile.created_at || '-'))}</td>
+                </tr>`;
+            })
+            .join('');
+    }
+
+    async function loadChunkProfiles() {
+        try {
+            const payload = await apiGet('/api/chunk/profiles');
+            const data = payload.data || {};
+            state.chunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+        } catch (_err) {
+            state.chunkProfiles = [];
+        }
+        renderCreateChunkProfileOptions();
+        renderChunkProfileTable();
+        syncCreateChunkProfileMode();
     }
 
     async function loadKbCategoryMappings() {
@@ -753,6 +853,7 @@
         const modeInputs = createForm?.querySelectorAll('input[name="kb_mode"]') || [];
         const createNameInput = createForm?.querySelector('[name="name"]');
         const createCategories = document.getElementById('rag-create-categories');
+        const createChunkProfileSelect = document.getElementById('rag-create-chunk-profile');
 
         const syncCreateMode = () => {
             if (!createForm) return;
@@ -773,21 +874,28 @@
             state.selectedCreateFiles.clear();
             renderCreateSelectedFiles();
             syncCreateKbId();
+            if (createChunkProfileSelect) createChunkProfileSelect.value = '';
+            syncCreateChunkProfileMode();
             syncCreateMode();
         };
 
-        const openCreateModal = () => {
+        const openCreateModal = async () => {
             resetCreateForm();
+            await loadChunkProfiles();
+            if (!state.chunkProfiles.length) {
+                notify('No chunk profiles found. Create one from Chunk Profiles first.', 'warning');
+            }
             openModal('rag-create-kb-modal');
         };
 
         modeInputs.forEach((input) => input.addEventListener('change', syncCreateMode));
         createNameInput?.addEventListener('input', () => syncCreateKbId());
         createCategories?.addEventListener('change', () => refreshCreateCategoryStats());
+        createChunkProfileSelect?.addEventListener('change', () => syncCreateChunkProfileMode());
 
         document.getElementById('rag-open-create-modal')?.addEventListener('click', openCreateModal);
 
-        document.getElementById('rag-create-from-unmapped')?.addEventListener('click', () => {
+        document.getElementById('rag-create-from-unmapped')?.addEventListener('click', async () => {
             if (!createForm) return;
             resetCreateForm();
             const select = document.getElementById('rag-create-categories');
@@ -798,6 +906,10 @@
                 });
             }
             refreshCreateCategoryStats();
+            await loadChunkProfiles();
+            if (!state.chunkProfiles.length) {
+                notify('No chunk profiles found. Create one from Chunk Profiles first.', 'warning');
+            }
             openModal('rag-create-kb-modal');
         });
 
@@ -807,19 +919,62 @@
             if (alert) alert.style.display = 'none';
         });
 
+        document.getElementById('rag-open-profiles-modal')?.addEventListener('click', async () => {
+            openModal('rag-chunk-profile-modal');
+            await loadChunkProfiles();
+        });
+
+        document.getElementById('rag-create-chunk-profile-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const form = e.currentTarget;
+            const formData = new FormData(form);
+            const body = {
+                name: String(formData.get('name') || '').trim(),
+                chunk_size: Number(formData.get('chunk_size') || 800),
+                chunk_overlap: Number(formData.get('chunk_overlap') || 100),
+                splitter: String(formData.get('splitter') || 'semantic').trim() || 'semantic',
+                tokenizer: String(formData.get('tokenizer') || 'cl100k_base').trim() || 'cl100k_base',
+                version: String(formData.get('version') || 'v1').trim() || 'v1',
+                metadata: {
+                    chunk_model: String(formData.get('chunk_model') || 'gpt-4').trim() || 'gpt-4',
+                },
+            };
+            if (!body.name) {
+                notify('Profile name is required', 'warning');
+                return;
+            }
+            try {
+                await apiPost('/api/chunk/profiles', body, true);
+                notify('Chunk profile saved', 'success');
+                await loadChunkProfiles();
+            } catch (err) {
+                notify(`Save profile failed: ${formatError(err)}`, 'error');
+            }
+        });
+
         async function submitCreate(createAndIndex) {
             if (!createForm) return;
             syncCreateKbId();
             const formData = new FormData(createForm);
             const mode = formData.get('kb_mode');
+            const selectedChunkProfileId = String(formData.get('chunk_profile_id') || '').trim();
+            const selectedChunkProfile =
+                selectedChunkProfileId
+                    ? state.chunkProfiles.find((p) => p.profile_id === selectedChunkProfileId)
+                    : null;
+            if (!selectedChunkProfile) {
+                notify('Please select an existing chunk profile', 'warning');
+                return;
+            }
             const payload = {
                 kb_id: String(formData.get('kb_id') || ''),
                 name: String(formData.get('name') || '').trim(),
                 description: String(formData.get('description') || ''),
                 kb_mode: mode,
                 embedding_model: formData.get('embedding_model'),
-                chunk_size: Number(formData.get('chunk_size') || 800),
-                chunk_overlap: Number(formData.get('chunk_overlap') || 100),
+                chunk_size: Number(selectedChunkProfile.chunk_size || 800),
+                chunk_overlap: Number(selectedChunkProfile.chunk_overlap || 100),
+                chunk_profile_id: selectedChunkProfile.profile_id,
             };
 
             if (!payload.name) {
@@ -1018,7 +1173,7 @@
                 const fileUrl = btn.getAttribute('data-preview-file');
                 if (!fileUrl) return;
                 const previewUrl = `/file_preview?file_url=${encodeURIComponent(fileUrl)}&kb_id=${encodeURIComponent(context.kbId)}`;
-                window.open(previewUrl, '_blank');
+                window.location.href = previewUrl;
             });
         });
 
@@ -1238,6 +1393,7 @@
             renderKbTable();
         });
         await refreshListPage();
+        await loadChunkProfiles();
         syncCreateKbId();
         refreshCreateCategoryStats();
         renderCreateSelectedFiles();
@@ -1257,6 +1413,7 @@
         bindFileSelector();
         bindDetailEvents();
         await refreshDetailPage();
+        await loadChunkProfiles();
         syncCreateKbId();
         refreshCreateCategoryStats();
         renderCreateSelectedFiles();
