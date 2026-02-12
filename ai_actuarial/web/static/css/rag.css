@@ -4,19 +4,6 @@
     gap: 1rem;
 }
 
-.rag-task-modal {
-    width: min(900px, 90vw);
-    max-height: calc(100vh - 56px);
-    padding: 28px;
-    overflow-y: auto;
-}
-
-.rag-task-modal .close {
-    position: absolute;
-    right: 20px;
-    top: 14px;
-}
-
 .rag-header {
     display: flex;
     justify-content: space-between;
