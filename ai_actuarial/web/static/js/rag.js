@@ -1076,19 +1076,39 @@
     }
 
     async function loadDetailTasks() {
-        const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/tasks?limit=30`);
-        const active = payload.data?.active || [];
-        const history = payload.data?.history || [];
         const activeBox = document.getElementById('rag-detail-active-tasks');
-        activeBox.innerHTML = active.map((t) => `<div class="rag-active-task">${esc(t.name || t.id)} - ${esc(t.status || 'pending')} (${t.progress || 0}%)</div>`).join('');
         const body = document.getElementById('rag-detail-tasks-body');
-        if (!history.length) {
-            body.innerHTML = '<tr><td colspan="5">No task history.</td></tr>';
+        if (!activeBox || !body) {
             return;
         }
-        body.innerHTML = history
-            .map((t) => `<tr><td>${esc(t.name || t.id)}</td><td>${esc(t.status || '-')}</td><td>${esc(formatDate(t.started_at))}</td><td>${t.items_processed || 0}</td><td>${t.rag_total_chunks || 0}</td></tr>`)
-            .join('');
+
+        try {
+            const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/tasks?limit=30`);
+            const active = payload.data?.active || [];
+            const history = payload.data?.history || [];
+
+            activeBox.innerHTML = active
+                .map((t) => `<div class="rag-active-task">${esc(t.name || t.id)} - ${esc(t.status || 'pending')} (${t.progress || 0}%)</div>`)
+                .join('');
+
+            if (!history.length) {
+                body.innerHTML = '<tr><td colspan="5">No task history.</td></tr>';
+                return;
+            }
+
+            body.innerHTML = history
+                .map((t) => `<tr><td>${esc(t.name || t.id)}</td><td>${esc(t.status || '-')}</td><td>${esc(formatDate(t.started_at))}</td><td>${t.items_processed || 0}</td><td>${t.rag_total_chunks || 0}</td></tr>`)
+                .join('');
+        } catch (err) {
+            // Handle authorization failures and other errors without rejecting
+            let message = 'Unable to load tasks.';
+            const status = (err && (err.status || (err.response && err.response.status))) || null;
+            if (status === 403) {
+                message = 'You do not have permission to view task history.';
+            }
+            activeBox.innerHTML = '';
+            body.innerHTML = `<tr><td colspan="5" class="text-muted">${esc(message)}</td></tr>`;
+        }
     }
 
     async function refreshDetailPage() {
