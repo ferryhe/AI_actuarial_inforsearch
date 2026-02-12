@@ -864,7 +864,7 @@ def register_rag_routes(
             return _api_error("Internal server error", status_code=500, detail=str(exc))
 
     @app.route("/api/rag/files/preview", methods=["GET"])
-    @require_permissions("files.view")
+    @require_permissions("files.read")
     def api_rag_file_preview():
         """
         Get file preview data including original file info, markdown content, and chunks.
