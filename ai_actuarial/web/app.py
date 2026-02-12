@@ -2167,6 +2167,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                 pipeline = IndexingPipeline(kb_manager, progress_callback=rag_progress)
                 stats = pipeline.index_files(kb_id=kb_id, file_urls=file_urls, force_reindex=force_reindex)
+                try:
+                    index_path = str(Path(kb_manager.config.data_dir) / kb_id / "index.faiss")
+                    storage.create_kb_index_version(
+                        kb_id=kb_id,
+                        embedding_model=kb.embedding_model,
+                        index_type=kb.index_type,
+                        chunk_count=int(stats.get("total_chunks", 0) or 0),
+                        status="ready",
+                        artifact_path=index_path,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _append_task_log(task_id, "WARNING", f"Failed recording KB index version: {exc}")
 
                 class RagIndexResult:
                     def __init__(self, payload: dict[str, Any]):

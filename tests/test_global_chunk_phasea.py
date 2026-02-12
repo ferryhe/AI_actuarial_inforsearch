@@ -1,0 +1,177 @@
+﻿import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+import types
+import unittest
+from urllib.parse import quote
+
+import yaml
+
+if "schedule" not in sys.modules:
+    sys.modules["schedule"] = types.ModuleType("schedule")
+
+from ai_actuarial.storage import Storage
+from ai_actuarial.web.app import FLASK_AVAILABLE, create_app
+
+MAX_CLEANUP_RETRIES = 10
+
+
+class TestGlobalChunkPhaseA(unittest.TestCase):
+    def setUp(self):
+        if not FLASK_AVAILABLE:
+            self.skipTest("Flask is not installed")
+
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.temp_dir, "test.db")
+        self.config_path = os.path.join(self.temp_dir, "sites.yaml")
+        self.categories_path = os.path.join(self.temp_dir, "categories.yaml")
+        self.admin_token = "test-global-chunk-admin-token"
+
+        config_data = {
+            "paths": {
+                "db": self.db_path,
+                "download_dir": os.path.join(self.temp_dir, "files"),
+                "updates_dir": os.path.join(self.temp_dir, "updates"),
+                "last_run_new": os.path.join(self.temp_dir, "last_run_new.json"),
+            },
+            "defaults": {
+                "user_agent": "test-agent/1.0",
+                "max_pages": 10,
+                "max_depth": 1,
+                "file_exts": [".pdf", ".docx"],
+                "keywords": ["actuarial"],
+            },
+            "sites": [],
+        }
+        categories_data = {"categories": {"Test": ["test"]}}
+
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(config_data, f, sort_keys=False, allow_unicode=True)
+        with open(self.categories_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(categories_data, f, sort_keys=False, allow_unicode=True)
+
+        self.original_env = dict(os.environ)
+        os.environ["CONFIG_PATH"] = self.config_path
+        os.environ["CATEGORIES_CONFIG_PATH"] = self.categories_path
+        os.environ["BOOTSTRAP_ADMIN_TOKEN"] = self.admin_token
+        os.environ["FLASK_SECRET_KEY"] = "test-global-chunk-secret"
+        os.environ["REQUIRE_AUTH"] = "false"
+        os.environ["RAG_DATA_DIR"] = os.path.join(self.temp_dir, "rag_data")
+
+        self.app = create_app({"TESTING": True, "DEBUG": True})
+        self.client = self.app.test_client()
+        self.auth_header = {"Authorization": f"Bearer {self.admin_token}"}
+
+        self.storage = Storage(self.db_path)
+        self.file_url = "test://global-chunk-file.pdf"
+        self.storage.insert_file(
+            url=self.file_url,
+            sha256="sha-test-1",
+            title="Global Chunk Test Document",
+            source_site="test",
+            source_page_url="test://source",
+            original_filename="test.pdf",
+            local_path="/tmp/test.pdf",
+            bytes=2048,
+            content_type="application/pdf",
+        )
+        self.storage.update_file_markdown(
+            self.file_url,
+            "# Section 1\n\nThis is a paragraph for chunking.\n\n## Section 1.1\n\nAnother paragraph.",
+            "manual",
+        )
+
+    def tearDown(self):
+        if hasattr(self, "storage"):
+            self.storage.close()
+
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+        if os.path.exists(self.temp_dir):
+            for _ in range(MAX_CLEANUP_RETRIES):
+                try:
+                    shutil.rmtree(self.temp_dir)
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
+
+    def test_phase_a_profile_chunk_binding_flow(self):
+        profile_resp = self.client.post(
+            "/api/chunk/profiles",
+            headers=self.auth_header,
+            json={
+                "name": "KB default profile",
+                "chunk_size": 300,
+                "chunk_overlap": 50,
+                "splitter": "semantic",
+                "tokenizer": "cl100k_base",
+                "version": "v1",
+            },
+        )
+        if profile_resp.status_code == 503:
+            self.skipTest("RAG functionality not available")
+        self.assertEqual(profile_resp.status_code, 201)
+        profile_data = profile_resp.get_json()
+        self.assertTrue(profile_data["success"])
+        profile_id = profile_data["data"]["profile_id"]
+
+        encoded_file_url = quote(self.file_url, safe="")
+        gen_resp = self.client.post(
+            f"/api/files/{encoded_file_url}/chunk-sets/generate",
+            headers=self.auth_header,
+            json={"profile_id": profile_id, "overwrite_same_profile": True},
+        )
+        self.assertIn(gen_resp.status_code, [200, 201])
+        gen_data = gen_resp.get_json()
+        self.assertTrue(gen_data["success"])
+        self.assertGreater(gen_data["data"]["chunk_count"], 0)
+        chunk_set_id = gen_data["data"]["chunk_set_id"]
+
+        list_resp = self.client.get(f"/api/files/{encoded_file_url}/chunk-sets", headers=self.auth_header)
+        self.assertEqual(list_resp.status_code, 200)
+        list_data = list_resp.get_json()
+        self.assertTrue(list_data["success"])
+        self.assertGreaterEqual(list_data["data"]["count"], 1)
+
+        kb_id = "kb_phasea_test"
+        create_kb_resp = self.client.post(
+            "/api/rag/knowledge-bases",
+            headers=self.auth_header,
+            json={
+                "kb_id": kb_id,
+                "name": "PhaseA KB",
+                "kb_mode": "manual",
+                "chunk_size": 300,
+                "chunk_overlap": 50,
+                "embedding_model": "text-embedding-3-small",
+            },
+        )
+        self.assertEqual(create_kb_resp.status_code, 201)
+
+        bind_resp = self.client.post(
+            f"/api/rag/knowledge-bases/{kb_id}/bindings",
+            headers=self.auth_header,
+            json={"file_url": self.file_url, "chunk_set_id": chunk_set_id, "bound_by": "test"},
+        )
+        self.assertEqual(bind_resp.status_code, 200)
+        bind_data = bind_resp.get_json()
+        self.assertTrue(bind_data["success"])
+        self.assertEqual(bind_data["data"]["created"], 1)
+
+        status_resp = self.client.get(
+            f"/api/rag/knowledge-bases/{kb_id}/composition/status",
+            headers=self.auth_header,
+        )
+        self.assertEqual(status_resp.status_code, 200)
+        status_data = status_resp.get_json()
+        self.assertTrue(status_data["success"])
+        self.assertEqual(status_data["data"]["file_count"], 1)
+        self.assertGreaterEqual(status_data["data"]["chunk_set_count"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

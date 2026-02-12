@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import hashlib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -121,6 +122,307 @@ def register_rag_routes(
             return fn(KnowledgeBaseManager(storage), storage)
         finally:
             storage.close()
+
+    def _with_storage(fn):
+        storage = Storage(db_path)
+        try:
+            return fn(storage)
+        finally:
+            storage.close()
+
+    @app.route("/api/chunk/profiles", methods=["GET"])
+    @require_permissions("catalog.read")
+    def api_chunk_profiles_list():
+        try:
+            def _run(storage):
+                return _api_success({"profiles": storage.list_chunk_profiles()})
+
+            return _with_storage(_run)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error listing chunk profiles")
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/chunk/profiles", methods=["POST"])
+    @require_permissions("config.write")
+    def api_chunk_profiles_create():
+        if (r := _check_config_write_auth()) is not None:
+            return r
+        try:
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+            name = _norm(data.get("name"))
+            if not name:
+                return _api_error("name is required", status_code=400)
+            chunk_size = int(data.get("chunk_size") or 800)
+            chunk_overlap = int(data.get("chunk_overlap") or 100)
+            splitter = _norm(data.get("splitter") or "semantic")
+            tokenizer = _norm(data.get("tokenizer") or "cl100k_base")
+            version = _norm(data.get("version") or "v1")
+            metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+
+            def _run(storage):
+                profile = storage.create_chunk_profile(
+                    name=name,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    splitter=splitter,
+                    tokenizer=tokenizer,
+                    version=version,
+                    metadata=metadata,
+                    upsert=True,
+                )
+                return _api_success(profile, status_code=201)
+
+            return _with_storage(_run)
+        except ValueError as exc:
+            return _api_error(str(exc), status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error creating chunk profile")
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/files/<path:file_url>/chunk-sets", methods=["GET"])
+    @require_permissions("files.read")
+    def api_file_chunk_sets(file_url: str):
+        try:
+            def _run(storage):
+                file_info = storage.get_file_by_url(file_url)
+                if not file_info:
+                    return _api_error("File not found", status_code=404)
+                rows = storage.list_file_chunk_sets(file_url)
+                return _api_success(
+                    {
+                        "file_url": file_url,
+                        "chunk_sets": rows,
+                        "count": len(rows),
+                    }
+                )
+
+            return _with_storage(_run)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error listing file chunk sets %s", file_url)
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/files/<path:file_url>/chunk-sets/generate", methods=["POST"])
+    @require_permissions("tasks.run")
+    def api_file_chunk_sets_generate(file_url: str):
+        if (r := _check_rag_available()) is not None:
+            return r
+        if (r := _check_config_write_auth()) is not None:
+            return r
+        try:
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+            profile_id = _norm(data.get("profile_id"))
+            overwrite_same_profile = bool(data.get("overwrite_same_profile", False))
+            chunk_size = int(data.get("chunk_size") or 800)
+            chunk_overlap = int(data.get("chunk_overlap") or 100)
+            splitter = _norm(data.get("splitter") or "semantic")
+            tokenizer = _norm(data.get("tokenizer") or "cl100k_base")
+            version = _norm(data.get("version") or "v1")
+            profile_name = _norm(data.get("name") or f"default-{chunk_size}-{chunk_overlap}")
+
+            def _run(storage):
+                from ai_actuarial.rag.semantic_chunking import SemanticChunker
+
+                file_info = storage.get_file_by_url(file_url)
+                if not file_info:
+                    return _api_error("File not found", status_code=404)
+                markdown_data = storage.get_file_markdown(file_url)
+                markdown_content = (markdown_data or {}).get("markdown_content") or ""
+                if not markdown_content.strip():
+                    return _api_error("No markdown content available for this file", status_code=400)
+
+                if profile_id:
+                    profile = storage.get_chunk_profile(profile_id)
+                    if not profile:
+                        return _api_error("chunk profile not found", status_code=404)
+                else:
+                    profile = storage.create_chunk_profile(
+                        name=profile_name,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        splitter=splitter,
+                        tokenizer=tokenizer,
+                        version=version,
+                        metadata={},
+                        upsert=True,
+                    )
+
+                markdown_hash = hashlib.sha256(markdown_content.encode("utf-8")).hexdigest()
+                chunk_set = storage.get_or_create_file_chunk_set(
+                    file_url=file_url,
+                    profile_id=profile["profile_id"],
+                    markdown_hash=markdown_hash,
+                    status="ready",
+                )
+                if not chunk_set.get("created") and not overwrite_same_profile:
+                    return _api_success(
+                        {
+                            "file_url": file_url,
+                            "chunk_set_id": chunk_set["chunk_set_id"],
+                            "profile": profile,
+                            "chunk_count": chunk_set.get("chunk_count", 0),
+                            "reused_existing": True,
+                            "overwrote_existing": False,
+                        },
+                        status_code=200,
+                    )
+
+                max_tokens = int(profile.get("chunk_size") or 800)
+                # Keep a conservative minimum to reduce tiny fragments while supporting smaller chunk sizes.
+                min_tokens = max(20, min(100, max_tokens // 4))
+                chunker = SemanticChunker(
+                    max_tokens=max_tokens,
+                    min_tokens=min_tokens,
+                    preserve_headers=True,
+                    preserve_citations=True,
+                    include_hierarchy=True,
+                    model="gpt-4",
+                )
+                chunks = chunker.chunk_document(markdown_content, metadata={"file_url": file_url})
+                payload_chunks = [
+                    {
+                        "chunk_index": chunk.chunk_index,
+                        "content": chunk.content,
+                        "token_count": chunk.token_count,
+                        "section_hierarchy": chunk.section_hierarchy,
+                    }
+                    for chunk in chunks
+                ]
+                write_res = storage.replace_global_chunks(
+                    chunk_set_id=chunk_set["chunk_set_id"],
+                    chunks=payload_chunks,
+                    overwrite=True,
+                )
+                return _api_success(
+                    {
+                        "file_url": file_url,
+                        "chunk_set_id": chunk_set["chunk_set_id"],
+                        "profile": profile,
+                        "chunk_count": write_res.get("chunk_count", 0),
+                        "reused_existing": not chunk_set.get("created", False),
+                        "overwrote_existing": write_res.get("replaced", False),
+                    },
+                    status_code=201 if chunk_set.get("created") else 200,
+                )
+
+            return _with_storage(_run)
+        except ValueError as exc:
+            return _api_error(str(exc), status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error generating chunk sets for file %s", file_url)
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/files/<path:file_url>/indexes", methods=["GET"])
+    @require_permissions("files.read")
+    def api_file_indexes(file_url: str):
+        try:
+            def _run(storage):
+                file_info = storage.get_file_by_url(file_url)
+                if not file_info:
+                    return _api_error("File not found", status_code=404)
+                rows = storage.list_file_index_status(file_url)
+                return _api_success({"file_url": file_url, "indexes": rows, "count": len(rows)})
+
+            return _with_storage(_run)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error listing file indexes %s", file_url)
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/rag/knowledge-bases/<kb_id>/bindings", methods=["POST"])
+    @require_permissions("config.write")
+    def api_rag_bind_chunk_sets(kb_id: str):
+        if (r := _check_rag_available()) is not None:
+            return r
+        if (r := _check_config_write_auth()) is not None:
+            return r
+        try:
+            kid = _kb_id(kb_id)
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+            bound_by = _norm(data.get("bound_by") or "api")
+
+            if isinstance(data.get("bindings"), list):
+                items = data.get("bindings") or []
+            else:
+                items = [{"file_url": data.get("file_url"), "chunk_set_id": data.get("chunk_set_id")}]
+            parsed: list[tuple[str, str]] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                file_url = _norm(item.get("file_url"))
+                chunk_set_id = _norm(item.get("chunk_set_id"))
+                if file_url and chunk_set_id:
+                    parsed.append((file_url, chunk_set_id))
+            if not parsed:
+                return _api_error("bindings must include file_url and chunk_set_id", status_code=400)
+
+            def _run(kb_manager, storage):
+                kb = kb_manager.get_kb(kid)
+                if not kb:
+                    return _api_error(f"Knowledge base '{kid}' not found", status_code=404)
+                created_n = 0
+                out: list[dict[str, Any]] = []
+                for file_url, chunk_set_id in parsed:
+                    res = storage.bind_chunk_set_to_kb(
+                        kb_id=kid,
+                        file_url=file_url,
+                        chunk_set_id=chunk_set_id,
+                        bound_by=bound_by,
+                    )
+                    if res.get("created"):
+                        created_n += 1
+                    out.append(res)
+                return _api_success(
+                    {
+                        "kb_id": kid,
+                        "processed": len(out),
+                        "created": created_n,
+                        "existing": len(out) - created_n,
+                        "bindings": out,
+                    }
+                )
+
+            return _with_manager(_run)
+        except ValueError as exc:
+            return _api_error(str(exc), status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error binding chunk sets for KB %s", kb_id)
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/rag/knowledge-bases/<kb_id>/composition/status", methods=["GET"])
+    @require_permissions("catalog.read")
+    def api_rag_kb_composition_status(kb_id: str):
+        if (r := _check_rag_available()) is not None:
+            return r
+        try:
+            kid = _kb_id(kb_id)
+            limit_raw = _norm(request.args.get("limit") or "200")
+            try:
+                limit = max(1, min(int(limit_raw), 1000))
+            except ValueError:
+                limit = 200
+
+            def _run(kb_manager, storage):
+                kb = kb_manager.get_kb(kid)
+                if not kb:
+                    return _api_error(f"Knowledge base '{kid}' not found", status_code=404)
+                status = storage.get_kb_composition_status(kid)
+                bindings = storage.list_kb_chunk_bindings(kid)[:limit]
+                status["bindings"] = bindings
+                status["bindings_count"] = len(bindings)
+                status["bindings_limit"] = limit
+                return _api_success(status)
+
+            return _with_manager(_run)
+        except ValueError as exc:
+            return _api_error(str(exc), status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error getting KB composition status %s", kb_id)
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
 
     @app.route("/api/rag/knowledge-bases", methods=["GET"])
     @require_permissions("catalog.read")
@@ -815,6 +1117,12 @@ def register_rag_routes(
         except Exception as exc:  # noqa: BLE001
             logger.exception("Error creating RAG index task for %s", kb_id)
             return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/rag/knowledge-bases/<kb_id>/index/build", methods=["POST"])
+    @require_permissions("tasks.run")
+    def api_rag_create_index_build_task(kb_id: str):
+        """Alias endpoint for KB index build requests (Phase A compatibility)."""
+        return api_rag_create_index_task(kb_id)
 
     @app.route("/api/rag/knowledge-bases/<kb_id>/tasks", methods=["GET"])
     @require_permissions("tasks.view")
