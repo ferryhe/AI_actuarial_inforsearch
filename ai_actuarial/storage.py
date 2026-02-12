@@ -1032,7 +1032,9 @@ class Storage:
                    f.original_filename, f.local_path, f.bytes, f.content_type,
                    f.last_modified, f.etag, f.published_time, f.first_seen,
                    f.last_seen, f.crawl_time, f.deleted_at,
-                   c.category, c.summary, c.keywords
+                   c.category, c.summary, c.keywords,
+                   c.markdown_content, c.markdown_source, c.markdown_updated_at,
+                   c.rag_chunk_count, c.rag_indexed_at
             FROM files f
             {join_clause}
             WHERE {where_clause}
@@ -1063,7 +1065,12 @@ class Storage:
                 "deleted_at": row[15],
                 "category": row[16],
                 "summary": row[17],
-                "keywords": json.loads(row[18]) if row[18] else []
+                "keywords": json.loads(row[18]) if row[18] else [],
+                "markdown_content": row[19],
+                "markdown_source": row[20],
+                "markdown_updated_at": row[21],
+                "rag_chunk_count": row[22] or 0,
+                "rag_indexed_at": row[23]
             }
             files.append(file_dict)
         
