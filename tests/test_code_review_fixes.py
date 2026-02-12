@@ -443,7 +443,8 @@ class TestConcurrentSQLiteWrites(unittest.TestCase):
     def test_begin_immediate_in_code(self):
         """Test that catalog_incremental uses thread-safe writes."""
         # Read the source code to verify thread-safe write protection
-        catalog_path = Path(__file__).parent / "ai_actuarial" / "catalog_incremental.py"
+        project_root = Path(__file__).resolve().parents[1]
+        catalog_path = project_root / "ai_actuarial" / "catalog_incremental.py"
         with open(catalog_path, "r", encoding="utf-8") as f:
             content = f.read()
         
@@ -517,7 +518,8 @@ class TestOrderByDocumentation(unittest.TestCase):
     
     def test_order_by_comment_exists(self):
         """Test that ORDER BY comment exists in catalog_incremental."""
-        catalog_path = Path(__file__).parent / "ai_actuarial" / "catalog_incremental.py"
+        project_root = Path(__file__).resolve().parents[1]
+        catalog_path = project_root / "ai_actuarial" / "catalog_incremental.py"
         with open(catalog_path, "r", encoding="utf-8") as f:
             content = f.read()
         
@@ -530,7 +532,8 @@ class TestPathTraversalProtection(unittest.TestCase):
     
     def test_path_validation_in_code(self):
         """Test that path validation exists in web app."""
-        app_path = Path(__file__).parent / "ai_actuarial" / "web" / "app.py"
+        project_root = Path(__file__).resolve().parents[1]
+        app_path = project_root / "ai_actuarial" / "web" / "app.py"
         with open(app_path, "r", encoding="utf-8") as f:
             content = f.read()
         
