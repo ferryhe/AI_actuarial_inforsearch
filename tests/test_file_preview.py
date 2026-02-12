@@ -6,10 +6,14 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import types
 import unittest
 
 import yaml
+
+# Constants
+MAX_CLEANUP_RETRIES = 10
 
 # Mock schedule module if not available
 if "schedule" not in sys.modules:
@@ -106,12 +110,11 @@ class TestFilePreview(unittest.TestCase):
         
         # Clean up temp directory
         if os.path.exists(self.temp_dir):
-            for _ in range(10):
+            for _ in range(MAX_CLEANUP_RETRIES):
                 try:
                     shutil.rmtree(self.temp_dir)
                     break
                 except PermissionError:
-                    import time
                     time.sleep(0.1)
 
     def test_preview_route_exists(self):
