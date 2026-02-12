@@ -282,6 +282,21 @@
         <small class="form-hint">Same profile + overwrite = replace current chunk set. Different profile = add a new chunk set.</small>
       </div>
       <div class="form-group">
+        <label>Bind To Knowledge Base (Optional)</label>
+        <select name="kb_id" id="file-chunk-kb-select">
+          <option value="">Do not bind to KB</option>
+        </select>
+        <small class="form-hint">If selected, this file's generated chunk set will be bound to that KB.</small>
+      </div>
+      <div class="form-group">
+        <label>Binding Mode</label>
+        <select name="binding_mode" id="file-chunk-binding-mode-select">
+          <option value="follow_latest" selected>Follow Latest (Recommended)</option>
+          <option value="pin">Pin (Fixed Version)</option>
+        </select>
+        <small class="form-hint">Follow Latest auto-tracks new same-profile chunk sets. Pin keeps current chunk_set_id.</small>
+      </div>
+      <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" name="overwrite_same_profile" id="file-chunk-overwrite-same-profile"> Overwrite same-profile chunk set
         </label>
@@ -305,6 +320,8 @@
     let hasMarkdownForChunk = false;
     let fileChunkSets = [];
     let fileChunkProfiles = [];
+    let fileChunkKbs = [];
+    let chunkKbControlBound = false;
     let categoryOptionsLoaded = false;
     let categoryOptions = [];
     let selectedCategories = [];
@@ -520,6 +537,49 @@
         }
     }
 
+    function fillKbSelect(options) {
+        const select = document.getElementById('file-chunk-kb-select');
+        if (!select) return;
+        const current = String(select.value || '').trim();
+        const entries = Array.isArray(options) ? options : [];
+        select.innerHTML = '<option value="">Do not bind to KB</option>';
+        entries.forEach((kb) => {
+            const opt = document.createElement('option');
+            opt.value = String(kb.kb_id || '');
+            opt.textContent = `${kb.name || kb.kb_id} (${kb.kb_id})`;
+            select.appendChild(opt);
+        });
+        if (current && entries.some((kb) => String(kb.kb_id || '') === current)) {
+            select.value = current;
+        }
+        toggleBindingModeControl();
+    }
+
+    function toggleBindingModeControl() {
+        const kbSelect = document.getElementById('file-chunk-kb-select');
+        const modeSelect = document.getElementById('file-chunk-binding-mode-select');
+        if (!kbSelect || !modeSelect) return;
+        const hasKb = String(kbSelect.value || '').trim().length > 0;
+        modeSelect.disabled = !hasKb;
+    }
+
+    async function loadFileChunkKbs() {
+        try {
+            const resp = await fetch('/api/rag/knowledge-bases');
+            const payload = await resp.json();
+            if (!resp.ok || !payload.success) {
+                throw new Error(payload.error || 'Failed loading knowledge bases');
+            }
+            const rows = _extractApiData(payload) || [];
+            fileChunkKbs = Array.isArray(rows) ? rows : [];
+            fillKbSelect(fileChunkKbs);
+        } catch (err) {
+            console.error('Failed loading KB options:', err);
+            fileChunkKbs = [];
+            fillKbSelect([]);
+        }
+    }
+
     function renderChunkStatusMeta() {
         const chunkMeta = document.getElementById('chunk-meta');
         const chunkActions = document.getElementById('chunk-actions');
@@ -551,13 +611,18 @@
             Toast.error('This file has no markdown yet. Generate markdown first.');
             return;
         }
-        await loadFileChunkProfiles();
+        await Promise.all([loadFileChunkProfiles(), loadFileChunkKbs()]);
         if (!Array.isArray(fileChunkProfiles) || fileChunkProfiles.length === 0) {
             Toast.error('No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
             return;
         }
         const preferredProfile = fileChunkSets.length > 0 ? String(fileChunkSets[0].profile_id || '') : '';
         fillChunkProfileSelect(fileChunkProfiles, preferredProfile);
+        if (!chunkKbControlBound) {
+            document.getElementById('file-chunk-kb-select')?.addEventListener('change', toggleBindingModeControl);
+            chunkKbControlBound = true;
+        }
+        toggleBindingModeControl();
         const modal = document.getElementById('file-chunk-task-modal');
         if (!modal) return;
         modal.style.display = 'flex';
@@ -576,22 +641,34 @@
         const form = document.getElementById('file-chunk-task-form');
         if (!form) return;
         const profileId = String(document.getElementById('file-chunk-profile-select')?.value || '').trim();
+        const kbId = String(document.getElementById('file-chunk-kb-select')?.value || '').trim();
+        const bindingMode = String(document.getElementById('file-chunk-binding-mode-select')?.value || 'follow_latest').trim().toLowerCase();
         const overwriteSame = !!document.getElementById('file-chunk-overwrite-same-profile')?.checked;
         if (!profileId) {
             Toast.error('Please select a chunk profile.');
             return;
         }
+        if (!['follow_latest', 'pin'].includes(bindingMode)) {
+            Toast.error('Invalid binding mode.');
+            return;
+        }
+        const payload = {
+            type: 'chunk_generation',
+            file_urls: [fileUrl],
+            profile_id: profileId,
+            overwrite_same_profile: overwriteSame,
+            name: `Chunk Generation (${profileId}) - single file`
+        };
+        if (kbId) {
+            payload.kb_id = kbId;
+            payload.binding_mode = bindingMode;
+            payload.name = `Chunk Generation (${profileId}) + bind ${kbId} [${bindingMode}]`;
+        }
         try {
             const resp = await fetch('/api/collections/run', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    type: 'chunk_generation',
-                    file_urls: [fileUrl],
-                    profile_id: profileId,
-                    overwrite_same_profile: overwriteSame,
-                    name: `Chunk Generation (${profileId}) - single file`
-                })
+                body: JSON.stringify(payload)
             });
             const data = await resp.json();
             if (!resp.ok || !data.success) {
