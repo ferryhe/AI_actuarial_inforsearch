@@ -4,6 +4,12 @@
     gap: 1rem;
 }
 
+.rag-task-modal {
+    width: min(900px, 94vw);
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+}
+
 .rag-header {
     display: flex;
     justify-content: space-between;
@@ -74,6 +80,14 @@
 
 .rag-main {
     margin-bottom: 0;
+}
+
+.rag-kb-row {
+    cursor: pointer;
+}
+
+.rag-kb-row:hover {
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--card-bg));
 }
 
 .rag-toolbar {
@@ -222,6 +236,23 @@
     gap: 0.3rem;
 }
 
+.rag-generated-kb-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.9rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.55rem 0.65rem;
+    background: color-mix(in srgb, var(--gray-100) 60%, var(--card-bg));
+}
+
+.rag-category-stats {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.55rem 0.65rem;
+    font-size: 0.9rem;
+    background: color-mix(in srgb, var(--primary-color) 4%, var(--card-bg));
+}
+
 .rag-selected-file-item {
     border: 1px solid var(--border-color);
     border-radius: 6px;
@@ -253,6 +284,20 @@
     margin-bottom: 0.75rem;
 }
 
+.rag-selector-hint {
+    margin: -0.2rem 0 0.65rem 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.rag-selector-table-wrap {
+    flex: 1;
+    min-height: 280px;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
 .rag-selector-footer {
     display: flex;
     justify-content: space-between;
@@ -275,6 +320,10 @@
 
 .rag-file-selector-modal-content {
     width: min(1100px, 94vw);
+    height: min(92vh, 900px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 @media (max-width: 980px) {

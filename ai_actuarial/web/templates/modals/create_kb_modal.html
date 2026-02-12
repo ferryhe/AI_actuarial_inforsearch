@@ -1,12 +1,13 @@
 <div id="rag-create-kb-modal" class="modal" style="display:none;">
-    <div class="modal-content modal-lg">
+    <div class="modal-content modal-lg rag-task-modal">
         <span class="close" data-close-modal="rag-create-kb-modal">&times;</span>
         <h3>Create Knowledge Base</h3>
         <form id="rag-create-kb-form">
             <div class="form-row">
                 <div class="form-group half">
-                    <label>KB ID</label>
-                    <input type="text" name="kb_id" required pattern="[A-Za-z0-9_-]{2,64}" placeholder="pricing_risk_kb">
+                    <label>KB ID (Auto Generated)</label>
+                    <div id="rag-create-kb-id-preview" class="rag-generated-kb-id">knowledge_base_kb</div>
+                    <input type="hidden" name="kb_id" id="rag-create-kb-id-input">
                 </div>
                 <div class="form-group half">
                     <label>Name</label>
@@ -30,6 +31,9 @@
                     <label>Categories</label>
                     <select name="categories" id="rag-create-categories" multiple size="8"></select>
                     <small>Hold Ctrl/Cmd to select multiple categories.</small>
+                </div>
+                <div id="rag-create-category-stats" class="rag-category-stats text-muted">
+                    Select categories to view unique file and markdown counts.
                 </div>
             </div>
 
