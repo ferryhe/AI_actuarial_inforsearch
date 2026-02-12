@@ -172,6 +172,105 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
         self.assertEqual(status_data["data"]["file_count"], 1)
         self.assertGreaterEqual(status_data["data"]["chunk_set_count"], 1)
 
+    def test_follow_latest_binding_auto_sync_on_new_chunk(self):
+        profile_resp = self.client.post(
+            "/api/chunk/profiles",
+            headers=self.auth_header,
+            json={
+                "name": "Follow Latest Profile",
+                "chunk_size": 280,
+                "chunk_overlap": 40,
+                "splitter": "semantic",
+                "tokenizer": "cl100k_base",
+                "version": "v1",
+            },
+        )
+        if profile_resp.status_code == 503:
+            self.skipTest("RAG functionality not available")
+        self.assertEqual(profile_resp.status_code, 201)
+        profile_id = profile_resp.get_json()["data"]["profile_id"]
+
+        encoded_file_url = quote(self.file_url, safe="")
+        first_gen_resp = self.client.post(
+            f"/api/files/{encoded_file_url}/chunk-sets/generate",
+            headers=self.auth_header,
+            json={"profile_id": profile_id, "overwrite_same_profile": True},
+        )
+        self.assertIn(first_gen_resp.status_code, [200, 201])
+        first_data = first_gen_resp.get_json()["data"]
+        first_chunk_set_id = first_data["chunk_set_id"]
+        self.assertGreater(first_data["chunk_count"], 0)
+
+        kb_id = "kb_follow_latest_sync"
+        create_kb_resp = self.client.post(
+            "/api/rag/knowledge-bases",
+            headers=self.auth_header,
+            json={
+                "kb_id": kb_id,
+                "name": "FollowLatest KB",
+                "kb_mode": "manual",
+                "chunk_size": 280,
+                "chunk_overlap": 40,
+                "embedding_model": "text-embedding-3-small",
+            },
+        )
+        self.assertEqual(create_kb_resp.status_code, 201)
+
+        bind_resp = self.client.post(
+            f"/api/rag/knowledge-bases/{kb_id}/bindings",
+            headers=self.auth_header,
+            json={
+                "file_url": self.file_url,
+                "chunk_set_id": first_chunk_set_id,
+                "binding_mode": "follow_latest",
+                "bound_by": "test",
+            },
+        )
+        self.assertEqual(bind_resp.status_code, 200)
+        bind_data = bind_resp.get_json()
+        self.assertTrue(bind_data["success"])
+        self.assertEqual(bind_data["data"]["created"], 1)
+
+        # Simulate an index snapshot before markdown/chunk update.
+        self.storage.create_kb_index_version(
+            kb_id=kb_id,
+            embedding_model="text-embedding-3-small",
+            index_type="Flat",
+            chunk_count=int(first_data["chunk_count"]),
+            status="ready",
+            artifact_path="",
+        )
+
+        # Markdown changed -> a new chunk_set should be created and follow_latest should auto-sync.
+        self.storage.update_file_markdown(
+            self.file_url,
+            "# Section 1\n\nUpdated markdown content.\n\n## Section 2\n\nMore updated text.",
+            "manual",
+        )
+        second_gen_resp = self.client.post(
+            f"/api/files/{encoded_file_url}/chunk-sets/generate",
+            headers=self.auth_header,
+            json={"profile_id": profile_id, "overwrite_same_profile": True},
+        )
+        self.assertIn(second_gen_resp.status_code, [200, 201])
+        second_payload = second_gen_resp.get_json()["data"]
+        second_chunk_set_id = second_payload["chunk_set_id"]
+        self.assertNotEqual(second_chunk_set_id, first_chunk_set_id)
+        self.assertGreaterEqual(int(second_payload.get("auto_synced_kb_bindings", 0)), 1)
+
+        status_resp = self.client.get(
+            f"/api/rag/knowledge-bases/{kb_id}/composition/status",
+            headers=self.auth_header,
+        )
+        self.assertEqual(status_resp.status_code, 200)
+        status_payload = status_resp.get_json()["data"]
+        self.assertTrue(status_payload["needs_reindex"])
+
+        bindings = status_payload.get("bindings") or []
+        self.assertTrue(any(b.get("chunk_set_id") == second_chunk_set_id for b in bindings))
+        self.assertTrue(any((b.get("binding_mode") or "") == "follow_latest" for b in bindings))
+        self.assertFalse(any(b.get("chunk_set_id") == first_chunk_set_id for b in bindings))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,23 @@ import hashlib
 
 class Storage:
     # Allowlist for schema/migration helpers that interpolate table names into PRAGMA.
-    _SCHEMA_TABLES = frozenset({"files", "pages", "blobs", "catalog_items", "auth_tokens", "audit_events"})
+    _SCHEMA_TABLES = frozenset(
+        {
+            "files",
+            "pages",
+            "blobs",
+            "catalog_items",
+            "auth_tokens",
+            "audit_events",
+            "chunk_profiles",
+            "file_chunk_sets",
+            "global_chunks",
+            "chunk_embeddings",
+            "kb_chunk_bindings",
+            "kb_index_versions",
+            "kb_index_items",
+        }
+    )
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -275,6 +291,8 @@ class Storage:
                 chunk_set_id TEXT NOT NULL,
                 bound_at TEXT NOT NULL,
                 bound_by TEXT,
+                binding_mode TEXT NOT NULL DEFAULT 'pin',
+                target_profile_id TEXT,
                 PRIMARY KEY (kb_id, file_url, chunk_set_id),
                 FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
                 FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets(chunk_set_id) ON DELETE CASCADE
@@ -342,6 +360,13 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_kb_index_versions_kb_id
             ON kb_index_versions(kb_id)
             """
+        )
+        self._ensure_columns(
+            "kb_chunk_bindings",
+            {
+                "binding_mode": "TEXT NOT NULL DEFAULT 'pin'",
+                "target_profile_id": "TEXT",
+            },
         )
         self._conn.commit()
 
@@ -1854,43 +1879,182 @@ class Storage:
         file_url: str,
         chunk_set_id: str,
         bound_by: str = "system",
+        binding_mode: str = "pin",
     ) -> dict[str, Any]:
-        """Bind one chunk set to one KB."""
-        now = self._utcnow_iso()
-        exists = self._conn.execute(
-            """
-            SELECT 1
-            FROM kb_chunk_bindings
-            WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
-            LIMIT 1
-            """,
-            (kb_id, file_url, chunk_set_id),
-        ).fetchone()
-        if exists:
-            return {"kb_id": kb_id, "file_url": file_url, "chunk_set_id": chunk_set_id, "created": False}
+        """Bind one chunk set to one KB.
 
-        # Validate chunk_set belongs to this file.
+        binding_mode:
+            - pin: fixed chunk_set_id for this binding
+            - follow_latest: auto-track latest chunk_set for same file/profile
+        """
+        mode = str(binding_mode or "pin").strip().lower()
+        if mode not in {"pin", "follow_latest"}:
+            raise ValueError("binding_mode must be 'pin' or 'follow_latest'")
+        now = self._utcnow_iso()
+        # Validate chunk_set belongs to this file and get profile relation.
         rel = self._conn.execute(
             """
-            SELECT 1
+            SELECT file_url, profile_id
             FROM file_chunk_sets
-            WHERE chunk_set_id = ? AND file_url = ?
+            WHERE chunk_set_id = ?
             LIMIT 1
             """,
-            (chunk_set_id, file_url),
+            (chunk_set_id,),
         ).fetchone()
         if not rel:
+            raise ValueError("chunk_set_id not found")
+        if (rel[0] or "") != file_url:
             raise ValueError("chunk_set_id does not belong to the specified file_url")
+        target_profile_id = (rel[1] or "") if mode == "follow_latest" else None
 
-        self._conn.execute(
+        with self.transaction():
+            # For follow_latest mode, keep only one active binding per (kb, file, profile).
+            if mode == "follow_latest":
+                self._conn.execute(
+                    """
+                    DELETE FROM kb_chunk_bindings
+                    WHERE kb_id = ?
+                      AND file_url = ?
+                      AND binding_mode = 'follow_latest'
+                      AND COALESCE(target_profile_id, '') = ?
+                      AND chunk_set_id != ?
+                    """,
+                    (kb_id, file_url, target_profile_id or "", chunk_set_id),
+                )
+
+            exists = self._conn.execute(
+                """
+                SELECT binding_mode, COALESCE(target_profile_id, '')
+                FROM kb_chunk_bindings
+                WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                LIMIT 1
+                """,
+                (kb_id, file_url, chunk_set_id),
+            ).fetchone()
+            if exists:
+                current_mode = (exists[0] or "pin").strip().lower()
+                current_target_profile = exists[1] or ""
+                if current_mode != mode or current_target_profile != (target_profile_id or ""):
+                    self._conn.execute(
+                        """
+                        UPDATE kb_chunk_bindings
+                        SET bound_at = ?, bound_by = ?, binding_mode = ?, target_profile_id = ?
+                        WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                        """,
+                        (now, bound_by, mode, target_profile_id, kb_id, file_url, chunk_set_id),
+                    )
+                return {
+                    "kb_id": kb_id,
+                    "file_url": file_url,
+                    "chunk_set_id": chunk_set_id,
+                    "binding_mode": mode,
+                    "target_profile_id": target_profile_id or "",
+                    "created": False,
+                }
+
+            self._conn.execute(
+                """
+                INSERT INTO kb_chunk_bindings (
+                    kb_id, file_url, chunk_set_id, bound_at, bound_by, binding_mode, target_profile_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (kb_id, file_url, chunk_set_id, now, bound_by, mode, target_profile_id),
+            )
+            return {
+                "kb_id": kb_id,
+                "file_url": file_url,
+                "chunk_set_id": chunk_set_id,
+                "binding_mode": mode,
+                "target_profile_id": target_profile_id or "",
+                "created": True,
+            }
+
+    def sync_follow_latest_bindings_for_chunk_set(
+        self,
+        *,
+        file_url: str,
+        profile_id: str,
+        chunk_set_id: str,
+        bound_by: str = "system_follow_latest",
+    ) -> dict[str, Any]:
+        """Move follow_latest bindings to the newest chunk_set for same file/profile."""
+        now = self._utcnow_iso()
+        rows = self._conn.execute(
             """
-            INSERT INTO kb_chunk_bindings (kb_id, file_url, chunk_set_id, bound_at, bound_by)
-            VALUES (?, ?, ?, ?, ?)
+            SELECT kb_id, file_url, chunk_set_id
+            FROM kb_chunk_bindings
+            WHERE file_url = ?
+              AND binding_mode = 'follow_latest'
+              AND COALESCE(target_profile_id, '') = ?
+              AND chunk_set_id != ?
             """,
-            (kb_id, file_url, chunk_set_id, now, bound_by),
-        )
-        self._maybe_commit()
-        return {"kb_id": kb_id, "file_url": file_url, "chunk_set_id": chunk_set_id, "created": True}
+            (file_url, profile_id, chunk_set_id),
+        ).fetchall()
+        if not rows:
+            return {
+                "file_url": file_url,
+                "profile_id": profile_id,
+                "chunk_set_id": chunk_set_id,
+                "synced_bindings": 0,
+                "affected_kb_ids": [],
+            }
+
+        affected_kb_ids: set[str] = set()
+        synced = 0
+        with self.transaction():
+            for row in rows:
+                kb_id = str(row[0] or "")
+                old_chunk_set_id = str(row[2] or "")
+                if not kb_id or not old_chunk_set_id:
+                    continue
+
+                target_exists = self._conn.execute(
+                    """
+                    SELECT 1
+                    FROM kb_chunk_bindings
+                    WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                    LIMIT 1
+                    """,
+                    (kb_id, file_url, chunk_set_id),
+                ).fetchone()
+
+                if target_exists:
+                    self._conn.execute(
+                        """
+                        UPDATE kb_chunk_bindings
+                        SET bound_at = ?, bound_by = ?, binding_mode = 'follow_latest', target_profile_id = ?
+                        WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                        """,
+                        (now, bound_by, profile_id, kb_id, file_url, chunk_set_id),
+                    )
+                else:
+                    self._conn.execute(
+                        """
+                        INSERT INTO kb_chunk_bindings (
+                            kb_id, file_url, chunk_set_id, bound_at, bound_by, binding_mode, target_profile_id
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'follow_latest', ?)
+                        """,
+                        (kb_id, file_url, chunk_set_id, now, bound_by, profile_id),
+                    )
+                self._conn.execute(
+                    """
+                    DELETE FROM kb_chunk_bindings
+                    WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                    """,
+                    (kb_id, file_url, old_chunk_set_id),
+                )
+                synced += 1
+                affected_kb_ids.add(kb_id)
+
+        return {
+            "file_url": file_url,
+            "profile_id": profile_id,
+            "chunk_set_id": chunk_set_id,
+            "synced_bindings": synced,
+            "affected_kb_ids": sorted(affected_kb_ids),
+        }
 
     def list_file_index_status(self, file_url: str) -> list[dict[str, Any]]:
         cur = self._conn.execute(
@@ -1964,11 +2128,40 @@ class Storage:
             """,
             (kb_id,),
         ).fetchone()
+        latest_binding_at = self._conn.execute(
+            """
+            SELECT MAX(bound_at)
+            FROM kb_chunk_bindings
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()[0]
+        mode_counts = self._conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN binding_mode = 'follow_latest' THEN 1 ELSE 0 END) AS follow_latest_count,
+                SUM(CASE WHEN binding_mode = 'pin' OR binding_mode IS NULL THEN 1 ELSE 0 END) AS pin_count
+            FROM kb_chunk_bindings
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()
+        follow_latest_count = int((mode_counts[0] or 0) if mode_counts else 0)
+        pin_count = int((mode_counts[1] or 0) if mode_counts else 0)
+        has_index = bool(latest)
+        latest_index_time = (latest[4] or latest[5]) if latest else None
+        needs_reindex = bool(file_count > 0 and (not has_index or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)))
         return {
             "kb_id": kb_id,
             "file_count": file_count,
             "chunk_set_count": chunk_set_count,
-            "has_index": bool(latest),
+            "has_index": has_index,
+            "latest_binding_at": latest_binding_at,
+            "binding_mode_counts": {
+                "follow_latest": follow_latest_count,
+                "pin": pin_count,
+            },
+            "needs_reindex": needs_reindex,
             "latest_index": {
                 "embedding_model": latest[0],
                 "index_type": latest[1],
@@ -1989,6 +2182,8 @@ class Storage:
                 b.chunk_set_id,
                 b.bound_at,
                 b.bound_by,
+                b.binding_mode,
+                b.target_profile_id,
                 s.profile_id,
                 s.chunk_count,
                 s.markdown_hash
@@ -2008,9 +2203,11 @@ class Storage:
                     "chunk_set_id": row[2],
                     "bound_at": row[3],
                     "bound_by": row[4],
-                    "profile_id": row[5],
-                    "chunk_count": row[6] or 0,
-                    "markdown_hash": row[7] or "",
+                    "binding_mode": row[5] or "pin",
+                    "target_profile_id": row[6] or "",
+                    "profile_id": row[7],
+                    "chunk_count": row[8] or 0,
+                    "markdown_hash": row[9] or "",
                 }
             )
         return out

@@ -296,6 +296,12 @@ def register_rag_routes(
                     chunks=payload_chunks,
                     overwrite=True,
                 )
+                sync_res = storage.sync_follow_latest_bindings_for_chunk_set(
+                    file_url=file_url,
+                    profile_id=str(profile.get("profile_id") or ""),
+                    chunk_set_id=chunk_set["chunk_set_id"],
+                    bound_by="chunk_generation_auto_sync",
+                )
                 return _api_success(
                     {
                         "file_url": file_url,
@@ -304,6 +310,8 @@ def register_rag_routes(
                         "chunk_count": write_res.get("chunk_count", 0),
                         "reused_existing": not chunk_set.get("created", False),
                         "overwrote_existing": write_res.get("replaced", False),
+                        "auto_synced_kb_bindings": sync_res.get("synced_bindings", 0),
+                        "auto_synced_kb_ids": sync_res.get("affected_kb_ids", []),
                     },
                     status_code=201 if chunk_set.get("created") else 200,
                 )
@@ -344,19 +352,27 @@ def register_rag_routes(
             if not isinstance(data, dict):
                 return _api_error("Invalid JSON body", status_code=400)
             bound_by = _norm(data.get("bound_by") or "api")
+            default_binding_mode = _norm(data.get("binding_mode") or "follow_latest").lower()
 
             if isinstance(data.get("bindings"), list):
                 items = data.get("bindings") or []
             else:
-                items = [{"file_url": data.get("file_url"), "chunk_set_id": data.get("chunk_set_id")}]
-            parsed: list[tuple[str, str]] = []
+                items = [
+                    {
+                        "file_url": data.get("file_url"),
+                        "chunk_set_id": data.get("chunk_set_id"),
+                        "binding_mode": data.get("binding_mode") or "follow_latest",
+                    }
+                ]
+            parsed: list[tuple[str, str, str]] = []
             for item in items:
                 if not isinstance(item, dict):
                     continue
                 file_url = _norm(item.get("file_url"))
                 chunk_set_id = _norm(item.get("chunk_set_id"))
-                if file_url and chunk_set_id:
-                    parsed.append((file_url, chunk_set_id))
+                binding_mode = _norm(item.get("binding_mode") or default_binding_mode or "pin").lower()
+                if file_url and chunk_set_id and binding_mode:
+                    parsed.append((file_url, chunk_set_id, binding_mode))
             if not parsed:
                 return _api_error("bindings must include file_url and chunk_set_id", status_code=400)
 
@@ -366,12 +382,13 @@ def register_rag_routes(
                     return _api_error(f"Knowledge base '{kid}' not found", status_code=404)
                 created_n = 0
                 out: list[dict[str, Any]] = []
-                for file_url, chunk_set_id in parsed:
+                for file_url, chunk_set_id, binding_mode in parsed:
                     res = storage.bind_chunk_set_to_kb(
                         kb_id=kid,
                         file_url=file_url,
                         chunk_set_id=chunk_set_id,
                         bound_by=bound_by,
+                        binding_mode=binding_mode,
                     )
                     if res.get("created"):
                         created_n += 1
