@@ -1111,7 +1111,8 @@ class Storage:
                    f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords, c.status,
                    c.markdown_content, c.markdown_updated_at, c.markdown_source,
-                   c.catalog_version, c.processed_at, c.updated_at
+                   c.catalog_version, c.processed_at, c.updated_at,
+                   c.rag_chunk_count, c.rag_indexed_at
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
             WHERE f.url = ?
@@ -1149,7 +1150,52 @@ class Storage:
             "catalog_version": row[23],
             "catalog_processed_at": row[24],
             "catalog_updated_at": row[25],
+            "rag_chunk_count": row[26] or 0,
+            "rag_indexed_at": row[27],
         }
+
+    def get_file_rag_kb_entries(self, file_url: str) -> list[dict]:
+        """Return KB-level RAG metadata for a specific file.
+
+        Each entry contains KB identity, embedding model, and file index status.
+        Returns an empty list when RAG tables are not present.
+        """
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT
+                    kf.kb_id,
+                    kb.name,
+                    kb.embedding_model,
+                    kf.chunk_count,
+                    kf.indexed_at,
+                    kf.added_at
+                FROM rag_kb_files kf
+                LEFT JOIN rag_knowledge_bases kb ON kb.kb_id = kf.kb_id
+                WHERE kf.file_url = ?
+                ORDER BY
+                    CASE WHEN kf.indexed_at IS NULL OR kf.indexed_at = '' THEN 1 ELSE 0 END,
+                    kf.indexed_at DESC,
+                    kf.added_at DESC
+                """,
+                (file_url,),
+            )
+        except sqlite3.OperationalError:
+            return []
+
+        out: list[dict] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "kb_id": row[0],
+                    "kb_name": row[1] or row[0],
+                    "embedding_model": row[2] or "",
+                    "chunk_count": row[3] or 0,
+                    "indexed_at": row[4],
+                    "added_at": row[5],
+                }
+            )
+        return out
     
     def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
         """Update catalog information for a file.

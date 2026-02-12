@@ -1430,6 +1430,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             # Use a JOIN to get file info + catalog info in one go
             # Use abstraction method
             file_data = storage.get_file_with_catalog(file_url)
+            rag_kb_entries = storage.get_file_rag_kb_entries(file_url)
             storage.close()
             
             if not file_data:
@@ -1438,7 +1439,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # For now, just return 404
                 return "File not found", 404
             
-            return render_template("file_view.html", file=file_data)
+            return render_template("file_view.html", file=file_data, rag_kb_entries=rag_kb_entries)
             
         except Exception as e:
             logger.exception("Error viewing file")
