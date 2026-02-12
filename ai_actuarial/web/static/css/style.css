@@ -1703,10 +1703,12 @@ html {
 
 .modal-content.modal-md {
     max-width: 600px;
+    padding: 1.5rem;
 }
 
 .modal-content.modal-lg {
     max-width: 900px;
+    padding: 1.5rem;
 }
 
 .modal-content.modal-xl {
