@@ -657,6 +657,21 @@
                 <input type="number" name="scan_count" id="chunk-scan-count" value="50" min="1" max="2000">
             </div>
             <div class="form-group">
+                <label>Bind To Knowledge Base (Optional)</label>
+                <select name="kb_id" id="chunk-generation-kb-id" onchange="toggleChunkGenerationBindingMode()">
+                    <option value="">Do not bind to KB</option>
+                </select>
+                <small class="form-hint">If selected, each generated chunk set will be bound to this KB.</small>
+            </div>
+            <div class="form-group">
+                <label>Binding Mode</label>
+                <select name="binding_mode" id="chunk-generation-binding-mode">
+                    <option value="follow_latest" selected>Follow Latest (Recommended)</option>
+                    <option value="pin">Pin (Fixed Version)</option>
+                </select>
+                <small class="form-hint">Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.</small>
+            </div>
+            <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_same_profile" id="chunk-overwrite-same-profile">
                     Overwrite same-profile chunk sets
@@ -1101,6 +1116,7 @@ function openChunkGenerationModal() {
     openModal('chunk-generation-modal');
     loadChunkGenerationStats();
     loadChunkProfiles();
+    loadKbOptionsForChunkGeneration();
 }
 function openKbIndexBuildModal() {
     openModal('kb-index-build-modal');
@@ -1261,6 +1277,7 @@ let markdownConversionStats = null;
 let chunkGenerationStats = null;
 let chunkProfiles = [];
 let kbIndexBuildKbs = [];
+let chunkGenerationKbs = [];
 
 function openMarkdownConversionModal() {
     openModal('markdown-conversion-modal');
@@ -1421,6 +1438,13 @@ function toggleChunkProfileCustomFields() {
     custom.style.display = select.value ? 'none' : 'block';
 }
 
+function toggleChunkGenerationBindingMode() {
+    const kbSelect = document.getElementById('chunk-generation-kb-id');
+    const modeSelect = document.getElementById('chunk-generation-binding-mode');
+    if (!kbSelect || !modeSelect) return;
+    modeSelect.disabled = !String(kbSelect.value || '').trim();
+}
+
 function startChunkGeneration(e) {
     e.preventDefault();
     const form = e.target;
@@ -1431,6 +1455,8 @@ function startChunkGeneration(e) {
     const startIndex = parseInt(formData.get('scan_start_index') || '1');
     const scanCount = parseInt(formData.get('scan_count') || '50');
     const overwriteSameProfile = formData.get('overwrite_same_profile') === 'on';
+    const kbId = (formData.get('kb_id') || '').toString().trim();
+    const bindingMode = (formData.get('binding_mode') || 'follow_latest').toString().trim().toLowerCase() || 'follow_latest';
 
     if (!Number.isFinite(startIndex) || startIndex < 1) {
         showNotification('Start index must be >= 1', 'error');
@@ -1438,6 +1464,10 @@ function startChunkGeneration(e) {
     }
     if (!Number.isFinite(scanCount) || scanCount < 1) {
         showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+    if (!['follow_latest', 'pin'].includes(bindingMode)) {
+        showNotification('Binding mode must be follow_latest or pin', 'error');
         return;
     }
 
@@ -1464,9 +1494,45 @@ function startChunkGeneration(e) {
         payload.tokenizer = (formData.get('tokenizer') || 'cl100k_base').toString().trim() || 'cl100k_base';
         payload.version = (formData.get('version') || 'v1').toString().trim() || 'v1';
     }
+    if (kbId) {
+        payload.kb_id = kbId;
+        payload.binding_mode = bindingMode;
+        payload.name = `${payload.name} | bind=${kbId} [${bindingMode}]`;
+    }
 
     startTask('chunk_generation', payload);
     closeModal('chunk-generation-modal');
+}
+
+async function loadKbOptionsForChunkGeneration() {
+    const select = document.getElementById('chunk-generation-kb-id');
+    if (!select) return;
+    const current = String(select.value || '').trim();
+    select.innerHTML = '<option value=\"\">Loading KBs...</option>';
+    try {
+        const resp = await fetch('/api/rag/knowledge-bases');
+        const payload = await resp.json();
+        if (!resp.ok || !payload.success) {
+            throw new Error(payload.error || 'Failed to load KB list');
+        }
+        const data = _extractApiData(payload);
+        chunkGenerationKbs = Array.isArray(data) ? data : [];
+        select.innerHTML = '<option value=\"\">Do not bind to KB</option>';
+        chunkGenerationKbs.forEach((kb) => {
+            const option = document.createElement('option');
+            option.value = kb.kb_id;
+            option.textContent = `${kb.name || kb.kb_id} (${kb.embedding_model || 'default model'})`;
+            select.appendChild(option);
+        });
+        if (current && chunkGenerationKbs.some((kb) => kb.kb_id === current)) {
+            select.value = current;
+        }
+    } catch (e) {
+        console.error('Failed loading KB options for chunk generation:', e);
+        select.innerHTML = '<option value=\"\">Do not bind to KB</option>';
+    } finally {
+        toggleChunkGenerationBindingMode();
+    }
 }
 
 async function loadKbOptionsForIndexBuild() {

@@ -2117,6 +2117,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
             elif collection_type == "chunk_generation":
                 from ai_actuarial.rag.semantic_chunking import SemanticChunker
+                from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 
                 file_urls = data.get("file_urls") or []
                 if not isinstance(file_urls, list):
@@ -2216,11 +2217,25 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 tokenizer = str(profile.get("tokenizer") or "cl100k_base").strip() or "cl100k_base"
 
                 overwrite_same_profile = bool(data.get("overwrite_same_profile", False))
+                kb_id = str(data.get("kb_id") or "").strip()
+                binding_mode = str(data.get("binding_mode") or "follow_latest").strip().lower() or "follow_latest"
+                if binding_mode not in {"follow_latest", "pin"}:
+                    raise ValueError("binding_mode must be 'follow_latest' or 'pin'")
+
+                bind_to_kb = bool(kb_id)
+                if bind_to_kb:
+                    kb_manager = KnowledgeBaseManager(storage)
+                    if not kb_manager.get_kb(kb_id):
+                        raise ValueError(f"Knowledge base '{kb_id}' not found")
+
                 created_count = 0
                 overwritten_count = 0
                 reused_count = 0
                 no_markdown_count = 0
                 processed_count = 0
+                auto_synced_count = 0
+                kb_bind_created_count = 0
+                kb_bind_existing_count = 0
                 errors = []
 
                 total_files = len(file_urls)
@@ -2231,7 +2246,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "Chunk generation started: "
                         f"files={total_files}, profile={profile.get('profile_id')}, "
                         f"chunk_model={chunk_model}, splitter={splitter}, tokenizer={tokenizer}, "
-                        f"overwrite_same_profile={overwrite_same_profile}"
+                        f"overwrite_same_profile={overwrite_same_profile}, "
+                        f"bind_to_kb={kb_id if bind_to_kb else '-'}, binding_mode={binding_mode if bind_to_kb else '-'}"
                     ),
                 )
 
@@ -2263,6 +2279,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                         if not chunk_set.get("created") and not overwrite_same_profile:
                             reused_count += 1
+                            if bind_to_kb:
+                                bind_res = storage.bind_chunk_set_to_kb(
+                                    kb_id=kb_id,
+                                    file_url=file_url,
+                                    chunk_set_id=str(chunk_set.get("chunk_set_id") or ""),
+                                    bound_by="chunk_generation_task",
+                                    binding_mode=binding_mode,
+                                )
+                                if bind_res.get("created"):
+                                    kb_bind_created_count += 1
+                                else:
+                                    kb_bind_existing_count += 1
                             _append_task_log(
                                 task_id,
                                 "INFO",
@@ -2302,6 +2330,27 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             chunks=payload_chunks,
                             overwrite=True,
                         )
+                        sync_res = storage.sync_follow_latest_bindings_for_chunk_set(
+                            file_url=file_url,
+                            profile_id=str(profile.get("profile_id") or ""),
+                            chunk_set_id=str(chunk_set.get("chunk_set_id") or ""),
+                            bound_by="chunk_generation_auto_sync",
+                        )
+                        auto_synced_count += int(sync_res.get("synced_bindings") or 0)
+
+                        if bind_to_kb:
+                            bind_res = storage.bind_chunk_set_to_kb(
+                                kb_id=kb_id,
+                                file_url=file_url,
+                                chunk_set_id=str(chunk_set.get("chunk_set_id") or ""),
+                                bound_by="chunk_generation_task",
+                                binding_mode=binding_mode,
+                            )
+                            if bind_res.get("created"):
+                                kb_bind_created_count += 1
+                            else:
+                                kb_bind_existing_count += 1
+
                         processed_count += 1
                         if chunk_set.get("created"):
                             created_count += 1
@@ -2312,7 +2361,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             "INFO",
                             (
                                 f"Chunk set ready: {chunk_set.get('chunk_set_id')} "
-                                f"(chunks={write_res.get('chunk_count', 0)}) {file_url}"
+                                f"(chunks={write_res.get('chunk_count', 0)}, auto_synced={sync_res.get('synced_bindings', 0)}) {file_url}"
                             ),
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -2327,6 +2376,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         self.items_downloaded = processed_count
                         self.items_skipped = reused_count + no_markdown_count
                         self.errors = errors[:20]
+                        self.rag_auto_synced_bindings = auto_synced_count
 
                 result = ChunkGenerationResult()
                 progress_callback(
@@ -2336,7 +2386,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "Chunk generation complete. "
                         f"created={created_count}, overwritten={overwritten_count}, "
                         f"reused={reused_count}, no_markdown={no_markdown_count}, "
-                        f"errors={len(errors)}"
+                        f"errors={len(errors)}, auto_synced_bindings={auto_synced_count}, "
+                        f"kb_bind_created={kb_bind_created_count}, kb_bind_existing={kb_bind_existing_count}"
                     ),
                 )
                 _append_task_log(
@@ -2346,7 +2397,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "Chunk generation complete. "
                         f"created={created_count}, overwritten={overwritten_count}, "
                         f"reused={reused_count}, no_markdown={no_markdown_count}, "
-                        f"errors={len(errors)}"
+                        f"errors={len(errors)}, auto_synced_bindings={auto_synced_count}, "
+                        f"kb_bind_created={kb_bind_created_count}, kb_bind_existing={kb_bind_existing_count}"
                     ),
                 )
 
