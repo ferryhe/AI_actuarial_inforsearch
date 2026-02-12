@@ -176,7 +176,9 @@ function displayResults(data) {
                     label: 'Actions',
                     sortable: false,
                     render: (value, row) => {
-                        return `<button class="btn btn-small btn-primary" onclick="previewFile('${escapeHtml(row.url).replace(/'/g, "\\'")}'); event.stopPropagation();">Preview</button>`;
+                        // Escape for HTML attribute context: escape both quotes and backslashes
+                        const safeUrl = escapeHtml(row.url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                        return `<button class="btn btn-small btn-primary" onclick="previewFile('${safeUrl}'); event.stopPropagation();">Preview</button>`;
                     }
                 }
             ],
