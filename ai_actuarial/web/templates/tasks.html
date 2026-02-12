@@ -99,7 +99,33 @@
             </div>
         </div>
 
-        <!-- Card 8: Create Knowledge Base -->
+        <!-- Card 8: Chunk Generation -->
+        <div class="task-card-launch" onclick="openChunkGenerationModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-tag"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Generate Chunks</h4>
+                <p>Build/reuse chunk sets</p>
+            </div>
+        </div>
+
+        <!-- Card 9: KB Index Build -->
+        <div class="task-card-launch" onclick="openKbIndexBuildModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-folder"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Build KB Index</h4>
+                <p>Run KB index task</p>
+            </div>
+        </div>
+
+        <!-- Card 10: Create Knowledge Base -->
         <div class="task-card-launch" onclick="location.href='/rag?open=create'">
             <div class="launch-icon">
                 <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
@@ -555,6 +581,116 @@
     </div>
 </div>
 
+<!-- Chunk Generation Modal -->
+<div id="chunk-generation-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('chunk-generation-modal')">&times;</span>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-tag"></use>
+            </svg>
+            Generate Chunks
+        </h3>
+        <p class="hint">Batch generate chunk sets from markdown files. Existing same-profile chunk sets can be reused or overwritten.</p>
+        <div id="chunk-generation-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
+        <form id="chunk-generation-form" onsubmit="startChunkGeneration(event)">
+            <div class="form-group">
+                <label>Chunk Profile</label>
+                <select name="profile_id" id="chunk-profile-select" onchange="toggleChunkProfileCustomFields()">
+                    <option value="">Custom profile (from fields below)</option>
+                </select>
+                <small class="form-hint">Select an existing profile to reuse, or keep custom.</small>
+            </div>
+            <div id="chunk-profile-custom-fields">
+                <div class="form-group">
+                    <label>Profile Name</label>
+                    <input type="text" name="profile_name" value="task-profile" maxlength="80">
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Chunk Size</label>
+                        <input type="number" name="chunk_size" value="800" min="64" max="8192">
+                    </div>
+                    <div class="form-group half">
+                        <label>Chunk Overlap</label>
+                        <input type="number" name="chunk_overlap" value="100" min="0" max="2048">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Splitter</label>
+                        <input type="text" name="splitter" value="semantic" maxlength="64">
+                    </div>
+                    <div class="form-group half">
+                        <label>Tokenizer</label>
+                        <input type="text" name="tokenizer" value="cl100k_base" maxlength="64">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Profile Version</label>
+                    <input type="text" name="version" value="v1" maxlength="32">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Start From Index (1-based, newest first)</label>
+                <input type="number" name="scan_start_index" id="chunk-scan-start-index" value="1" min="1">
+            </div>
+            <div class="form-group">
+                <label>Scan Count</label>
+                <input type="number" name="scan_count" id="chunk-scan-count" value="50" min="1" max="2000">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="overwrite_same_profile" id="chunk-overwrite-same-profile">
+                    Overwrite same-profile chunk sets
+                </label>
+                <small class="form-hint">Unchecked = reuse existing same-profile chunk set.</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Generate Chunks</button>
+        </form>
+    </div>
+</div>
+
+<!-- KB Index Build Modal -->
+<div id="kb-index-build-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('kb-index-build-modal')">&times;</span>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-folder"></use>
+            </svg>
+            Build KB Index
+        </h3>
+        <p class="hint">Submit a KB index build task using the KB configuration and selected scope.</p>
+        <form id="kb-index-build-form" onsubmit="startKbIndexBuild(event)">
+            <div class="form-group">
+                <label>Knowledge Base</label>
+                <select name="kb_id" id="kb-index-kb-id" required>
+                    <option value="">Loading KBs...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>File URLs (Optional, one per line)</label>
+                <textarea name="file_urls" id="kb-index-file-urls" rows="4" placeholder="Leave empty to use KB default scope"></textarea>
+                <small class="form-hint">Empty = incremental pending files, unless force rebuild is enabled.</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="incremental" id="kb-index-incremental" checked>
+                    Incremental mode (index only pending files)
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="force_reindex" id="kb-index-force-reindex">
+                    Force reindex all selected files
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary">Submit KB Index Task</button>
+        </form>
+    </div>
+</div>
+
 <style>
 /* Grid Layout */
 .task-launch-grid {
@@ -944,6 +1080,15 @@ function openCatalogModal() {
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
+function openChunkGenerationModal() {
+    openModal('chunk-generation-modal');
+    loadChunkGenerationStats();
+    loadChunkProfiles();
+}
+function openKbIndexBuildModal() {
+    openModal('kb-index-build-modal');
+    loadKbOptionsForIndexBuild();
+}
 
 // --- Validation Helpers ---
 function clearValidationErrors(form) {
@@ -1096,6 +1241,9 @@ async function loadCatalogStats() {
 
 // Markdown Conversion (Batch) Modal Functions
 let markdownConversionStats = null;
+let chunkGenerationStats = null;
+let chunkProfiles = [];
+let kbIndexBuildKbs = [];
 
 function openMarkdownConversionModal() {
     openModal('markdown-conversion-modal');
@@ -1162,6 +1310,180 @@ function startMarkdownConversion(e) {
 
     startTask('markdown_conversion', payload);
     closeModal('markdown-conversion-modal');
+}
+
+async function loadChunkGenerationStats() {
+    const statsEl = document.getElementById('chunk-generation-stats');
+    const startEl = document.getElementById('chunk-scan-start-index');
+    if (statsEl) statsEl.textContent = 'Loading stats...';
+    try {
+        const resp = await fetch('/api/chunk_generation/stats');
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            return;
+        }
+        chunkGenerationStats = data;
+        const totalWithMarkdown = data.total_with_markdown ?? 0;
+        const totalWithChunks = data.total_with_chunks ?? 0;
+        const missing = Math.max(0, totalWithMarkdown - totalWithChunks);
+        const firstMissing = data.first_without_chunks_index;
+        if (statsEl) {
+            statsEl.textContent =
+                `Markdown files: ${totalWithMarkdown} | With chunks: ${totalWithChunks} | Missing: ${missing}` +
+                (firstMissing ? ` | First missing index: ${firstMissing}` : '');
+        }
+        if (startEl && firstMissing) {
+            startEl.value = String(firstMissing);
+        }
+    } catch (e) {
+        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+    }
+}
+
+function _extractApiData(payload) {
+    if (payload && typeof payload === 'object' && payload.data !== undefined) {
+        return payload.data;
+    }
+    return payload;
+}
+
+async function loadChunkProfiles() {
+    const select = document.getElementById('chunk-profile-select');
+    if (!select) return;
+    try {
+        const resp = await fetch('/api/chunk/profiles');
+        const payload = await resp.json();
+        if (!resp.ok || !payload.success) {
+            throw new Error(payload.error || 'Failed to load chunk profiles');
+        }
+        const data = _extractApiData(payload) || {};
+        chunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+        select.innerHTML = '<option value=\"\">Custom profile (from fields below)</option>';
+        chunkProfiles.forEach((profile) => {
+            const option = document.createElement('option');
+            option.value = profile.profile_id;
+            option.textContent = `${profile.name} | size=${profile.chunk_size}, overlap=${profile.chunk_overlap}, ${profile.splitter}/${profile.tokenizer}`;
+            select.appendChild(option);
+        });
+    } catch (e) {
+        console.error('Failed loading chunk profiles:', e);
+        select.innerHTML = '<option value=\"\">Custom profile (from fields below)</option>';
+    } finally {
+        toggleChunkProfileCustomFields();
+    }
+}
+
+function toggleChunkProfileCustomFields() {
+    const select = document.getElementById('chunk-profile-select');
+    const custom = document.getElementById('chunk-profile-custom-fields');
+    if (!select || !custom) return;
+    custom.style.display = select.value ? 'none' : 'block';
+}
+
+function startChunkGeneration(e) {
+    e.preventDefault();
+    const form = e.target;
+    if (!validateForm(form)) return;
+
+    const formData = new FormData(form);
+    const profileId = (formData.get('profile_id') || '').toString().trim();
+    const startIndex = parseInt(formData.get('scan_start_index') || '1');
+    const scanCount = parseInt(formData.get('scan_count') || '50');
+    const overwriteSameProfile = formData.get('overwrite_same_profile') === 'on';
+
+    if (!Number.isFinite(startIndex) || startIndex < 1) {
+        showNotification('Start index must be >= 1', 'error');
+        return;
+    }
+    if (!Number.isFinite(scanCount) || scanCount < 1) {
+        showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+
+    const payload = {
+        type: 'chunk_generation',
+        scan_start_index: startIndex,
+        scan_count: scanCount,
+        overwrite_same_profile: overwriteSameProfile,
+        name: `Chunk Generation (start ${startIndex}, scan ${scanCount})`
+    };
+
+    if (profileId) {
+        payload.profile_id = profileId;
+        const selected = chunkProfiles.find((p) => p.profile_id === profileId);
+        if (selected) {
+            payload.name = `Chunk Generation - ${selected.name} (start ${startIndex}, scan ${scanCount})`;
+        }
+    } else {
+        payload.profile_name = (formData.get('profile_name') || 'task-profile').toString().trim() || 'task-profile';
+        payload.chunk_size = parseInt(formData.get('chunk_size') || '800');
+        payload.chunk_overlap = parseInt(formData.get('chunk_overlap') || '100');
+        payload.splitter = (formData.get('splitter') || 'semantic').toString().trim() || 'semantic';
+        payload.tokenizer = (formData.get('tokenizer') || 'cl100k_base').toString().trim() || 'cl100k_base';
+        payload.version = (formData.get('version') || 'v1').toString().trim() || 'v1';
+    }
+
+    startTask('chunk_generation', payload);
+    closeModal('chunk-generation-modal');
+}
+
+async function loadKbOptionsForIndexBuild() {
+    const select = document.getElementById('kb-index-kb-id');
+    if (!select) return;
+    select.innerHTML = '<option value=\"\">Loading KBs...</option>';
+    try {
+        const resp = await fetch('/api/rag/knowledge-bases');
+        const payload = await resp.json();
+        if (!resp.ok || !payload.success) {
+            throw new Error(payload.error || 'Failed to load KB list');
+        }
+        const data = _extractApiData(payload);
+        kbIndexBuildKbs = Array.isArray(data) ? data : [];
+        select.innerHTML = '<option value=\"\">Select a KB</option>';
+        kbIndexBuildKbs.forEach((kb) => {
+            const option = document.createElement('option');
+            option.value = kb.kb_id;
+            option.textContent = `${kb.name || kb.kb_id} (${kb.embedding_model || 'default model'})`;
+            select.appendChild(option);
+        });
+    } catch (e) {
+        console.error('Failed loading KB options:', e);
+        select.innerHTML = '<option value=\"\">Failed to load KBs</option>';
+    }
+}
+
+function startKbIndexBuild(e) {
+    e.preventDefault();
+    const form = e.target;
+    if (!validateForm(form)) return;
+
+    const formData = new FormData(form);
+    const kbId = (formData.get('kb_id') || '').toString().trim();
+    if (!kbId) {
+        showNotification('Please select a Knowledge Base', 'error');
+        return;
+    }
+
+    const fileUrlsRaw = (formData.get('file_urls') || '').toString();
+    const fileUrls = fileUrlsRaw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    const incremental = formData.get('incremental') === 'on';
+    const forceReindex = formData.get('force_reindex') === 'on';
+
+    const payload = {
+        type: 'kb_index_build',
+        kb_id: kbId,
+        file_urls: fileUrls,
+        incremental: incremental,
+        force_reindex: forceReindex,
+        name: `KB Index Build - ${kbId}`
+    };
+
+    startTask('kb_index_build', payload);
+    closeModal('kb-index-build-modal');
 }
 
 function startUrlCollection(e) {
