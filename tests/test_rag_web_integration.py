@@ -66,7 +66,12 @@ class TestRagWebIntegration(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self.original_env)
         if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
+            for _ in range(10):
+                try:
+                    shutil.rmtree(self.temp_dir)
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
 
     def test_rag_pages_available(self):
         list_resp = self.client.get("/rag", headers=self.auth_header)
