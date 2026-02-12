@@ -10,7 +10,10 @@
         categories: [],
         unmapped: [],
         currentCategory: '',
+        currentKb: null,
+        detailFiles: [],
         selectedCreateFiles: new Map(),
+        selectedDetailFiles: new Map(),
         fileSelector: {
             pageSize: 100,
             offset: 0,
@@ -36,7 +39,7 @@
         const status = err && err.status;
         const msg = (err && err.message) || 'Unknown error';
         if (status === 403 || String(msg).toLowerCase().includes('forbidden')) {
-            return 'Forbidden：请确认使用 admin 登录，并提供正确的 CONFIG_WRITE_AUTH_TOKEN（X-Auth-Token）。';
+            return 'Forbidden: please log in with operator/admin and provide CONFIG_WRITE_AUTH_TOKEN (X-Auth-Token).';
         }
         return msg;
     }
@@ -139,7 +142,7 @@
             sessionStorage.getItem('config_write_token') ||
             '';
         const promptText =
-            '该操作需要 CONFIG_WRITE_AUTH_TOKEN（X-Auth-Token）。\n请输入写入 Token（仅本浏览器会话保存）：';
+            'This action requires CONFIG_WRITE_AUTH_TOKEN (X-Auth-Token).\nEnter write token (saved in current session only):';
         const input = window.prompt(promptText, current);
         if (input === null) return false;
         const token = (input || '').trim();
@@ -174,6 +177,93 @@
                 }
             });
         });
+    }
+
+    async function confirmDeleteWithText(title, message) {
+        return new Promise((resolve) => {
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.style.display = 'flex';
+            modal.innerHTML = `
+                <div class="modal-content confirm-dialog">
+                    <h3>${esc(title || 'Confirm Delete')}</h3>
+                    <p>${esc(message || 'Type "confirm delete" to proceed.')}</p>
+                    <p>Type <strong>confirm delete</strong> to proceed:</p>
+                    <input type="text" id="rag-delete-confirm-input" class="form-control"
+                        placeholder="confirm delete"
+                        style="margin: 1rem 0; padding: 0.5rem; width: 100%; border: 1px solid var(--border-color); border-radius: 4px;">
+                    <div class="confirm-buttons">
+                        <button class="btn btn-secondary" id="rag-delete-cancel">Cancel</button>
+                        <button class="btn btn-danger" id="rag-delete-confirm">Delete</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.body.classList.add('modal-open');
+
+            const input = modal.querySelector('#rag-delete-confirm-input');
+            const confirmBtn = modal.querySelector('#rag-delete-confirm');
+            const cancelBtn = modal.querySelector('#rag-delete-cancel');
+
+            const cleanup = (result) => {
+                modal.remove();
+                document.body.classList.remove('modal-open');
+                resolve(result);
+            };
+
+            setTimeout(() => input?.focus(), 50);
+
+            confirmBtn?.addEventListener('click', () => {
+                const value = (input?.value || '').trim().toLowerCase();
+                if (value === 'confirm delete') {
+                    cleanup(true);
+                    return;
+                }
+                notify('Please type "confirm delete" exactly to proceed', 'error');
+                input?.focus();
+            });
+            cancelBtn?.addEventListener('click', () => cleanup(false));
+            input?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') confirmBtn?.click();
+            });
+        });
+    }
+
+    function slugifyKbName(name) {
+        const cleaned = String(name || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+        return cleaned || 'knowledge_base';
+    }
+
+    function generateNextKbId(nameHint) {
+        const existing = new Set(state.kbs.map((kb) => kb.kb_id));
+        const baseRaw = slugifyKbName(nameHint);
+        const base = baseRaw.endsWith('_kb') ? baseRaw : `${baseRaw}_kb`;
+        if (!existing.has(base)) return base;
+        let index = 1;
+        while (index < 10000) {
+            const candidate = `${base}_${String(index).padStart(3, '0')}`;
+            if (!existing.has(candidate)) return candidate;
+            index += 1;
+        }
+        return `${base}_${Date.now()}`;
+    }
+
+    function syncCreateKbId() {
+        const nameInput = document.querySelector('#rag-create-kb-form [name="name"]');
+        const kbIdInput = document.getElementById('rag-create-kb-id-input');
+        const kbIdPreview = document.getElementById('rag-create-kb-id-preview');
+        if (!nameInput || !kbIdInput || !kbIdPreview) return;
+        const nextKbId = generateNextKbId(nameInput.value || '');
+        kbIdInput.value = nextKbId;
+        kbIdPreview.textContent = nextKbId;
+    }
+
+    function getFileSelectionMap(target) {
+        return target === 'detail' ? state.selectedDetailFiles : state.selectedCreateFiles;
     }
 
     function renderCreateSelectedFiles() {
@@ -316,22 +406,12 @@
     }
 
     function bindKbRowActions() {
-        document.querySelectorAll('[data-kb-view]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                window.location.href = `/rag/${encodeURIComponent(btn.getAttribute('data-kb-view'))}`;
+        document.querySelectorAll('[data-kb-row]').forEach((row) => {
+            row.addEventListener('click', () => {
+                const kbId = row.getAttribute('data-kb-row');
+                if (!kbId) return;
+                window.location.href = `/rag/${encodeURIComponent(kbId)}`;
             });
-        });
-        document.querySelectorAll('[data-kb-edit]').forEach((btn) => {
-            btn.addEventListener('click', async () => openEditModal(btn.getAttribute('data-kb-edit')));
-        });
-        document.querySelectorAll('[data-kb-delete]').forEach((btn) => {
-            btn.addEventListener('click', async () => deleteKb(btn.getAttribute('data-kb-delete')));
-        });
-        document.querySelectorAll('[data-kb-index]').forEach((btn) => {
-            btn.addEventListener('click', async () => triggerIndex(btn.getAttribute('data-kb-index'), false));
-        });
-        document.querySelectorAll('[data-kb-export]').forEach((btn) => {
-            btn.addEventListener('click', async () => exportKb(btn.getAttribute('data-kb-export')));
         });
     }
 
@@ -340,27 +420,18 @@
         if (!body) return;
         const rows = getFilteredKbs();
         if (!rows.length) {
-            body.innerHTML = '<tr><td colspan="6">No knowledge bases found.</td></tr>';
+            body.innerHTML = '<tr><td colspan="5">No knowledge bases found.</td></tr>';
             return;
         }
         body.innerHTML = rows
             .map(
                 (kb) => `
-                <tr>
+                <tr class="rag-kb-row" data-kb-row="${esc(kb.kb_id)}">
                     <td><strong>${esc(kb.name)}</strong><br><small>${esc(kb.kb_id)}</small></td>
                     <td>${esc(getKbModeBadge(kb.kb_mode))}</td>
                     <td>${kb.file_count || 0}</td>
                     <td>${kb.chunk_count || 0}</td>
                     <td>${esc(formatDate(kb.updated_at))}</td>
-                    <td>
-                        <div class="rag-actions">
-                            <button class="btn btn-secondary btn-sm" data-kb-view="${esc(kb.kb_id)}">View</button>
-                            <button class="btn btn-secondary btn-sm" data-kb-edit="${esc(kb.kb_id)}">Edit</button>
-                            <button class="btn btn-secondary btn-sm" data-kb-index="${esc(kb.kb_id)}">Index</button>
-                            <button class="btn btn-secondary btn-sm" data-kb-export="${esc(kb.kb_id)}">Export</button>
-                            <button class="btn btn-secondary btn-sm" data-kb-delete="${esc(kb.kb_id)}">Delete</button>
-                        </div>
-                    </td>
                 </tr>
             `
             )
@@ -368,24 +439,37 @@
         bindKbRowActions();
     }
 
-    async function triggerIndex(kbId, reindexAll) {
-        try {
-            const payload = await apiPost(
-                `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`,
-                { force_reindex: !!reindexAll, reindex_all: !!reindexAll, incremental: !reindexAll },
-                true
-            );
-            const jobId = payload.data?.job_id || '-';
-            notify(`Index task created: ${jobId}`, 'success');
-        } catch (err) {
-            notify(`Failed to start indexing: ${formatError(err)}`, 'error');
+    async function triggerIndex(kbId, options = {}) {
+        const opts = options || {};
+        const fileUrls = Array.isArray(opts.fileUrls) ? opts.fileUrls : [];
+        const reindexAll = !!opts.reindexAll;
+        const confirmMessage = opts.confirmMessage || '';
+
+        if (confirmMessage) {
+            const ok = window.customConfirm
+                ? await window.customConfirm(confirmMessage, 'Start Indexing')
+                : window.confirm(confirmMessage);
+            if (!ok) return null;
         }
+
+        const payload = await apiPost(
+            `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`,
+            {
+                force_reindex: reindexAll,
+                reindex_all: reindexAll,
+                incremental: !reindexAll,
+                ...(fileUrls.length ? { file_urls: fileUrls } : {}),
+            },
+            true
+        );
+        return payload.data || null;
     }
 
     async function deleteKb(kbId) {
-        const ok = window.customConfirm
-            ? await window.customConfirm(`Delete knowledge base '${kbId}'?`, 'Delete KB')
-            : window.confirm(`Delete knowledge base '${kbId}'?`);
+        const ok = await confirmDeleteWithText(
+            'Delete Knowledge Base',
+            `You are deleting KB '${kbId}'. This cannot be undone.`
+        );
         if (!ok) return;
         try {
             await apiDelete(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`);
@@ -400,18 +484,49 @@
         }
     }
 
-    async function exportKb(kbId) {
+    function csvEscape(rawValue) {
+        let str = String(rawValue == null ? '' : rawValue);
+        if (/^\s*[=+\-@]/.test(str)) str = `'${str}`;
+        const escaped = str.replace(/"/g, '""');
+        return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+    }
+
+    async function exportKbFileList(kbId) {
         try {
-            const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`);
-            const blob = new Blob([JSON.stringify(payload.data || {}, null, 2)], { type: 'application/json' });
+            const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`);
+            const files = payload.data?.files || [];
+            const headers = [
+                'file_url',
+                'title',
+                'category',
+                'status',
+                'chunk_count',
+                'indexed_at',
+                'markdown_updated_at',
+            ];
+            const rows = files.map((f) => [
+                f.file_url || '',
+                f.title || '',
+                f.category || '',
+                f.status || '',
+                f.chunk_count || 0,
+                f.indexed_at || '',
+                f.markdown_updated_at || '',
+            ]);
+            const csv = [headers, ...rows]
+                .map((row) => row.map((v) => csvEscape(v)).join(','))
+                .join('\n');
+            const ts = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${kbId}.metadata.json`;
+            a.download = `${kbId}_filelist_${ts}.csv`;
             document.body.appendChild(a);
             a.click();
             a.remove();
             URL.revokeObjectURL(url);
+            notify('KB file list exported', 'success');
         } catch (err) {
             notify(`Export failed: ${formatError(err)}`, 'error');
         }
@@ -424,15 +539,16 @@
         const qp = new URLSearchParams({
             limit: String(state.fileSelector.pageSize),
             offset: String(state.fileSelector.offset),
-            order_by: 'last_seen',
-            order_dir: 'desc',
             query: state.fileSelector.query || '',
             category: state.fileSelector.category || '',
         });
+        if (state.fileSelector.target === 'detail' && context.kbId) {
+            qp.set('kb_id', context.kbId);
+        }
         try {
-            const payload = await apiGet(`/api/files?${qp.toString()}`);
-            state.fileSelector.rows = payload.files || [];
-            state.fileSelector.total = payload.total || 0;
+            const payload = await apiGet(`/api/rag/files/selectable?${qp.toString()}`);
+            state.fileSelector.rows = payload.data?.files || [];
+            state.fileSelector.total = payload.data?.total || 0;
             renderFileSelectorRows();
         } catch (err) {
             body.innerHTML = `<tr><td colspan="6">${esc(formatError(err))}</td></tr>`;
@@ -442,11 +558,12 @@
     function renderFileSelectorRows() {
         const body = document.getElementById('rag-file-selector-body');
         if (!body) return;
-        const selectedMap = state.fileSelector.target === 'create' ? state.selectedCreateFiles : new Map();
+        const selectedMap = getFileSelectionMap(state.fileSelector.target);
         const checkAll = document.getElementById('rag-file-selector-check-all');
         if (!state.fileSelector.rows.length) {
-            body.innerHTML = '<tr><td colspan="6">No files found.</td></tr>';
+            body.innerHTML = '<tr><td colspan="6">No selectable markdown files found.</td></tr>';
             if (checkAll) checkAll.checked = false;
+            updateFileSelectorSummary();
             return;
         }
         body.innerHTML = state.fileSelector.rows
@@ -459,20 +576,18 @@
                         <td>${esc(row.category || '-')}</td>
                         <td>${esc(row.source_site || '-')}</td>
                         <td>${esc(formatBytes(row.bytes))}</td>
-                        <td>${esc(formatDate(row.last_seen || row.crawl_time))}</td>
+                        <td>${esc(formatDate(row.markdown_updated_at || row.last_seen || row.crawl_time))}</td>
                     </tr>
                 `;
             })
             .join('');
         body.querySelectorAll('[data-file-select]').forEach((cb) => {
             cb.addEventListener('change', () => {
-                if (state.fileSelector.target === 'create') {
-                    const url = cb.getAttribute('data-file-select');
-                    const row = state.fileSelector.rows.find((r) => r.url === url);
-                    if (cb.checked && row) state.selectedCreateFiles.set(url, row);
-                    if (!cb.checked) state.selectedCreateFiles.delete(url);
-                    renderCreateSelectedFiles();
-                }
+                const url = cb.getAttribute('data-file-select');
+                const row = state.fileSelector.rows.find((r) => r.url === url);
+                if (cb.checked && row) selectedMap.set(url, row);
+                if (!cb.checked) selectedMap.delete(url);
+                if (state.fileSelector.target === 'create') renderCreateSelectedFiles();
                 if (checkAll) {
                     const allRows = Array.from(body.querySelectorAll('[data-file-select]'));
                     checkAll.checked = allRows.length > 0 && allRows.every((x) => x.checked);
@@ -490,13 +605,17 @@
     function updateFileSelectorSummary() {
         const summary = document.getElementById('rag-file-selector-summary');
         if (!summary) return;
-        const count =
-            state.fileSelector.target === 'create' ? state.selectedCreateFiles.size : 0;
+        const count = getFileSelectionMap(state.fileSelector.target).size;
         summary.textContent = `${count} files selected`;
     }
 
     function openFileSelector(target) {
         state.fileSelector.target = target || 'create';
+        state.fileSelector.offset = 0;
+        if (state.fileSelector.target === 'detail') {
+            state.selectedDetailFiles.clear();
+        }
+        updateFileSelectorSummary();
         openModal('rag-file-selector-modal');
         loadFileSelectorPage();
     }
@@ -504,7 +623,7 @@
     function bindFileSelector() {
         document.getElementById('rag-open-file-selector')?.addEventListener('click', () => openFileSelector('create'));
         document.getElementById('rag-file-selector-refresh')?.addEventListener('click', () => loadFileSelectorPage());
-        document.getElementById('rag-file-selector-search')?.addEventListener('change', (e) => {
+        document.getElementById('rag-file-selector-search')?.addEventListener('input', (e) => {
             state.fileSelector.query = e.target.value || '';
             state.fileSelector.offset = 0;
             loadFileSelectorPage();
@@ -525,7 +644,7 @@
             loadFileSelectorPage();
         });
         document.getElementById('rag-file-selector-clear')?.addEventListener('click', () => {
-            if (state.fileSelector.target === 'create') state.selectedCreateFiles.clear();
+            getFileSelectionMap(state.fileSelector.target).clear();
             renderCreateSelectedFiles();
             updateFileSelectorSummary();
             loadFileSelectorPage();
@@ -539,23 +658,36 @@
             });
         });
         document.getElementById('rag-file-selector-apply')?.addEventListener('click', async () => {
-            if (state.fileSelector.target === 'detail') {
-                const checked = Array.from(document.querySelectorAll('[data-file-select]:checked')).map(
-                    (cb) => cb.getAttribute('data-file-select')
+            if (state.fileSelector.target === 'create') {
+                closeModal('rag-file-selector-modal');
+                return;
+            }
+            const selected = Array.from(state.selectedDetailFiles.keys());
+            if (!selected.length) {
+                notify('Select at least one file', 'warning');
+                return;
+            }
+            try {
+                const addResp = await apiPost(
+                    `/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files`,
+                    { file_urls: selected },
+                    true
                 );
-                if (!checked.length) {
-                    notify('Select at least one file', 'warning');
+                const addedCount = Number(addResp.data?.added_count || 0);
+                if (addedCount <= 0) {
+                    notify('No new files were added', 'warning');
+                    closeModal('rag-file-selector-modal');
+                    await refreshDetailPage();
                     return;
                 }
-                try {
-                    await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files`, { file_urls: checked }, true);
-                    notify('Files added to knowledge base', 'success');
-                    await loadDetailFiles();
-                } catch (err) {
-                    notify(`Add files failed: ${formatError(err)}`, 'error');
-                }
+                const indexResp = await triggerIndex(context.kbId, { fileUrls: selected });
+                notify(`Added ${addedCount} file(s). Index task submitted: ${indexResp?.job_id || '-'}`, 'success');
+                state.selectedDetailFiles.clear();
+                closeModal('rag-file-selector-modal');
+                await refreshDetailPage();
+            } catch (err) {
+                notify(`Add files failed: ${formatError(err)}`, 'error');
             }
-            closeModal('rag-file-selector-modal');
         });
     }
 
@@ -576,33 +708,83 @@
         }
     }
 
+    function getSelectedCreateCategories() {
+        const select = document.getElementById('rag-create-categories');
+        if (!select) return [];
+        return Array.from(select.selectedOptions).map((o) => o.value).filter(Boolean);
+    }
+
+    async function refreshCreateCategoryStats() {
+        const statsEl = document.getElementById('rag-create-category-stats');
+        const modeInput = document.querySelector('#rag-create-kb-form input[name="kb_mode"]:checked');
+        if (!statsEl) return;
+        if (!modeInput || modeInput.value !== 'category') {
+            statsEl.textContent = 'Select categories to view unique file and markdown counts.';
+            return;
+        }
+        const categories = getSelectedCreateCategories();
+        if (!categories.length) {
+            statsEl.textContent = 'Select categories to view unique file and markdown counts.';
+            return;
+        }
+        statsEl.textContent = 'Loading category statistics...';
+        try {
+            const payload = { categories };
+            if (context.page === 'detail' && context.kbId) payload.kb_id = context.kbId;
+            const resp = await apiPost('/api/rag/categories/stats', payload, false);
+            const stats = resp.data || {};
+            statsEl.textContent =
+                `Unique files: ${Number(stats.unique_files || 0)} | ` +
+                `Unique markdown files: ${Number(stats.unique_markdown_files || 0)} | ` +
+                `Already in this RAG: ${Number(stats.in_kb_markdown_files || 0)}`;
+        } catch (err) {
+            statsEl.textContent = `Failed to load stats: ${formatError(err)}`;
+        }
+    }
+
     function bindCreateEditForms() {
         const createForm = document.getElementById('rag-create-kb-form');
         const editForm = document.getElementById('rag-edit-kb-form');
-        const modeInputs = document.querySelectorAll('input[name="kb_mode"]');
+        const modeInputs = createForm?.querySelectorAll('input[name="kb_mode"]') || [];
+        const createNameInput = createForm?.querySelector('[name="name"]');
+        const createCategories = document.getElementById('rag-create-categories');
 
-        modeInputs.forEach((input) => {
-            input.addEventListener('change', () => {
-                const isCategory = input.checked && input.value === 'category';
-                const c = document.getElementById('rag-create-category-fields');
-                const m = document.getElementById('rag-create-manual-fields');
-                if (c) c.style.display = isCategory ? 'block' : 'none';
-                if (m) m.style.display = isCategory ? 'none' : 'block';
-            });
-        });
+        const syncCreateMode = () => {
+            if (!createForm) return;
+            const mode = createForm.querySelector('input[name="kb_mode"]:checked')?.value || 'category';
+            const isCategory = mode === 'category';
+            const c = document.getElementById('rag-create-category-fields');
+            const m = document.getElementById('rag-create-manual-fields');
+            if (c) c.style.display = isCategory ? 'block' : 'none';
+            if (m) m.style.display = isCategory ? 'none' : 'block';
+            refreshCreateCategoryStats();
+        };
 
-        document.getElementById('rag-open-create-modal')?.addEventListener('click', () => {
-            if (createForm) createForm.reset();
-            state.selectedCreateFiles.clear();
-            renderCreateSelectedFiles();
-            openModal('rag-create-kb-modal');
-        });
-
-        document.getElementById('rag-create-from-unmapped')?.addEventListener('click', () => {
+        const resetCreateForm = () => {
             if (!createForm) return;
             createForm.reset();
             const categoryRadio = createForm.querySelector('input[name="kb_mode"][value="category"]');
             if (categoryRadio) categoryRadio.checked = true;
+            state.selectedCreateFiles.clear();
+            renderCreateSelectedFiles();
+            syncCreateKbId();
+            syncCreateMode();
+        };
+
+        const openCreateModal = () => {
+            resetCreateForm();
+            openModal('rag-create-kb-modal');
+        };
+
+        modeInputs.forEach((input) => input.addEventListener('change', syncCreateMode));
+        createNameInput?.addEventListener('input', () => syncCreateKbId());
+        createCategories?.addEventListener('change', () => refreshCreateCategoryStats());
+
+        document.getElementById('rag-open-create-modal')?.addEventListener('click', openCreateModal);
+
+        document.getElementById('rag-create-from-unmapped')?.addEventListener('click', () => {
+            if (!createForm) return;
+            resetCreateForm();
             const select = document.getElementById('rag-create-categories');
             if (select) {
                 const preselect = new Set(state.unmapped.slice(0, 6).map((x) => x.name));
@@ -610,43 +792,67 @@
                     opt.selected = preselect.has(opt.value);
                 });
             }
+            refreshCreateCategoryStats();
             openModal('rag-create-kb-modal');
         });
 
         document.getElementById('rag-dismiss-unmapped')?.addEventListener('click', () => {
             localStorage.setItem('rag_unmapped_dismissed', '1');
-            document.getElementById('rag-unmapped-alert').style.display = 'none';
+            const alert = document.getElementById('rag-unmapped-alert');
+            if (alert) alert.style.display = 'none';
         });
 
         async function submitCreate(createAndIndex) {
             if (!createForm) return;
+            syncCreateKbId();
             const formData = new FormData(createForm);
             const mode = formData.get('kb_mode');
             const payload = {
-                kb_id: formData.get('kb_id'),
-                name: formData.get('name'),
-                description: formData.get('description'),
+                kb_id: String(formData.get('kb_id') || ''),
+                name: String(formData.get('name') || '').trim(),
+                description: String(formData.get('description') || ''),
                 kb_mode: mode,
                 embedding_model: formData.get('embedding_model'),
                 chunk_size: Number(formData.get('chunk_size') || 800),
                 chunk_overlap: Number(formData.get('chunk_overlap') || 100),
             };
+
+            if (!payload.name) {
+                notify('Name is required', 'warning');
+                return;
+            }
+
             if (mode === 'category') {
-                payload.categories = Array.from(document.getElementById('rag-create-categories').selectedOptions).map((o) => o.value);
+                payload.categories = getSelectedCreateCategories();
+                if (!payload.categories.length) {
+                    notify('Select at least one category', 'warning');
+                    return;
+                }
             } else {
                 payload.file_urls = Array.from(state.selectedCreateFiles.keys());
+                if (!payload.file_urls.length) {
+                    notify('Manual mode requires at least one file', 'warning');
+                    return;
+                }
             }
             try {
                 const created = await apiPost('/api/rag/knowledge-bases', payload, true);
+                const createdKbId = created.data?.kb_id || payload.kb_id;
                 closeModal('rag-create-kb-modal');
                 notify('Knowledge base created', 'success');
-                if (createAndIndex) {
-                    await triggerIndex(created.data?.kb_id || payload.kb_id, false);
+                if (createAndIndex && createdKbId) {
+                    const indexResp =
+                        mode === 'manual'
+                            ? await triggerIndex(createdKbId, { fileUrls: payload.file_urls || [] })
+                            : await triggerIndex(createdKbId, { reindexAll: false });
+                    if (indexResp?.job_id) {
+                        notify(`Index task submitted: ${indexResp.job_id}`, 'success');
+                    }
                 }
                 if (context.page === 'list') {
                     await refreshListPage();
-                } else if (created.data?.kb_id) {
-                    window.location.href = `/rag/${encodeURIComponent(created.data.kb_id)}`;
+                } else if (createdKbId) {
+                    window.location.href = `/rag/${encodeURIComponent(createdKbId)}`;
                 }
             } catch (err) {
                 notify(`Create failed: ${formatError(err)}`, 'error');
@@ -688,6 +894,7 @@
     async function loadDetailHeader() {
         const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}`);
         const kb = payload.data || {};
+        state.currentKb = kb;
         document.getElementById('rag-detail-title').textContent = kb.name || kb.kb_id || 'Knowledge Base';
         document.getElementById('rag-detail-description').textContent = kb.description || '';
         document.getElementById('rag-meta-kb-id').textContent = kb.kb_id || '-';
@@ -698,15 +905,29 @@
         document.getElementById('rag-meta-updated').textContent = formatDate(kb.updated_at);
 
         const stats = kb.stats || {};
+        const pendingFiles = Number(stats.pending_files ?? 0);
         document.getElementById('rag-stat-total-files').textContent = stats.total_files ?? kb.file_count ?? 0;
         document.getElementById('rag-stat-indexed-files').textContent = stats.indexed_files ?? 0;
-        document.getElementById('rag-stat-pending-files').textContent = stats.pending_files ?? 0;
+        document.getElementById('rag-stat-pending-files').textContent = pendingFiles;
         document.getElementById('rag-stat-total-chunks').textContent = stats.total_chunks ?? kb.chunk_count ?? 0;
+
+        const reindexBtn = document.getElementById('rag-detail-reindex');
+        if (reindexBtn) {
+            if (pendingFiles > 0) {
+                reindexBtn.style.display = '';
+                reindexBtn.textContent = `Reindex (${pendingFiles})`;
+                reindexBtn.setAttribute('data-pending-files', String(pendingFiles));
+            } else {
+                reindexBtn.style.display = 'none';
+                reindexBtn.removeAttribute('data-pending-files');
+            }
+        }
     }
 
     async function loadDetailFiles() {
         const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files`);
         const rows = payload.data?.files || [];
+        state.detailFiles = rows;
         const search = (document.getElementById('rag-detail-file-search')?.value || '').toLowerCase();
         const filtered = rows.filter((f) => !search || (f.title || f.file_url || '').toLowerCase().includes(search));
         const body = document.getElementById('rag-detail-files-body');
@@ -730,10 +951,16 @@
             .join('');
         body.querySelectorAll('[data-remove-detail-file]').forEach((btn) => {
             btn.addEventListener('click', async () => {
+                const fileUrl = btn.getAttribute('data-remove-detail-file');
+                const ok = await confirmDeleteWithText(
+                    'Remove File From KB',
+                    'This will remove the file from this knowledge base.'
+                );
+                if (!ok) return;
                 try {
-                    await apiDelete(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files/${encodeURIComponent(btn.getAttribute('data-remove-detail-file'))}`);
-                    await loadDetailFiles();
-                    await loadDetailHeader();
+                    await apiDelete(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files/${encodeURIComponent(fileUrl)}`);
+                    await refreshDetailPage();
+                    notify('File removed from KB', 'success');
                 } catch (err) {
                     notify(`Remove failed: ${formatError(err)}`, 'error');
                 }
@@ -771,7 +998,23 @@
     function bindDetailEvents() {
         document.getElementById('rag-detail-refresh')?.addEventListener('click', () => refreshDetailPage());
         document.getElementById('rag-detail-edit')?.addEventListener('click', () => openEditModal(context.kbId));
-        document.getElementById('rag-detail-reindex')?.addEventListener('click', () => triggerIndex(context.kbId, true));
+        document.getElementById('rag-detail-export')?.addEventListener('click', () => exportKbFileList(context.kbId));
+        document.getElementById('rag-detail-reindex')?.addEventListener('click', async (e) => {
+            const btn = e.currentTarget;
+            const pending = Number(btn.getAttribute('data-pending-files') || 0);
+            if (pending <= 0) return;
+            try {
+                const resp = await triggerIndex(context.kbId, {
+                    reindexAll: false,
+                    confirmMessage: `Start indexing ${pending} pending file(s) for this KB?`,
+                });
+                if (!resp) return;
+                notify(`Index task created: ${resp.job_id || '-'}`, 'success');
+                await loadDetailTasks();
+            } catch (err) {
+                notify(`Failed to start indexing: ${formatError(err)}`, 'error');
+            }
+        });
         document.getElementById('rag-detail-delete')?.addEventListener('click', () => deleteKb(context.kbId));
         document.getElementById('rag-detail-add-files')?.addEventListener('click', () => openFileSelector('detail'));
         document.getElementById('rag-detail-file-search')?.addEventListener('input', () => loadDetailFiles());
@@ -813,6 +1056,18 @@
             renderKbTable();
         });
         await refreshListPage();
+        syncCreateKbId();
+        refreshCreateCategoryStats();
+        renderCreateSelectedFiles();
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('open') === 'create') {
+            document.getElementById('rag-open-create-modal')?.click();
+            params.delete('open');
+            const query = params.toString();
+            const nextUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+            window.history.replaceState({}, '', nextUrl);
+        }
     }
 
     async function initDetailPage() {
@@ -820,6 +1075,9 @@
         bindFileSelector();
         bindDetailEvents();
         await refreshDetailPage();
+        syncCreateKbId();
+        refreshCreateCategoryStats();
+        renderCreateSelectedFiles();
         window.setInterval(() => loadDetailTasks(), 4000);
     }
 
