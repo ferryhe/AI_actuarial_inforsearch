@@ -1,0 +1,486 @@
+"""Chat API routes for AI chatbot interface."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+import uuid
+from datetime import datetime
+from typing import Any, Callable
+
+from flask import Flask, jsonify, request, render_template
+
+logger = logging.getLogger(__name__)
+
+
+def register_chat_routes(
+    app: Flask,
+    db_path: str,
+    require_permissions: Callable,
+) -> None:
+    """
+    Register chat-related API routes.
+    
+    Args:
+        app: Flask application instance
+        db_path: Path to database file
+        require_permissions: Decorator for permission checks
+    """
+    from ai_actuarial.storage import Storage
+    
+    # Check if chatbot functionality is available
+    try:
+        from ai_actuarial.chatbot.retrieval import RAGRetriever
+        from ai_actuarial.chatbot.llm import LLMClient
+        from ai_actuarial.chatbot.conversation import ConversationManager
+        from ai_actuarial.chatbot.router import QueryRouter
+        from ai_actuarial.chatbot.config import ChatbotConfig
+        from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+        chatbot_available = True
+    except ImportError as e:
+        logger.warning(f"Chatbot functionality not available: {e}")
+        chatbot_available = False
+    
+    def _api_error(message: str, *, status_code: int, detail: str | None = None):
+        """Return API error response."""
+        payload: dict[str, Any] = {"success": False, "error": message}
+        if detail and os.getenv("EXPOSE_ERROR_DETAILS"):
+            payload["detail"] = detail
+        return jsonify(payload), status_code
+    
+    def _api_success(data: Any = None, message: str | None = None, status_code: int = 200):
+        """Return API success response."""
+        payload: dict[str, Any] = {"success": True}
+        if data is not None:
+            payload["data"] = data
+        if message:
+            payload["message"] = message
+        return jsonify(payload), status_code
+    
+    def _check_chatbot_available():
+        """Check if chatbot functionality is available."""
+        if not chatbot_available:
+            return _api_error("Chatbot functionality not available", status_code=503)
+        return None
+    
+    def _get_user_id() -> str:
+        """Get user ID from session or request."""
+        # Try to get from session (authenticated user)
+        from flask import session, g
+        if hasattr(g, 'auth_subject') and g.auth_subject:
+            return g.auth_subject
+        if 'auth_subject' in session:
+            return session['auth_subject']
+        # Fallback to guest user
+        return "guest"
+    
+    # ========================================================================
+    # Chat Page Route
+    # ========================================================================
+    
+    @app.route("/chat")
+    @require_permissions("chat.view")
+    def chat():
+        """Render chat interface page."""
+        error = _check_chatbot_available()
+        if error:
+            return render_template("error.html", 
+                                 error="Chatbot functionality is not available",
+                                 detail="Please contact your administrator"), 503
+        
+        return render_template("chat.html")
+    
+    # ========================================================================
+    # Chat API Routes
+    # ========================================================================
+    
+    @app.route("/api/chat/query", methods=["POST"])
+    @require_permissions("chat.query")
+    def api_chat_query():
+        """
+        Submit a chat query and get response.
+        
+        Request JSON:
+            {
+                "conversation_id": "conv_123" | null,  // null for new conversation
+                "message": "What is Solvency II?",
+                "kb_ids": ["kb1", "kb2"] | "auto" | null,
+                "mode": "expert" | "summary" | "tutorial" | "comparison",
+                "stream": false
+            }
+        
+        Response JSON:
+            {
+                "success": true,
+                "data": {
+                    "conversation_id": "conv_123",
+                    "message_id": "msg_456",
+                    "response": "Solvency II is...",
+                    "citations": [
+                        {
+                            "filename": "regulation_2023.pdf",
+                            "kb_id": "kb1",
+                            "kb_name": "General",
+                            "chunk_id": "chunk_789",
+                            "similarity_score": 0.89,
+                            "file_url": "/database/regulation_2023.pdf"
+                        }
+                    ],
+                    "metadata": {
+                        "retrieval_time_ms": 450,
+                        "generation_time_ms": 1200,
+                        "model": "gpt-4",
+                        "mode": "expert"
+                    }
+                }
+            }
+        """
+        error = _check_chatbot_available()
+        if error:
+            return error
+        
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return _api_error("Invalid or missing JSON body", status_code=400)
+            
+            # Extract parameters
+            message = data.get("message", "").strip()
+            if not message:
+                return _api_error("Message is required", status_code=400)
+            
+            conversation_id = data.get("conversation_id")
+            kb_ids = data.get("kb_ids")
+            mode = data.get("mode", "expert")
+            stream = data.get("stream", False)
+            
+            # Validate mode
+            valid_modes = ["expert", "summary", "tutorial", "comparison"]
+            if mode not in valid_modes:
+                return _api_error(
+                    f"Invalid mode. Must be one of: {', '.join(valid_modes)}", 
+                    status_code=400
+                )
+            
+            # Get user ID
+            user_id = _get_user_id()
+            
+            # Initialize components
+            storage = Storage(db_path)
+            config = ChatbotConfig(default_mode=mode)
+            
+            try:
+                retriever = RAGRetriever(storage, config)
+                llm_client = LLMClient(config)
+                conv_manager = ConversationManager(storage, config)
+                
+                # Handle conversation
+                if conversation_id:
+                    # Verify conversation exists and belongs to user
+                    conv = conv_manager.get_conversation(conversation_id)
+                    if not conv:
+                        return _api_error("Conversation not found", status_code=404)
+                    if conv.get("user_id") != user_id:
+                        return _api_error("Access denied", status_code=403)
+                else:
+                    # Create new conversation
+                    # Determine primary KB
+                    primary_kb = None
+                    if kb_ids and isinstance(kb_ids, list) and len(kb_ids) > 0:
+                        primary_kb = kb_ids[0]
+                    elif kb_ids and isinstance(kb_ids, str) and kb_ids != "auto":
+                        primary_kb = kb_ids
+                    
+                    conversation_id = conv_manager.create_conversation(
+                        user_id=user_id,
+                        kb_id=primary_kb,
+                        mode=mode,
+                        metadata={
+                            "kb_ids": kb_ids,
+                            "mode": mode
+                        }
+                    )
+                
+                # Add user message
+                start_time = time.time()
+                user_msg_id = conv_manager.add_message(
+                    conversation_id=conversation_id,
+                    role="user",
+                    content=message
+                )
+                
+                # Retrieve relevant chunks
+                retrieval_start = time.time()
+                
+                # Handle KB selection
+                if kb_ids == "auto":
+                    # Use query router for automatic KB selection
+                    router = QueryRouter(storage, config)
+                    kb_ids = router.select_kbs(message)
+                elif kb_ids is None or kb_ids == "all":
+                    # Query all available KBs
+                    kb_ids = None
+                elif isinstance(kb_ids, str):
+                    # Single KB ID
+                    kb_ids = [kb_ids]
+                
+                # Retrieve chunks
+                chunks = retriever.retrieve(
+                    query=message,
+                    kb_ids=kb_ids,
+                    top_k=config.top_k,
+                    threshold=config.similarity_threshold
+                )
+                
+                retrieval_time_ms = int((time.time() - retrieval_start) * 1000)
+                
+                # Get conversation history for context
+                history = conv_manager.get_messages(conversation_id, limit=10)
+                
+                # Generate response
+                generation_start = time.time()
+                response_text = llm_client.generate_response(
+                    query=message,
+                    chunks=chunks,
+                    mode=mode,
+                    conversation_history=history[:-1]  # Exclude the message we just added
+                )
+                
+                generation_time_ms = int((time.time() - generation_start) * 1000)
+                
+                # Extract citations from chunks
+                citations = []
+                seen_files = set()
+                for chunk in chunks:
+                    metadata = chunk.get("metadata", {})
+                    filename = metadata.get("filename", "unknown")
+                    
+                    # Avoid duplicate citations
+                    if filename in seen_files:
+                        continue
+                    seen_files.add(filename)
+                    
+                    # Build file URL for linking
+                    file_url = metadata.get("file_url", "")
+                    if not file_url and filename:
+                        # Construct URL from filename
+                        file_url = f"/database/{filename}"
+                    
+                    citations.append({
+                        "filename": filename,
+                        "kb_id": metadata.get("kb_id", ""),
+                        "kb_name": metadata.get("kb_name", ""),
+                        "chunk_id": metadata.get("chunk_id", ""),
+                        "similarity_score": metadata.get("similarity_score", 0.0),
+                        "file_url": file_url
+                    })
+                
+                # Add assistant message
+                assistant_msg_id = conv_manager.add_message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=response_text,
+                    citations=citations,
+                    metadata={
+                        "model": config.model,
+                        "mode": mode,
+                        "retrieval_time_ms": retrieval_time_ms,
+                        "generation_time_ms": generation_time_ms,
+                        "num_chunks": len(chunks)
+                    }
+                )
+                
+                # Update conversation title if this is the first message
+                if len(history) == 1:  # Only user message exists
+                    # Generate title from first query (simple truncation for now)
+                    title = message[:50] + ("..." if len(message) > 50 else "")
+                    conv_manager.update_conversation_title(conversation_id, title)
+                
+                # Return response
+                return _api_success({
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_msg_id,
+                    "response": response_text,
+                    "citations": citations,
+                    "metadata": {
+                        "retrieval_time_ms": retrieval_time_ms,
+                        "generation_time_ms": generation_time_ms,
+                        "model": config.model,
+                        "mode": mode
+                    }
+                })
+                
+            finally:
+                storage.close()
+        
+        except Exception as e:
+            logger.exception("Error processing chat query")
+            return _api_error(
+                "Internal server error",
+                status_code=500,
+                detail=str(e)
+            )
+    
+    @app.route("/api/chat/conversations", methods=["GET", "POST"])
+    @require_permissions("chat.conversations")
+    def api_chat_conversations():
+        """
+        GET: List user conversations
+        POST: Create new conversation
+        """
+        error = _check_chatbot_available()
+        if error:
+            return error
+        
+        user_id = _get_user_id()
+        
+        if request.method == "GET":
+            try:
+                storage = Storage(db_path)
+                config = ChatbotConfig()
+                
+                try:
+                    conv_manager = ConversationManager(storage, config)
+                    conversations = conv_manager.list_conversations(user_id)
+                    
+                    return _api_success({"conversations": conversations})
+                    
+                finally:
+                    storage.close()
+            
+            except Exception as e:
+                logger.exception("Error listing conversations")
+                return _api_error(
+                    "Internal server error",
+                    status_code=500,
+                    detail=str(e)
+                )
+        
+        elif request.method == "POST":
+            try:
+                data = request.get_json(silent=True) or {}
+                
+                kb_id = data.get("kb_id")
+                mode = data.get("mode", "expert")
+                
+                storage = Storage(db_path)
+                config = ChatbotConfig()
+                
+                try:
+                    conv_manager = ConversationManager(storage, config)
+                    
+                    conversation_id = conv_manager.create_conversation(
+                        user_id=user_id,
+                        kb_id=kb_id,
+                        mode=mode,
+                        metadata=data.get("metadata", {})
+                    )
+                    
+                    return _api_success({
+                        "conversation_id": conversation_id
+                    }, status_code=201)
+                    
+                finally:
+                    storage.close()
+            
+            except Exception as e:
+                logger.exception("Error creating conversation")
+                return _api_error(
+                    "Internal server error",
+                    status_code=500,
+                    detail=str(e)
+                )
+    
+    @app.route("/api/chat/conversations/<conversation_id>", methods=["GET", "DELETE"])
+    @require_permissions("chat.conversations")
+    def api_chat_conversation_detail(conversation_id: str):
+        """
+        GET: Get conversation history
+        DELETE: Delete conversation
+        """
+        error = _check_chatbot_available()
+        if error:
+            return error
+        
+        user_id = _get_user_id()
+        
+        try:
+            storage = Storage(db_path)
+            config = ChatbotConfig()
+            
+            try:
+                conv_manager = ConversationManager(storage, config)
+                
+                # Verify conversation exists and belongs to user
+                conv = conv_manager.get_conversation(conversation_id)
+                if not conv:
+                    return _api_error("Conversation not found", status_code=404)
+                if conv.get("user_id") != user_id:
+                    return _api_error("Access denied", status_code=403)
+                
+                if request.method == "GET":
+                    # Get messages
+                    messages = conv_manager.get_messages(conversation_id)
+                    
+                    return _api_success({
+                        "conversation": conv,
+                        "messages": messages
+                    })
+                
+                elif request.method == "DELETE":
+                    # Delete conversation
+                    conv_manager.delete_conversation(conversation_id)
+                    
+                    return _api_success(message="Conversation deleted")
+            
+            finally:
+                storage.close()
+        
+        except Exception as e:
+            logger.exception(f"Error handling conversation {conversation_id}")
+            return _api_error(
+                "Internal server error",
+                status_code=500,
+                detail=str(e)
+            )
+    
+    @app.route("/api/chat/knowledge-bases", methods=["GET"])
+    @require_permissions("chat.view")
+    def api_chat_knowledge_bases():
+        """Get list of available knowledge bases for chat."""
+        error = _check_chatbot_available()
+        if error:
+            return error
+        
+        try:
+            storage = Storage(db_path)
+            
+            try:
+                kb_manager = KnowledgeBaseManager(storage)
+                kbs = kb_manager.list_kbs()
+                
+                # Format for frontend
+                kb_list = [{
+                    "kb_id": kb.kb_id,
+                    "name": kb.name,
+                    "description": kb.description,
+                    "file_count": kb.file_count,
+                    "chunk_count": kb.chunk_count
+                } for kb in kbs]
+                
+                return _api_success({"knowledge_bases": kb_list})
+                
+            finally:
+                storage.close()
+        
+        except Exception as e:
+            logger.exception("Error listing knowledge bases")
+            return _api_error(
+                "Internal server error",
+                status_code=500,
+                detail=str(e)
+            )
+    
+    logger.info("Chat routes registered")

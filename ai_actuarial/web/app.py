@@ -152,6 +152,9 @@ _PERMISSIONS: frozenset[str] = frozenset(
         "logs.system.read",
         "export.read",
         "tokens.manage",
+        "chat.view",
+        "chat.query",
+        "chat.conversations",
     }
 )
 
@@ -173,6 +176,9 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "files.download",
             "catalog.read",
             "markdown.read",
+            "chat.view",
+            "chat.query",
+            "chat.conversations",
         }
     ),
     "operator": frozenset(
@@ -191,6 +197,9 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "tasks.run",
             "tasks.stop",
             "logs.task.read",
+            "chat.view",
+            "chat.query",
+            "chat.conversations",
         }
     ),
     "admin": frozenset(_PERMISSIONS),
@@ -3161,6 +3170,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         logger.warning(f"RAG routes not available: {e}")
     except Exception as e:
         logger.error(f"Failed to register RAG routes: {e}")
+    
+    # ========================================================================
+    # Chat API Routes
+    # ========================================================================
+    try:
+        from ai_actuarial.web.chat_routes import register_chat_routes
+        register_chat_routes(
+            app,
+            db_path,
+            require_permissions,
+        )
+        logger.info("Chat routes registered")
+    except ImportError as e:
+        logger.warning(f"Chat routes not available: {e}")
+    except Exception as e:
+        logger.error(f"Failed to register chat routes: {e}")
 
     # Scheduler Initialization
     def init_scheduler():
