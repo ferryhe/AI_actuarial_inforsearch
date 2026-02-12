@@ -1151,7 +1151,7 @@ def register_rag_routes(
                             task = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-                        if task.get("type") == "rag_indexing" and task.get("kb_id") == kid:
+                        if task.get("type") in {"rag_indexing", "kb_index_build"} and task.get("kb_id") == kid:
                             history.append(task)
                 history.sort(key=lambda t: t.get("started_at", ""), reverse=True)
                 payload = {"active": [], "history": history[:limit]}
