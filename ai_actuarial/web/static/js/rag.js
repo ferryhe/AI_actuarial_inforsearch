@@ -32,6 +32,15 @@
         }
     }
 
+    function formatError(err) {
+        const status = err && err.status;
+        const msg = (err && err.message) || 'Unknown error';
+        if (status === 403 || String(msg).toLowerCase().includes('forbidden')) {
+            return 'Forbidden：请确认使用 admin 登录，并提供正确的 CONFIG_WRITE_AUTH_TOKEN（X-Auth-Token）。';
+        }
+        return msg;
+    }
+
     function formatDate(dateStr) {
         if (window.formatDate) return window.formatDate(dateStr);
         return dateStr || '-';
@@ -369,7 +378,7 @@
             const jobId = payload.data?.job_id || '-';
             notify(`Index task created: ${jobId}`, 'success');
         } catch (err) {
-            notify(`Failed to start indexing: ${err.message}`, 'error');
+            notify(`Failed to start indexing: ${formatError(err)}`, 'error');
         }
     }
 
@@ -387,7 +396,7 @@
             }
             await refreshListPage();
         } catch (err) {
-            notify(`Delete failed: ${err.message}`, 'error');
+            notify(`Delete failed: ${formatError(err)}`, 'error');
         }
     }
 
@@ -404,7 +413,7 @@
             a.remove();
             URL.revokeObjectURL(url);
         } catch (err) {
-            notify(`Export failed: ${err.message}`, 'error');
+            notify(`Export failed: ${formatError(err)}`, 'error');
         }
     }
 
@@ -426,7 +435,7 @@
             state.fileSelector.total = payload.total || 0;
             renderFileSelectorRows();
         } catch (err) {
-            body.innerHTML = `<tr><td colspan="6">${esc(err.message)}</td></tr>`;
+            body.innerHTML = `<tr><td colspan="6">${esc(formatError(err))}</td></tr>`;
         }
     }
 
@@ -543,7 +552,7 @@
                     notify('Files added to knowledge base', 'success');
                     await loadDetailFiles();
                 } catch (err) {
-                    notify(`Add files failed: ${err.message}`, 'error');
+                    notify(`Add files failed: ${formatError(err)}`, 'error');
                 }
             }
             closeModal('rag-file-selector-modal');
@@ -563,7 +572,7 @@
             form.embedding_model.value = kb.embedding_model || '';
             openModal('rag-edit-kb-modal');
         } catch (err) {
-            notify(`Failed to load KB: ${err.message}`, 'error');
+            notify(`Failed to load KB: ${formatError(err)}`, 'error');
         }
     }
 
@@ -640,7 +649,7 @@
                     window.location.href = `/rag/${encodeURIComponent(created.data.kb_id)}`;
                 }
             } catch (err) {
-                notify(`Create failed: ${err.message}`, 'error');
+                notify(`Create failed: ${formatError(err)}`, 'error');
             }
         }
 
@@ -664,7 +673,7 @@
                 if (context.page === 'list') await refreshListPage();
                 if (context.page === 'detail') await refreshDetailPage();
             } catch (err) {
-                notify(`Update failed: ${err.message}`, 'error');
+                notify(`Update failed: ${formatError(err)}`, 'error');
             }
         });
     }
@@ -726,7 +735,7 @@
                     await loadDetailFiles();
                     await loadDetailHeader();
                 } catch (err) {
-                    notify(`Remove failed: ${err.message}`, 'error');
+                    notify(`Remove failed: ${formatError(err)}`, 'error');
                 }
             });
         });
@@ -777,7 +786,7 @@
                 await loadDetailCategories();
                 await loadDetailHeader();
             } catch (err) {
-                notify(`Link failed: ${err.message}`, 'error');
+                notify(`Link failed: ${formatError(err)}`, 'error');
             }
         });
 
