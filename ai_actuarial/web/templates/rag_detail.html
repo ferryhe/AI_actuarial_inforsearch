@@ -48,11 +48,13 @@
             <div class="rag-toolbar">
                 <input type="text" id="rag-detail-file-search" placeholder="Search files">
                 <button id="rag-detail-add-files" class="btn btn-secondary">Add Files</button>
+                <button id="rag-detail-bulk-remove" class="btn btn-secondary">Bulk Remove (0)</button>
             </div>
             <div class="rag-table-wrap">
                 <table class="data-table">
                     <thead>
                         <tr>
+                            <th><input type="checkbox" id="rag-detail-files-check-all"></th>
                             <th>Filename</th>
                             <th>Category</th>
                             <th>Status</th>
@@ -62,10 +64,11 @@
                         </tr>
                     </thead>
                     <tbody id="rag-detail-files-body">
-                        <tr><td colspan="6">Loading files...</td></tr>
+                        <tr><td colspan="7">Loading files...</td></tr>
                     </tbody>
                 </table>
             </div>
+            <div id="rag-detail-files-pagination" class="rag-pagination"></div>
         </div>
 
         <div class="rag-tab-content" id="rag-tab-categories">
