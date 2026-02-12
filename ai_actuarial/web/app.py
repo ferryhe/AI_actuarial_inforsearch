@@ -700,7 +700,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         return render_template("rag_detail.html", kb_id=kb_id)
     
     @app.route("/file_preview")
-    @require_permissions("files.view")
+    @require_permissions("files.read")
     def file_preview():
         """File preview page with original file, markdown, and chunks."""
         return render_template("file_preview.html")

@@ -170,6 +170,14 @@ function displayResults(data) {
                     label: 'Last Seen',
                     sortable: true,
                     render: (value) => formatDate(value)
+                },
+                {
+                    key: 'actions',
+                    label: 'Actions',
+                    sortable: false,
+                    render: (value, row) => {
+                        return `<button class="btn btn-small btn-primary" onclick="previewFile('${escapeHtml(row.url).replace(/'/g, "\\'")}'); event.stopPropagation();">Preview</button>`;
+                    }
                 }
             ],
             sortable: true,
@@ -281,6 +289,12 @@ function resetFilters() {
 function viewFile(url) {
     // Properly encode URL for path parameter
     window.location = `/file/${encodeURIComponent(url)}`;
+}
+
+function previewFile(url) {
+    // Open preview in new tab
+    const previewUrl = `/file_preview?file_url=${encodeURIComponent(url)}`;
+    window.open(previewUrl, '_blank');
 }
 
 function downloadFile(url) {
