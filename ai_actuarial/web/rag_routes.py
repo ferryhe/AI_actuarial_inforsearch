@@ -863,4 +863,95 @@ def register_rag_routes(
             logger.exception("Error listing KB tasks %s", kb_id)
             return _api_error("Internal server error", status_code=500, detail=str(exc))
 
+    @app.route("/api/rag/files/preview", methods=["GET"])
+    @require_permissions("files.view")
+    def api_rag_file_preview():
+        """
+        Get file preview data including original file info, markdown content, and chunks.
+        
+        Query params:
+            file_url: URL of the file to preview
+            kb_id: (optional) Knowledge base ID to get chunks from specific KB
+        
+        Returns:
+            - file_info: Basic file metadata
+            - markdown_content: Markdown content if available
+            - chunks: List of chunks with their content and metadata
+        """
+        if (r := _check_rag_available()) is not None:
+            return r
+        
+        file_url = request.args.get("file_url", "").strip()
+        kb_id = request.args.get("kb_id", "").strip()
+        
+        if not file_url:
+            return _api_error("file_url parameter is required", status_code=400)
+        
+        try:
+            def _run(kb_manager, storage):
+                # Get file metadata
+                file_info = storage.get_file(file_url)
+                if not file_info:
+                    return _api_error("File not found", status_code=404)
+                
+                # Get markdown content
+                markdown_data = storage.get_file_markdown(file_url)
+                markdown_content = markdown_data.get("markdown_content", "") if markdown_data else ""
+                markdown_source = markdown_data.get("markdown_source", "") if markdown_data else ""
+                markdown_updated_at = markdown_data.get("markdown_updated_at", "") if markdown_data else ""
+                
+                # Get chunks if KB ID provided
+                chunks = []
+                if kb_id:
+                    try:
+                        kid = _kb_id(kb_id)
+                        # Query chunks from database
+                        chunk_rows = storage._conn.execute(
+                            """
+                            SELECT chunk_id, chunk_index, content, token_count, 
+                                   section_hierarchy, created_at
+                            FROM rag_chunks
+                            WHERE kb_id = ? AND file_url = ?
+                            ORDER BY chunk_index
+                            """,
+                            (kid, file_url)
+                        ).fetchall()
+                        
+                        for row in chunk_rows:
+                            chunks.append({
+                                "chunk_id": row[0],
+                                "chunk_index": row[1],
+                                "content": row[2],
+                                "token_count": row[3],
+                                "section_hierarchy": row[4],
+                                "created_at": row[5]
+                            })
+                    except ValueError:
+                        # Invalid KB ID, just skip chunks
+                        pass
+                
+                return _api_success({
+                    "file_info": {
+                        "url": file_info["url"],
+                        "title": file_info["title"],
+                        "original_filename": file_info.get("original_filename", ""),
+                        "local_path": file_info.get("local_path", ""),
+                        "content_type": file_info.get("content_type", ""),
+                        "bytes": file_info.get("bytes", 0),
+                        "sha256": file_info.get("sha256", ""),
+                        "last_modified": file_info.get("last_modified", ""),
+                    },
+                    "markdown": {
+                        "content": markdown_content,
+                        "source": markdown_source,
+                        "updated_at": markdown_updated_at
+                    },
+                    "chunks": chunks
+                })
+            
+            return _with_manager(_run)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error getting file preview for %s", file_url)
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
     logger.info("RAG API routes registered successfully")

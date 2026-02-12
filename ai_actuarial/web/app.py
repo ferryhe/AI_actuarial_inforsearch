@@ -699,6 +699,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """RAG knowledge base detail page."""
         return render_template("rag_detail.html", kb_id=kb_id)
     
+    @app.route("/file_preview")
+    @require_permissions("files.view")
+    def file_preview():
+        """File preview page with original file, markdown, and chunks."""
+        return render_template("file_preview.html")
+    
     @app.route("/scheduled_tasks")
     @require_permissions("tasks.view")
     def scheduled_tasks():

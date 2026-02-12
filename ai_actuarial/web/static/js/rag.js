@@ -965,6 +965,7 @@
                     <td>${esc(formatDate(f.indexed_at))}</td>
                     <td>
                         <div class="rag-actions">
+                            <button class="btn btn-secondary btn-sm" data-preview-file="${esc(f.file_url)}">Preview</button>
                             ${(Number(f.chunk_count || 0) <= 0 || f.status === 'pending' || f.status === 'stale')
                                 ? `<button class="btn btn-secondary btn-sm" data-index-detail-file="${esc(f.file_url)}">Index</button>`
                                 : ''}
@@ -1009,6 +1010,15 @@
                 } catch (err) {
                     notify(`Index failed: ${formatError(err)}`, 'error');
                 }
+            });
+        });
+
+        body.querySelectorAll('[data-preview-file]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const fileUrl = btn.getAttribute('data-preview-file');
+                if (!fileUrl) return;
+                const previewUrl = `/file_preview?file_url=${encodeURIComponent(fileUrl)}&kb_id=${encodeURIComponent(context.kbId)}`;
+                window.open(previewUrl, '_blank');
             });
         });
 
