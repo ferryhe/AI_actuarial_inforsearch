@@ -102,6 +102,16 @@ def register_rag_routes(
             "updated_at": kb.updated_at,
         }
 
+    def _build_category_where(categories: list[str]) -> tuple[str, list[str]]:
+        if not categories:
+            return "1=0", []
+        parts: list[str] = []
+        params: list[str] = []
+        for category in categories:
+            parts.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
+            params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
+        return " OR ".join(parts), params
+
     def _with_manager(fn):
         storage = Storage(db_path)
         try:
@@ -396,6 +406,179 @@ def register_rag_routes(
             logger.exception("Error listing unmapped categories")
             return _api_error("Internal server error", status_code=500, detail=str(exc))
 
+    @app.route("/api/rag/categories/stats", methods=["POST"])
+    @require_permissions("catalog.read")
+    def api_rag_category_stats():
+        if (r := _check_rag_available()) is not None:
+            return r
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+            categories = _list(data.get("categories"), "categories")
+            kb_id_raw = _norm(data.get("kb_id"))
+            kb_id = _kb_id(kb_id_raw) if kb_id_raw else ""
+            where_sql, params = _build_category_where(categories)
+
+            def _run(kb_manager, storage):
+                if kb_id and not kb_manager.get_kb(kb_id):
+                    return _api_error(f"Knowledge base '{kb_id}' not found", status_code=404)
+                if not categories:
+                    return _api_success(
+                        {
+                            "categories": [],
+                            "unique_files": 0,
+                            "unique_markdown_files": 0,
+                            "in_kb_files": 0,
+                            "in_kb_markdown_files": 0,
+                        }
+                    )
+
+                sql = f"""
+                    WITH matched AS (
+                        SELECT DISTINCT
+                            c.file_url AS file_url,
+                            CASE
+                                WHEN c.markdown_content IS NOT NULL AND c.markdown_content != '' THEN 1
+                                ELSE 0
+                            END AS has_markdown
+                        FROM catalog_items c
+                        JOIN files f ON f.url = c.file_url
+                        WHERE f.deleted_at IS NULL
+                          AND ({where_sql})
+                    )
+                    SELECT
+                        COUNT(*) AS unique_files,
+                        COALESCE(SUM(has_markdown), 0) AS unique_markdown_files,
+                        COALESCE(SUM(CASE WHEN kf.file_url IS NOT NULL THEN 1 ELSE 0 END), 0) AS in_kb_files,
+                        COALESCE(
+                            SUM(CASE WHEN kf.file_url IS NOT NULL AND has_markdown = 1 THEN 1 ELSE 0 END),
+                            0
+                        ) AS in_kb_markdown_files
+                    FROM matched m
+                    LEFT JOIN rag_kb_files kf
+                      ON kf.file_url = m.file_url
+                     AND (? = '' OR kf.kb_id = ?)
+                """
+                row = storage._conn.execute(sql, params + [kb_id, kb_id]).fetchone()
+                return _api_success(
+                    {
+                        "categories": categories,
+                        "unique_files": int(row[0] or 0),
+                        "unique_markdown_files": int(row[1] or 0),
+                        "in_kb_files": int(row[2] or 0),
+                        "in_kb_markdown_files": int(row[3] or 0),
+                    }
+                )
+
+            return _with_manager(_run)
+        except ValueError as exc:
+            return _api_error(str(exc), status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error getting category stats")
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
+    @app.route("/api/rag/files/selectable", methods=["GET"])
+    @require_permissions("catalog.read")
+    def api_rag_selectable_files():
+        if (r := _check_rag_available()) is not None:
+            return r
+        try:
+            query = _norm(request.args.get("query")).lower()
+            category = _norm(request.args.get("category"))
+            kb_id_raw = _norm(request.args.get("kb_id"))
+            kb_id = _kb_id(kb_id_raw) if kb_id_raw else ""
+            limit = max(1, min(int(_norm(request.args.get("limit")) or "100"), 500))
+            offset = max(0, int(_norm(request.args.get("offset")) or "0"))
+
+            where_parts = [
+                "f.deleted_at IS NULL",
+                "c.markdown_content IS NOT NULL",
+                "c.markdown_content != ''",
+            ]
+            params: list[Any] = []
+
+            if query:
+                where_parts.append(
+                    "(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(f.url) LIKE ?)"
+                )
+                q = f"%{query}%"
+                params.extend([q, q, q])
+
+            if category:
+                where_parts.append(
+                    "(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                )
+                params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
+
+            if kb_id:
+                where_parts.append(
+                    "NOT EXISTS (SELECT 1 FROM rag_kb_files kf WHERE kf.kb_id = ? AND kf.file_url = f.url)"
+                )
+                params.append(kb_id)
+
+            where_sql = " AND ".join(where_parts)
+
+            def _run(kb_manager, storage):
+                if kb_id and not kb_manager.get_kb(kb_id):
+                    return _api_error(f"Knowledge base '{kb_id}' not found", status_code=404)
+
+                count_sql = f"""
+                    SELECT COUNT(*)
+                    FROM files f
+                    JOIN catalog_items c ON c.file_url = f.url
+                    WHERE {where_sql}
+                """
+                total = int(storage._conn.execute(count_sql, params).fetchone()[0] or 0)
+
+                data_sql = f"""
+                    SELECT
+                        f.url,
+                        f.title,
+                        f.original_filename,
+                        f.source_site,
+                        f.bytes,
+                        f.last_seen,
+                        c.category,
+                        c.markdown_updated_at
+                    FROM files f
+                    JOIN catalog_items c ON c.file_url = f.url
+                    WHERE {where_sql}
+                    ORDER BY f.last_seen DESC, f.id DESC
+                    LIMIT ? OFFSET ?
+                """
+                rows = storage._conn.execute(data_sql, params + [limit, offset]).fetchall()
+                files = [
+                    {
+                        "url": row[0],
+                        "title": row[1] or "",
+                        "original_filename": row[2] or "",
+                        "source_site": row[3] or "",
+                        "bytes": row[4] or 0,
+                        "last_seen": row[5],
+                        "category": row[6] or "",
+                        "markdown_updated_at": row[7],
+                    }
+                    for row in rows
+                ]
+
+                return _api_success(
+                    {
+                        "files": files,
+                        "total": total,
+                        "limit": limit,
+                        "offset": offset,
+                        "kb_id": kb_id or None,
+                    }
+                )
+
+            return _with_manager(_run)
+        except ValueError as exc:
+            return _api_error(str(exc), status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error listing selectable RAG files")
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
     @app.route("/api/rag/knowledge-bases/<kb_id>/categories", methods=["GET"])
     @require_permissions("catalog.read")
     def api_rag_get_kb_categories(kb_id: str):
@@ -553,6 +736,7 @@ def register_rag_routes(
                 kb = kb_manager.get_kb(kid)
                 if not kb:
                     return _api_error(f"Knowledge base '{kid}' not found", status_code=404)
+                user_requested = bool(requested)
                 files_to_index = requested
                 if not files_to_index:
                     if force_reindex or not incremental:
@@ -562,6 +746,30 @@ def register_rag_routes(
                         files_to_index = kb_manager.get_files_needing_index(kid)
                 if not files_to_index:
                     return _api_error("No files to index", status_code=400)
+
+                skipped_no_markdown = 0
+                if not user_requested:
+                    # Auto mode: index only files with markdown content.
+                    placeholders = ",".join(["?" for _ in files_to_index])
+                    markdown_rows = _storage._conn.execute(
+                        f"""
+                            SELECT DISTINCT file_url
+                            FROM catalog_items
+                            WHERE file_url IN ({placeholders})
+                              AND markdown_content IS NOT NULL
+                              AND markdown_content != ''
+                        """,
+                        files_to_index,
+                    ).fetchall()
+                    markdown_urls = {row[0] for row in markdown_rows if row and row[0]}
+                    original_count = len(files_to_index)
+                    files_to_index = [url for url in files_to_index if url in markdown_urls]
+                    skipped_no_markdown = max(0, original_count - len(files_to_index))
+                    if not files_to_index:
+                        return _api_error(
+                            "No markdown files to index (all candidates missing markdown)",
+                            status_code=400,
+                        )
 
                 task_payload = {
                     "type": "rag_indexing",
@@ -585,6 +793,7 @@ def register_rag_routes(
                         "job_id": task_id,
                         "kb_id": kid,
                         "file_count": len(files_to_index),
+                        "skipped_no_markdown": skipped_no_markdown,
                         "force_reindex": force_reindex,
                         "incremental": incremental,
                         "status": "pending",
