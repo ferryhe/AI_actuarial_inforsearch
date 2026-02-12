@@ -243,6 +243,7 @@ window.FilePreview = (function() {
         }
         
         const chunksHTML = chunks.map((chunk, index) => {
+            // Note: chunk_index is 0-based in the database, we display as 1-based
             return `
                 <div class="chunk-item" id="chunk-${chunk.chunk_index}">
                     <div class="chunk-header">
