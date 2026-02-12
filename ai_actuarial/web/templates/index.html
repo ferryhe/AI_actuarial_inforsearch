@@ -77,6 +77,17 @@
                 <p>Manage scheduled collections</p>
             </div>
             {% endif %}
+            {% if auth_group in ['admin', 'operator', 'reader'] %}
+            <div class="action-card" onclick="location.href='/rag'">
+                <div class="action-icon">
+                    <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                        <use xlink:href="#icon-tag"></use>
+                    </svg>
+                </div>
+                <h4>Knowledge Bases</h4>
+                <p>Manage RAG knowledge bases</p>
+            </div>
+            {% endif %}
             <div class="action-card" onclick="location.href='/database'">
                 <div class="action-icon">
                     <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">

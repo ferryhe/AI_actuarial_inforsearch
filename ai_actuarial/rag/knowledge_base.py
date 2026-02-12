@@ -776,6 +776,8 @@ class KnowledgeBaseManager:
             FROM catalog_items ci
             WHERE ({placeholders})
             AND ci.status = 'ok'
+            AND ci.markdown_content IS NOT NULL
+            AND ci.markdown_content != ''
         """, params)
         
         file_urls = [row[0] for row in cursor.fetchall()]

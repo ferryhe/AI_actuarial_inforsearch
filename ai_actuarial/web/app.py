@@ -185,6 +185,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "catalog.write",
             "markdown.read",
             "markdown.write",
+            "config.write",
             "schedule.write",
             "tasks.view",
             "tasks.run",
@@ -685,6 +686,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def tasks():
         """Task progress monitoring page."""
         return render_template("tasks.html")
+
+    @app.route("/rag")
+    @require_permissions("catalog.read")
+    def rag_management():
+        """RAG knowledge base management page."""
+        return render_template("rag_management.html")
+
+    @app.route("/rag/<kb_id>")
+    @require_permissions("catalog.read")
+    def rag_detail(kb_id: str):
+        """RAG knowledge base detail page."""
+        return render_template("rag_detail.html", kb_id=kb_id)
     
     @app.route("/scheduled_tasks")
     @require_permissions("tasks.view")
@@ -2093,6 +2106,87 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 progress_callback(100, 100, f"Conversion complete. Converted: {converted_count}, Skipped: {skipped_count}, Errors: {error_count}")
                 _append_task_log(task_id, "INFO", f"Conversion complete. converted={converted_count} skipped={skipped_count} errors={error_count}")
 
+            elif collection_type == "rag_indexing":
+                from ai_actuarial.rag.indexing import IndexingPipeline
+                from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+
+                kb_id = str(data.get("kb_id") or "").strip()
+                if not kb_id:
+                    raise ValueError("kb_id is required for rag_indexing task")
+
+                kb_manager = KnowledgeBaseManager(storage)
+                kb = kb_manager.get_kb(kb_id)
+                if not kb:
+                    raise ValueError(f"Knowledge base '{kb_id}' not found")
+
+                file_urls = data.get("file_urls") or []
+                if not isinstance(file_urls, list):
+                    raise ValueError("file_urls must be a list")
+                file_urls = [str(url).strip() for url in file_urls if str(url).strip()]
+
+                force_reindex = bool(data.get("force_reindex", False))
+                incremental = bool(data.get("incremental", True))
+                if not file_urls:
+                    if force_reindex or not incremental:
+                        file_urls = [
+                            str(item.get("file_url")).strip()
+                            for item in kb_manager.get_kb_files(kb_id)
+                            if item.get("file_url")
+                        ]
+                    else:
+                        file_urls = kb_manager.get_files_needing_index(kb_id)
+
+                if not file_urls:
+                    raise ValueError("No files to index")
+
+                try:
+                    metadata = kb_manager.get_rag_task_metadata(kb_id)
+                    _append_task_log(
+                        task_id,
+                        "INFO",
+                        (
+                            f"RAG indexing pre-check for {kb_id}: "
+                            f"pending={metadata.get('pending_files', 0)}, "
+                            f"estimated_seconds={metadata.get('estimated_time_seconds', 0)}"
+                        ),
+                    )
+                except Exception as exc:
+                    _append_task_log(task_id, "WARNING", f"RAG task metadata pre-check failed: {exc}")
+
+                def rag_progress(message: str, current: int, total: int):
+                    progress_callback(current, total, message)
+                    if message:
+                        _append_task_log(task_id, "INFO", message)
+
+                pipeline = IndexingPipeline(kb_manager, progress_callback=rag_progress)
+                stats = pipeline.index_files(kb_id=kb_id, file_urls=file_urls, force_reindex=force_reindex)
+
+                class RagIndexResult:
+                    def __init__(self, payload: dict[str, Any]):
+                        self.success = payload.get("error_files", 0) == 0
+                        self.items_found = payload.get("total_files", 0)
+                        self.items_downloaded = payload.get("indexed_files", 0)
+                        self.items_skipped = payload.get("skipped_files", 0)
+                        self.errors = [
+                            f"{err.get('file_url')}: {err.get('error')}"
+                            for err in payload.get("errors", [])
+                        ][:20]
+                        self.rag_total_chunks = payload.get("total_chunks", 0)
+                        self.rag_error_files = payload.get("error_files", 0)
+
+                result = RagIndexResult(stats)
+                _append_task_log(
+                    task_id,
+                    "INFO",
+                    (
+                        f"RAG indexing complete for {kb_id}: "
+                        f"indexed={stats.get('indexed_files', 0)}, "
+                        f"skipped={stats.get('skipped_files', 0)}, "
+                        f"errors={stats.get('error_files', 0)}, "
+                        f"chunks={stats.get('total_chunks', 0)}"
+                    ),
+                )
+
             storage.close()
             
             # Update status
@@ -2113,6 +2207,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "catalog_ok": getattr(result, "catalog_ok", None),
                         "catalog_skipped": getattr(result, "catalog_skipped", None),
                         "catalog_errors": getattr(result, "catalog_errors", None),
+                        "rag_total_chunks": getattr(result, "rag_total_chunks", None),
+                        "rag_error_files": getattr(result, "rag_error_files", None),
                     })
                     # Check if stopped
                     if task_data.get("stop_requested"):
@@ -2216,6 +2312,61 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 return f"Export failed: {e}", 500
             return "Export failed", 500
 
+    def _start_background_task(
+        collection_type: str,
+        data: dict[str, Any],
+        *,
+        task_name: str | None = None,
+        extra_fields: dict[str, Any] | None = None,
+    ) -> str:
+        """Create and start a background task, returning task ID."""
+        task_id = f"task_{int(time.time() * 1000)}_{secrets.token_hex(2)}"
+        name = task_name or data.get("name", f"{collection_type.capitalize()} Collection")
+        log_file = str(_task_log_path(task_id))
+        task_data: dict[str, Any] = {
+            "id": task_id,
+            "name": name,
+            "type": collection_type,
+            "status": "pending",
+            "progress": 0,
+            "started_at": datetime.now().isoformat(),
+            "items_processed": 0,
+            "items_total": 0,
+            "log_file": log_file,
+        }
+        if extra_fields:
+            task_data.update(extra_fields)
+
+        with _task_lock:
+            _active_tasks[task_id] = task_data
+
+        _append_task_log(task_id, "INFO", f"Task created (type={collection_type})")
+
+        thread = threading.Thread(
+            target=execute_collection_task,
+            args=(task_id, collection_type, data),
+            daemon=True,
+        )
+        thread.start()
+        return task_id
+
+    def _get_rag_kb_tasks(kb_id: str, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
+        """Get active and history task rows for one KB's rag_indexing jobs."""
+        with _task_lock:
+            active = [
+                dict(task)
+                for task in _active_tasks.values()
+                if task.get("type") == "rag_indexing" and task.get("kb_id") == kb_id
+            ]
+            history = [
+                dict(task)
+                for task in _task_history
+                if task.get("type") == "rag_indexing" and task.get("kb_id") == kb_id
+            ]
+        active.sort(key=lambda t: t.get("started_at", ""), reverse=True)
+        history.sort(key=lambda t: t.get("started_at", ""), reverse=True)
+        return {"active": active[:limit], "history": history[:limit]}
+
     @app.route("/api/collections/run", methods=["POST"])
     @require_permissions("tasks.run")
     @_limit("10 per minute")
@@ -2236,6 +2387,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 "catalog",
                 "quick_check",
                 "markdown_conversion",
+                "rag_indexing",
             ]
 
             def _reject_request(reason: str, *, override_type: str | None = None):
@@ -2281,32 +2433,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                  has_scan = data.get("scan_count") not in (None, "", "null")
                  if not has_urls and not has_scan:
                      return _reject_request("No files selected for markdown conversion")
+            if collection_type == "rag_indexing" and not str(data.get("kb_id") or "").strip():
+                 return _reject_request("kb_id is required for rag_indexing")
 
-            task_id = f"task_{int(datetime.now().timestamp())}"
             task_name = data.get("name", f"{collection_type.capitalize()} Collection")
-             
-            with _task_lock:
-                log_file = str(_task_log_path(task_id))
-                _active_tasks[task_id] = {
-                    "id": task_id,
-                    "name": task_name,
-                    "type": collection_type,
-                    "status": "pending",
-                    "progress": 0,
-                    "started_at": datetime.now().isoformat(),
-                    "items_processed": 0,
-                    "items_total": 0,
-                    "log_file": log_file,
-                }
-            _append_task_log(task_id, "INFO", f"Task created (type={collection_type})")
-             
-            # Start background thread
-            thread = threading.Thread(
-                target=execute_collection_task,
-                args=(task_id, collection_type, data)
-            )
-            thread.daemon = True
-            thread.start()
+            task_id = _start_background_task(collection_type, data, task_name=task_name)
             
             return jsonify({
                 "success": True, 
@@ -3018,7 +3149,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     # ========================================================================
     try:
         from ai_actuarial.web.rag_routes import register_rag_routes
-        register_rag_routes(app, db_path, require_permissions)
+        register_rag_routes(
+            app,
+            db_path,
+            require_permissions,
+            start_background_task=_start_background_task,
+            get_kb_tasks=_get_rag_kb_tasks,
+        )
         logger.info("RAG API routes registered")
     except ImportError as e:
         logger.warning(f"RAG routes not available: {e}")
