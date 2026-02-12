@@ -597,7 +597,7 @@
             <div class="form-group">
                 <label>Chunk Profile</label>
                 <select name="profile_id" id="chunk-profile-select" onchange="toggleChunkProfileCustomFields()">
-                    <option value="">Custom profile (from fields below)</option>
+                    <option value="">Loading profiles...</option>
                 </select>
                 <small class="form-hint">Select an existing profile to reuse, or choose custom. Chunk profile stores chunk strategy and tokenizer settings.</small>
             </div>
@@ -1387,7 +1387,7 @@ async function loadChunkProfiles() {
         }
         const data = _extractApiData(payload) || {};
         chunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
-        select.innerHTML = '<option value=\"\">Custom profile (from fields below)</option>';
+        select.innerHTML = '';
         chunkProfiles.forEach((profile) => {
             const cfg = _parseProfileConfig(profile);
             const chunkModel = (cfg.metadata && cfg.metadata.chunk_model) ? cfg.metadata.chunk_model : 'gpt-4';
@@ -1396,6 +1396,16 @@ async function loadChunkProfiles() {
             option.textContent = `${profile.name} | model=${chunkModel} | size=${profile.chunk_size}, overlap=${profile.chunk_overlap}, ${profile.splitter}/${profile.tokenizer}`;
             select.appendChild(option);
         });
+        const customOpt = document.createElement('option');
+        customOpt.value = '';
+        customOpt.textContent = 'Custom profile (from fields below)';
+        select.appendChild(customOpt);
+
+        if (chunkProfiles.length > 0) {
+            select.value = chunkProfiles[0].profile_id;
+        } else {
+            select.value = '';
+        }
     } catch (e) {
         console.error('Failed loading chunk profiles:', e);
         select.innerHTML = '<option value=\"\">Custom profile (from fields below)</option>';
