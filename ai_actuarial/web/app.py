@@ -185,6 +185,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "catalog.write",
             "markdown.read",
             "markdown.write",
+            "config.write",
             "schedule.write",
             "tasks.view",
             "tasks.run",
