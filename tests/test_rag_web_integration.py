@@ -57,6 +57,8 @@ class TestRagWebIntegration(unittest.TestCase):
         os.environ["BOOTSTRAP_ADMIN_TOKEN"] = self.admin_token
         os.environ["FLASK_SECRET_KEY"] = "test-rag-secret-key"
         os.environ["REQUIRE_AUTH"] = "false"
+        # Set RAG_DATA_DIR to temp directory to avoid polluting the repo
+        os.environ["RAG_DATA_DIR"] = os.path.join(self.temp_dir, "rag_data")
 
         self.app = create_app({"TESTING": True, "DEBUG": True})
         self.client = self.app.test_client()
