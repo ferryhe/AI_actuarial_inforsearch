@@ -92,9 +92,10 @@ class MistralEngine(Engine):
         markdown, assets = self._render_markdown_and_assets(path.stem, combined_response)
 
         if len(chunks) > 1:
+            ranges = ", ".join(self._format_range(chunk) for chunk in chunks if chunk.page_range)
             notice = (
                 f"_Note: Source document was split into {len(chunks)} OCR chunks "
-                "to stay within token limits._"
+                f"({ranges}) to stay within token limits._"
             )
             markdown = f"{notice}\n\n{markdown}"
 
