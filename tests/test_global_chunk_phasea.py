@@ -152,6 +152,12 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
             },
         )
         self.assertEqual(create_kb_resp.status_code, 201)
+        add_file_resp = self.client.post(
+            f"/api/rag/knowledge-bases/{kb_id}/files",
+            headers=self.auth_header,
+            json={"file_urls": [self.file_url]},
+        )
+        self.assertEqual(add_file_resp.status_code, 200)
 
         bind_resp = self.client.post(
             f"/api/rag/knowledge-bases/{kb_id}/bindings",
@@ -162,6 +168,19 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
         bind_data = bind_resp.get_json()
         self.assertTrue(bind_data["success"])
         self.assertEqual(bind_data["data"]["created"], 1)
+
+        files_resp = self.client.get(
+            f"/api/rag/knowledge-bases/{kb_id}/files",
+            headers=self.auth_header,
+        )
+        self.assertEqual(files_resp.status_code, 200)
+        files_payload = files_resp.get_json()["data"]
+        self.assertEqual(files_payload["total_files"], 1)
+        self.assertIn("profile_summary", files_payload)
+        file_row = files_payload["files"][0]
+        self.assertEqual(file_row.get("chunk_set_id"), chunk_set_id)
+        self.assertGreaterEqual(int(file_row.get("chunk_version_count") or 0), 1)
+        self.assertIn("chunk_set_updated_at", file_row)
 
         status_resp = self.client.get(
             f"/api/rag/knowledge-bases/{kb_id}/composition/status",

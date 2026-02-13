@@ -45,9 +45,6 @@
                     <li><a href="{{ url_for('tasks') }}" class="nav-link">Tasks</a></li>
                     {% endif %}
 
-                    {% if auth_group in ['admin', 'operator'] %}
-                    <li><a href="{{ url_for('scheduled_tasks') }}" class="nav-link">Schedule</a></li>
-                    {% endif %}
                     {% if auth_group in ['admin', 'operator', 'reader'] %}
                     <li><a href="{{ url_for('rag_management') }}" class="nav-link">Knowledge Bases</a></li>
                     {% endif %}

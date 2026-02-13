@@ -60,20 +60,7 @@
             </div>
         </div>
 
-        <!-- Card 5: Catalog Incremental -->
-        <div class="task-card-launch" onclick="openCatalogModal()">
-            <div class="launch-icon">
-                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
-                    <use xlink:href="#icon-tag"></use>
-                </svg>
-            </div>
-            <div class="launch-content">
-                <h4>Cataloging</h4>
-                <p>AI Categorization</p>
-            </div>
-        </div>
-        
-         <!-- Card 6: Scheduled (Manage) -->
+        <!-- Card 5: Scheduled (Manage) -->
         <div class="task-card-launch" onclick="location.href='/scheduled_tasks'">
             <div class="launch-icon">
                 <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
@@ -83,6 +70,19 @@
             <div class="launch-content">
                 <h4>Scheduled</h4>
                 <p>Manage Schedules</p>
+            </div>
+        </div>
+        
+         <!-- Card 6: Catalog Incremental -->
+        <div class="task-card-launch" onclick="openCatalogModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-tag"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Cataloging</h4>
+                <p>AI Categorization</p>
             </div>
         </div>
         
@@ -112,20 +112,7 @@
             </div>
         </div>
 
-        <!-- Card 9: KB Index Build -->
-        <div class="task-card-launch" onclick="openKbIndexBuildModal()">
-            <div class="launch-icon">
-                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
-                    <use xlink:href="#icon-folder"></use>
-                </svg>
-            </div>
-            <div class="launch-content">
-                <h4>Build KB Index</h4>
-                <p>Run KB index task</p>
-            </div>
-        </div>
-
-        <!-- Card 10: Create Knowledge Base -->
+        <!-- Card 9: Create Knowledge Base -->
         <div class="task-card-launch" onclick="location.href='/rag?open=create'">
             <div class="launch-icon">
                 <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
@@ -135,6 +122,19 @@
             <div class="launch-content">
                 <h4>Create KB</h4>
                 <p>Create Knowledge Base</p>
+            </div>
+        </div>
+
+        <!-- Card 10: KB Index Build -->
+        <div class="task-card-launch" onclick="openKbIndexBuildModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-folder"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Build KB Index</h4>
+                <p>Run KB index task</p>
             </div>
         </div>
     </div>
@@ -361,6 +361,20 @@
         <div id="catalog-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="catalog-form" onsubmit="startCatalog(event)">
             <div class="form-group">
+                <label>Task Scope</label>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleCatalogScopeMode()"> By Index Range</label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleCatalogScopeMode()"> By Category</label>
+                </div>
+            </div>
+            <div class="form-group" id="catalog-category-group" style="display:none;">
+                <label>Category</label>
+                <select name="category" id="catalog-category-select" onchange="loadCatalogStats()">
+                    <option value="">Loading categories...</option>
+                </select>
+                <small class="form-hint">Select one category; task will scan this category only.</small>
+            </div>
+            <div class="form-group" id="catalog-start-index-group">
                 <label>Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="catalog-scan-start-index" value="1" min="1">
                 <small class="form-hint">Use the stats above to jump to the first uncataloged candidate.</small>
@@ -550,6 +564,20 @@
         <div id="markdown-conversion-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="markdown-conversion-form" onsubmit="startMarkdownConversion(event)">
             <div class="form-group">
+                <label>Task Scope</label>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleMarkdownScopeMode()"> By Index Range</label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleMarkdownScopeMode()"> By Category</label>
+                </div>
+            </div>
+            <div class="form-group" id="md-category-group" style="display:none;">
+                <label>Category</label>
+                <select name="category" id="md-category-select" onchange="loadMarkdownConversionStats()">
+                    <option value="">Loading categories...</option>
+                </select>
+                <small class="form-hint">Select one category; conversion runs only on this category.</small>
+            </div>
+            <div class="form-group">
                 <label>Conversion Tool</label>
                 <select name="conversion_tool" id="conversion-tool-select">
                     <option value="docling" selected>Docling (Multi-format)</option>
@@ -559,7 +587,7 @@
                 </select>
                 <small class="form-hint">Different tools work better for different file types</small>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="md-start-index-group">
                 <label>Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="md-scan-start-index" value="1" min="1">
                 <small class="form-hint">Use the stats above to jump to the first file without markdown.</small>
@@ -594,6 +622,20 @@
         <p class="hint">Batch generate chunk sets from markdown files. Existing same-profile chunk sets can be reused or overwritten.</p>
         <div id="chunk-generation-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="chunk-generation-form" onsubmit="startChunkGeneration(event)">
+            <div class="form-group">
+                <label>Task Scope</label>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleChunkScopeMode()"> By Index Range</label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleChunkScopeMode()"> By Category</label>
+                </div>
+            </div>
+            <div class="form-group" id="chunk-category-group" style="display:none;">
+                <label>Category</label>
+                <select name="category" id="chunk-category-select" onchange="loadChunkGenerationStats()">
+                    <option value="">Loading categories...</option>
+                </select>
+                <small class="form-hint">Select one category; chunk generation runs only on this category.</small>
+            </div>
             <div class="form-group">
                 <label>Chunk Profile</label>
                 <select name="profile_id" id="chunk-profile-select" onchange="toggleChunkProfileCustomFields()">
@@ -648,7 +690,7 @@
                     <input type="text" name="version" value="v1" maxlength="32">
                 </div>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="chunk-start-index-group">
                 <label>Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="chunk-scan-start-index" value="1" min="1">
             </div>
@@ -1108,13 +1150,13 @@ function _bindCatalogModal() {
 function openCatalogModal() {
     openModal('catalog-modal');
     _bindCatalogModal();
-    loadCatalogStats();
+    toggleCatalogScopeMode();
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
 function openChunkGenerationModal() {
     openModal('chunk-generation-modal');
-    loadChunkGenerationStats();
+    toggleChunkScopeMode();
     loadChunkProfiles();
     loadKbOptionsForChunkGeneration();
 }
@@ -1224,20 +1266,40 @@ function startCatalog(e) {
     const form = e.target;
     if (!validateForm(form)) return;
     const formData = new FormData(form);
+    const scopeMode = (formData.get('scope_mode') || 'index').toString().trim().toLowerCase();
+    const category = (formData.get('category') || '').toString().trim();
     const overwrite = formData.get('overwrite_existing') === 'on';
     const skipExisting = !overwrite;
-    
-    startTask('catalog', {
+    const scanCount = parseInt(formData.get('scan_count') || '50');
+    if (!Number.isFinite(scanCount) || scanCount < 1) {
+        showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+    if (scopeMode === 'category' && !category) {
+        showNotification('Please select a category', 'error');
+        return;
+    }
+
+    const payload = {
         type: 'catalog',
-        scan_start_index: parseInt(formData.get('scan_start_index') || '1'),
-        scan_count: parseInt(formData.get('scan_count') || '50'),
+        scope_mode: scopeMode,
+        scan_count: scanCount,
         retry_errors: formData.get('retry_errors') === 'on',
         input_source: formData.get('input_source') || 'source',
         skip_existing: skipExisting,
         overwrite_existing: overwrite,
         provider: formData.get('provider'),
-        name: `Cataloging (start ${formData.get('scan_start_index') || 1}, scan ${formData.get('scan_count') || 50})`
-    });
+    };
+    if (scopeMode === 'category') {
+        payload.category = category;
+        payload.name = `Cataloging (category ${category}, scan ${scanCount})`;
+    } else {
+        const startIndex = parseInt(formData.get('scan_start_index') || '1');
+        payload.scan_start_index = Number.isFinite(startIndex) && startIndex >= 1 ? startIndex : 1;
+        payload.name = `Cataloging (start ${payload.scan_start_index}, scan ${scanCount})`;
+    }
+
+    startTask('catalog', payload);
     closeModal('catalog-modal');
 }
 
@@ -1249,7 +1311,13 @@ async function loadCatalogStats() {
         const form = document.getElementById('catalog-form');
         const provider = form ? (form.querySelector('select[name=\"provider\"]')?.value || 'openai') : 'openai';
         const inputSource = form ? (form.querySelector('select[name=\"input_source\"]')?.value || 'markdown') : 'markdown';
-        const resp = await fetch(`/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`);
+        const scopeMode = form ? getScopeMode(form, 'index') : 'index';
+        const category = form ? (form.querySelector('#catalog-category-select')?.value || '') : '';
+        let url = `/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`;
+        if (scopeMode === 'category' && category) {
+            url += `&category=${encodeURIComponent(category)}`;
+        }
+        const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
@@ -1278,10 +1346,72 @@ let chunkGenerationStats = null;
 let chunkProfiles = [];
 let kbIndexBuildKbs = [];
 let chunkGenerationKbs = [];
+let taskCategories = [];
+
+async function loadTaskCategories() {
+    try {
+        const resp = await fetch('/api/categories?mode=used');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        taskCategories = Array.isArray(data.categories) ? data.categories : [];
+    } catch (e) {
+        console.error('Failed loading categories for task scope:', e);
+        taskCategories = [];
+    }
+    const options = taskCategories
+        .map((cat) => `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`)
+        .join('');
+    ['catalog-category-select', 'md-category-select', 'chunk-category-select'].forEach((id) => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = `<option value="">Select category</option>${options}`;
+    });
+}
+
+function getScopeMode(form, fallback = 'index') {
+    const scope = (new FormData(form).get('scope_mode') || fallback).toString().trim().toLowerCase();
+    return scope === 'category' ? 'category' : 'index';
+}
+
+function toggleCatalogScopeMode() {
+    const form = document.getElementById('catalog-form');
+    if (!form) return;
+    const mode = getScopeMode(form, 'index');
+    const categoryGroup = document.getElementById('catalog-category-group');
+    const startGroup = document.getElementById('catalog-start-index-group');
+    if (categoryGroup) categoryGroup.style.display = mode === 'category' ? 'block' : 'none';
+    if (startGroup) startGroup.style.display = mode === 'category' ? 'none' : 'block';
+    if (mode === 'category') loadTaskCategories();
+    loadCatalogStats();
+}
+
+function toggleMarkdownScopeMode() {
+    const form = document.getElementById('markdown-conversion-form');
+    if (!form) return;
+    const mode = getScopeMode(form, 'index');
+    const categoryGroup = document.getElementById('md-category-group');
+    const startGroup = document.getElementById('md-start-index-group');
+    if (categoryGroup) categoryGroup.style.display = mode === 'category' ? 'block' : 'none';
+    if (startGroup) startGroup.style.display = mode === 'category' ? 'none' : 'block';
+    if (mode === 'category') loadTaskCategories();
+    loadMarkdownConversionStats();
+}
+
+function toggleChunkScopeMode() {
+    const form = document.getElementById('chunk-generation-form');
+    if (!form) return;
+    const mode = getScopeMode(form, 'index');
+    const categoryGroup = document.getElementById('chunk-category-group');
+    const startGroup = document.getElementById('chunk-start-index-group');
+    if (categoryGroup) categoryGroup.style.display = mode === 'category' ? 'block' : 'none';
+    if (startGroup) startGroup.style.display = mode === 'category' ? 'none' : 'block';
+    if (mode === 'category') loadTaskCategories();
+    loadChunkGenerationStats();
+}
 
 function openMarkdownConversionModal() {
     openModal('markdown-conversion-modal');
-    loadMarkdownConversionStats();
+    toggleMarkdownScopeMode();
 }
 
 async function loadMarkdownConversionStats() {
@@ -1289,7 +1419,14 @@ async function loadMarkdownConversionStats() {
     const startEl = document.getElementById('md-scan-start-index');
     if (statsEl) statsEl.textContent = 'Loading stats...';
     try {
-        const resp = await fetch('/api/markdown_conversion/stats');
+        const form = document.getElementById('markdown-conversion-form');
+        const scopeMode = form ? getScopeMode(form, 'index') : 'index';
+        const category = form ? (form.querySelector('#md-category-select')?.value || '') : '';
+        let url = '/api/markdown_conversion/stats';
+        if (scopeMode === 'category' && category) {
+            url += `?category=${encodeURIComponent(category)}`;
+        }
+        const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
@@ -1317,30 +1454,43 @@ function startMarkdownConversion(e) {
 
     const form = e.target;
     const formData = new FormData(form);
+    const scopeMode = (formData.get('scope_mode') || 'index').toString().trim().toLowerCase();
+    const category = (formData.get('category') || '').toString().trim();
     const engine = formData.get('conversion_tool');
-    const startIndex = parseInt(formData.get('scan_start_index') || '1');
     const scanCount = parseInt(formData.get('scan_count') || '50');
     const overwriteExisting = formData.get('overwrite_existing') === 'on';
     const skipExisting = !overwriteExisting;
 
-    if (!Number.isFinite(startIndex) || startIndex < 1) {
-        showNotification('Start index must be >= 1', 'error');
-        return;
-    }
     if (!Number.isFinite(scanCount) || scanCount < 1) {
         showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+    if (scopeMode === 'category' && !category) {
+        showNotification('Please select a category', 'error');
         return;
     }
 
     const payload = {
         type: 'markdown_conversion',
+        scope_mode: scopeMode,
         conversion_tool: engine,
-        scan_start_index: startIndex,
         scan_count: scanCount,
         skip_existing: skipExisting,
         overwrite_existing: overwriteExisting,
-        name: `Markdown Conversion - engine ${engine} (start ${startIndex}, scan ${scanCount})`
+        name: `Markdown Conversion - engine ${engine} (scan ${scanCount})`
     };
+    if (scopeMode === 'category') {
+        payload.category = category;
+        payload.name = `Markdown Conversion - engine ${engine} (category ${category}, scan ${scanCount})`;
+    } else {
+        const startIndex = parseInt(formData.get('scan_start_index') || '1');
+        if (!Number.isFinite(startIndex) || startIndex < 1) {
+            showNotification('Start index must be >= 1', 'error');
+            return;
+        }
+        payload.scan_start_index = startIndex;
+        payload.name = `Markdown Conversion - engine ${engine} (start ${startIndex}, scan ${scanCount})`;
+    }
 
     startTask('markdown_conversion', payload);
     closeModal('markdown-conversion-modal');
@@ -1351,7 +1501,14 @@ async function loadChunkGenerationStats() {
     const startEl = document.getElementById('chunk-scan-start-index');
     if (statsEl) statsEl.textContent = 'Loading stats...';
     try {
-        const resp = await fetch('/api/chunk_generation/stats');
+        const form = document.getElementById('chunk-generation-form');
+        const scopeMode = form ? getScopeMode(form, 'index') : 'index';
+        const category = form ? (form.querySelector('#chunk-category-select')?.value || '') : '';
+        let url = '/api/chunk_generation/stats';
+        if (scopeMode === 'category' && category) {
+            url += `?category=${encodeURIComponent(category)}`;
+        }
+        const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
@@ -1451,19 +1608,20 @@ function startChunkGeneration(e) {
     if (!validateForm(form)) return;
 
     const formData = new FormData(form);
+    const scopeMode = (formData.get('scope_mode') || 'index').toString().trim().toLowerCase();
+    const category = (formData.get('category') || '').toString().trim();
     const profileId = (formData.get('profile_id') || '').toString().trim();
-    const startIndex = parseInt(formData.get('scan_start_index') || '1');
     const scanCount = parseInt(formData.get('scan_count') || '50');
     const overwriteSameProfile = formData.get('overwrite_same_profile') === 'on';
     const kbId = (formData.get('kb_id') || '').toString().trim();
     const bindingMode = (formData.get('binding_mode') || 'follow_latest').toString().trim().toLowerCase() || 'follow_latest';
 
-    if (!Number.isFinite(startIndex) || startIndex < 1) {
-        showNotification('Start index must be >= 1', 'error');
-        return;
-    }
     if (!Number.isFinite(scanCount) || scanCount < 1) {
         showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+    if (scopeMode === 'category' && !category) {
+        showNotification('Please select a category', 'error');
         return;
     }
     if (!['follow_latest', 'pin'].includes(bindingMode)) {
@@ -1473,17 +1631,31 @@ function startChunkGeneration(e) {
 
     const payload = {
         type: 'chunk_generation',
-        scan_start_index: startIndex,
+        scope_mode: scopeMode,
         scan_count: scanCount,
         overwrite_same_profile: overwriteSameProfile,
-        name: `Chunk Generation (start ${startIndex}, scan ${scanCount})`
+        name: `Chunk Generation (scan ${scanCount})`
     };
+    if (scopeMode === 'category') {
+        payload.category = category;
+        payload.name = `Chunk Generation (category ${category}, scan ${scanCount})`;
+    } else {
+        const startIndex = parseInt(formData.get('scan_start_index') || '1');
+        if (!Number.isFinite(startIndex) || startIndex < 1) {
+            showNotification('Start index must be >= 1', 'error');
+            return;
+        }
+        payload.scan_start_index = startIndex;
+        payload.name = `Chunk Generation (start ${startIndex}, scan ${scanCount})`;
+    }
 
     if (profileId) {
         payload.profile_id = profileId;
         const selected = chunkProfiles.find((p) => p.profile_id === profileId);
         if (selected) {
-            payload.name = `Chunk Generation - ${selected.name} (start ${startIndex}, scan ${scanCount})`;
+            payload.name = scopeMode === 'category'
+                ? `Chunk Generation - ${selected.name} (category ${category}, scan ${scanCount})`
+                : `Chunk Generation - ${selected.name} (start ${payload.scan_start_index}, scan ${scanCount})`;
         }
     } else {
         payload.profile_name = (formData.get('profile_name') || 'task-profile').toString().trim() || 'task-profile';
