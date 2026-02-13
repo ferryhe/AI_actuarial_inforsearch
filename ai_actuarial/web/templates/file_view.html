@@ -10,7 +10,7 @@
 {% block content %}
 <div class="file-view-page">
     <div class="page-header">
-        <button onclick="history.back()" class="btn btn-secondary">&larr; Back</button>
+        <a href="{{ return_to or '/database' }}" class="btn btn-secondary">&larr; Back</a>
         <h2>File Details</h2>
     </div>
 
@@ -135,6 +135,7 @@
 
         {% set can_write_catalog = auth_group in ['admin', 'operator'] %}
         {% set can_write_markdown = auth_group in ['admin', 'operator'] %}
+        {% set can_run_rag_tasks = auth_group in ['admin', 'operator'] %}
         {% set can_delete_file = auth_group in ['admin', 'operator'] %}
         {% set can_download_file = auth_group in ['admin', 'operator', 'reader'] %}
 
@@ -153,11 +154,27 @@
             {% endif %}
               
             {% if can_delete_file %}
-            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger">Delete File</button>
             {% endif %}
+
+            <a id="file-preview-link"
+               class="btn btn-secondary btn-small file-preview-top-btn"
+               href="/file_preview?file_url={{ file.url|urlencode }}">
+                File Preview
+            </a>
         </div>
 
         <div class="markdown-section">
+            <div class="rag-status-panel">
+                <div id="chunk-meta" class="markdown-meta rag-meta" style="display:none;"></div>
+                {% if can_run_rag_tasks %}
+                <div id="chunk-actions" class="rag-index-actions" style="display:none;">
+                    <button id="chunk-modify-btn" class="btn btn-secondary" onclick="openChunkTaskModal()">
+                        Modify Chunk
+                    </button>
+                </div>
+                {% endif %}
+            </div>
             <div class="markdown-header">
                 <h4>Markdown Content</h4>
                 <div class="markdown-tabs">
@@ -179,10 +196,10 @@
             <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
                 <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
                  <div class="markdown-convert-actions">
-                      <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
-                      <select id="markdown-convert-engine" class="markdown-convert-select">
-                         <option value="marker">Marker</option>
+                     <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
+                     <select id="markdown-convert-engine" class="markdown-convert-select">
                           <option value="docling">Docling</option>
+                         <option value="marker">Marker</option>
                           <option value="mistral">Mistral OCR</option>
                           <option value="deepseekocr">DeepSeek OCR</option>
                       </select>
@@ -218,8 +235,8 @@
       <div class="form-group">
         <label>Catalog From</label>
         <select name="input_source" id="file-catalog-input-source">
+          <option value="markdown" selected>Markdown</option>
           <option value="source">Source file</option>
-          <option value="markdown">Markdown</option>
         </select>
         <small class="form-hint">Markdown uses converted/edited markdown content (if available).</small>
       </div>
@@ -232,10 +249,10 @@
       <div class="form-group">
         <label>AI Provider</label>
         <select name="provider" id="file-catalog-provider">
-          <option value="local">Local (KeyBERT)</option>
-          <option value="openai" {% if not openai_configured %}disabled{% endif %}>
+          <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
             OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
           </option>
+          <option value="local" {% if not openai_configured %}selected{% endif %}>Local (KeyBERT)</option>
         </select>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
@@ -247,11 +264,64 @@
 </div>
 {% endif %}
 
+{% if can_run_rag_tasks %}
+<div id="file-chunk-task-modal" class="modal" style="display:none;">
+  <div class="modal-content catalog-task-modal">
+    <span class="close" onclick="closeChunkTaskModal()">&times;</span>
+    <h3>
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <use xlink:href="#icon-tag"></use>
+      </svg>
+      Modify Chunk (This File)
+    </h3>
+    <p class="hint">Submit a single-file chunk generation task. Choose a profile and overwrite policy.</p>
+    <form id="file-chunk-task-form" onsubmit="submitChunkTask(event)">
+      <div class="form-group">
+        <label>Chunk Profile</label>
+        <select name="profile_id" id="file-chunk-profile-select" required></select>
+        <small class="form-hint">Same profile + overwrite = replace current chunk set. Different profile = add a new chunk set.</small>
+      </div>
+      <div class="form-group">
+        <label>Bind To Knowledge Base (Optional)</label>
+        <select name="kb_id" id="file-chunk-kb-select">
+          <option value="">Do not bind to KB</option>
+        </select>
+        <small class="form-hint">If selected, this file's generated chunk set will be bound to that KB.</small>
+      </div>
+      <div class="form-group">
+        <label>Binding Mode</label>
+        <select name="binding_mode" id="file-chunk-binding-mode-select">
+          <option value="follow_latest" selected>Follow Latest (Recommended)</option>
+          <option value="pin">Pin (Fixed Version)</option>
+        </select>
+        <small class="form-hint">Follow Latest auto-tracks new same-profile chunk sets. Pin keeps current chunk_set_id.</small>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="overwrite_same_profile" id="file-chunk-overwrite-same-profile"> Overwrite same-profile chunk set
+        </label>
+        <small class="form-hint">Unchecked = keep existing same-profile chunk and reuse it.</small>
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="closeChunkTaskModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Submit Chunk Task</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <script>
     let editMode = false;
     const fileUrl = {{ file.url|tojson }};
     const initialCatalogVersion = {{ (file.catalog_version or '')|tojson }};
     const initialCatalogProcessedAt = {{ (file.catalog_processed_at or file.catalog_updated_at or '')|tojson }};
+    const canRunRagTasks = {{ 'true' if can_run_rag_tasks else 'false' }};
+    let hasMarkdownForChunk = false;
+    let fileChunkSets = [];
+    let fileChunkProfiles = [];
+    let fileChunkKbs = [];
+    let chunkKbControlBound = false;
     let categoryOptionsLoaded = false;
     let categoryOptions = [];
     let selectedCategories = [];
@@ -282,8 +352,8 @@
         const form = document.getElementById('file-catalog-form');
         if (!form) return;
 
-        const provider = document.getElementById('file-catalog-provider')?.value || 'local';
-        const inputSource = document.getElementById('file-catalog-input-source')?.value || 'source';
+        const provider = document.getElementById('file-catalog-provider')?.value || 'openai';
+        const inputSource = document.getElementById('file-catalog-input-source')?.value || 'markdown';
         const overwrite = document.getElementById('file-catalog-overwrite-existing')?.checked || false;
         const skipExisting = !overwrite;
 
@@ -331,6 +401,13 @@
         return 'Source file';
     }
 
+    function mapMarkdownSourceLabel(source) {
+        const s = String(source || '').trim();
+        if (!s) return 'Unknown';
+        if (s.toLowerCase() === 'manual') return 'Manual';
+        return s;
+    }
+
     function mapCatalogProviderLabel(provider) {
         const p = String(provider || '').trim().toLowerCase();
         if (p === 'openai') return 'OpenAI (ChatGPT)';
@@ -341,7 +418,7 @@
     function parseCatalogVersion(version) {
         const raw = String(version || '').trim();
         if (!raw) {
-            return { source: 'source', provider: 'local' };
+            return { source: 'markdown', provider: 'openai' };
         }
         const parts = raw.split(':').map(v => v.trim()).filter(Boolean);
         if (parts.length >= 3) {
@@ -350,7 +427,22 @@
         const lower = raw.toLowerCase();
         if (lower.includes('openai')) return { source: 'source', provider: 'openai' };
         if (lower.includes('markdown')) return { source: 'markdown', provider: 'local' };
-        return { source: 'source', provider: 'local' };
+        return { source: 'markdown', provider: 'openai' };
+    }
+
+    function formatLocalTimestamp(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return '-';
+        const parsed = new Date(raw);
+        if (isNaN(parsed.getTime())) return raw;
+        return parsed.toLocaleString(undefined, {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
     }
 
     function renderCatalogMeta(version, updatedAt) {
@@ -363,8 +455,236 @@
             el.textContent = '';
             return;
         }
-        el.textContent = `${mapCatalogSourceLabel(parsed.source)} | ${mapCatalogProviderLabel(parsed.provider)} | Updated: ${timestamp || '-'}`;
+        el.textContent = `${mapCatalogSourceLabel(parsed.source)} | ${mapCatalogProviderLabel(parsed.provider)} | Updated: ${formatLocalTimestamp(timestamp)}`;
         el.style.display = 'block';
+    }
+
+    function _extractApiData(payload) {
+        if (payload && typeof payload === 'object' && payload.data !== undefined) {
+            return payload.data;
+        }
+        return payload;
+    }
+
+    function _parseProfileConfig(profile) {
+        const raw = profile && profile.config_json ? profile.config_json : '';
+        if (!raw) return {};
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_e) {
+            return {};
+        }
+    }
+
+    function _getChunkModel(profile) {
+        const cfg = _parseProfileConfig(profile);
+        const metadata = cfg && typeof cfg.metadata === 'object' ? cfg.metadata : {};
+        return metadata && metadata.chunk_model ? String(metadata.chunk_model) : 'gpt-4';
+    }
+
+    function fillChunkProfileSelect(options, preferredProfileId = '') {
+        const select = document.getElementById('file-chunk-profile-select');
+        if (!select) return;
+        select.innerHTML = '';
+        options.forEach((item) => {
+            const opt = document.createElement('option');
+            opt.value = item.profile_id;
+            const model = _getChunkModel(item);
+            opt.textContent = `${item.name || item.profile_id} | model=${model} | size=${item.chunk_size}, overlap=${item.chunk_overlap}`;
+            select.appendChild(opt);
+        });
+        if (preferredProfileId && options.some((item) => item.profile_id === preferredProfileId)) {
+            select.value = preferredProfileId;
+        }
+    }
+
+    async function loadFileChunkProfiles() {
+        try {
+            const resp = await fetch('/api/chunk/profiles');
+            const payload = await resp.json();
+            if (!resp.ok || !payload.success) {
+                throw new Error(payload.error || 'Failed loading chunk profiles');
+            }
+            const data = _extractApiData(payload) || {};
+            fileChunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+
+            let preferred = '';
+            if (fileChunkSets.length > 0) {
+                preferred = String(fileChunkSets[0].profile_id || '');
+            }
+            fillChunkProfileSelect(fileChunkProfiles, preferred);
+        } catch (err) {
+            console.error('Failed loading chunk profile options:', err);
+            fileChunkProfiles = [];
+        }
+    }
+
+    async function loadFileChunkSets() {
+        try {
+            const resp = await fetch(`/api/files/${encodeURIComponent(fileUrl)}/chunk-sets`);
+            const payload = await resp.json();
+            if (!resp.ok || !payload.success) {
+                throw new Error(payload.error || 'Failed loading chunk status');
+            }
+            const data = _extractApiData(payload) || {};
+            fileChunkSets = Array.isArray(data.chunk_sets) ? data.chunk_sets : [];
+            return true;
+        } catch (err) {
+            console.error('Failed loading file chunk sets:', err);
+            fileChunkSets = [];
+            return false;
+        }
+    }
+
+    function fillKbSelect(options) {
+        const select = document.getElementById('file-chunk-kb-select');
+        if (!select) return;
+        const current = String(select.value || '').trim();
+        const entries = Array.isArray(options) ? options : [];
+        select.innerHTML = '<option value="">Do not bind to KB</option>';
+        entries.forEach((kb) => {
+            const opt = document.createElement('option');
+            opt.value = String(kb.kb_id || '');
+            opt.textContent = `${kb.name || kb.kb_id} (${kb.kb_id})`;
+            select.appendChild(opt);
+        });
+        if (current && entries.some((kb) => String(kb.kb_id || '') === current)) {
+            select.value = current;
+        }
+        toggleBindingModeControl();
+    }
+
+    function toggleBindingModeControl() {
+        const kbSelect = document.getElementById('file-chunk-kb-select');
+        const modeSelect = document.getElementById('file-chunk-binding-mode-select');
+        if (!kbSelect || !modeSelect) return;
+        const hasKb = String(kbSelect.value || '').trim().length > 0;
+        modeSelect.disabled = !hasKb;
+    }
+
+    async function loadFileChunkKbs() {
+        try {
+            const resp = await fetch('/api/rag/knowledge-bases');
+            const payload = await resp.json();
+            if (!resp.ok || !payload.success) {
+                throw new Error(payload.error || 'Failed loading knowledge bases');
+            }
+            const rows = _extractApiData(payload) || [];
+            fileChunkKbs = Array.isArray(rows) ? rows : [];
+            fillKbSelect(fileChunkKbs);
+        } catch (err) {
+            console.error('Failed loading KB options:', err);
+            fileChunkKbs = [];
+            fillKbSelect([]);
+        }
+    }
+
+    function renderChunkStatusMeta() {
+        const chunkMeta = document.getElementById('chunk-meta');
+        const chunkActions = document.getElementById('chunk-actions');
+        if (!chunkMeta) return;
+
+        const hasChunk = Array.isArray(fileChunkSets) && fileChunkSets.length > 0;
+        if (hasChunk) {
+            const latest = fileChunkSets[0];
+            const updatedAt = latest.updated_at || latest.created_at || '';
+            const profileLabel = latest.profile_name || latest.profile_id || 'Unknown profile';
+            const chunkCount = Number(latest.chunk_count || 0);
+            const totalSets = fileChunkSets.length;
+            const setsExtra = totalSets > 1 ? ` | Profiles: ${totalSets}` : '';
+            chunkMeta.textContent = `Chunk | ${profileLabel} | Updated: ${formatLocalTimestamp(updatedAt)} | Chunks: ${chunkCount}${setsExtra}`;
+            chunkMeta.style.display = 'block';
+        } else {
+            chunkMeta.style.display = 'none';
+            chunkMeta.textContent = '';
+        }
+
+        if (chunkActions && canRunRagTasks) {
+            const showModifyChunk = hasMarkdownForChunk;
+            chunkActions.style.display = showModifyChunk ? 'flex' : 'none';
+        }
+    }
+
+    async function openChunkTaskModal() {
+        if (!hasMarkdownForChunk) {
+            Toast.error('This file has no markdown yet. Generate markdown first.');
+            return;
+        }
+        await Promise.all([loadFileChunkProfiles(), loadFileChunkKbs()]);
+        if (!Array.isArray(fileChunkProfiles) || fileChunkProfiles.length === 0) {
+            Toast.error('No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
+            return;
+        }
+        const preferredProfile = fileChunkSets.length > 0 ? String(fileChunkSets[0].profile_id || '') : '';
+        fillChunkProfileSelect(fileChunkProfiles, preferredProfile);
+        if (!chunkKbControlBound) {
+            document.getElementById('file-chunk-kb-select')?.addEventListener('change', toggleBindingModeControl);
+            chunkKbControlBound = true;
+        }
+        toggleBindingModeControl();
+        const modal = document.getElementById('file-chunk-task-modal');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    function closeChunkTaskModal() {
+        const modal = document.getElementById('file-chunk-task-modal');
+        if (!modal) return;
+        modal.style.display = 'none';
+        if (window.syncModalState) window.syncModalState();
+    }
+
+    async function submitChunkTask(e) {
+        e.preventDefault();
+        const form = document.getElementById('file-chunk-task-form');
+        if (!form) return;
+        const profileId = String(document.getElementById('file-chunk-profile-select')?.value || '').trim();
+        const kbId = String(document.getElementById('file-chunk-kb-select')?.value || '').trim();
+        const bindingMode = String(document.getElementById('file-chunk-binding-mode-select')?.value || 'follow_latest').trim().toLowerCase();
+        const overwriteSame = !!document.getElementById('file-chunk-overwrite-same-profile')?.checked;
+        if (!profileId) {
+            Toast.error('Please select a chunk profile.');
+            return;
+        }
+        if (!['follow_latest', 'pin'].includes(bindingMode)) {
+            Toast.error('Invalid binding mode.');
+            return;
+        }
+        const payload = {
+            type: 'chunk_generation',
+            file_urls: [fileUrl],
+            profile_id: profileId,
+            overwrite_same_profile: overwriteSame,
+            name: `Chunk Generation (${profileId}) - single file`
+        };
+        if (kbId) {
+            payload.kb_id = kbId;
+            payload.binding_mode = bindingMode;
+            payload.name = `Chunk Generation (${profileId}) + bind ${kbId} [${bindingMode}]`;
+        }
+        try {
+            const resp = await fetch('/api/collections/run', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                throw new Error(data.error || 'Failed to submit chunk task');
+            }
+            Toast.success(`Chunk task submitted: ${data.job_id || '-'}`);
+            closeChunkTaskModal();
+            setTimeout(() => {
+                loadFileChunkSets().then(() => {
+                    loadFileChunkProfiles().then(() => renderChunkStatusMeta());
+                });
+            }, 800);
+        } catch (err) {
+            Toast.error(`Failed to submit chunk task: ${err.message}`);
+            console.error('submitChunkTask error:', err);
+        }
     }
 
     function categoryListToString(list) {
@@ -659,6 +979,11 @@
     // Load categories early so the first edit interaction is instant.
     ensureCategoryOptions();
     renderCatalogMeta(initialCatalogVersion, initialCatalogProcessedAt);
+    loadFileChunkSets().then(() => {
+        loadFileChunkProfiles().then(() => {
+            renderChunkStatusMeta();
+        });
+    });
     
     // ===== Markdown functionality =====
     let currentMarkdownContent = '';
@@ -680,13 +1005,14 @@
             
             if (data.success && data.markdown && data.markdown.markdown_content) {
                 currentMarkdownContent = data.markdown.markdown_content;
+                hasMarkdownForChunk = true;
                 renderMarkdownView();
                 updateMarkdownMeta(data.markdown);
                 
                 // Update timestamp if available
                 if (data.markdown.markdown_updated_at) {
                     const timestamp = document.getElementById('markdown-last-updated');
-                    timestamp.textContent = `Last updated: ${data.markdown.markdown_updated_at}`;
+                    timestamp.textContent = `Last updated: ${formatLocalTimestamp(data.markdown.markdown_updated_at)}`;
                 }
                 
                 // Hide empty message
@@ -694,13 +1020,17 @@
             } else {
                 // No markdown content (but request was successful)
                 currentMarkdownContent = '';
+                hasMarkdownForChunk = false;
                 updateMarkdownMeta(null);
                 document.getElementById('markdown-rendered').innerHTML = '';
                 document.getElementById('markdown-empty').style.display = 'block';
             }
+            renderChunkStatusMeta();
         } catch (err) {
             console.error('Error loading markdown:', err);
             Toast.error('Failed to load markdown content');
+            hasMarkdownForChunk = false;
+            renderChunkStatusMeta();
         }
     }
     
@@ -807,7 +1137,7 @@
                 // Update timestamp
                 if (data.markdown && data.markdown.markdown_updated_at) {
                     const timestamp = document.getElementById('markdown-last-updated');
-                    timestamp.textContent = `Last updated: ${data.markdown.markdown_updated_at}`;
+                    timestamp.textContent = `Last updated: ${formatLocalTimestamp(data.markdown.markdown_updated_at)}`;
                 }
 
                 // Update meta (source/updated_at) in view header.
@@ -892,9 +1222,9 @@
             meta.textContent = '';
             return;
         }
-        const parts = [];
-        if (markdown.markdown_source) parts.push(`Source: ${markdown.markdown_source}`);
-        if (markdown.markdown_updated_at) parts.push(`Updated: ${markdown.markdown_updated_at}`);
+        const parts = ['Markdown'];
+        if (markdown.markdown_source) parts.push(mapMarkdownSourceLabel(markdown.markdown_source));
+        if (markdown.markdown_updated_at) parts.push(`Updated: ${formatLocalTimestamp(markdown.markdown_updated_at)}`);
         if (!parts.length) {
             meta.style.display = 'none';
             meta.textContent = '';
@@ -1094,6 +1424,14 @@
         margin-top: 2rem;
         border-top: 1px solid var(--border-color);
         padding-top: 1rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .file-preview-top-btn {
+        margin-left: auto;
     }
 
     .catalog-meta-text {
@@ -1321,6 +1659,22 @@
         margin: -0.5rem 0 0.75rem 0;
         color: var(--text-secondary);
         font-size: 0.9rem;
+    }
+
+    .rag-status-panel {
+        margin-bottom: 0.9rem;
+    }
+
+    .rag-meta {
+        margin: 0 0 0.4rem 0;
+    }
+
+    .rag-index-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin: 0.3rem 0 0.8rem 0;
+        flex-wrap: wrap;
     }
 
     /* Long markdown can make the page unwieldy; cap height and allow scroll by default. */

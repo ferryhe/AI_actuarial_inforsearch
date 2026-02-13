@@ -699,6 +699,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """RAG knowledge base detail page."""
         return render_template("rag_detail.html", kb_id=kb_id)
     
+    @app.route("/file_preview")
+    @require_permissions("files.read")
+    def file_preview():
+        """File preview page with original file, markdown, and chunks."""
+        return render_template("file_preview.html")
+    
     @app.route("/scheduled_tasks")
     @require_permissions("tasks.view")
     def scheduled_tasks():
@@ -1432,7 +1438,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # For now, just return 404
                 return "File not found", 404
             
-            return render_template("file_view.html", file=file_data)
+            return_to = str(request.args.get("return_to") or "").strip()
+            if not return_to.startswith("/") or return_to.startswith("//"):
+                return_to = "/database"
+            return render_template("file_view.html", file=file_data, return_to=return_to)
             
         except Exception as e:
             logger.exception("Error viewing file")
@@ -1475,6 +1484,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             result = None
+
+            def _category_where_sql(category_value: str, *, alias: str = "c") -> tuple[str, list[Any]]:
+                category_name = str(category_value or "").strip()
+                if not category_name:
+                    return "", []
+                return (
+                    f" AND ({alias}.category = ? OR {alias}.category LIKE ? OR {alias}.category LIKE ? OR {alias}.category LIKE ?)",
+                    [
+                        category_name,
+                        f"{category_name};%",
+                        f"%; {category_name}",
+                        f"%; {category_name};%",
+                    ],
+                )
             
             if collection_type == "url":
                 urls = data.get("urls", [])
@@ -1763,12 +1786,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
 
                 retry_errors = bool(data.get("retry_errors", False))
-                provider = str(data.get("provider") or "local").strip().lower()
-                input_source = str(data.get("input_source") or "source").strip().lower()
+                provider = str(data.get("provider") or "openai").strip().lower()
+                input_source = str(data.get("input_source") or "markdown").strip().lower()
                 overwrite_existing = bool(data.get("overwrite_existing", False))
                 skip_existing = bool(data.get("skip_existing", True))
                 if overwrite_existing:
                     skip_existing = False
+                scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                if scope_mode not in {"index", "category"}:
+                    scope_mode = "index"
+                category_filter = str(data.get("category") or "").strip()
 
                 file_urls = data.get("file_urls") or []
                 if not isinstance(file_urls, list):
@@ -1792,7 +1819,42 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # Map a "start index" in the newest-first local file list into a candidate offset.
                 candidate_offset = 0
                 catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
-                if (not skip_existing) and start_index > 1:
+                if scope_mode == "category" and category_filter and not file_urls:
+                    category_clause, category_params = _category_where_sql(category_filter, alias="c")
+                    candidate_sql = f"""
+                        SELECT f.url
+                        FROM files f
+                        LEFT JOIN catalog_items c ON c.file_url = f.url
+                        WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                          AND f.deleted_at IS NULL
+                          {category_clause}
+                    """
+                    candidate_params: list[Any] = list(category_params)
+                    if skip_existing:
+                        candidate_sql += """
+                          AND (
+                            c.file_url IS NULL
+                            OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
+                            OR IFNULL(c.file_sha256, c.sha256) != f.sha256
+                            OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version), '') != ?
+                            OR (? = 1 AND c.status = 'error')
+                          )
+                        """
+                        candidate_params.extend([catalog_version, 1 if retry_errors else 0])
+                    candidate_sql += " ORDER BY f.id DESC LIMIT ?"
+                    candidate_params.append(limit)
+                    rows = storage._conn.execute(candidate_sql, tuple(candidate_params)).fetchall()
+                    file_urls = [str(r[0]).strip() for r in rows if r and r[0]]
+                    _append_task_log(
+                        task_id,
+                        "INFO",
+                        (
+                            "Cataloging category window: "
+                            f"category={category_filter}, scan_count={limit}, selected={len(file_urls)}, "
+                            f"retry_errors={retry_errors}, skip_existing={skip_existing}, overwrite_existing={overwrite_existing}"
+                        ),
+                    )
+                elif (not skip_existing) and start_index > 1:
                     candidate_offset = start_index - 1
                 elif start_index > 1:
                     try:
@@ -1860,6 +1922,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     "INFO",
                     (
                         "Cataloging requested window: "
+                        f"scope={scope_mode}, category={category_filter or '-'}, "
                         f"start_index={start_index}, scan_count={limit}, retry_errors={retry_errors}, "
                         f"skip_existing={skip_existing}, overwrite_existing={overwrite_existing}, "
                         f"provider={provider}, input_source={input_source}, candidate_offset={candidate_offset}"
@@ -1915,13 +1978,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
                 file_urls = data.get("file_urls", []) or []
-                conversion_tool = data.get("conversion_tool", "marker")
+                conversion_tool = data.get("conversion_tool", "docling")
                 if (conversion_tool or "").strip().lower() == "auto":
-                    conversion_tool = "marker"
+                    conversion_tool = "docling"
                 overwrite_existing = data.get("overwrite_existing", False)
                 skip_existing = bool(data.get("skip_existing", True))
                 scan_start_index = data.get("scan_start_index")
                 scan_count = data.get("scan_count")
+                scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                if scope_mode not in {"index", "category"}:
+                    scope_mode = "index"
+                category_filter = str(data.get("category") or "").strip()
 
                 if overwrite_existing:
                     # Overwrite implies we should not skip existing markdown.
@@ -1962,6 +2029,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
                         )
                     """
+                    where_params: list[Any] = []
+                    if scope_mode == "category" and category_filter:
+                        category_clause, category_params = _category_where_sql(category_filter, alias="c")
+                        where += category_clause
+                        where_params.extend(category_params)
                     rows = storage._conn.execute(
                         f"""
                         SELECT f.url, c.markdown_content
@@ -1971,13 +2043,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         ORDER BY f.id DESC
                         LIMIT ? OFFSET ?
                         """,
-                        (scan_n, offset),
+                        tuple(where_params + [scan_n, offset]),
                     ).fetchall()
                     file_urls = [r[0] for r in rows]
                     _append_task_log(
                         task_id,
                         "INFO",
-                        f"Batch scan selected {len(file_urls)} file(s) (start_index={start_idx}, scan_count={scan_n}, skip_existing={skip_existing}, overwrite={overwrite_existing})",
+                        (
+                            f"Batch scan selected {len(file_urls)} file(s) "
+                            f"(scope={scope_mode}, category={category_filter or '-'}, "
+                            f"start_index={start_idx}, scan_count={scan_n}, "
+                            f"skip_existing={skip_existing}, overwrite={overwrite_existing})"
+                        ),
                     )
                 
                 logger.info(f"Starting markdown conversion for {len(file_urls)} files")
@@ -2106,13 +2183,309 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 progress_callback(100, 100, f"Conversion complete. Converted: {converted_count}, Skipped: {skipped_count}, Errors: {error_count}")
                 _append_task_log(task_id, "INFO", f"Conversion complete. converted={converted_count} skipped={skipped_count} errors={error_count}")
 
-            elif collection_type == "rag_indexing":
+            elif collection_type == "chunk_generation":
+                from ai_actuarial.rag.semantic_chunking import SemanticChunker
+                from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+
+                file_urls = data.get("file_urls") or []
+                if not isinstance(file_urls, list):
+                    raise ValueError("file_urls must be a list")
+                file_urls = [str(url).strip() for url in file_urls if str(url).strip()]
+
+                scan_start_index = data.get("scan_start_index")
+                scan_count = data.get("scan_count")
+                scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                if scope_mode not in {"index", "category"}:
+                    scope_mode = "index"
+                category_filter = str(data.get("category") or "").strip()
+
+                if not file_urls and scan_count not in (None, "", "null"):
+                    try:
+                        start_idx = (
+                            int(scan_start_index)
+                            if scan_start_index not in (None, "", "null")
+                            else 1
+                        )
+                    except Exception:
+                        start_idx = 1
+                    try:
+                        scan_n = int(scan_count)
+                    except Exception:
+                        scan_n = 50
+
+                    start_idx = max(1, start_idx)
+                    scan_n = max(1, min(scan_n, 2000))
+                    offset = start_idx - 1
+                    category_clause, category_params = _category_where_sql(category_filter, alias="c") if (scope_mode == "category" and category_filter) else ("", [])
+
+                    rows = storage._conn.execute(
+                        f"""
+                        SELECT f.url
+                        FROM files f
+                        JOIN catalog_items c ON c.file_url = f.url
+                        WHERE f.deleted_at IS NULL
+                          AND c.markdown_content IS NOT NULL
+                          AND c.markdown_content != ''
+                          {category_clause}
+                        ORDER BY f.id DESC
+                        LIMIT ? OFFSET ?
+                        """,
+                        tuple(category_params + [scan_n, offset]),
+                    ).fetchall()
+                    file_urls = [str(r[0]).strip() for r in rows if r and r[0]]
+                    _append_task_log(
+                        task_id,
+                        "INFO",
+                        (
+                            "Chunk generation batch selected "
+                            f"{len(file_urls)} file(s) "
+                            f"(scope={scope_mode}, category={category_filter or '-'}, "
+                            f"start_index={start_idx}, scan_count={scan_n})"
+                        ),
+                    )
+
+                if not file_urls:
+                    raise ValueError("No files selected for chunk generation")
+
+                profile_id = str(data.get("profile_id") or "").strip()
+                profile = None
+                if profile_id:
+                    profile = storage.get_chunk_profile(profile_id)
+                    if not profile:
+                        raise ValueError(f"Chunk profile '{profile_id}' not found")
+                else:
+                    profile_name = str(data.get("profile_name") or "").strip() or "task-profile"
+                    chunk_size = _parse_int_clamped(
+                        data.get("chunk_size", 800), default=800, min_value=64, max_value=8192
+                    )
+                    chunk_overlap = _parse_int_clamped(
+                        data.get("chunk_overlap", 100), default=100, min_value=0, max_value=2048
+                    )
+                    splitter = str(data.get("splitter") or "semantic").strip().lower() or "semantic"
+                    tokenizer = str(data.get("tokenizer") or "cl100k_base").strip() or "cl100k_base"
+                    chunk_model = str(data.get("chunk_model") or "gpt-4").strip() or "gpt-4"
+                    version = str(data.get("version") or "v1").strip() or "v1"
+                    profile = storage.create_chunk_profile(
+                        name=profile_name,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        splitter=splitter,
+                        tokenizer=tokenizer,
+                        version=version,
+                        metadata={"chunk_model": chunk_model},
+                        upsert=True,
+                    )
+
+                profile_config: dict[str, Any] = {}
+                raw_config = str(profile.get("config_json") or "").strip()
+                if raw_config:
+                    try:
+                        parsed = json.loads(raw_config)
+                        if isinstance(parsed, dict):
+                            profile_config = parsed
+                    except Exception:
+                        profile_config = {}
+                profile_metadata = profile_config.get("metadata", {})
+                if not isinstance(profile_metadata, dict):
+                    profile_metadata = {}
+                chunk_model = str(profile_metadata.get("chunk_model") or "gpt-4").strip() or "gpt-4"
+                splitter = str(profile.get("splitter") or "semantic").strip().lower() or "semantic"
+                tokenizer = str(profile.get("tokenizer") or "cl100k_base").strip() or "cl100k_base"
+
+                overwrite_same_profile = bool(data.get("overwrite_same_profile", False))
+                kb_id = str(data.get("kb_id") or "").strip()
+                binding_mode = str(data.get("binding_mode") or "follow_latest").strip().lower() or "follow_latest"
+                if binding_mode not in {"follow_latest", "pin"}:
+                    raise ValueError("binding_mode must be 'follow_latest' or 'pin'")
+
+                bind_to_kb = bool(kb_id)
+                if bind_to_kb:
+                    kb_manager = KnowledgeBaseManager(storage)
+                    if not kb_manager.get_kb(kb_id):
+                        raise ValueError(f"Knowledge base '{kb_id}' not found")
+
+                created_count = 0
+                overwritten_count = 0
+                reused_count = 0
+                no_markdown_count = 0
+                processed_count = 0
+                auto_synced_count = 0
+                kb_bind_created_count = 0
+                kb_bind_existing_count = 0
+                errors = []
+
+                total_files = len(file_urls)
+                _append_task_log(
+                    task_id,
+                    "INFO",
+                    (
+                        "Chunk generation started: "
+                        f"files={total_files}, profile={profile.get('profile_id')}, "
+                        f"chunk_model={chunk_model}, splitter={splitter}, tokenizer={tokenizer}, "
+                        f"overwrite_same_profile={overwrite_same_profile}, "
+                        f"bind_to_kb={kb_id if bind_to_kb else '-'}, binding_mode={binding_mode if bind_to_kb else '-'}"
+                    ),
+                )
+
+                for idx, file_url in enumerate(file_urls):
+                    if stop_check():
+                        _append_task_log(task_id, "WARNING", "Stop requested by user")
+                        break
+
+                    progress_callback(idx, total_files, f"Chunking file {idx + 1}/{total_files}")
+                    try:
+                        markdown_data = storage.get_file_markdown(file_url) or {}
+                        markdown_content = str(markdown_data.get("markdown_content") or "")
+                        if not markdown_content.strip():
+                            no_markdown_count += 1
+                            _append_task_log(
+                                task_id,
+                                "WARNING",
+                                f"Skipped (no markdown): {file_url}",
+                            )
+                            continue
+
+                        markdown_hash = hashlib.sha256(markdown_content.encode("utf-8")).hexdigest()
+                        chunk_set = storage.get_or_create_file_chunk_set(
+                            file_url=file_url,
+                            profile_id=str(profile.get("profile_id") or ""),
+                            markdown_hash=markdown_hash,
+                            status="ready",
+                        )
+
+                        if not chunk_set.get("created") and not overwrite_same_profile:
+                            reused_count += 1
+                            if bind_to_kb:
+                                bind_res = storage.bind_chunk_set_to_kb(
+                                    kb_id=kb_id,
+                                    file_url=file_url,
+                                    chunk_set_id=str(chunk_set.get("chunk_set_id") or ""),
+                                    bound_by="chunk_generation_task",
+                                    binding_mode=binding_mode,
+                                )
+                                if bind_res.get("created"):
+                                    kb_bind_created_count += 1
+                                else:
+                                    kb_bind_existing_count += 1
+                            _append_task_log(
+                                task_id,
+                                "INFO",
+                                f"Reused existing chunk set: {chunk_set.get('chunk_set_id')} ({file_url})",
+                            )
+                            continue
+
+                        max_tokens = int(profile.get("chunk_size") or 800)
+                        min_tokens = max(20, min(100, max_tokens // 4))
+                        if splitter != "semantic":
+                            _append_task_log(
+                                task_id,
+                                "WARNING",
+                                f"Unsupported splitter '{splitter}', falling back to semantic",
+                            )
+                        chunker = SemanticChunker(
+                            max_tokens=max_tokens,
+                            min_tokens=min_tokens,
+                            preserve_headers=True,
+                            preserve_citations=True,
+                            include_hierarchy=True,
+                            model=chunk_model,
+                            tokenizer_name=tokenizer,
+                        )
+                        chunks = chunker.chunk_document(markdown_content, metadata={"file_url": file_url})
+                        payload_chunks = [
+                            {
+                                "chunk_index": chunk.chunk_index,
+                                "content": chunk.content,
+                                "token_count": chunk.token_count,
+                                "section_hierarchy": chunk.section_hierarchy,
+                            }
+                            for chunk in chunks
+                        ]
+                        write_res = storage.replace_global_chunks(
+                            chunk_set_id=str(chunk_set.get("chunk_set_id")),
+                            chunks=payload_chunks,
+                            overwrite=True,
+                        )
+                        sync_res = storage.sync_follow_latest_bindings_for_chunk_set(
+                            file_url=file_url,
+                            profile_id=str(profile.get("profile_id") or ""),
+                            chunk_set_id=str(chunk_set.get("chunk_set_id") or ""),
+                            bound_by="chunk_generation_auto_sync",
+                        )
+                        auto_synced_count += int(sync_res.get("synced_bindings") or 0)
+
+                        if bind_to_kb:
+                            bind_res = storage.bind_chunk_set_to_kb(
+                                kb_id=kb_id,
+                                file_url=file_url,
+                                chunk_set_id=str(chunk_set.get("chunk_set_id") or ""),
+                                bound_by="chunk_generation_task",
+                                binding_mode=binding_mode,
+                            )
+                            if bind_res.get("created"):
+                                kb_bind_created_count += 1
+                            else:
+                                kb_bind_existing_count += 1
+
+                        processed_count += 1
+                        if chunk_set.get("created"):
+                            created_count += 1
+                        else:
+                            overwritten_count += 1
+                        _append_task_log(
+                            task_id,
+                            "INFO",
+                            (
+                                f"Chunk set ready: {chunk_set.get('chunk_set_id')} "
+                                f"(chunks={write_res.get('chunk_count', 0)}, auto_synced={sync_res.get('synced_bindings', 0)}) {file_url}"
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("Chunk generation failed for %s", file_url)
+                        errors.append(f"{file_url}: {exc}")
+                        _append_task_log(task_id, "ERROR", f"Chunk generation failed: {file_url} error={exc}")
+
+                class ChunkGenerationResult:
+                    def __init__(self):
+                        self.success = True
+                        self.items_found = total_files
+                        self.items_downloaded = processed_count
+                        self.items_skipped = reused_count + no_markdown_count
+                        self.errors = errors[:20]
+                        self.rag_auto_synced_bindings = auto_synced_count
+
+                result = ChunkGenerationResult()
+                progress_callback(
+                    100,
+                    100,
+                    (
+                        "Chunk generation complete. "
+                        f"created={created_count}, overwritten={overwritten_count}, "
+                        f"reused={reused_count}, no_markdown={no_markdown_count}, "
+                        f"errors={len(errors)}, auto_synced_bindings={auto_synced_count}, "
+                        f"kb_bind_created={kb_bind_created_count}, kb_bind_existing={kb_bind_existing_count}"
+                    ),
+                )
+                _append_task_log(
+                    task_id,
+                    "INFO",
+                    (
+                        "Chunk generation complete. "
+                        f"created={created_count}, overwritten={overwritten_count}, "
+                        f"reused={reused_count}, no_markdown={no_markdown_count}, "
+                        f"errors={len(errors)}, auto_synced_bindings={auto_synced_count}, "
+                        f"kb_bind_created={kb_bind_created_count}, kb_bind_existing={kb_bind_existing_count}"
+                    ),
+                )
+
+            elif collection_type in {"rag_indexing", "kb_index_build"}:
                 from ai_actuarial.rag.indexing import IndexingPipeline
                 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 
+                task_label = "KB index build" if collection_type == "kb_index_build" else "RAG indexing"
                 kb_id = str(data.get("kb_id") or "").strip()
                 if not kb_id:
-                    raise ValueError("kb_id is required for rag_indexing task")
+                    raise ValueError(f"kb_id is required for {collection_type} task")
 
                 kb_manager = KnowledgeBaseManager(storage)
                 kb = kb_manager.get_kb(kb_id)
@@ -2145,13 +2518,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         task_id,
                         "INFO",
                         (
-                            f"RAG indexing pre-check for {kb_id}: "
+                            f"{task_label} pre-check for {kb_id}: "
                             f"pending={metadata.get('pending_files', 0)}, "
                             f"estimated_seconds={metadata.get('estimated_time_seconds', 0)}"
                         ),
                     )
                 except Exception as exc:
-                    _append_task_log(task_id, "WARNING", f"RAG task metadata pre-check failed: {exc}")
+                    _append_task_log(task_id, "WARNING", f"{task_label} metadata pre-check failed: {exc}")
 
                 def rag_progress(message: str, current: int, total: int):
                     progress_callback(current, total, message)
@@ -2160,6 +2533,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                 pipeline = IndexingPipeline(kb_manager, progress_callback=rag_progress)
                 stats = pipeline.index_files(kb_id=kb_id, file_urls=file_urls, force_reindex=force_reindex)
+                try:
+                    index_path = str(Path(kb_manager.config.data_dir) / kb_id / "index.faiss")
+                    storage.create_kb_index_version(
+                        kb_id=kb_id,
+                        embedding_model=kb.embedding_model,
+                        index_type=kb.index_type,
+                        chunk_count=int(stats.get("total_chunks", 0) or 0),
+                        status="ready",
+                        artifact_path=index_path,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _append_task_log(task_id, "WARNING", f"Failed recording KB index version: {exc}")
 
                 class RagIndexResult:
                     def __init__(self, payload: dict[str, Any]):
@@ -2179,7 +2564,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     task_id,
                     "INFO",
                     (
-                        f"RAG indexing complete for {kb_id}: "
+                        f"{task_label} complete for {kb_id}: "
                         f"indexed={stats.get('indexed_files', 0)}, "
                         f"skipped={stats.get('skipped_files', 0)}, "
                         f"errors={stats.get('error_files', 0)}, "
@@ -2351,17 +2736,19 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         return task_id
 
     def _get_rag_kb_tasks(kb_id: str, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
-        """Get active and history task rows for one KB's rag_indexing jobs."""
+        """Get active and history task rows for one KB's indexing jobs."""
         with _task_lock:
             active = [
                 dict(task)
                 for task in _active_tasks.values()
-                if task.get("type") == "rag_indexing" and task.get("kb_id") == kb_id
+                if task.get("type") in {"rag_indexing", "kb_index_build"}
+                and task.get("kb_id") == kb_id
             ]
             history = [
                 dict(task)
                 for task in _task_history
-                if task.get("type") == "rag_indexing" and task.get("kb_id") == kb_id
+                if task.get("type") in {"rag_indexing", "kb_index_build"}
+                and task.get("kb_id") == kb_id
             ]
         active.sort(key=lambda t: t.get("started_at", ""), reverse=True)
         history.sort(key=lambda t: t.get("started_at", ""), reverse=True)
@@ -2387,7 +2774,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 "catalog",
                 "quick_check",
                 "markdown_conversion",
+                "chunk_generation",
                 "rag_indexing",
+                "kb_index_build",
             ]
 
             def _reject_request(reason: str, *, override_type: str | None = None):
@@ -2428,13 +2817,28 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                  path = data.get("directory_path")
                  if not path or not os.path.exists(path):
                      return _reject_request("Invalid directory path")
+            if collection_type == "catalog":
+                 scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                 if scope_mode == "category" and not str(data.get("category") or "").strip():
+                     return _reject_request("Category is required for category-scoped cataloging")
             if collection_type == "markdown_conversion":
+                 scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                 if scope_mode == "category" and not str(data.get("category") or "").strip():
+                     return _reject_request("Category is required for category-scoped markdown conversion")
                  has_urls = bool(data.get("file_urls"))
                  has_scan = data.get("scan_count") not in (None, "", "null")
                  if not has_urls and not has_scan:
                      return _reject_request("No files selected for markdown conversion")
-            if collection_type == "rag_indexing" and not str(data.get("kb_id") or "").strip():
-                 return _reject_request("kb_id is required for rag_indexing")
+            if collection_type == "chunk_generation":
+                 scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                 if scope_mode == "category" and not str(data.get("category") or "").strip():
+                     return _reject_request("Category is required for category-scoped chunk generation")
+                 has_urls = bool(data.get("file_urls"))
+                 has_scan = data.get("scan_count") not in (None, "", "null")
+                 if not has_urls and not has_scan:
+                     return _reject_request("No files selected for chunk generation")
+            if collection_type in {"rag_indexing", "kb_index_build"} and not str(data.get("kb_id") or "").strip():
+                 return _reject_request(f"kb_id is required for {collection_type}")
 
             task_name = data.get("name", f"{collection_type.capitalize()} Collection")
             task_id = _start_background_task(collection_type, data, task_name=task_name)
@@ -2495,6 +2899,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             conn = storage._conn
+            category_filter = str(request.args.get("category") or "").strip()
             # Convertibility check (best effort): prefer MIME type, fall back to extension.
             where = """
                 f.local_path IS NOT NULL AND f.local_path != ''
@@ -2516,6 +2921,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
                 )
             """
+            params: list[Any] = []
+            if category_filter:
+                where += " AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                params.extend(
+                    [
+                        category_filter,
+                        f"{category_filter};%",
+                        f"%; {category_filter}",
+                        f"%; {category_filter};%",
+                    ]
+                )
 
             total = conn.execute(
                 f"""
@@ -2523,7 +2939,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 FROM files f
                 LEFT JOIN catalog_items c ON c.file_url = f.url
                 WHERE {where}
-                """
+                """,
+                tuple(params),
             ).fetchone()[0]
 
             with_md = conn.execute(
@@ -2534,7 +2951,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 WHERE {where}
                   AND c.markdown_content IS NOT NULL
                   AND c.markdown_content != ''
-                """
+                """,
+                tuple(params),
             ).fetchone()[0]
 
             first_missing = None
@@ -2554,7 +2972,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     WHERE md IS NULL OR md = ''
                     ORDER BY rn
                     LIMIT 1
-                    """
+                    """,
+                    tuple(params),
                 ).fetchone()
                 if row:
                     first_missing = int(row[0])
@@ -2566,6 +2985,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 {
                     "success": True,
                     "order": "id_desc",
+                    "category": category_filter or "",
                     "total_convertible": int(total),
                     "total_with_markdown": int(with_md),
                     "first_without_markdown_index": first_missing,
@@ -2577,6 +2997,104 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         finally:
             try:
                 storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/chunk_generation/stats")
+    @require_permissions("tasks.view")
+    def api_chunk_generation_stats():
+        """Return stats for chunk generation candidates (files with markdown)."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            conn = storage._conn
+            category_filter = str(request.args.get("category") or "").strip()
+            where = """
+                f.deleted_at IS NULL
+                AND c.markdown_content IS NOT NULL
+                AND c.markdown_content != ''
+            """
+            params: list[Any] = []
+            if category_filter:
+                where += " AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                params.extend(
+                    [
+                        category_filter,
+                        f"{category_filter};%",
+                        f"%; {category_filter}",
+                        f"%; {category_filter};%",
+                    ]
+                )
+
+            total_with_markdown = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM files f
+                JOIN catalog_items c ON c.file_url = f.url
+                WHERE {where}
+                """,
+                tuple(params),
+            ).fetchone()[0]
+
+            total_with_chunks = conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT f.url)
+                FROM files f
+                JOIN catalog_items c ON c.file_url = f.url
+                WHERE {where}
+                  AND EXISTS (
+                      SELECT 1
+                      FROM file_chunk_sets s
+                      WHERE s.file_url = f.url
+                  )
+                """,
+                tuple(params),
+            ).fetchone()[0]
+
+            first_without_chunks = None
+            try:
+                row = conn.execute(
+                    f"""
+                    WITH ordered AS (
+                        SELECT
+                            ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
+                            f.url AS file_url
+                        FROM files f
+                        JOIN catalog_items c ON c.file_url = f.url
+                        WHERE {where}
+                    )
+                    SELECT rn
+                    FROM ordered o
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM file_chunk_sets s WHERE s.file_url = o.file_url
+                    )
+                    ORDER BY rn
+                    LIMIT 1
+                    """,
+                    tuple(params),
+                ).fetchone()
+                if row:
+                    first_without_chunks = int(row[0])
+            except Exception:
+                first_without_chunks = None
+
+            return jsonify(
+                {
+                    "success": True,
+                    "order": "id_desc",
+                    "category": category_filter or "",
+                    "total_with_markdown": int(total_with_markdown),
+                    "total_with_chunks": int(total_with_chunks),
+                    "first_without_chunks_index": first_without_chunks,
+                }
+            )
+        except Exception as e:
+            logger.exception("Error computing chunk generation stats")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
             except Exception:
                 pass
 
@@ -2609,6 +3127,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
             provider = str(request.args.get("provider") or "local").strip().lower()
             input_source = str(request.args.get("input_source") or "source").strip().lower()
+            category_filter = str(request.args.get("category") or "").strip()
             catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
             # Candidate definition (aligned with catalog_incremental behavior, but using legacy columns too).
             candidates_where = """
@@ -2621,6 +3140,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version),'') != ?
                 )
             """
+            candidate_params: list[Any] = [catalog_version]
+            if category_filter:
+                candidates_where += " AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                candidate_params.extend(
+                    [
+                        category_filter,
+                        f"{category_filter};%",
+                        f"%; {category_filter}",
+                        f"%; {category_filter};%",
+                    ]
+                )
 
             candidate_total = conn.execute(
                 f"""
@@ -2629,11 +3159,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 LEFT JOIN catalog_items c ON c.file_url = f.url
                 WHERE {candidates_where}
                 """,
-                (catalog_version,),
+                tuple(candidate_params),
             ).fetchone()[0]
 
             first_candidate_index = None
             try:
+                first_candidate_params: list[Any] = []
+                if category_filter:
+                    first_candidate_params.extend(
+                        [
+                            category_filter,
+                            f"{category_filter};%",
+                            f"%; {category_filter}",
+                            f"%; {category_filter};%",
+                        ]
+                    )
+                first_candidate_params.append(catalog_version)
                 row = conn.execute(
                     f"""
                     WITH ordered AS (
@@ -2647,6 +3188,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                          LEFT JOIN catalog_items c ON c.file_url = f.url
                          WHERE f.local_path IS NOT NULL AND f.local_path != ''
                            AND f.deleted_at IS NULL
+                           {("AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)" if category_filter else "")}
                      )
                      SELECT rn
                           FROM ordered
@@ -2657,7 +3199,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         ORDER BY rn
                         LIMIT 1
                         """,
-                     (catalog_version,),
+                     tuple(first_candidate_params),
                 ).fetchone()
                 if row:
                     first_candidate_index = int(row[0])
@@ -2673,6 +3215,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     "candidate_total": int(candidate_total),
                     "first_candidate_index": first_candidate_index,
                     "catalog_version": catalog_version,
+                    "category": category_filter or "",
                 }
             )
         except Exception as e:

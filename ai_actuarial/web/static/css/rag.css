@@ -118,6 +118,30 @@
     overflow: auto;
 }
 
+#rag-detail-files-table {
+    table-layout: fixed;
+    min-width: 1120px;
+}
+
+#rag-detail-files-table th:nth-child(1),
+#rag-detail-files-table td:nth-child(1) {
+    width: 40px;
+}
+
+#rag-detail-files-table th:nth-child(2),
+#rag-detail-files-table td:nth-child(2) {
+    width: 56px;
+}
+
+#rag-detail-files-table .rag-col-filename,
+#rag-detail-files-table td:nth-child(3) {
+    width: 220px;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .rag-pagination {
     display: flex;
     justify-content: space-between;

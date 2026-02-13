@@ -1,4 +1,42 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
+
+{% block extra_css %}
+<style>
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-align: center;
+    min-width: 30px;
+}
+
+.status-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+[data-theme="dark"] .status-success {
+    background-color: #1e4620;
+    color: #7ec97f;
+    border-color: #2d5f2e;
+}
+
+.status-missing {
+    background-color: #f8f9fa;
+    color: #6c757d;
+    border: 1px solid #dee2e6;
+}
+
+[data-theme="dark"] .status-missing {
+    background-color: #2d2d2d;
+    color: #999;
+    border-color: #444;
+}
+</style>
+{% endblock %}
 
 {% block content %}
 {% set can_export_filelist = auth_group in ['admin', 'operator'] %}
@@ -57,8 +95,45 @@
 let currentPage = 1;
 const pageSize = 20;
 
+function readPageStateFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const page = parseInt(params.get('page') || '1', 10);
+    const query = params.get('query') || '';
+    const source = params.get('source') || '';
+    const category = params.get('category') || '';
+    const includeDeleted = params.get('include_deleted') === 'true';
+    const sortBy = params.get('sort_by') || 'last_seen';
+    return {
+        page: Number.isFinite(page) && page > 0 ? page : 1,
+        query,
+        source,
+        category,
+        includeDeleted,
+        sortBy
+    };
+}
+
+function writePageStateToUrl(page) {
+    const params = new URLSearchParams();
+    const query = document.getElementById('search-query').value;
+    const source = document.getElementById('source-filter').value;
+    const category = document.getElementById('category-filter').value;
+    const includeDeleted = document.getElementById('include-deleted').checked;
+    const sortBy = document.getElementById('sort-by').value;
+
+    params.set('page', String(page));
+    params.set('sort_by', sortBy);
+    if (query) params.set('query', query);
+    if (source) params.set('source', source);
+    if (category) params.set('category', category);
+    if (includeDeleted) params.set('include_deleted', 'true');
+
+    const next = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, '', next);
+}
+
 // Load sources and categories for filters
-fetch('/api/sources')
+const sourceFilterPromise = fetch('/api/sources')
     .then(response => response.json())
     .then(data => {
         const select = document.getElementById('source-filter');
@@ -70,7 +145,7 @@ fetch('/api/sources')
         });
     });
 
-fetch('/api/categories?mode=used')
+const categoryFilterPromise = fetch('/api/categories?mode=used')
     .then(response => response.json())
     .then(data => {
         const select = document.getElementById('category-filter');
@@ -115,6 +190,8 @@ function searchFiles(page = 1) {
     if (category) params.append('category', category);
     if (includeDeleted) params.append('include_deleted', 'true');
 
+    writePageStateToUrl(page);
+
     document.getElementById('results-container').innerHTML = '<p class="loading">Loading...</p>';
 
     fetch(`/api/files?${params}`)
@@ -132,11 +209,22 @@ function displayResults(data) {
     const container = document.getElementById('results-container');
     document.getElementById('results-count').textContent = `${data.total} files`;
 
-        if (data.files && data.files.length > 0) {
+    if (data.files && data.files.length > 0) {
         // Use Phase 3 DataTable component
+        const rowsWithSequence = data.files.map((row, index) => ({
+            ...row,
+            row_number: Number(data.offset || 0) + index + 1
+        }));
+
         new DataTable(container, {
-            data: data.files,
+            data: rowsWithSequence,
             columns: [
+                {
+                    key: 'row_number',
+                    label: '#',
+                    sortable: false,
+                    render: (value) => String(value || '')
+                },
                 {
                     key: 'title',
                     label: 'Title / Summary',
@@ -160,6 +248,17 @@ function displayResults(data) {
                     render: (value) => escapeHtml(value || '-')
                 },
                 {
+                    key: 'markdown_status',
+                    label: 'Markdown',
+                    sortable: false,
+                    render: (value, row) => {
+                        if (row.markdown_content && row.markdown_content.length > 0) {
+                            return '<span class="status-badge status-success" title="Markdown available">Y</span>';
+                        }
+                        return '<span class="status-badge status-missing" title="No markdown">-</span>';
+                    }
+                },
+                {
                     key: 'bytes',
                     label: 'Size',
                     sortable: true,
@@ -170,6 +269,15 @@ function displayResults(data) {
                     label: 'Last Seen',
                     sortable: true,
                     render: (value) => formatDate(value)
+                },
+                {
+                    key: 'actions',
+                    label: 'Actions',
+                    sortable: false,
+                    render: (value, row) => {
+                        const safeUrl = escapeHtml(row.url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                        return `<button class="btn btn-small btn-primary" onclick="previewFile('${safeUrl}'); event.stopPropagation();">Preview</button>`;
+                    }
                 }
             ],
             sortable: true,
@@ -280,7 +388,13 @@ function resetFilters() {
 
 function viewFile(url) {
     // Properly encode URL for path parameter
-    window.location = `/file/${encodeURIComponent(url)}`;
+    const returnTo = `${window.location.pathname}${window.location.search || ''}`;
+    window.location = `/file/${encodeURIComponent(url)}?return_to=${encodeURIComponent(returnTo)}`;
+}
+
+function previewFile(url) {
+    const previewUrl = `/file_preview?file_url=${encodeURIComponent(url)}`;
+    window.location = previewUrl;
 }
 
 function downloadFile(url) {
@@ -300,7 +414,23 @@ function downloadFile(url) {
 }
 
 // Load initial results
-searchFiles(1);
+const initialState = readPageStateFromUrl();
+document.getElementById('search-query').value = initialState.query;
+document.getElementById('include-deleted').checked = initialState.includeDeleted;
+document.getElementById('sort-by').value = initialState.sortBy;
+currentPage = initialState.page;
+
+function applyDeferredFilterDefaults() {
+    const sourceFilter = document.getElementById('source-filter');
+    const categoryFilter = document.getElementById('category-filter');
+    if (initialState.source) sourceFilter.value = initialState.source;
+    if (initialState.category) categoryFilter.value = initialState.category;
+    searchFiles(currentPage);
+}
+
+Promise.allSettled([sourceFilterPromise, categoryFilterPromise]).then(() => {
+    applyDeferredFilterDefaults();
+});
 
 function debounceSearch() {
     clearTimeout(window.searchTimeout);
@@ -348,3 +478,4 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </script>
 {% endblock %}
+

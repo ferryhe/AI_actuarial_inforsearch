@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     mistral_retry_attempts: int = Field(default=3, alias="MISTRAL_RETRY_ATTEMPTS")
     mistral_max_pdf_tokens: int = Field(default=9000, alias="MISTRAL_MAX_PDF_TOKENS")
     mistral_max_pages_per_chunk: int = Field(default=25, alias="MISTRAL_MAX_PAGES_PER_CHUNK")
+    mistral_extract_footer: bool = Field(default=True, alias="MISTRAL_EXTRACT_FOOTER")
+    mistral_extract_header: bool = Field(default=True, alias="MISTRAL_EXTRACT_HEADER")
 
     # SiliconFlow (DeepSeek OCR) tuning
     siliconflow_timeout_seconds: float = Field(default=60.0, alias="SILICONFLOW_TIMEOUT_SECONDS")

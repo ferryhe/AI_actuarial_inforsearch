@@ -50,6 +50,13 @@
 
             <details class="rag-advanced-settings">
                 <summary>Advanced Settings</summary>
+                <div class="form-group">
+                    <label>Chunk Profile</label>
+                    <select name="chunk_profile_id" id="rag-create-chunk-profile" required>
+                        <option value="" selected disabled>Select existing chunk profile</option>
+                    </select>
+                    <small class="form-hint">Choose an existing chunk profile. Create new profiles in Chunk Profile Management or chunk generation tasks.</small>
+                </div>
                 <div class="form-row">
                     <div class="form-group half">
                         <label>Embedding Model</label>
@@ -57,18 +64,10 @@
                             <option value="text-embedding-3-large">text-embedding-3-large</option>
                             <option value="text-embedding-3-small">text-embedding-3-small</option>
                         </select>
-                    </div>
-                    <div class="form-group half">
-                        <label>Chunk Size</label>
-                        <input type="number" name="chunk_size" min="100" max="4000" value="800">
+                        <small class="form-hint">Index model (for vector embedding), independent of chunk profile model.</small>
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group half">
-                        <label>Chunk Overlap</label>
-                        <input type="number" name="chunk_overlap" min="0" max="800" value="100">
-                    </div>
-                </div>
+                <div id="rag-create-selected-profile-summary" class="rag-category-stats text-muted" style="display:none;"></div>
             </details>
 
             <div class="rag-modal-actions">
