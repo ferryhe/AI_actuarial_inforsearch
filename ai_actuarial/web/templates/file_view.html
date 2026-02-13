@@ -154,18 +154,18 @@
             {% endif %}
               
             {% if can_delete_file %}
-            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" style="margin-left: 10px;">Delete File</button>
+            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger">Delete File</button>
             {% endif %}
+
+            <a id="file-preview-link"
+               class="btn btn-secondary btn-small file-preview-top-btn"
+               href="/file_preview?file_url={{ file.url|urlencode }}">
+                File Preview
+            </a>
         </div>
 
         <div class="markdown-section">
             <div class="rag-status-panel">
-                <a id="file-preview-link"
-                   class="btn btn-secondary btn-small"
-                   href="/file_preview?file_url={{ file.url|urlencode }}"
-                   style="margin-bottom: 0.6rem;">
-                    File Preview
-                </a>
                 <div id="chunk-meta" class="markdown-meta rag-meta" style="display:none;"></div>
                 {% if can_run_rag_tasks %}
                 <div id="chunk-actions" class="rag-index-actions" style="display:none;">
@@ -1424,6 +1424,14 @@
         margin-top: 2rem;
         border-top: 1px solid var(--border-color);
         padding-top: 1rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .file-preview-top-btn {
+        margin-left: auto;
     }
 
     .catalog-meta-text {

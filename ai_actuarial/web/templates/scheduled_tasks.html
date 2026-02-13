@@ -4,6 +4,7 @@
 {% set can_edit_sites = auth_group in ['admin', 'operator'] %}
 <div class="scheduled-tasks-page">
     <div class="page-header">
+        <p><a href="{{ url_for('tasks') }}">&larr; Back to Tasks</a></p>
         <h2>Scheduled Task Management</h2>
     </div>
 

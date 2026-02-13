@@ -640,24 +640,66 @@ def register_rag_routes(
             kid = _kb_id(kb_id)
             status_filter = _norm(request.args.get("status")).lower()
 
-            def _run(kb_manager, _storage):
+            def _run(kb_manager, storage):
                 if not kb_manager.get_kb(kid):
                     return _api_error(f"Knowledge base '{kid}' not found", status_code=404)
+                bindings = storage.list_kb_chunk_bindings(kid)
+                latest_binding_by_file: dict[str, dict[str, Any]] = {}
+                version_count_cache: dict[tuple[str, str], int] = {}
+                profile_names: set[str] = set()
+                for binding in bindings:
+                    file_url = str(binding.get("file_url") or "")
+                    if not file_url or file_url in latest_binding_by_file:
+                        continue
+                    latest_binding_by_file[file_url] = binding
+                    profile_name = str(binding.get("profile_name") or binding.get("profile_id") or "").strip()
+                    if profile_name:
+                        profile_names.add(profile_name)
+
                 rows = []
                 for item in kb_manager.get_kb_files(kid):
+                    file_url = item.get("file_url")
+                    binding = latest_binding_by_file.get(str(file_url or ""), {})
+                    profile_id = str(binding.get("profile_id") or "").strip()
+                    cache_key = (str(file_url or ""), profile_id)
+                    if cache_key not in version_count_cache:
+                        if profile_id:
+                            row = storage._conn.execute(
+                                """
+                                SELECT COUNT(*)
+                                FROM file_chunk_sets
+                                WHERE file_url = ? AND profile_id = ?
+                                """,
+                                (cache_key[0], profile_id),
+                            ).fetchone()
+                        else:
+                            row = storage._conn.execute(
+                                """
+                                SELECT COUNT(*)
+                                FROM file_chunk_sets
+                                WHERE file_url = ?
+                                """,
+                                (cache_key[0],),
+                            ).fetchone()
+                        version_count_cache[cache_key] = int((row[0] if row else 0) or 0)
                     indexed = item.get("indexed_at") is not None
                     stale = bool(item.get("needs_reindex"))
                     status = "indexed" if indexed and not stale else ("stale" if indexed else "pending")
                     rows.append(
                         {
-                            "file_url": item.get("file_url"),
+                            "file_url": file_url,
                             "title": item.get("title") or "",
                             "category": item.get("category") or "",
                             "source_site": item.get("source_site") or "",
                             "added_at": item.get("added_at"),
                             "indexed_at": item.get("indexed_at"),
                             "markdown_updated_at": item.get("markdown_updated_at"),
-                            "chunk_count": item.get("chunk_count") or 0,
+                            "chunk_count": binding.get("chunk_count") or item.get("chunk_count") or 0,
+                            "chunk_set_id": binding.get("chunk_set_id") or "",
+                            "chunk_version_count": version_count_cache.get(cache_key, 0),
+                            "chunk_set_updated_at": binding.get("chunk_set_updated_at") or binding.get("bound_at"),
+                            "bound_at": binding.get("bound_at"),
+                            "chunk_profile": binding.get("profile_name") or binding.get("profile_id") or "",
                             "indexed": indexed,
                             "needs_reindex": stale,
                             "status": status,
@@ -665,7 +707,19 @@ def register_rag_routes(
                     )
                 if status_filter:
                     rows = [row for row in rows if row.get("status") == status_filter]
-                return _api_success({"kb_id": kid, "total_files": len(rows), "files": rows})
+                profile_summary = "-"
+                if len(profile_names) == 1:
+                    profile_summary = next(iter(profile_names))
+                elif len(profile_names) > 1:
+                    profile_summary = f"Mixed ({len(profile_names)})"
+                return _api_success(
+                    {
+                        "kb_id": kid,
+                        "total_files": len(rows),
+                        "files": rows,
+                        "profile_summary": profile_summary,
+                    }
+                )
 
             return _with_manager(_run)
         except ValueError as exc:

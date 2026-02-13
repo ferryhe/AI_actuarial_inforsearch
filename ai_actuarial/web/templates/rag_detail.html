@@ -31,31 +31,10 @@
             <div><strong>KB ID:</strong> <span id="rag-meta-kb-id">-</span></div>
             <div><strong>Mode:</strong> <span id="rag-meta-mode">-</span></div>
             <div><strong>Embedding:</strong> <span id="rag-meta-embedding">-</span></div>
+            <div><strong>Chunk Profile:</strong> <span id="rag-meta-chunk-profile">-</span></div>
             <div><strong>Chunk Size:</strong> <span id="rag-meta-chunk-size">-</span></div>
             <div><strong>Chunk Overlap:</strong> <span id="rag-meta-chunk-overlap">-</span></div>
             <div><strong>Updated:</strong> <span id="rag-meta-updated">-</span></div>
-        </div>
-    </section>
-
-    <section class="card">
-        <h3>Chunk Composition</h3>
-        <p id="rag-composition-summary" class="text-muted">Loading composition status...</p>
-        <div class="rag-table-wrap">
-            <table class="data-table">
-                <thead>
-                    <tr>
-                        <th>File</th>
-                        <th>Profile</th>
-                        <th>Binding Mode</th>
-                        <th>Chunk Set</th>
-                        <th>Updated</th>
-                        <th>Version State</th>
-                    </tr>
-                </thead>
-                <tbody id="rag-composition-bindings-body">
-                    <tr><td colspan="6">Loading bindings...</td></tr>
-                </tbody>
-            </table>
         </div>
     </section>
 
@@ -85,20 +64,23 @@
                 <button id="rag-detail-bulk-remove" class="btn btn-secondary">Bulk Remove (0)</button>
             </div>
             <div class="rag-table-wrap">
-                <table class="data-table">
+                <table id="rag-detail-files-table" class="data-table">
                     <thead>
                         <tr>
-                            <th><input type="checkbox" id="rag-detail-files-check-all"></th>
-                            <th>Filename</th>
-                            <th>Category</th>
-                            <th>Status</th>
-                            <th>Chunks</th>
-                            <th>Indexed At</th>
+                            <th class="row-select"><input type="checkbox" id="rag-detail-files-check-all"></th>
+                            <th>#</th>
+                            <th class="rag-col-filename">Filename</th>
+                            <th class="sortable" data-sort-key="chunks">Chunks</th>
+                            <th class="sortable" data-sort-key="no_versions">No. of Versions</th>
+                            <th class="sortable" data-sort-key="chunk_time">Chunk Time</th>
+                            <th class="sortable" data-sort-key="markdown_time">Markdown Time</th>
+                            <th class="sortable" data-sort-key="index_status">Index Status</th>
+                            <th class="sortable" data-sort-key="index_time">Index Time</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="rag-detail-files-body">
-                        <tr><td colspan="7">Loading files...</td></tr>
+                        <tr><td colspan="10">Loading files...</td></tr>
                     </tbody>
                 </table>
             </div>

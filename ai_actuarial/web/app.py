@@ -1484,6 +1484,20 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             result = None
+
+            def _category_where_sql(category_value: str, *, alias: str = "c") -> tuple[str, list[Any]]:
+                category_name = str(category_value or "").strip()
+                if not category_name:
+                    return "", []
+                return (
+                    f" AND ({alias}.category = ? OR {alias}.category LIKE ? OR {alias}.category LIKE ? OR {alias}.category LIKE ?)",
+                    [
+                        category_name,
+                        f"{category_name};%",
+                        f"%; {category_name}",
+                        f"%; {category_name};%",
+                    ],
+                )
             
             if collection_type == "url":
                 urls = data.get("urls", [])
@@ -1778,6 +1792,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 skip_existing = bool(data.get("skip_existing", True))
                 if overwrite_existing:
                     skip_existing = False
+                scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                if scope_mode not in {"index", "category"}:
+                    scope_mode = "index"
+                category_filter = str(data.get("category") or "").strip()
 
                 file_urls = data.get("file_urls") or []
                 if not isinstance(file_urls, list):
@@ -1801,7 +1819,42 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 # Map a "start index" in the newest-first local file list into a candidate offset.
                 candidate_offset = 0
                 catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
-                if (not skip_existing) and start_index > 1:
+                if scope_mode == "category" and category_filter and not file_urls:
+                    category_clause, category_params = _category_where_sql(category_filter, alias="c")
+                    candidate_sql = f"""
+                        SELECT f.url
+                        FROM files f
+                        LEFT JOIN catalog_items c ON c.file_url = f.url
+                        WHERE f.local_path IS NOT NULL AND f.local_path != ''
+                          AND f.deleted_at IS NULL
+                          {category_clause}
+                    """
+                    candidate_params: list[Any] = list(category_params)
+                    if skip_existing:
+                        candidate_sql += """
+                          AND (
+                            c.file_url IS NULL
+                            OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
+                            OR IFNULL(c.file_sha256, c.sha256) != f.sha256
+                            OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version), '') != ?
+                            OR (? = 1 AND c.status = 'error')
+                          )
+                        """
+                        candidate_params.extend([catalog_version, 1 if retry_errors else 0])
+                    candidate_sql += " ORDER BY f.id DESC LIMIT ?"
+                    candidate_params.append(limit)
+                    rows = storage._conn.execute(candidate_sql, tuple(candidate_params)).fetchall()
+                    file_urls = [str(r[0]).strip() for r in rows if r and r[0]]
+                    _append_task_log(
+                        task_id,
+                        "INFO",
+                        (
+                            "Cataloging category window: "
+                            f"category={category_filter}, scan_count={limit}, selected={len(file_urls)}, "
+                            f"retry_errors={retry_errors}, skip_existing={skip_existing}, overwrite_existing={overwrite_existing}"
+                        ),
+                    )
+                elif (not skip_existing) and start_index > 1:
                     candidate_offset = start_index - 1
                 elif start_index > 1:
                     try:
@@ -1869,6 +1922,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     "INFO",
                     (
                         "Cataloging requested window: "
+                        f"scope={scope_mode}, category={category_filter or '-'}, "
                         f"start_index={start_index}, scan_count={limit}, retry_errors={retry_errors}, "
                         f"skip_existing={skip_existing}, overwrite_existing={overwrite_existing}, "
                         f"provider={provider}, input_source={input_source}, candidate_offset={candidate_offset}"
@@ -1931,6 +1985,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 skip_existing = bool(data.get("skip_existing", True))
                 scan_start_index = data.get("scan_start_index")
                 scan_count = data.get("scan_count")
+                scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                if scope_mode not in {"index", "category"}:
+                    scope_mode = "index"
+                category_filter = str(data.get("category") or "").strip()
 
                 if overwrite_existing:
                     # Overwrite implies we should not skip existing markdown.
@@ -1971,6 +2029,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
                         )
                     """
+                    where_params: list[Any] = []
+                    if scope_mode == "category" and category_filter:
+                        category_clause, category_params = _category_where_sql(category_filter, alias="c")
+                        where += category_clause
+                        where_params.extend(category_params)
                     rows = storage._conn.execute(
                         f"""
                         SELECT f.url, c.markdown_content
@@ -1980,13 +2043,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         ORDER BY f.id DESC
                         LIMIT ? OFFSET ?
                         """,
-                        (scan_n, offset),
+                        tuple(where_params + [scan_n, offset]),
                     ).fetchall()
                     file_urls = [r[0] for r in rows]
                     _append_task_log(
                         task_id,
                         "INFO",
-                        f"Batch scan selected {len(file_urls)} file(s) (start_index={start_idx}, scan_count={scan_n}, skip_existing={skip_existing}, overwrite={overwrite_existing})",
+                        (
+                            f"Batch scan selected {len(file_urls)} file(s) "
+                            f"(scope={scope_mode}, category={category_filter or '-'}, "
+                            f"start_index={start_idx}, scan_count={scan_n}, "
+                            f"skip_existing={skip_existing}, overwrite={overwrite_existing})"
+                        ),
                     )
                 
                 logger.info(f"Starting markdown conversion for {len(file_urls)} files")
@@ -2126,6 +2194,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                 scan_start_index = data.get("scan_start_index")
                 scan_count = data.get("scan_count")
+                scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                if scope_mode not in {"index", "category"}:
+                    scope_mode = "index"
+                category_filter = str(data.get("category") or "").strip()
 
                 if not file_urls and scan_count not in (None, "", "null"):
                     try:
@@ -2144,19 +2216,21 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     start_idx = max(1, start_idx)
                     scan_n = max(1, min(scan_n, 2000))
                     offset = start_idx - 1
+                    category_clause, category_params = _category_where_sql(category_filter, alias="c") if (scope_mode == "category" and category_filter) else ("", [])
 
                     rows = storage._conn.execute(
-                        """
+                        f"""
                         SELECT f.url
                         FROM files f
                         JOIN catalog_items c ON c.file_url = f.url
                         WHERE f.deleted_at IS NULL
                           AND c.markdown_content IS NOT NULL
                           AND c.markdown_content != ''
+                          {category_clause}
                         ORDER BY f.id DESC
                         LIMIT ? OFFSET ?
                         """,
-                        (scan_n, offset),
+                        tuple(category_params + [scan_n, offset]),
                     ).fetchall()
                     file_urls = [str(r[0]).strip() for r in rows if r and r[0]]
                     _append_task_log(
@@ -2164,7 +2238,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         "INFO",
                         (
                             "Chunk generation batch selected "
-                            f"{len(file_urls)} file(s) (start_index={start_idx}, scan_count={scan_n})"
+                            f"{len(file_urls)} file(s) "
+                            f"(scope={scope_mode}, category={category_filter or '-'}, "
+                            f"start_index={start_idx}, scan_count={scan_n})"
                         ),
                     )
 
@@ -2741,12 +2817,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                  path = data.get("directory_path")
                  if not path or not os.path.exists(path):
                      return _reject_request("Invalid directory path")
+            if collection_type == "catalog":
+                 scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                 if scope_mode == "category" and not str(data.get("category") or "").strip():
+                     return _reject_request("Category is required for category-scoped cataloging")
             if collection_type == "markdown_conversion":
+                 scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                 if scope_mode == "category" and not str(data.get("category") or "").strip():
+                     return _reject_request("Category is required for category-scoped markdown conversion")
                  has_urls = bool(data.get("file_urls"))
                  has_scan = data.get("scan_count") not in (None, "", "null")
                  if not has_urls and not has_scan:
                      return _reject_request("No files selected for markdown conversion")
             if collection_type == "chunk_generation":
+                 scope_mode = str(data.get("scope_mode") or "index").strip().lower()
+                 if scope_mode == "category" and not str(data.get("category") or "").strip():
+                     return _reject_request("Category is required for category-scoped chunk generation")
                  has_urls = bool(data.get("file_urls"))
                  has_scan = data.get("scan_count") not in (None, "", "null")
                  if not has_urls and not has_scan:
@@ -2813,6 +2899,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             conn = storage._conn
+            category_filter = str(request.args.get("category") or "").strip()
             # Convertibility check (best effort): prefer MIME type, fall back to extension.
             where = """
                 f.local_path IS NOT NULL AND f.local_path != ''
@@ -2834,6 +2921,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
                 )
             """
+            params: list[Any] = []
+            if category_filter:
+                where += " AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                params.extend(
+                    [
+                        category_filter,
+                        f"{category_filter};%",
+                        f"%; {category_filter}",
+                        f"%; {category_filter};%",
+                    ]
+                )
 
             total = conn.execute(
                 f"""
@@ -2841,7 +2939,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 FROM files f
                 LEFT JOIN catalog_items c ON c.file_url = f.url
                 WHERE {where}
-                """
+                """,
+                tuple(params),
             ).fetchone()[0]
 
             with_md = conn.execute(
@@ -2852,7 +2951,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 WHERE {where}
                   AND c.markdown_content IS NOT NULL
                   AND c.markdown_content != ''
-                """
+                """,
+                tuple(params),
             ).fetchone()[0]
 
             first_missing = None
@@ -2872,7 +2972,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     WHERE md IS NULL OR md = ''
                     ORDER BY rn
                     LIMIT 1
-                    """
+                    """,
+                    tuple(params),
                 ).fetchone()
                 if row:
                     first_missing = int(row[0])
@@ -2884,6 +2985,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 {
                     "success": True,
                     "order": "id_desc",
+                    "category": category_filter or "",
                     "total_convertible": int(total),
                     "total_with_markdown": int(with_md),
                     "first_without_markdown_index": first_missing,
@@ -2906,11 +3008,23 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             conn = storage._conn
+            category_filter = str(request.args.get("category") or "").strip()
             where = """
                 f.deleted_at IS NULL
                 AND c.markdown_content IS NOT NULL
                 AND c.markdown_content != ''
             """
+            params: list[Any] = []
+            if category_filter:
+                where += " AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                params.extend(
+                    [
+                        category_filter,
+                        f"{category_filter};%",
+                        f"%; {category_filter}",
+                        f"%; {category_filter};%",
+                    ]
+                )
 
             total_with_markdown = conn.execute(
                 f"""
@@ -2918,7 +3032,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 FROM files f
                 JOIN catalog_items c ON c.file_url = f.url
                 WHERE {where}
-                """
+                """,
+                tuple(params),
             ).fetchone()[0]
 
             total_with_chunks = conn.execute(
@@ -2932,7 +3047,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                       FROM file_chunk_sets s
                       WHERE s.file_url = f.url
                   )
-                """
+                """,
+                tuple(params),
             ).fetchone()[0]
 
             first_without_chunks = None
@@ -2954,7 +3070,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     )
                     ORDER BY rn
                     LIMIT 1
-                    """
+                    """,
+                    tuple(params),
                 ).fetchone()
                 if row:
                     first_without_chunks = int(row[0])
@@ -2965,6 +3082,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 {
                     "success": True,
                     "order": "id_desc",
+                    "category": category_filter or "",
                     "total_with_markdown": int(total_with_markdown),
                     "total_with_chunks": int(total_with_chunks),
                     "first_without_chunks_index": first_without_chunks,
@@ -3009,6 +3127,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
             provider = str(request.args.get("provider") or "local").strip().lower()
             input_source = str(request.args.get("input_source") or "source").strip().lower()
+            category_filter = str(request.args.get("category") or "").strip()
             catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
             # Candidate definition (aligned with catalog_incremental behavior, but using legacy columns too).
             candidates_where = """
@@ -3021,6 +3140,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version),'') != ?
                 )
             """
+            candidate_params: list[Any] = [catalog_version]
+            if category_filter:
+                candidates_where += " AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                candidate_params.extend(
+                    [
+                        category_filter,
+                        f"{category_filter};%",
+                        f"%; {category_filter}",
+                        f"%; {category_filter};%",
+                    ]
+                )
 
             candidate_total = conn.execute(
                 f"""
@@ -3029,11 +3159,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 LEFT JOIN catalog_items c ON c.file_url = f.url
                 WHERE {candidates_where}
                 """,
-                (catalog_version,),
+                tuple(candidate_params),
             ).fetchone()[0]
 
             first_candidate_index = None
             try:
+                first_candidate_params: list[Any] = []
+                if category_filter:
+                    first_candidate_params.extend(
+                        [
+                            category_filter,
+                            f"{category_filter};%",
+                            f"%; {category_filter}",
+                            f"%; {category_filter};%",
+                        ]
+                    )
+                first_candidate_params.append(catalog_version)
                 row = conn.execute(
                     f"""
                     WITH ordered AS (
@@ -3047,6 +3188,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                          LEFT JOIN catalog_items c ON c.file_url = f.url
                          WHERE f.local_path IS NOT NULL AND f.local_path != ''
                            AND f.deleted_at IS NULL
+                           {("AND (c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)" if category_filter else "")}
                      )
                      SELECT rn
                           FROM ordered
@@ -3057,7 +3199,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         ORDER BY rn
                         LIMIT 1
                         """,
-                     (catalog_version,),
+                     tuple(first_candidate_params),
                 ).fetchone()
                 if row:
                     first_candidate_index = int(row[0])
@@ -3073,6 +3215,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     "candidate_total": int(candidate_total),
                     "first_candidate_index": first_candidate_index,
                     "catalog_version": catalog_version,
+                    "category": category_filter or "",
                 }
             )
         except Exception as e:

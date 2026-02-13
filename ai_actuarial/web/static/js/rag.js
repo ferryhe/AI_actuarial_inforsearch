@@ -15,9 +15,13 @@
         detailFiles: [],
         detailComposition: null,
         detailPendingFiles: 0,
+        detailProfileSummary: '-',
         detailFileSelection: new Set(),
         detailPage: 1,
         detailPageSize: 20,
+        detailSortKey: 'index_time',
+        detailSortDirection: 'desc',
+        detailColumnResizeReady: false,
         selectedCreateFiles: new Map(),
         selectedDetailFiles: new Map(),
         fileSelector: {
@@ -65,6 +69,25 @@
         if (!text) return '-';
         if (text.length <= head + tail + 3) return text;
         return `${text.slice(0, head)}...${text.slice(-tail)}`;
+    }
+
+    function parseTimestamp(value) {
+        const text = String(value || '').trim();
+        if (!text) return null;
+        const ms = Date.parse(text);
+        return Number.isFinite(ms) ? ms : null;
+    }
+
+    function compareMaybe(aVal, bVal, direction) {
+        if (aVal == null && bVal == null) return 0;
+        if (aVal == null) return 1;
+        if (bVal == null) return -1;
+        if (typeof aVal === 'number' && typeof bVal === 'number') {
+            return direction === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+        const left = String(aVal);
+        const right = String(bVal);
+        return direction === 'asc' ? left.localeCompare(right) : right.localeCompare(left);
     }
 
     function parseChunkProfileConfig(profile) {
@@ -1088,10 +1111,9 @@
 
     function renderDetailComposition() {
         const composition = state.detailComposition || {};
-        const summaryEl = document.getElementById('rag-composition-summary');
         const syncSummaryEl = document.getElementById('rag-sync-status-summary');
-        const body = document.getElementById('rag-composition-bindings-body');
-        if (!summaryEl || !syncSummaryEl || !body) return;
+        const profileEl = document.getElementById('rag-meta-chunk-profile');
+        if (!syncSummaryEl) return;
 
         const modeCounts = composition.binding_mode_counts || {};
         const followLatest = Number(modeCounts.follow_latest || 0);
@@ -1102,51 +1124,25 @@
         const latestIndex = composition.latest_index || null;
         const latestIndexBuiltAt = latestIndex ? formatDate(latestIndex.built_at || latestIndex.created_at || '') : '-';
 
-        summaryEl.textContent =
-            `Files: ${Number(composition.file_count || 0)} | Chunk Sets: ${Number(composition.chunk_set_count || 0)} | ` +
-            `Follow Latest: ${followLatest} | Pin: ${pin} | Outdated Bindings: ${outdated}`;
-
         syncSummaryEl.textContent =
             `Index: ${hasIndex ? 'Available' : 'Missing'} | Latest Built: ${latestIndexBuiltAt} | ` +
-            `Needs Reindex: ${needsReindex ? 'Yes' : 'No'}`;
+            `Needs Reindex: ${needsReindex ? 'Yes' : 'No'} | Follow Latest: ${followLatest} | Pin: ${pin} | Outdated: ${outdated}`;
 
-        const bindings = Array.isArray(composition.bindings) ? composition.bindings : [];
-        if (!bindings.length) {
-            body.innerHTML = '<tr><td colspan="6">No chunk bindings for this KB.</td></tr>';
-            return;
+        if (profileEl) {
+            const bindings = Array.isArray(composition.bindings) ? composition.bindings : [];
+            const names = new Set();
+            bindings.forEach((b) => {
+                const name = String(b.profile_name || b.profile_id || '').trim();
+                if (name) names.add(name);
+            });
+            if (!names.size) {
+                profileEl.textContent = state.detailProfileSummary || '-';
+            } else if (names.size === 1) {
+                profileEl.textContent = Array.from(names)[0];
+            } else {
+                profileEl.textContent = `Mixed (${names.size})`;
+            }
         }
-
-        body.innerHTML = bindings
-            .map((b) => {
-                const fileUrl = String(b.file_url || '');
-                const fileName = fileUrl ? fileUrl.split('/').pop() || fileUrl : '-';
-                const bindingMode = String(b.binding_mode || 'pin');
-                const chunkSetId = String(b.chunk_set_id || '');
-                const latestChunkSetId = String(b.latest_chunk_set_id || '');
-                const isLatest = !!b.is_latest_for_profile;
-                const versionState = isLatest
-                    ? 'Latest'
-                    : (bindingMode === 'follow_latest' ? 'Switch pending' : 'Pinned old version');
-                const versionClass = isLatest ? 'indexed' : 'stale';
-                return `
-                    <tr>
-                        <td title="${esc(fileUrl)}">${esc(fileName)}</td>
-                        <td>${esc(b.profile_name || b.profile_id || '-')}</td>
-                        <td>${esc(bindingMode)}</td>
-                        <td title="${esc(chunkSetId)}">${esc(shortId(chunkSetId))}</td>
-                        <td>${esc(formatDate(b.chunk_set_updated_at || b.bound_at || ''))}</td>
-                        <td>
-                            <span class="rag-status ${esc(versionClass)}">${esc(versionState)}</span>
-                            ${
-                                !isLatest && latestChunkSetId
-                                    ? `<div class="text-muted" style="font-size:12px;">Latest: ${esc(shortId(latestChunkSetId))}</div>`
-                                    : ''
-                            }
-                        </td>
-                    </tr>
-                `;
-            })
-            .join('');
     }
 
     async function loadDetailComposition() {
@@ -1155,12 +1151,8 @@
             state.detailComposition = payload.data || {};
         } catch (err) {
             state.detailComposition = null;
-            const summaryEl = document.getElementById('rag-composition-summary');
             const syncSummaryEl = document.getElementById('rag-sync-status-summary');
-            const body = document.getElementById('rag-composition-bindings-body');
-            if (summaryEl) summaryEl.textContent = `Failed to load composition: ${formatError(err)}`;
             if (syncSummaryEl) syncSummaryEl.textContent = 'Unable to determine sync status.';
-            if (body) body.innerHTML = '<tr><td colspan="6">Failed to load chunk bindings.</td></tr>';
             updateDetailReindexButton();
             return;
         }
@@ -1177,6 +1169,7 @@
         document.getElementById('rag-meta-kb-id').textContent = kb.kb_id || '-';
         document.getElementById('rag-meta-mode').textContent = getKbModeBadge(kb.kb_mode);
         document.getElementById('rag-meta-embedding').textContent = kb.embedding_model || '-';
+        document.getElementById('rag-meta-chunk-profile').textContent = state.detailProfileSummary || '-';
         document.getElementById('rag-meta-chunk-size').textContent = kb.chunk_size || '-';
         document.getElementById('rag-meta-chunk-overlap').textContent = kb.chunk_overlap || '-';
         document.getElementById('rag-meta-updated').textContent = formatDate(kb.updated_at);
@@ -1191,87 +1184,156 @@
         updateDetailReindexButton();
     }
 
+    function getDetailSortValue(fileRow, sortKey) {
+        const row = fileRow || {};
+        switch (sortKey) {
+            case 'filename':
+                return String(row.title || row.file_url || '');
+            case 'chunks':
+                return Number(row.chunk_count || 0);
+            case 'no_versions':
+                return Number(row.chunk_version_count || 0);
+            case 'chunk_time':
+                return parseTimestamp(row.chunk_set_updated_at || row.bound_at || '');
+            case 'markdown_time':
+                return parseTimestamp(row.markdown_updated_at || '');
+            case 'index_status': {
+                const status = String(row.status || 'pending').toLowerCase();
+                if (status === 'indexed') return 2;
+                if (status === 'stale') return 1;
+                return 0;
+            }
+            case 'index_time':
+                return parseTimestamp(row.indexed_at || '');
+            default:
+                return null;
+        }
+    }
+
+    function renderDetailSortIndicators() {
+        const headers = document.querySelectorAll('#rag-tab-files th.sortable[data-sort-key]');
+        headers.forEach((th) => {
+            const key = th.getAttribute('data-sort-key');
+            th.classList.remove('sort-asc', 'sort-desc');
+            if (key !== state.detailSortKey) return;
+            th.classList.add(state.detailSortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+        });
+    }
+
+    function enableDetailFilesColumnResize() {
+        if (state.detailColumnResizeReady) return;
+        const table = document.getElementById('rag-detail-files-table');
+        if (!table) return;
+        const headers = table.querySelectorAll('thead th');
+        headers.forEach((th, idx) => {
+            if (idx === 0 || idx === headers.length - 1) return;
+            if (th.querySelector('.col-resizer')) return;
+            const resizer = document.createElement('div');
+            resizer.className = 'col-resizer';
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const startX = e.clientX;
+                const startWidth = th.getBoundingClientRect().width;
+                const onMove = (moveEvent) => {
+                    const delta = moveEvent.clientX - startX;
+                    const nextWidth = Math.max(60, Math.round(startWidth + delta));
+                    th.style.width = `${nextWidth}px`;
+                    th.style.maxWidth = `${nextWidth}px`;
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+            th.appendChild(resizer);
+        });
+        state.detailColumnResizeReady = true;
+    }
+
     async function loadDetailFiles() {
         const payload = await apiGet(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files`);
         const rows = payload.data?.files || [];
+        state.detailProfileSummary = payload.data?.profile_summary || '-';
+        const profileEl = document.getElementById('rag-meta-chunk-profile');
+        if (profileEl) profileEl.textContent = state.detailProfileSummary;
         state.detailFiles = rows;
         const search = (document.getElementById('rag-detail-file-search')?.value || '').toLowerCase();
         const filtered = rows.filter((f) => !search || (f.title || f.file_url || '').toLowerCase().includes(search));
-        const filteredUrls = new Set(filtered.map((f) => f.file_url));
+        const filteredUrls = new Set(filtered.map((f) => String(f.file_url || '')));
         state.detailFileSelection = new Set(
             Array.from(state.detailFileSelection).filter((url) => filteredUrls.has(url))
         );
+        const sorted = filtered.slice().sort((a, b) => {
+            const left = getDetailSortValue(a, state.detailSortKey);
+            const right = getDetailSortValue(b, state.detailSortKey);
+            const primary = compareMaybe(left, right, state.detailSortDirection);
+            if (primary !== 0) return primary;
+            const tieLeft = String(a.title || a.file_url || '');
+            const tieRight = String(b.title || b.file_url || '');
+            return tieLeft.localeCompare(tieRight);
+        });
 
-        const totalPages = Math.max(1, Math.ceil(filtered.length / state.detailPageSize));
+        const totalPages = Math.max(1, Math.ceil(sorted.length / state.detailPageSize));
         if (state.detailPage > totalPages) state.detailPage = totalPages;
         const start = (state.detailPage - 1) * state.detailPageSize;
-        const paged = filtered.slice(start, start + state.detailPageSize);
+        const paged = sorted.slice(start, start + state.detailPageSize);
 
         const body = document.getElementById('rag-detail-files-body');
         if (!paged.length) {
-            body.innerHTML = '<tr><td colspan="7">No files found.</td></tr>';
-            renderDetailFilesPagination(filtered.length, totalPages);
+            body.innerHTML = '<tr><td colspan="10">No files found.</td></tr>';
+            renderDetailFilesPagination(sorted.length, totalPages);
+            renderDetailSortIndicators();
             updateDetailBulkRemoveButton();
             return;
         }
 
         body.innerHTML = paged
-            .map(
-                (f) => `
+            .map((f, idx) => {
+                const fileUrl = String(f.file_url || '');
+                const rowNo = start + idx + 1;
+                const checked = state.detailFileSelection.has(fileUrl);
+                return `
                 <tr>
-                    <td><input type="checkbox" data-detail-file-check="${esc(f.file_url)}" ${state.detailFileSelection.has(f.file_url) ? 'checked' : ''}></td>
-                    <td>${esc(f.title || f.file_url)}</td>
-                    <td>${esc(f.category || '-')}</td>
-                    <td><span class="rag-status ${esc(f.status || 'pending')}">${esc(f.status || 'pending')}</span></td>
+                    <td class="row-select">
+                        <input type="checkbox" data-detail-file-check="${esc(fileUrl)}" ${checked ? 'checked' : ''}>
+                    </td>
+                    <td>${rowNo}</td>
+                    <td title="${esc(fileUrl)}">${esc(f.title || f.file_url)}</td>
                     <td>${f.chunk_count || 0}</td>
+                    <td>${Number(f.chunk_version_count || 0)}</td>
+                    <td>${esc(formatDate(f.chunk_set_updated_at || f.bound_at || ''))}</td>
+                    <td>${esc(formatDate(f.markdown_updated_at || ''))}</td>
+                    <td><span class="rag-status ${esc(f.status || 'pending')}">${esc(f.status || 'pending')}</span></td>
                     <td>${esc(formatDate(f.indexed_at))}</td>
                     <td>
                         <div class="rag-actions">
-                            <button class="btn btn-secondary btn-sm" data-preview-file="${esc(f.file_url)}">Preview</button>
-                            ${(Number(f.chunk_count || 0) <= 0 || f.status === 'pending' || f.status === 'stale')
-                                ? `<button class="btn btn-secondary btn-sm" data-index-detail-file="${esc(f.file_url)}">Index</button>`
-                                : ''}
-                            <button class="btn btn-secondary btn-sm" data-remove-detail-file="${esc(f.file_url)}">Remove</button>
+                            <button class="btn btn-secondary btn-sm" data-preview-file="${esc(fileUrl)}">View</button>
+                            <button class="btn btn-secondary btn-sm" data-remove-detail-file="${esc(fileUrl)}">Delete</button>
                         </div>
                     </td>
                 </tr>
             `
-            )
+            })
             .join('');
 
         const checkAll = document.getElementById('rag-detail-files-check-all');
         if (checkAll) {
-            checkAll.checked = paged.length > 0 && paged.every((f) => state.detailFileSelection.has(f.file_url));
+            checkAll.checked = paged.length > 0 && paged.every((f) => state.detailFileSelection.has(String(f.file_url || '')));
         }
 
         body.querySelectorAll('[data-detail-file-check]').forEach((cb) => {
             cb.addEventListener('change', () => {
-                const fileUrl = cb.getAttribute('data-detail-file-check');
+                const fileUrl = String(cb.getAttribute('data-detail-file-check') || '');
                 if (!fileUrl) return;
                 if (cb.checked) state.detailFileSelection.add(fileUrl);
                 else state.detailFileSelection.delete(fileUrl);
                 if (checkAll) {
-                    checkAll.checked = paged.length > 0 && paged.every((f) => state.detailFileSelection.has(f.file_url));
+                    checkAll.checked = paged.length > 0 && paged.every((f) => state.detailFileSelection.has(String(f.file_url || '')));
                 }
                 updateDetailBulkRemoveButton();
-            });
-        });
-
-        body.querySelectorAll('[data-index-detail-file]').forEach((btn) => {
-            btn.addEventListener('click', async () => {
-                const fileUrl = btn.getAttribute('data-index-detail-file');
-                if (!fileUrl) return;
-                try {
-                    const resp = await triggerIndex(context.kbId, {
-                        fileUrls: [fileUrl],
-                        confirmMessage: 'Create indexing task for this file now?',
-                    });
-                    if (!resp) return;
-                    notify(`Index task created: ${resp.job_id || '-'}`, 'success');
-                    await Promise.all([loadDetailTasks(), loadDetailHeader()]);
-                } catch (err) {
-                    notify(`Index failed: ${formatError(err)}`, 'error');
-                }
             });
         });
 
@@ -1302,7 +1364,8 @@
             });
         });
 
-        renderDetailFilesPagination(filtered.length, totalPages);
+        renderDetailFilesPagination(sorted.length, totalPages);
+        renderDetailSortIndicators();
         updateDetailBulkRemoveButton();
     }
 
@@ -1466,6 +1529,20 @@
             state.detailPage = 1;
             loadDetailFiles();
         });
+        document.querySelectorAll('#rag-tab-files th.sortable[data-sort-key]').forEach((th) => {
+            th.addEventListener('click', () => {
+                const sortKey = String(th.getAttribute('data-sort-key') || '').trim();
+                if (!sortKey) return;
+                if (state.detailSortKey === sortKey) {
+                    state.detailSortDirection = state.detailSortDirection === 'asc' ? 'desc' : 'asc';
+                } else {
+                    state.detailSortKey = sortKey;
+                    state.detailSortDirection = ['index_time', 'chunk_time', 'markdown_time', 'chunks', 'no_versions'].includes(sortKey) ? 'desc' : 'asc';
+                }
+                state.detailPage = 1;
+                loadDetailFiles();
+            });
+        });
         document.getElementById('rag-detail-files-check-all')?.addEventListener('change', (e) => {
             const checked = !!e.target.checked;
             document.querySelectorAll('[data-detail-file-check]').forEach((cb) => {
@@ -1488,7 +1565,7 @@
                     await apiDelete(`/api/rag/knowledge-bases/${encodeURIComponent(context.kbId)}/files/${encodeURIComponent(fileUrl)}`);
                     removed += 1;
                 } catch (_err) {
-                    // Continue processing remaining rows.
+                    // Continue removing remaining selections.
                 }
             }
             state.detailFileSelection.clear();
@@ -1572,6 +1649,7 @@
         bindCreateEditForms();
         bindFileSelector();
         bindDetailEvents();
+        enableDetailFilesColumnResize();
         await refreshDetailPage();
         await loadChunkProfiles();
         syncCreateKbId();
