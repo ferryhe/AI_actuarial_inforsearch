@@ -3,15 +3,33 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
+import hashlib
 
 
 class Storage:
     # Allowlist for schema/migration helpers that interpolate table names into PRAGMA.
-    _SCHEMA_TABLES = frozenset({"files", "pages", "blobs", "catalog_items", "auth_tokens", "audit_events"})
+    _SCHEMA_TABLES = frozenset(
+        {
+            "files",
+            "pages",
+            "blobs",
+            "catalog_items",
+            "auth_tokens",
+            "audit_events",
+            "chunk_profiles",
+            "file_chunk_sets",
+            "global_chunks",
+            "chunk_embeddings",
+            "kb_chunk_bindings",
+            "kb_index_versions",
+            "kb_index_items",
+        }
+    )
 
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -166,6 +184,8 @@ class Storage:
                 "markdown_content": "TEXT",
                 "markdown_updated_at": "TEXT",
                 "markdown_source": "TEXT",
+                "rag_chunk_count": "INTEGER DEFAULT 0",
+                "rag_indexed_at": "TEXT",
             },
         )
         self._migrate_catalog_items()
@@ -196,6 +216,159 @@ class Storage:
                 "created_at": "TEXT",
             },
         )
+        self._init_global_chunk_schema()
+
+    def _init_global_chunk_schema(self) -> None:
+        """Initialize schema for global chunk generation and KB composition."""
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chunk_profiles (
+                profile_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                config_hash TEXT NOT NULL UNIQUE,
+                config_json TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                splitter TEXT NOT NULL,
+                tokenizer TEXT NOT NULL,
+                version TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS file_chunk_sets (
+                chunk_set_id TEXT PRIMARY KEY,
+                file_url TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                markdown_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ready',
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(file_url, profile_id, markdown_hash),
+                FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
+                FOREIGN KEY(profile_id) REFERENCES chunk_profiles(profile_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS global_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                chunk_set_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                token_count INTEGER NOT NULL DEFAULT 0,
+                section_hierarchy TEXT,
+                content_hash TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(chunk_set_id, chunk_index),
+                FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets(chunk_set_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                chunk_id TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                dim INTEGER NOT NULL DEFAULT 0,
+                vector_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (chunk_id, embedding_model),
+                FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kb_chunk_bindings (
+                kb_id TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                chunk_set_id TEXT NOT NULL,
+                bound_at TEXT NOT NULL,
+                bound_by TEXT,
+                binding_mode TEXT NOT NULL DEFAULT 'pin',
+                target_profile_id TEXT,
+                PRIMARY KEY (kb_id, file_url, chunk_set_id),
+                FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
+                FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets(chunk_set_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kb_index_versions (
+                index_version_id TEXT PRIMARY KEY,
+                kb_id TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                index_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                artifact_path TEXT,
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                built_at TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kb_index_items (
+                index_version_id TEXT NOT NULL,
+                chunk_id TEXT NOT NULL,
+                PRIMARY KEY (index_version_id, chunk_id),
+                FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
+                FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_file_url
+            ON file_chunk_sets(file_url)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_profile_id
+            ON file_chunk_sets(profile_id)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_global_chunks_chunk_set_id
+            ON global_chunks(chunk_set_id)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_kb_chunk_bindings_kb_id
+            ON kb_chunk_bindings(kb_id)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_kb_chunk_bindings_file_url
+            ON kb_chunk_bindings(file_url)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_kb_index_versions_kb_id
+            ON kb_index_versions(kb_id)
+            """
+        )
+        self._ensure_columns(
+            "kb_chunk_bindings",
+            {
+                "binding_mode": "TEXT NOT NULL DEFAULT 'pin'",
+                "target_profile_id": "TEXT",
+            },
+        )
+        self._conn.commit()
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         if table not in self._SCHEMA_TABLES:
@@ -1032,7 +1205,9 @@ class Storage:
                    f.original_filename, f.local_path, f.bytes, f.content_type,
                    f.last_modified, f.etag, f.published_time, f.first_seen,
                    f.last_seen, f.crawl_time, f.deleted_at,
-                   c.category, c.summary, c.keywords
+                   c.category, c.summary, c.keywords,
+                   c.markdown_content, c.markdown_source, c.markdown_updated_at,
+                   c.rag_chunk_count, c.rag_indexed_at
             FROM files f
             {join_clause}
             WHERE {where_clause}
@@ -1063,7 +1238,12 @@ class Storage:
                 "deleted_at": row[15],
                 "category": row[16],
                 "summary": row[17],
-                "keywords": json.loads(row[18]) if row[18] else []
+                "keywords": json.loads(row[18]) if row[18] else [],
+                "markdown_content": row[19],
+                "markdown_source": row[20],
+                "markdown_updated_at": row[21],
+                "rag_chunk_count": row[22] or 0,
+                "rag_indexed_at": row[23]
             }
             files.append(file_dict)
         
@@ -1102,7 +1282,8 @@ class Storage:
                    f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords, c.status,
                    c.markdown_content, c.markdown_updated_at, c.markdown_source,
-                   c.catalog_version, c.processed_at, c.updated_at
+                   c.catalog_version, c.processed_at, c.updated_at,
+                   c.rag_chunk_count, c.rag_indexed_at
             FROM files f
             LEFT JOIN catalog_items c ON c.file_url = f.url
             WHERE f.url = ?
@@ -1140,7 +1321,52 @@ class Storage:
             "catalog_version": row[23],
             "catalog_processed_at": row[24],
             "catalog_updated_at": row[25],
+            "rag_chunk_count": row[26] or 0,
+            "rag_indexed_at": row[27],
         }
+
+    def get_file_rag_kb_entries(self, file_url: str) -> list[dict]:
+        """Return KB-level RAG metadata for a specific file.
+
+        Each entry contains KB identity, embedding model, and file index status.
+        Returns an empty list when RAG tables are not present.
+        """
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT
+                    kf.kb_id,
+                    kb.name,
+                    kb.embedding_model,
+                    kf.chunk_count,
+                    kf.indexed_at,
+                    kf.added_at
+                FROM rag_kb_files kf
+                LEFT JOIN rag_knowledge_bases kb ON kb.kb_id = kf.kb_id
+                WHERE kf.file_url = ?
+                ORDER BY
+                    CASE WHEN kf.indexed_at IS NULL OR kf.indexed_at = '' THEN 1 ELSE 0 END,
+                    kf.indexed_at DESC,
+                    kf.added_at DESC
+                """,
+                (file_url,),
+            )
+        except sqlite3.OperationalError:
+            return []
+
+        out: list[dict] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "kb_id": row[0],
+                    "kb_name": row[1] or row[0],
+                    "embedding_model": row[2] or "",
+                    "chunk_count": row[3] or 0,
+                    "indexed_at": row[4],
+                    "added_at": row[5],
+                }
+            )
+        return out
     
     def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
         """Update catalog information for a file.
@@ -1288,6 +1514,909 @@ class Storage:
             "markdown_content": row[0],
             "markdown_updated_at": row[1],
             "markdown_source": row[2],
+        }
+
+    @staticmethod
+    def _utcnow_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _parse_iso_to_utc(value: str | None) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        text = raw.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(text)
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    def create_chunk_profile(
+        self,
+        *,
+        name: str,
+        chunk_size: int,
+        chunk_overlap: int,
+        splitter: str = "semantic",
+        tokenizer: str = "cl100k_base",
+        version: str = "v1",
+        metadata: dict[str, Any] | None = None,
+        upsert: bool = True,
+    ) -> dict[str, Any]:
+        """Create (or reuse) a chunk profile."""
+        normalized_name = str(name or "").strip()
+        payload = {
+            "chunk_size": int(chunk_size),
+            "chunk_overlap": int(chunk_overlap),
+            "splitter": str(splitter or "semantic"),
+            "tokenizer": str(tokenizer or "cl100k_base"),
+            "version": str(version or "v1"),
+            "metadata": metadata or {},
+        }
+        config_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        config_hash = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+
+        # Enforce unique profile names (case-insensitive).
+        if normalized_name:
+            same_name = self._conn.execute(
+                """
+                SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
+                       config_hash, config_json, created_at, updated_at
+                FROM chunk_profiles
+                WHERE LOWER(name) = LOWER(?)
+                LIMIT 1
+                """,
+                (normalized_name,),
+            ).fetchone()
+            if same_name:
+                if same_name[7] != config_hash:
+                    raise ValueError(f"chunk profile name already exists: {normalized_name}")
+                return {
+                    "profile_id": same_name[0],
+                    "name": same_name[1],
+                    "chunk_size": same_name[2],
+                    "chunk_overlap": same_name[3],
+                    "splitter": same_name[4],
+                    "tokenizer": same_name[5],
+                    "version": same_name[6],
+                    "config_hash": same_name[7],
+                    "config_json": same_name[8],
+                    "created_at": same_name[9],
+                    "updated_at": same_name[10],
+                }
+
+        existing = self._conn.execute(
+            """
+            SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
+                   config_hash, config_json, created_at, updated_at
+            FROM chunk_profiles
+            WHERE config_hash = ?
+            LIMIT 1
+            """,
+            (config_hash,),
+        ).fetchone()
+        if existing:
+            return {
+                "profile_id": existing[0],
+                "name": existing[1],
+                "chunk_size": existing[2],
+                "chunk_overlap": existing[3],
+                "splitter": existing[4],
+                "tokenizer": existing[5],
+                "version": existing[6],
+                "config_hash": existing[7],
+                "config_json": existing[8],
+                "created_at": existing[9],
+                "updated_at": existing[10],
+            }
+
+        profile_id = f"cp_{uuid.uuid4().hex}"
+        now = self._utcnow_iso()
+        self._conn.execute(
+            """
+            INSERT INTO chunk_profiles (
+                profile_id, name, config_hash, config_json, chunk_size, chunk_overlap,
+                splitter, tokenizer, version, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile_id,
+                normalized_name or profile_id,
+                config_hash,
+                config_json,
+                payload["chunk_size"],
+                payload["chunk_overlap"],
+                payload["splitter"],
+                payload["tokenizer"],
+                payload["version"],
+                now,
+                now,
+            ),
+        )
+        self._maybe_commit()
+        return {
+            "profile_id": profile_id,
+            "name": normalized_name or profile_id,
+            "chunk_size": payload["chunk_size"],
+            "chunk_overlap": payload["chunk_overlap"],
+            "splitter": payload["splitter"],
+            "tokenizer": payload["tokenizer"],
+            "version": payload["version"],
+            "config_hash": config_hash,
+            "config_json": config_json,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def list_chunk_profiles(self) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """
+            SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
+                   config_hash, config_json, created_at, updated_at
+            FROM chunk_profiles
+            ORDER BY updated_at DESC, created_at DESC
+            """
+        )
+        rows = []
+        for row in cur.fetchall():
+            rows.append(
+                {
+                    "profile_id": row[0],
+                    "name": row[1],
+                    "chunk_size": row[2],
+                    "chunk_overlap": row[3],
+                    "splitter": row[4],
+                    "tokenizer": row[5],
+                    "version": row[6],
+                    "config_hash": row[7],
+                    "config_json": row[8],
+                    "created_at": row[9],
+                    "updated_at": row[10],
+                }
+            )
+        return rows
+
+    def get_chunk_profile(self, profile_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
+                   config_hash, config_json, created_at, updated_at
+            FROM chunk_profiles
+            WHERE profile_id = ?
+            LIMIT 1
+            """,
+            (profile_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "profile_id": row[0],
+            "name": row[1],
+            "chunk_size": row[2],
+            "chunk_overlap": row[3],
+            "splitter": row[4],
+            "tokenizer": row[5],
+            "version": row[6],
+            "config_hash": row[7],
+            "config_json": row[8],
+            "created_at": row[9],
+            "updated_at": row[10],
+        }
+
+    def get_or_create_file_chunk_set(
+        self,
+        *,
+        file_url: str,
+        profile_id: str,
+        markdown_hash: str,
+        status: str = "ready",
+    ) -> dict[str, Any]:
+        existing = self._conn.execute(
+            """
+            SELECT chunk_set_id, file_url, profile_id, markdown_hash, status, chunk_count, created_at, updated_at
+            FROM file_chunk_sets
+            WHERE file_url = ? AND profile_id = ? AND markdown_hash = ?
+            LIMIT 1
+            """,
+            (file_url, profile_id, markdown_hash),
+        ).fetchone()
+        if existing:
+            return {
+                "chunk_set_id": existing[0],
+                "file_url": existing[1],
+                "profile_id": existing[2],
+                "markdown_hash": existing[3],
+                "status": existing[4],
+                "chunk_count": existing[5],
+                "created_at": existing[6],
+                "updated_at": existing[7],
+                "created": False,
+            }
+
+        now = self._utcnow_iso()
+        chunk_set_id = f"cs_{uuid.uuid4().hex}"
+        self._conn.execute(
+            """
+            INSERT INTO file_chunk_sets (
+                chunk_set_id, file_url, profile_id, markdown_hash, status, chunk_count, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+            """,
+            (chunk_set_id, file_url, profile_id, markdown_hash, status, now, now),
+        )
+        self._maybe_commit()
+        return {
+            "chunk_set_id": chunk_set_id,
+            "file_url": file_url,
+            "profile_id": profile_id,
+            "markdown_hash": markdown_hash,
+            "status": status,
+            "chunk_count": 0,
+            "created_at": now,
+            "updated_at": now,
+            "created": True,
+        }
+
+    def replace_global_chunks(
+        self,
+        *,
+        chunk_set_id: str,
+        chunks: list[dict[str, Any]],
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Insert chunks for one chunk set.
+
+        When overwrite=False and existing chunks are present, this method keeps existing
+        records and returns current counts without modification.
+        """
+        current_n = int(
+            self._conn.execute(
+                "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
+                (chunk_set_id,),
+            ).fetchone()[0]
+            or 0
+        )
+        if current_n > 0 and not overwrite:
+            return {"chunk_set_id": chunk_set_id, "chunk_count": current_n, "replaced": False, "inserted": 0}
+
+        with self.transaction():
+            if current_n > 0:
+                self._conn.execute("DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,))
+
+            now = self._utcnow_iso()
+            inserted = 0
+            for idx, chunk in enumerate(chunks):
+                content = str((chunk or {}).get("content") or "")
+                token_count = int((chunk or {}).get("token_count") or 0)
+                section_hierarchy = (chunk or {}).get("section_hierarchy")
+                chunk_index = int((chunk or {}).get("chunk_index") if (chunk or {}).get("chunk_index") is not None else idx)
+                chunk_id = f"{chunk_set_id}:{chunk_index}"
+                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO global_chunks (
+                        chunk_id, chunk_set_id, chunk_index, content, token_count,
+                        section_hierarchy, content_hash, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        chunk_id,
+                        chunk_set_id,
+                        chunk_index,
+                        content,
+                        token_count,
+                        section_hierarchy,
+                        content_hash,
+                        now,
+                    ),
+                )
+                inserted += 1
+
+            self._conn.execute(
+                """
+                UPDATE file_chunk_sets
+                SET chunk_count = ?, status = 'ready', updated_at = ?
+                WHERE chunk_set_id = ?
+                """,
+                (inserted, now, chunk_set_id),
+            )
+
+        return {
+            "chunk_set_id": chunk_set_id,
+            "chunk_count": inserted,
+            "replaced": current_n > 0,
+            "inserted": inserted,
+        }
+
+    def list_file_chunk_sets(self, file_url: str) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """
+            SELECT
+                s.chunk_set_id,
+                s.file_url,
+                s.profile_id,
+                p.name,
+                p.chunk_size,
+                p.chunk_overlap,
+                p.splitter,
+                p.tokenizer,
+                p.version,
+                s.markdown_hash,
+                s.status,
+                s.chunk_count,
+                s.created_at,
+                s.updated_at,
+                (
+                    SELECT COUNT(*)
+                    FROM kb_chunk_bindings b
+                    WHERE b.chunk_set_id = s.chunk_set_id
+                ) AS bound_kb_count
+            FROM file_chunk_sets s
+            JOIN chunk_profiles p ON p.profile_id = s.profile_id
+            WHERE s.file_url = ?
+            ORDER BY s.updated_at DESC, s.created_at DESC
+            """,
+            (file_url,),
+        )
+        out: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "chunk_set_id": row[0],
+                    "file_url": row[1],
+                    "profile_id": row[2],
+                    "profile_name": row[3],
+                    "chunk_size": row[4],
+                    "chunk_overlap": row[5],
+                    "splitter": row[6],
+                    "tokenizer": row[7],
+                    "version": row[8],
+                    "markdown_hash": row[9],
+                    "status": row[10],
+                    "chunk_count": row[11],
+                    "created_at": row[12],
+                    "updated_at": row[13],
+                    "bound_kb_count": row[14] or 0,
+                }
+            )
+        return out
+
+    def bind_chunk_set_to_kb(
+        self,
+        *,
+        kb_id: str,
+        file_url: str,
+        chunk_set_id: str,
+        bound_by: str = "system",
+        binding_mode: str = "pin",
+    ) -> dict[str, Any]:
+        """Bind one chunk set to one KB.
+
+        binding_mode:
+            - pin: fixed chunk_set_id for this binding
+            - follow_latest: auto-track latest chunk_set for same file/profile
+        """
+        mode = str(binding_mode or "pin").strip().lower()
+        if mode not in {"pin", "follow_latest"}:
+            raise ValueError("binding_mode must be 'pin' or 'follow_latest'")
+        now = self._utcnow_iso()
+        # Validate chunk_set belongs to this file and get profile relation.
+        rel = self._conn.execute(
+            """
+            SELECT file_url, profile_id
+            FROM file_chunk_sets
+            WHERE chunk_set_id = ?
+            LIMIT 1
+            """,
+            (chunk_set_id,),
+        ).fetchone()
+        if not rel:
+            raise ValueError("chunk_set_id not found")
+        if (rel[0] or "") != file_url:
+            raise ValueError("chunk_set_id does not belong to the specified file_url")
+        target_profile_id = (rel[1] or "") if mode == "follow_latest" else None
+
+        with self.transaction():
+            # For follow_latest mode, keep only one active binding per (kb, file, profile).
+            if mode == "follow_latest":
+                self._conn.execute(
+                    """
+                    DELETE FROM kb_chunk_bindings
+                    WHERE kb_id = ?
+                      AND file_url = ?
+                      AND binding_mode = 'follow_latest'
+                      AND COALESCE(target_profile_id, '') = ?
+                      AND chunk_set_id != ?
+                    """,
+                    (kb_id, file_url, target_profile_id or "", chunk_set_id),
+                )
+
+            exists = self._conn.execute(
+                """
+                SELECT binding_mode, COALESCE(target_profile_id, '')
+                FROM kb_chunk_bindings
+                WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                LIMIT 1
+                """,
+                (kb_id, file_url, chunk_set_id),
+            ).fetchone()
+            if exists:
+                current_mode = (exists[0] or "pin").strip().lower()
+                current_target_profile = exists[1] or ""
+                if current_mode != mode or current_target_profile != (target_profile_id or ""):
+                    self._conn.execute(
+                        """
+                        UPDATE kb_chunk_bindings
+                        SET bound_at = ?, bound_by = ?, binding_mode = ?, target_profile_id = ?
+                        WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                        """,
+                        (now, bound_by, mode, target_profile_id, kb_id, file_url, chunk_set_id),
+                    )
+                return {
+                    "kb_id": kb_id,
+                    "file_url": file_url,
+                    "chunk_set_id": chunk_set_id,
+                    "binding_mode": mode,
+                    "target_profile_id": target_profile_id or "",
+                    "created": False,
+                }
+
+            self._conn.execute(
+                """
+                INSERT INTO kb_chunk_bindings (
+                    kb_id, file_url, chunk_set_id, bound_at, bound_by, binding_mode, target_profile_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (kb_id, file_url, chunk_set_id, now, bound_by, mode, target_profile_id),
+            )
+            return {
+                "kb_id": kb_id,
+                "file_url": file_url,
+                "chunk_set_id": chunk_set_id,
+                "binding_mode": mode,
+                "target_profile_id": target_profile_id or "",
+                "created": True,
+            }
+
+    def sync_follow_latest_bindings_for_chunk_set(
+        self,
+        *,
+        file_url: str,
+        profile_id: str,
+        chunk_set_id: str,
+        bound_by: str = "system_follow_latest",
+    ) -> dict[str, Any]:
+        """Move follow_latest bindings to the newest chunk_set for same file/profile."""
+        now = self._utcnow_iso()
+        rows = self._conn.execute(
+            """
+            SELECT kb_id, file_url, chunk_set_id
+            FROM kb_chunk_bindings
+            WHERE file_url = ?
+              AND binding_mode = 'follow_latest'
+              AND COALESCE(target_profile_id, '') = ?
+              AND chunk_set_id != ?
+            """,
+            (file_url, profile_id, chunk_set_id),
+        ).fetchall()
+        if not rows:
+            return {
+                "file_url": file_url,
+                "profile_id": profile_id,
+                "chunk_set_id": chunk_set_id,
+                "synced_bindings": 0,
+                "affected_kb_ids": [],
+            }
+
+        affected_kb_ids: set[str] = set()
+        synced = 0
+        with self.transaction():
+            for row in rows:
+                kb_id = str(row[0] or "")
+                old_chunk_set_id = str(row[2] or "")
+                if not kb_id or not old_chunk_set_id:
+                    continue
+
+                target_exists = self._conn.execute(
+                    """
+                    SELECT 1
+                    FROM kb_chunk_bindings
+                    WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                    LIMIT 1
+                    """,
+                    (kb_id, file_url, chunk_set_id),
+                ).fetchone()
+
+                if target_exists:
+                    self._conn.execute(
+                        """
+                        UPDATE kb_chunk_bindings
+                        SET bound_at = ?, bound_by = ?, binding_mode = 'follow_latest', target_profile_id = ?
+                        WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                        """,
+                        (now, bound_by, profile_id, kb_id, file_url, chunk_set_id),
+                    )
+                else:
+                    self._conn.execute(
+                        """
+                        INSERT INTO kb_chunk_bindings (
+                            kb_id, file_url, chunk_set_id, bound_at, bound_by, binding_mode, target_profile_id
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'follow_latest', ?)
+                        """,
+                        (kb_id, file_url, chunk_set_id, now, bound_by, profile_id),
+                    )
+                self._conn.execute(
+                    """
+                    DELETE FROM kb_chunk_bindings
+                    WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+                    """,
+                    (kb_id, file_url, old_chunk_set_id),
+                )
+                synced += 1
+                affected_kb_ids.add(kb_id)
+
+        return {
+            "file_url": file_url,
+            "profile_id": profile_id,
+            "chunk_set_id": chunk_set_id,
+            "synced_bindings": synced,
+            "affected_kb_ids": sorted(affected_kb_ids),
+        }
+
+    def list_file_index_status(self, file_url: str) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """
+            SELECT
+                b.kb_id,
+                COUNT(DISTINCT b.chunk_set_id) AS chunk_set_count,
+                COALESCE((
+                    SELECT iv.embedding_model
+                    FROM kb_index_versions iv
+                    WHERE iv.kb_id = b.kb_id
+                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
+                    LIMIT 1
+                ), '') AS embedding_model,
+                (
+                    SELECT COALESCE(iv.built_at, iv.created_at)
+                    FROM kb_index_versions iv
+                    WHERE iv.kb_id = b.kb_id
+                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
+                    LIMIT 1
+                ) AS indexed_at,
+                COALESCE((
+                    SELECT iv.chunk_count
+                    FROM kb_index_versions iv
+                    WHERE iv.kb_id = b.kb_id
+                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
+                    LIMIT 1
+                ), 0) AS indexed_chunk_count
+            FROM kb_chunk_bindings b
+            WHERE b.file_url = ?
+            GROUP BY b.kb_id
+            ORDER BY indexed_at DESC
+            """,
+            (file_url,),
+        )
+        out: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "kb_id": row[0],
+                    "chunk_set_count": row[1] or 0,
+                    "embedding_model": row[2] or "",
+                    "indexed_at": row[3],
+                    "indexed_chunk_count": row[4] or 0,
+                }
+            )
+        return out
+
+    def get_kb_composition_status(self, kb_id: str) -> dict[str, Any]:
+        file_count = int(
+            self._conn.execute(
+                "SELECT COUNT(DISTINCT file_url) FROM kb_chunk_bindings WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()[0]
+            or 0
+        )
+        chunk_set_count = int(
+            self._conn.execute(
+                "SELECT COUNT(DISTINCT chunk_set_id) FROM kb_chunk_bindings WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()[0]
+            or 0
+        )
+        latest = self._conn.execute(
+            """
+            SELECT embedding_model, index_type, status, chunk_count, built_at, created_at
+            FROM kb_index_versions
+            WHERE kb_id = ?
+            ORDER BY COALESCE(built_at, created_at) DESC
+            LIMIT 1
+            """,
+            (kb_id,),
+        ).fetchone()
+        latest_binding_at = self._conn.execute(
+            """
+            SELECT MAX(bound_at)
+            FROM kb_chunk_bindings
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()[0]
+        mode_counts = self._conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN binding_mode = 'follow_latest' THEN 1 ELSE 0 END) AS follow_latest_count,
+                SUM(CASE WHEN binding_mode = 'pin' OR binding_mode IS NULL THEN 1 ELSE 0 END) AS pin_count
+            FROM kb_chunk_bindings
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()
+        follow_latest_count = int((mode_counts[0] or 0) if mode_counts else 0)
+        pin_count = int((mode_counts[1] or 0) if mode_counts else 0)
+        outdated_binding_count = int(
+            self._conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM kb_chunk_bindings b
+                LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                WHERE b.kb_id = ?
+                  AND s.profile_id IS NOT NULL
+                  AND b.chunk_set_id != (
+                    SELECT s2.chunk_set_id
+                    FROM file_chunk_sets s2
+                    WHERE s2.file_url = b.file_url
+                      AND s2.profile_id = s.profile_id
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    LIMIT 1
+                  )
+                """,
+                (kb_id,),
+            ).fetchone()[0]
+            or 0
+        )
+        has_index = bool(latest)
+        latest_index_time = (latest[4] or latest[5]) if latest else None
+        needs_reindex = bool(file_count > 0 and (not has_index or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)))
+        return {
+            "kb_id": kb_id,
+            "file_count": file_count,
+            "chunk_set_count": chunk_set_count,
+            "has_index": has_index,
+            "latest_binding_at": latest_binding_at,
+            "binding_mode_counts": {
+                "follow_latest": follow_latest_count,
+                "pin": pin_count,
+            },
+            "outdated_binding_count": outdated_binding_count,
+            "new_chunk_versions_available": outdated_binding_count > 0,
+            "needs_reindex": needs_reindex,
+            "latest_index": {
+                "embedding_model": latest[0],
+                "index_type": latest[1],
+                "status": latest[2],
+                "chunk_count": latest[3] or 0,
+                "built_at": latest[4] or latest[5],
+            }
+            if latest
+            else None,
+        }
+
+    def list_kb_chunk_bindings(self, kb_id: str) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """
+            SELECT
+                b.kb_id,
+                b.file_url,
+                b.chunk_set_id,
+                b.bound_at,
+                b.bound_by,
+                b.binding_mode,
+                b.target_profile_id,
+                s.profile_id,
+                p.name AS profile_name,
+                s.chunk_count,
+                s.markdown_hash,
+                s.updated_at AS chunk_set_updated_at,
+                (
+                    SELECT s2.chunk_set_id
+                    FROM file_chunk_sets s2
+                    WHERE s2.file_url = b.file_url
+                      AND s2.profile_id = s.profile_id
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    LIMIT 1
+                ) AS latest_chunk_set_id
+            FROM kb_chunk_bindings b
+            LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+            LEFT JOIN chunk_profiles p ON p.profile_id = s.profile_id
+            WHERE b.kb_id = ?
+            ORDER BY b.bound_at DESC
+            """,
+            (kb_id,),
+        )
+        out: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "kb_id": row[0],
+                    "file_url": row[1],
+                    "chunk_set_id": row[2],
+                    "bound_at": row[3],
+                    "bound_by": row[4],
+                    "binding_mode": row[5] or "pin",
+                    "target_profile_id": row[6] or "",
+                    "profile_id": row[7],
+                    "profile_name": row[8] or "",
+                    "chunk_count": row[9] or 0,
+                    "markdown_hash": row[10] or "",
+                    "chunk_set_updated_at": row[11],
+                    "latest_chunk_set_id": row[12] or "",
+                    "is_latest_for_profile": (row[12] or "") == (row[2] or ""),
+                }
+            )
+        return out
+
+    def create_kb_index_version(
+        self,
+        *,
+        kb_id: str,
+        embedding_model: str,
+        index_type: str,
+        chunk_count: int,
+        status: str = "ready",
+        artifact_path: str = "",
+        chunk_ids: list[str] | None = None,
+        built_at: str | None = None,
+    ) -> dict[str, Any]:
+        now = self._utcnow_iso()
+        index_version_id = f"idxv_{uuid.uuid4().hex}"
+        built_time = built_at or now
+        with self.transaction():
+            # Keep only the latest index version record per KB.
+            old_ids = [
+                str(r[0])
+                for r in self._conn.execute(
+                    "SELECT index_version_id FROM kb_index_versions WHERE kb_id = ?",
+                    (kb_id,),
+                ).fetchall()
+            ]
+            if old_ids:
+                for old_id in old_ids:
+                    self._conn.execute(
+                        "DELETE FROM kb_index_items WHERE index_version_id = ?",
+                        (old_id,),
+                    )
+                self._conn.execute("DELETE FROM kb_index_versions WHERE kb_id = ?", (kb_id,))
+
+            self._conn.execute(
+                """
+                INSERT INTO kb_index_versions (
+                    index_version_id, kb_id, embedding_model, index_type, status,
+                    artifact_path, chunk_count, built_at, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    index_version_id,
+                    kb_id,
+                    embedding_model,
+                    index_type,
+                    status,
+                    artifact_path,
+                    int(chunk_count),
+                    built_time,
+                    now,
+                ),
+            )
+            if chunk_ids:
+                for chunk_id in chunk_ids:
+                    self._conn.execute(
+                        """
+                        INSERT OR IGNORE INTO kb_index_items (index_version_id, chunk_id)
+                        VALUES (?, ?)
+                        """,
+                        (index_version_id, chunk_id),
+                    )
+        return {
+            "index_version_id": index_version_id,
+            "kb_id": kb_id,
+            "embedding_model": embedding_model,
+            "index_type": index_type,
+            "status": status,
+            "artifact_path": artifact_path,
+            "chunk_count": int(chunk_count),
+            "built_at": built_time,
+            "created_at": now,
+        }
+
+    def cleanup_orphan_chunk_sets(
+        self,
+        *,
+        older_than_days: int = 30,
+        limit: int = 5000,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        days = max(1, int(older_than_days))
+        max_rows = max(1, min(int(limit), 20000))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        rows = self._conn.execute(
+            """
+            SELECT s.chunk_set_id, s.file_url, s.profile_id, s.created_at, s.updated_at,
+                   COALESCE((SELECT COUNT(*) FROM global_chunks g WHERE g.chunk_set_id = s.chunk_set_id), 0) AS chunk_count
+            FROM file_chunk_sets s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM kb_chunk_bindings b WHERE b.chunk_set_id = s.chunk_set_id
+            )
+            ORDER BY COALESCE(s.updated_at, s.created_at) ASC
+            LIMIT ?
+            """,
+            (max_rows,),
+        ).fetchall()
+
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            updated_at = row[4] or row[3]
+            updated_dt = self._parse_iso_to_utc(updated_at)
+            if not updated_dt or updated_dt >= cutoff:
+                continue
+            candidates.append(
+                {
+                    "chunk_set_id": row[0],
+                    "file_url": row[1],
+                    "profile_id": row[2],
+                    "created_at": row[3],
+                    "updated_at": row[4],
+                    "chunk_count": int(row[5] or 0),
+                }
+            )
+
+        total_chunks = sum(int(item.get("chunk_count") or 0) for item in candidates)
+        if dry_run or not candidates:
+            return {
+                "older_than_days": days,
+                "dry_run": bool(dry_run),
+                "deleted_chunk_sets": 0,
+                "deleted_chunks": 0,
+                "candidates": len(candidates),
+                "candidate_chunk_sets": candidates,
+            }
+
+        with self.transaction():
+            for item in candidates:
+                chunk_set_id = str(item["chunk_set_id"])
+                # Remove index references first (safe even when SQLite FK is disabled).
+                self._conn.execute(
+                    "DELETE FROM kb_index_items WHERE chunk_id LIKE ?",
+                    (f"{chunk_set_id}:%",),
+                )
+                self._conn.execute(
+                    """
+                    DELETE FROM chunk_embeddings
+                    WHERE chunk_id IN (
+                        SELECT chunk_id FROM global_chunks WHERE chunk_set_id = ?
+                    )
+                    """,
+                    (chunk_set_id,),
+                )
+                self._conn.execute("DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,))
+                self._conn.execute("DELETE FROM file_chunk_sets WHERE chunk_set_id = ?", (chunk_set_id,))
+
+        return {
+            "older_than_days": days,
+            "dry_run": False,
+            "deleted_chunk_sets": len(candidates),
+            "deleted_chunks": total_chunks,
+            "candidates": len(candidates),
+            "candidate_chunk_sets": candidates[:50],
         }
     
     def clear_local_path(self, url: str) -> None:

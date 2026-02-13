@@ -31,10 +31,23 @@
             <div><strong>KB ID:</strong> <span id="rag-meta-kb-id">-</span></div>
             <div><strong>Mode:</strong> <span id="rag-meta-mode">-</span></div>
             <div><strong>Embedding:</strong> <span id="rag-meta-embedding">-</span></div>
+            <div><strong>Chunk Profile:</strong> <span id="rag-meta-chunk-profile">-</span></div>
             <div><strong>Chunk Size:</strong> <span id="rag-meta-chunk-size">-</span></div>
             <div><strong>Chunk Overlap:</strong> <span id="rag-meta-chunk-overlap">-</span></div>
             <div><strong>Updated:</strong> <span id="rag-meta-updated">-</span></div>
         </div>
+    </section>
+
+    <section class="card">
+        <h3>Chunk Maintenance</h3>
+        <p id="rag-sync-status-summary" class="text-muted">Loading sync state...</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="rag-detail-cleanup-chunks" class="btn btn-secondary">Cleanup Unbound Chunks (>30d)</button>
+            <button id="rag-detail-cleanup-chunks-dry-run" class="btn btn-secondary">Preview Cleanup</button>
+        </div>
+        <p class="text-muted" style="margin-top:8px;">
+            Deletes chunk sets not bound to any KB and older than 30 days. Index versions keep only the latest record per KB.
+        </p>
     </section>
 
     <section class="card">
@@ -51,20 +64,23 @@
                 <button id="rag-detail-bulk-remove" class="btn btn-secondary">Bulk Remove (0)</button>
             </div>
             <div class="rag-table-wrap">
-                <table class="data-table">
+                <table id="rag-detail-files-table" class="data-table">
                     <thead>
                         <tr>
-                            <th><input type="checkbox" id="rag-detail-files-check-all"></th>
-                            <th>Filename</th>
-                            <th>Category</th>
-                            <th>Status</th>
-                            <th>Chunks</th>
-                            <th>Indexed At</th>
+                            <th class="row-select"><input type="checkbox" id="rag-detail-files-check-all"></th>
+                            <th>#</th>
+                            <th class="rag-col-filename">Filename</th>
+                            <th class="sortable" data-sort-key="chunks">Chunks</th>
+                            <th class="sortable" data-sort-key="no_versions">No. of Versions</th>
+                            <th class="sortable" data-sort-key="chunk_time">Chunk Time</th>
+                            <th class="sortable" data-sort-key="markdown_time">Markdown Time</th>
+                            <th class="sortable" data-sort-key="index_status">Index Status</th>
+                            <th class="sortable" data-sort-key="index_time">Index Time</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="rag-detail-files-body">
-                        <tr><td colspan="7">Loading files...</td></tr>
+                        <tr><td colspan="10">Loading files...</td></tr>
                     </tbody>
                 </table>
             </div>

@@ -67,15 +67,6 @@
                 <h4>Task Center</h4>
                 <p>Run collections and manage tasks</p>
             </div>
-            <div class="action-card" onclick="location.href='/scheduled_tasks'">
-                <div class="action-icon">
-                    <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
-                        <use xlink:href="#icon-calendar"></use>
-                    </svg>
-                </div>
-                <h4>Scheduled Tasks</h4>
-                <p>Manage scheduled collections</p>
-            </div>
             {% endif %}
             {% if auth_group in ['admin', 'operator', 'reader'] %}
             <div class="action-card" onclick="location.href='/rag'">

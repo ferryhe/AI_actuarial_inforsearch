@@ -60,20 +60,7 @@
             </div>
         </div>
 
-        <!-- Card 5: Catalog Incremental -->
-        <div class="task-card-launch" onclick="openCatalogModal()">
-            <div class="launch-icon">
-                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
-                    <use xlink:href="#icon-tag"></use>
-                </svg>
-            </div>
-            <div class="launch-content">
-                <h4>Cataloging</h4>
-                <p>AI Categorization</p>
-            </div>
-        </div>
-        
-         <!-- Card 6: Scheduled (Manage) -->
+        <!-- Card 5: Scheduled (Manage) -->
         <div class="task-card-launch" onclick="location.href='/scheduled_tasks'">
             <div class="launch-icon">
                 <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
@@ -83,6 +70,19 @@
             <div class="launch-content">
                 <h4>Scheduled</h4>
                 <p>Manage Schedules</p>
+            </div>
+        </div>
+        
+         <!-- Card 6: Catalog Incremental -->
+        <div class="task-card-launch" onclick="openCatalogModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-tag"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Cataloging</h4>
+                <p>AI Categorization</p>
             </div>
         </div>
         
@@ -99,7 +99,20 @@
             </div>
         </div>
 
-        <!-- Card 8: Create Knowledge Base -->
+        <!-- Card 8: Chunk Generation -->
+        <div class="task-card-launch" onclick="openChunkGenerationModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-tag"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Generate Chunks</h4>
+                <p>Build/reuse chunk sets</p>
+            </div>
+        </div>
+
+        <!-- Card 9: Create Knowledge Base -->
         <div class="task-card-launch" onclick="location.href='/rag?open=create'">
             <div class="launch-icon">
                 <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
@@ -109,6 +122,19 @@
             <div class="launch-content">
                 <h4>Create KB</h4>
                 <p>Create Knowledge Base</p>
+            </div>
+        </div>
+
+        <!-- Card 10: KB Index Build -->
+        <div class="task-card-launch" onclick="openKbIndexBuildModal()">
+            <div class="launch-icon">
+                <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                    <use xlink:href="#icon-folder"></use>
+                </svg>
+            </div>
+            <div class="launch-content">
+                <h4>Build KB Index</h4>
+                <p>Run KB index task</p>
             </div>
         </div>
     </div>
@@ -335,6 +361,20 @@
         <div id="catalog-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="catalog-form" onsubmit="startCatalog(event)">
             <div class="form-group">
+                <label>Task Scope</label>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleCatalogScopeMode()"> By Index Range</label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleCatalogScopeMode()"> By Category</label>
+                </div>
+            </div>
+            <div class="form-group" id="catalog-category-group" style="display:none;">
+                <label>Category</label>
+                <select name="category" id="catalog-category-select" onchange="loadCatalogStats()">
+                    <option value="">Loading categories...</option>
+                </select>
+                <small class="form-hint">Select one category; task will scan this category only.</small>
+            </div>
+            <div class="form-group" id="catalog-start-index-group">
                 <label>Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="catalog-scan-start-index" value="1" min="1">
                 <small class="form-hint">Use the stats above to jump to the first uncataloged candidate.</small>
@@ -351,8 +391,8 @@
             <div class="form-group">
                 <label>Catalog From</label>
                 <select name="input_source" id="catalog-input-source">
+                    <option value="markdown" selected>Markdown</option>
                     <option value="source">Source file</option>
-                    <option value="markdown">Markdown</option>
                 </select>
                 <small class="form-hint">Markdown uses converted/edited markdown content from File Details (if available).</small>
             </div>
@@ -366,10 +406,10 @@
             <div class="form-group">
                 <label>AI Provider</label>
                 <select name="provider">
-                    <option value="local">Local (KeyBERT, Default)</option>
-                    <option value="openai" {% if not openai_configured %}disabled{% endif %}>
+                    <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
                         OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
                     </option>
+                    <option value="local" {% if not openai_configured %}selected{% endif %}>Local (KeyBERT)</option>
                     <option value="anthropic" disabled>Anthropic (Coming Soon)</option>
                 </select>
             </div>
@@ -524,16 +564,30 @@
         <div id="markdown-conversion-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="markdown-conversion-form" onsubmit="startMarkdownConversion(event)">
             <div class="form-group">
+                <label>Task Scope</label>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleMarkdownScopeMode()"> By Index Range</label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleMarkdownScopeMode()"> By Category</label>
+                </div>
+            </div>
+            <div class="form-group" id="md-category-group" style="display:none;">
+                <label>Category</label>
+                <select name="category" id="md-category-select" onchange="loadMarkdownConversionStats()">
+                    <option value="">Loading categories...</option>
+                </select>
+                <small class="form-hint">Select one category; conversion runs only on this category.</small>
+            </div>
+            <div class="form-group">
                 <label>Conversion Tool</label>
                 <select name="conversion_tool" id="conversion-tool-select">
+                    <option value="docling" selected>Docling (Multi-format)</option>
                     <option value="marker">Marker (PDF optimized)</option>
-                    <option value="docling">Docling (Multi-format)</option>
                     <option value="mistral">Mistral OCR (API)</option>
                     <option value="deepseekocr">DeepSeek OCR (SiliconFlow API)</option>
                 </select>
                 <small class="form-hint">Different tools work better for different file types</small>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="md-start-index-group">
                 <label>Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="md-scan-start-index" value="1" min="1">
                 <small class="form-hint">Use the stats above to jump to the first file without markdown.</small>
@@ -551,6 +605,162 @@
                 <small class="form-hint">Unchecked = Skip already converted</small>
             </div>
             <button type="submit" class="btn btn-primary" id="markdown-convert-btn">Convert Files</button>
+        </form>
+    </div>
+</div>
+
+<!-- Chunk Generation Modal -->
+<div id="chunk-generation-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('chunk-generation-modal')">&times;</span>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-tag"></use>
+            </svg>
+            Generate Chunks
+        </h3>
+        <p class="hint">Batch generate chunk sets from markdown files. Existing same-profile chunk sets can be reused or overwritten.</p>
+        <div id="chunk-generation-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
+        <form id="chunk-generation-form" onsubmit="startChunkGeneration(event)">
+            <div class="form-group">
+                <label>Task Scope</label>
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleChunkScopeMode()"> By Index Range</label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleChunkScopeMode()"> By Category</label>
+                </div>
+            </div>
+            <div class="form-group" id="chunk-category-group" style="display:none;">
+                <label>Category</label>
+                <select name="category" id="chunk-category-select" onchange="loadChunkGenerationStats()">
+                    <option value="">Loading categories...</option>
+                </select>
+                <small class="form-hint">Select one category; chunk generation runs only on this category.</small>
+            </div>
+            <div class="form-group">
+                <label>Chunk Profile</label>
+                <select name="profile_id" id="chunk-profile-select" onchange="toggleChunkProfileCustomFields()">
+                    <option value="">Loading profiles...</option>
+                </select>
+                <small class="form-hint">Select an existing profile to reuse, or choose custom. Chunk profile stores chunk strategy and tokenizer settings.</small>
+            </div>
+            <div id="chunk-profile-custom-fields">
+                <div class="form-group">
+                    <label>Chunking Model</label>
+                    <select name="chunk_model">
+                        <option value="gpt-4">gpt-4 (recommended tokenizer profile)</option>
+                        <option value="gpt-4o">gpt-4o</option>
+                        <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                    </select>
+                    <small class="form-hint">Used for token counting behavior during chunking (not embedding model).</small>
+                </div>
+                <div class="form-group">
+                    <label>Profile Name</label>
+                    <input type="text" name="profile_name" value="task-profile" maxlength="80">
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Chunk Size</label>
+                        <input type="number" name="chunk_size" value="800" min="64" max="8192">
+                    </div>
+                    <div class="form-group half">
+                        <label>Chunk Overlap</label>
+                        <input type="number" name="chunk_overlap" value="100" min="0" max="2048">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Splitter</label>
+                        <select name="splitter">
+                            <option value="semantic">semantic (section/paragraph-aware)</option>
+                        </select>
+                        <small class="form-hint">How document text is segmented before chunk merge.</small>
+                    </div>
+                    <div class="form-group half">
+                        <label>Tokenizer Encoding</label>
+                        <select name="tokenizer">
+                            <option value="cl100k_base">cl100k_base (OpenAI GPT-4/3.5 family)</option>
+                            <option value="o200k_base">o200k_base (newer large-context models)</option>
+                            <option value="p50k_base">p50k_base (legacy Codex/GPT-3)</option>
+                        </select>
+                        <small class="form-hint">Controls token counting granularity for chunk size/overlap.</small>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Profile Version</label>
+                    <input type="text" name="version" value="v1" maxlength="32">
+                </div>
+            </div>
+            <div class="form-group" id="chunk-start-index-group">
+                <label>Start From Index (1-based, newest first)</label>
+                <input type="number" name="scan_start_index" id="chunk-scan-start-index" value="1" min="1">
+            </div>
+            <div class="form-group">
+                <label>Scan Count</label>
+                <input type="number" name="scan_count" id="chunk-scan-count" value="50" min="1" max="2000">
+            </div>
+            <div class="form-group">
+                <label>Bind To Knowledge Base (Optional)</label>
+                <select name="kb_id" id="chunk-generation-kb-id" onchange="toggleChunkGenerationBindingMode()">
+                    <option value="">Do not bind to KB</option>
+                </select>
+                <small class="form-hint">If selected, each generated chunk set will be bound to this KB.</small>
+            </div>
+            <div class="form-group">
+                <label>Binding Mode</label>
+                <select name="binding_mode" id="chunk-generation-binding-mode">
+                    <option value="follow_latest" selected>Follow Latest (Recommended)</option>
+                    <option value="pin">Pin (Fixed Version)</option>
+                </select>
+                <small class="form-hint">Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="overwrite_same_profile" id="chunk-overwrite-same-profile">
+                    Overwrite same-profile chunk sets
+                </label>
+                <small class="form-hint">Unchecked = reuse existing same-profile chunk set.</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Generate Chunks</button>
+        </form>
+    </div>
+</div>
+
+<!-- KB Index Build Modal -->
+<div id="kb-index-build-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('kb-index-build-modal')">&times;</span>
+        <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <use xlink:href="#icon-folder"></use>
+            </svg>
+            Build KB Index
+        </h3>
+        <p class="hint">Submit a KB index build task using the KB configuration and selected scope.</p>
+        <form id="kb-index-build-form" onsubmit="startKbIndexBuild(event)">
+            <div class="form-group">
+                <label>Knowledge Base</label>
+                <select name="kb_id" id="kb-index-kb-id" required>
+                    <option value="">Loading KBs...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>File URLs (Optional, one per line)</label>
+                <textarea name="file_urls" id="kb-index-file-urls" rows="4" placeholder="Leave empty to use KB default scope"></textarea>
+                <small class="form-hint">Empty = incremental pending files, unless force rebuild is enabled.</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="incremental" id="kb-index-incremental" checked>
+                    Incremental mode (index only pending files)
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="force_reindex" id="kb-index-force-reindex">
+                    Force reindex all selected files
+                </label>
+            </div>
+            <button type="submit" class="btn btn-primary">Submit KB Index Task</button>
         </form>
     </div>
 </div>
@@ -940,10 +1150,20 @@ function _bindCatalogModal() {
 function openCatalogModal() {
     openModal('catalog-modal');
     _bindCatalogModal();
-    loadCatalogStats();
+    toggleCatalogScopeMode();
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
+function openChunkGenerationModal() {
+    openModal('chunk-generation-modal');
+    toggleChunkScopeMode();
+    loadChunkProfiles();
+    loadKbOptionsForChunkGeneration();
+}
+function openKbIndexBuildModal() {
+    openModal('kb-index-build-modal');
+    loadKbOptionsForIndexBuild();
+}
 
 // --- Validation Helpers ---
 function clearValidationErrors(form) {
@@ -1046,20 +1266,40 @@ function startCatalog(e) {
     const form = e.target;
     if (!validateForm(form)) return;
     const formData = new FormData(form);
+    const scopeMode = (formData.get('scope_mode') || 'index').toString().trim().toLowerCase();
+    const category = (formData.get('category') || '').toString().trim();
     const overwrite = formData.get('overwrite_existing') === 'on';
     const skipExisting = !overwrite;
-    
-    startTask('catalog', {
+    const scanCount = parseInt(formData.get('scan_count') || '50');
+    if (!Number.isFinite(scanCount) || scanCount < 1) {
+        showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+    if (scopeMode === 'category' && !category) {
+        showNotification('Please select a category', 'error');
+        return;
+    }
+
+    const payload = {
         type: 'catalog',
-        scan_start_index: parseInt(formData.get('scan_start_index') || '1'),
-        scan_count: parseInt(formData.get('scan_count') || '50'),
+        scope_mode: scopeMode,
+        scan_count: scanCount,
         retry_errors: formData.get('retry_errors') === 'on',
         input_source: formData.get('input_source') || 'source',
         skip_existing: skipExisting,
         overwrite_existing: overwrite,
         provider: formData.get('provider'),
-        name: `Cataloging (start ${formData.get('scan_start_index') || 1}, scan ${formData.get('scan_count') || 50})`
-    });
+    };
+    if (scopeMode === 'category') {
+        payload.category = category;
+        payload.name = `Cataloging (category ${category}, scan ${scanCount})`;
+    } else {
+        const startIndex = parseInt(formData.get('scan_start_index') || '1');
+        payload.scan_start_index = Number.isFinite(startIndex) && startIndex >= 1 ? startIndex : 1;
+        payload.name = `Cataloging (start ${payload.scan_start_index}, scan ${scanCount})`;
+    }
+
+    startTask('catalog', payload);
     closeModal('catalog-modal');
 }
 
@@ -1069,9 +1309,15 @@ async function loadCatalogStats() {
     if (statsEl) statsEl.textContent = 'Loading stats...';
     try {
         const form = document.getElementById('catalog-form');
-        const provider = form ? (form.querySelector('select[name=\"provider\"]')?.value || 'local') : 'local';
-        const inputSource = form ? (form.querySelector('select[name=\"input_source\"]')?.value || 'source') : 'source';
-        const resp = await fetch(`/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`);
+        const provider = form ? (form.querySelector('select[name=\"provider\"]')?.value || 'openai') : 'openai';
+        const inputSource = form ? (form.querySelector('select[name=\"input_source\"]')?.value || 'markdown') : 'markdown';
+        const scopeMode = form ? getScopeMode(form, 'index') : 'index';
+        const category = form ? (form.querySelector('#catalog-category-select')?.value || '') : '';
+        let url = `/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`;
+        if (scopeMode === 'category' && category) {
+            url += `&category=${encodeURIComponent(category)}`;
+        }
+        const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
@@ -1096,10 +1342,76 @@ async function loadCatalogStats() {
 
 // Markdown Conversion (Batch) Modal Functions
 let markdownConversionStats = null;
+let chunkGenerationStats = null;
+let chunkProfiles = [];
+let kbIndexBuildKbs = [];
+let chunkGenerationKbs = [];
+let taskCategories = [];
+
+async function loadTaskCategories() {
+    try {
+        const resp = await fetch('/api/categories?mode=used');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        taskCategories = Array.isArray(data.categories) ? data.categories : [];
+    } catch (e) {
+        console.error('Failed loading categories for task scope:', e);
+        taskCategories = [];
+    }
+    const options = taskCategories
+        .map((cat) => `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`)
+        .join('');
+    ['catalog-category-select', 'md-category-select', 'chunk-category-select'].forEach((id) => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = `<option value="">Select category</option>${options}`;
+    });
+}
+
+function getScopeMode(form, fallback = 'index') {
+    const scope = (new FormData(form).get('scope_mode') || fallback).toString().trim().toLowerCase();
+    return scope === 'category' ? 'category' : 'index';
+}
+
+function toggleCatalogScopeMode() {
+    const form = document.getElementById('catalog-form');
+    if (!form) return;
+    const mode = getScopeMode(form, 'index');
+    const categoryGroup = document.getElementById('catalog-category-group');
+    const startGroup = document.getElementById('catalog-start-index-group');
+    if (categoryGroup) categoryGroup.style.display = mode === 'category' ? 'block' : 'none';
+    if (startGroup) startGroup.style.display = mode === 'category' ? 'none' : 'block';
+    if (mode === 'category') loadTaskCategories();
+    loadCatalogStats();
+}
+
+function toggleMarkdownScopeMode() {
+    const form = document.getElementById('markdown-conversion-form');
+    if (!form) return;
+    const mode = getScopeMode(form, 'index');
+    const categoryGroup = document.getElementById('md-category-group');
+    const startGroup = document.getElementById('md-start-index-group');
+    if (categoryGroup) categoryGroup.style.display = mode === 'category' ? 'block' : 'none';
+    if (startGroup) startGroup.style.display = mode === 'category' ? 'none' : 'block';
+    if (mode === 'category') loadTaskCategories();
+    loadMarkdownConversionStats();
+}
+
+function toggleChunkScopeMode() {
+    const form = document.getElementById('chunk-generation-form');
+    if (!form) return;
+    const mode = getScopeMode(form, 'index');
+    const categoryGroup = document.getElementById('chunk-category-group');
+    const startGroup = document.getElementById('chunk-start-index-group');
+    if (categoryGroup) categoryGroup.style.display = mode === 'category' ? 'block' : 'none';
+    if (startGroup) startGroup.style.display = mode === 'category' ? 'none' : 'block';
+    if (mode === 'category') loadTaskCategories();
+    loadChunkGenerationStats();
+}
 
 function openMarkdownConversionModal() {
     openModal('markdown-conversion-modal');
-    loadMarkdownConversionStats();
+    toggleMarkdownScopeMode();
 }
 
 async function loadMarkdownConversionStats() {
@@ -1107,7 +1419,14 @@ async function loadMarkdownConversionStats() {
     const startEl = document.getElementById('md-scan-start-index');
     if (statsEl) statsEl.textContent = 'Loading stats...';
     try {
-        const resp = await fetch('/api/markdown_conversion/stats');
+        const form = document.getElementById('markdown-conversion-form');
+        const scopeMode = form ? getScopeMode(form, 'index') : 'index';
+        const category = form ? (form.querySelector('#md-category-select')?.value || '') : '';
+        let url = '/api/markdown_conversion/stats';
+        if (scopeMode === 'category' && category) {
+            url += `?category=${encodeURIComponent(category)}`;
+        }
+        const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
@@ -1135,33 +1454,315 @@ function startMarkdownConversion(e) {
 
     const form = e.target;
     const formData = new FormData(form);
+    const scopeMode = (formData.get('scope_mode') || 'index').toString().trim().toLowerCase();
+    const category = (formData.get('category') || '').toString().trim();
     const engine = formData.get('conversion_tool');
-    const startIndex = parseInt(formData.get('scan_start_index') || '1');
     const scanCount = parseInt(formData.get('scan_count') || '50');
     const overwriteExisting = formData.get('overwrite_existing') === 'on';
     const skipExisting = !overwriteExisting;
 
-    if (!Number.isFinite(startIndex) || startIndex < 1) {
-        showNotification('Start index must be >= 1', 'error');
-        return;
-    }
     if (!Number.isFinite(scanCount) || scanCount < 1) {
         showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+    if (scopeMode === 'category' && !category) {
+        showNotification('Please select a category', 'error');
         return;
     }
 
     const payload = {
         type: 'markdown_conversion',
+        scope_mode: scopeMode,
         conversion_tool: engine,
-        scan_start_index: startIndex,
         scan_count: scanCount,
         skip_existing: skipExisting,
         overwrite_existing: overwriteExisting,
-        name: `Markdown Conversion - engine ${engine} (start ${startIndex}, scan ${scanCount})`
+        name: `Markdown Conversion - engine ${engine} (scan ${scanCount})`
     };
+    if (scopeMode === 'category') {
+        payload.category = category;
+        payload.name = `Markdown Conversion - engine ${engine} (category ${category}, scan ${scanCount})`;
+    } else {
+        const startIndex = parseInt(formData.get('scan_start_index') || '1');
+        if (!Number.isFinite(startIndex) || startIndex < 1) {
+            showNotification('Start index must be >= 1', 'error');
+            return;
+        }
+        payload.scan_start_index = startIndex;
+        payload.name = `Markdown Conversion - engine ${engine} (start ${startIndex}, scan ${scanCount})`;
+    }
 
     startTask('markdown_conversion', payload);
     closeModal('markdown-conversion-modal');
+}
+
+async function loadChunkGenerationStats() {
+    const statsEl = document.getElementById('chunk-generation-stats');
+    const startEl = document.getElementById('chunk-scan-start-index');
+    if (statsEl) statsEl.textContent = 'Loading stats...';
+    try {
+        const form = document.getElementById('chunk-generation-form');
+        const scopeMode = form ? getScopeMode(form, 'index') : 'index';
+        const category = form ? (form.querySelector('#chunk-category-select')?.value || '') : '';
+        let url = '/api/chunk_generation/stats';
+        if (scopeMode === 'category' && category) {
+            url += `?category=${encodeURIComponent(category)}`;
+        }
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            return;
+        }
+        chunkGenerationStats = data;
+        const totalWithMarkdown = data.total_with_markdown ?? 0;
+        const totalWithChunks = data.total_with_chunks ?? 0;
+        const missing = Math.max(0, totalWithMarkdown - totalWithChunks);
+        const firstMissing = data.first_without_chunks_index;
+        if (statsEl) {
+            statsEl.textContent =
+                `Markdown files: ${totalWithMarkdown} | With chunks: ${totalWithChunks} | Missing: ${missing}` +
+                (firstMissing ? ` | First missing index: ${firstMissing}` : '');
+        }
+        if (startEl && firstMissing) {
+            startEl.value = String(firstMissing);
+        }
+    } catch (e) {
+        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+    }
+}
+
+function _extractApiData(payload) {
+    if (payload && typeof payload === 'object' && payload.data !== undefined) {
+        return payload.data;
+    }
+    return payload;
+}
+
+function _parseProfileConfig(profile) {
+    const raw = profile && profile.config_json ? profile.config_json : '';
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_e) {
+        return {};
+    }
+}
+
+async function loadChunkProfiles() {
+    const select = document.getElementById('chunk-profile-select');
+    if (!select) return;
+    try {
+        const resp = await fetch('/api/chunk/profiles');
+        const payload = await resp.json();
+        if (!resp.ok || !payload.success) {
+            throw new Error(payload.error || 'Failed to load chunk profiles');
+        }
+        const data = _extractApiData(payload) || {};
+        chunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+        select.innerHTML = '';
+        chunkProfiles.forEach((profile) => {
+            const cfg = _parseProfileConfig(profile);
+            const chunkModel = (cfg.metadata && cfg.metadata.chunk_model) ? cfg.metadata.chunk_model : 'gpt-4';
+            const option = document.createElement('option');
+            option.value = profile.profile_id;
+            option.textContent = `${profile.name} | model=${chunkModel} | size=${profile.chunk_size}, overlap=${profile.chunk_overlap}, ${profile.splitter}/${profile.tokenizer}`;
+            select.appendChild(option);
+        });
+        const customOpt = document.createElement('option');
+        customOpt.value = '';
+        customOpt.textContent = 'Custom profile (from fields below)';
+        select.appendChild(customOpt);
+
+        if (chunkProfiles.length > 0) {
+            select.value = chunkProfiles[0].profile_id;
+        } else {
+            select.value = '';
+        }
+    } catch (e) {
+        console.error('Failed loading chunk profiles:', e);
+        select.innerHTML = '<option value=\"\">Custom profile (from fields below)</option>';
+    } finally {
+        toggleChunkProfileCustomFields();
+    }
+}
+
+function toggleChunkProfileCustomFields() {
+    const select = document.getElementById('chunk-profile-select');
+    const custom = document.getElementById('chunk-profile-custom-fields');
+    if (!select || !custom) return;
+    custom.style.display = select.value ? 'none' : 'block';
+}
+
+function toggleChunkGenerationBindingMode() {
+    const kbSelect = document.getElementById('chunk-generation-kb-id');
+    const modeSelect = document.getElementById('chunk-generation-binding-mode');
+    if (!kbSelect || !modeSelect) return;
+    modeSelect.disabled = !String(kbSelect.value || '').trim();
+}
+
+function startChunkGeneration(e) {
+    e.preventDefault();
+    const form = e.target;
+    if (!validateForm(form)) return;
+
+    const formData = new FormData(form);
+    const scopeMode = (formData.get('scope_mode') || 'index').toString().trim().toLowerCase();
+    const category = (formData.get('category') || '').toString().trim();
+    const profileId = (formData.get('profile_id') || '').toString().trim();
+    const scanCount = parseInt(formData.get('scan_count') || '50');
+    const overwriteSameProfile = formData.get('overwrite_same_profile') === 'on';
+    const kbId = (formData.get('kb_id') || '').toString().trim();
+    const bindingMode = (formData.get('binding_mode') || 'follow_latest').toString().trim().toLowerCase() || 'follow_latest';
+
+    if (!Number.isFinite(scanCount) || scanCount < 1) {
+        showNotification('Scan count must be >= 1', 'error');
+        return;
+    }
+    if (scopeMode === 'category' && !category) {
+        showNotification('Please select a category', 'error');
+        return;
+    }
+    if (!['follow_latest', 'pin'].includes(bindingMode)) {
+        showNotification('Binding mode must be follow_latest or pin', 'error');
+        return;
+    }
+
+    const payload = {
+        type: 'chunk_generation',
+        scope_mode: scopeMode,
+        scan_count: scanCount,
+        overwrite_same_profile: overwriteSameProfile,
+        name: `Chunk Generation (scan ${scanCount})`
+    };
+    if (scopeMode === 'category') {
+        payload.category = category;
+        payload.name = `Chunk Generation (category ${category}, scan ${scanCount})`;
+    } else {
+        const startIndex = parseInt(formData.get('scan_start_index') || '1');
+        if (!Number.isFinite(startIndex) || startIndex < 1) {
+            showNotification('Start index must be >= 1', 'error');
+            return;
+        }
+        payload.scan_start_index = startIndex;
+        payload.name = `Chunk Generation (start ${startIndex}, scan ${scanCount})`;
+    }
+
+    if (profileId) {
+        payload.profile_id = profileId;
+        const selected = chunkProfiles.find((p) => p.profile_id === profileId);
+        if (selected) {
+            payload.name = scopeMode === 'category'
+                ? `Chunk Generation - ${selected.name} (category ${category}, scan ${scanCount})`
+                : `Chunk Generation - ${selected.name} (start ${payload.scan_start_index}, scan ${scanCount})`;
+        }
+    } else {
+        payload.profile_name = (formData.get('profile_name') || 'task-profile').toString().trim() || 'task-profile';
+        payload.chunk_size = parseInt(formData.get('chunk_size') || '800');
+        payload.chunk_overlap = parseInt(formData.get('chunk_overlap') || '100');
+        payload.chunk_model = (formData.get('chunk_model') || 'gpt-4').toString().trim() || 'gpt-4';
+        payload.splitter = (formData.get('splitter') || 'semantic').toString().trim() || 'semantic';
+        payload.tokenizer = (formData.get('tokenizer') || 'cl100k_base').toString().trim() || 'cl100k_base';
+        payload.version = (formData.get('version') || 'v1').toString().trim() || 'v1';
+    }
+    if (kbId) {
+        payload.kb_id = kbId;
+        payload.binding_mode = bindingMode;
+        payload.name = `${payload.name} | bind=${kbId} [${bindingMode}]`;
+    }
+
+    startTask('chunk_generation', payload);
+    closeModal('chunk-generation-modal');
+}
+
+async function loadKbOptionsForChunkGeneration() {
+    const select = document.getElementById('chunk-generation-kb-id');
+    if (!select) return;
+    const current = String(select.value || '').trim();
+    select.innerHTML = '<option value=\"\">Loading KBs...</option>';
+    try {
+        const resp = await fetch('/api/rag/knowledge-bases');
+        const payload = await resp.json();
+        if (!resp.ok || !payload.success) {
+            throw new Error(payload.error || 'Failed to load KB list');
+        }
+        const data = _extractApiData(payload);
+        chunkGenerationKbs = Array.isArray(data) ? data : [];
+        select.innerHTML = '<option value=\"\">Do not bind to KB</option>';
+        chunkGenerationKbs.forEach((kb) => {
+            const option = document.createElement('option');
+            option.value = kb.kb_id;
+            option.textContent = `${kb.name || kb.kb_id} (${kb.embedding_model || 'default model'})`;
+            select.appendChild(option);
+        });
+        if (current && chunkGenerationKbs.some((kb) => kb.kb_id === current)) {
+            select.value = current;
+        }
+    } catch (e) {
+        console.error('Failed loading KB options for chunk generation:', e);
+        select.innerHTML = '<option value=\"\">Do not bind to KB</option>';
+    } finally {
+        toggleChunkGenerationBindingMode();
+    }
+}
+
+async function loadKbOptionsForIndexBuild() {
+    const select = document.getElementById('kb-index-kb-id');
+    if (!select) return;
+    select.innerHTML = '<option value=\"\">Loading KBs...</option>';
+    try {
+        const resp = await fetch('/api/rag/knowledge-bases');
+        const payload = await resp.json();
+        if (!resp.ok || !payload.success) {
+            throw new Error(payload.error || 'Failed to load KB list');
+        }
+        const data = _extractApiData(payload);
+        kbIndexBuildKbs = Array.isArray(data) ? data : [];
+        select.innerHTML = '<option value=\"\">Select a KB</option>';
+        kbIndexBuildKbs.forEach((kb) => {
+            const option = document.createElement('option');
+            option.value = kb.kb_id;
+            option.textContent = `${kb.name || kb.kb_id} (${kb.embedding_model || 'default model'})`;
+            select.appendChild(option);
+        });
+    } catch (e) {
+        console.error('Failed loading KB options:', e);
+        select.innerHTML = '<option value=\"\">Failed to load KBs</option>';
+    }
+}
+
+function startKbIndexBuild(e) {
+    e.preventDefault();
+    const form = e.target;
+    if (!validateForm(form)) return;
+
+    const formData = new FormData(form);
+    const kbId = (formData.get('kb_id') || '').toString().trim();
+    if (!kbId) {
+        showNotification('Please select a Knowledge Base', 'error');
+        return;
+    }
+
+    const fileUrlsRaw = (formData.get('file_urls') || '').toString();
+    const fileUrls = fileUrlsRaw
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    const incremental = formData.get('incremental') === 'on';
+    const forceReindex = formData.get('force_reindex') === 'on';
+
+    const payload = {
+        type: 'kb_index_build',
+        kb_id: kbId,
+        file_urls: fileUrls,
+        incremental: incremental,
+        force_reindex: forceReindex,
+        name: `KB Index Build - ${kbId}`
+    };
+
+    startTask('kb_index_build', payload);
+    closeModal('kb-index-build-modal');
 }
 
 function startUrlCollection(e) {

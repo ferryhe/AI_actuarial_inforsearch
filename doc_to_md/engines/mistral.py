@@ -29,7 +29,14 @@ class _DocumentChunk:
 class MistralEngine(Engine):
     name = "mistral"
 
-    def __init__(self, model: str | None = None, include_images: bool = False, **_kwargs) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        include_images: bool = False,
+        extract_footer: bool | None = None,
+        extract_header: bool | None = None,
+        **_kwargs,
+    ) -> None:
         settings = get_settings()
         if not settings.mistral_api_key:
             raise RuntimeError("MISTRAL_API_KEY missing")
@@ -46,6 +53,10 @@ class MistralEngine(Engine):
         self.retry_attempts = settings.mistral_retry_attempts
         self.max_pdf_tokens = settings.mistral_max_pdf_tokens
         self.max_pages_per_chunk = settings.mistral_max_pages_per_chunk
+        default_extract_footer = bool(getattr(settings, "mistral_extract_footer", True))
+        default_extract_header = bool(getattr(settings, "mistral_extract_header", True))
+        self.extract_footer = default_extract_footer if extract_footer is None else bool(extract_footer)
+        self.extract_header = default_extract_header if extract_header is None else bool(extract_header)
         self._retry_backoff = 1.5
         self.client = Mistral(api_key=self.api_key, timeout_ms=self.timeout_ms)
 
@@ -149,14 +160,39 @@ class MistralEngine(Engine):
         )
 
         try:
-            response = self._request_with_retry(
-                lambda: self.client.ocr.process(
-                    model=self.model,
-                    document=FileChunk(file_id=upload.id),
-                    include_image_base64=self.include_images,
-                ),
-                operation=f"mistral_process_{index}",
-            )
+            process_kwargs = {
+                "model": self.model,
+                "document": FileChunk(file_id=upload.id),
+                "include_image_base64": self.include_images,
+                "extract_footer": self.extract_footer,
+                "extract_header": self.extract_header,
+            }
+            try:
+                response = self._request_with_retry(
+                    lambda: self.client.ocr.process(**process_kwargs),
+                    operation=f"mistral_process_{index}",
+                )
+            except RuntimeError as exc:
+                # Backward compatibility: older mistralai SDK versions may not support
+                # extract_footer/extract_header parameters yet.
+                cause = exc.__cause__
+                msg = str(cause or exc).lower()
+                unsupported_param = (
+                    isinstance(cause, TypeError)
+                    and "unexpected keyword argument" in msg
+                    and ("extract_footer" in msg or "extract_header" in msg)
+                )
+                if not unsupported_param:
+                    raise
+                fallback_kwargs = {
+                    "model": self.model,
+                    "document": FileChunk(file_id=upload.id),
+                    "include_image_base64": self.include_images,
+                }
+                response = self._request_with_retry(
+                    lambda: self.client.ocr.process(**fallback_kwargs),
+                    operation=f"mistral_process_{index}_legacy",
+                )
             return response
         finally:
             try:
@@ -195,7 +231,6 @@ class MistralEngine(Engine):
         normalized_stem = self._normalize_stem(title)
 
         for page in pages:
-            sections.append(f"## Page {page.index + 1}")
             cleaned_page = self._strip_placeholder_images(getattr(page, "markdown", "") or "")
             sections.append(cleaned_page or "_No text extracted on this page._")
 
@@ -273,4 +308,3 @@ class MistralEngine(Engine):
             return None
         mapping = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
         return mapping.get(mime.lower())
-

@@ -15,6 +15,7 @@
         </div>
         <div class="rag-header-actions">
             <button id="rag-refresh-list" class="btn btn-secondary">Refresh</button>
+            <button id="rag-open-profiles-modal" class="btn btn-secondary">Chunk Profiles</button>
             <button id="rag-open-create-modal" class="btn btn-primary">Create KB</button>
         </div>
     </div>
@@ -63,6 +64,7 @@
 
 {% include "modals/create_kb_modal.html" %}
 {% include "modals/edit_kb_modal.html" %}
+{% include "modals/chunk_profile_management_modal.html" %}
 {% include "partials/file_selector.html" %}
 {% endblock %}
 
