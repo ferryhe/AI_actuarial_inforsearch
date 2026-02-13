@@ -158,13 +158,16 @@ _PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# When REQUIRE_AUTH=false, we still run the app in a "public read-only" mode:
-# endpoints that require any permission outside this allowlist will require a token.
+# When REQUIRE_AUTH=false, we run the app in a "guest-enabled" mode:
+# only allowlisted permissions are available without a token.
 _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
         "markdown.read",
+        "chat.view",
+        "chat.query",
+        "chat.conversations",
     }
 )
 
@@ -675,6 +678,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             "auth_subject": (token or {}).get("subject"),
             "require_auth": require_auth,
             "openai_configured": openai_configured,
+            "enable_global_logs_api": _env_flag("ENABLE_GLOBAL_LOGS_API", False),
+            "logs_read_auth_required": bool(os.getenv("LOGS_READ_AUTH_TOKEN")),
         }
 
     # Register routes

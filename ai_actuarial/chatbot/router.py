@@ -162,6 +162,19 @@ class QueryRouter:
             raise InvalidKBException("Failed to select any knowledge base")
         
         return selected_kbs
+
+    def select_kbs(
+        self,
+        query: str,
+        available_kbs: Optional[List[KnowledgeBase]] = None,
+        threshold: float = 0.3
+    ) -> List[str]:
+        """Backward-compatible alias for select_kb()."""
+        return self.select_kb(
+            query=query,
+            available_kbs=available_kbs,
+            threshold=threshold,
+        )
     
     def analyze_query(self, query: str) -> Dict[str, Any]:
         """
