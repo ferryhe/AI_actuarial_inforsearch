@@ -13,6 +13,7 @@ from openai import OpenAI, APITimeoutError, RateLimitError, APIError, Authentica
 
 from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.exceptions import LLMException
+from ai_actuarial.chatbot.prompts import build_full_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +217,26 @@ class LLMClient:
         raise LLMException(
             f"Failed to generate response after {self.config.max_retries} retries: {last_error}"
         )
+
+    def generate_response(
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        mode: str = "expert",
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """
+        Build a chat prompt from query+chunks and generate a response.
+
+        This method is a compatibility wrapper used by chat routes.
+        """
+        messages = build_full_prompt(
+            mode=mode,
+            retrieved_chunks=chunks,
+            query=query,
+            conversation_history=conversation_history or [],
+        )
+        return self.generate(messages=messages)
     
     def _apply_rate_limit(self):
         """Apply rate limiting between requests."""

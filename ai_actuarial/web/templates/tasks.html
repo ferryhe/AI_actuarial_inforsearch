@@ -1053,7 +1053,8 @@
 </style>
 
 <script>
-const CAN_VIEW_GLOBAL_LOGS = {{ 'true' if auth_group == 'admin' else 'false' }};
+const CAN_VIEW_GLOBAL_LOGS = {{ 'true' if auth_group == 'admin' and enable_global_logs_api else 'false' }};
+const GLOBAL_LOGS_AUTH_REQUIRED = {{ 'true' if logs_read_auth_required else 'false' }};
 // --- File Format Selector Helper Functions ---
 // 获取选中的文件格式（带校验）
 function getSelectedFormats(formElement) {
@@ -2043,11 +2044,66 @@ async function reloadTaskLog(taskId) {
     }
 }
 
+function getGlobalLogsHeaders() {
+    const headers = {};
+    const token =
+        sessionStorage.getItem('logs_read_token') ||
+        localStorage.getItem('logs_read_token') ||
+        sessionStorage.getItem('config_write_token') ||
+        localStorage.getItem('config_write_token') ||
+        '';
+    if (token) headers['X-Auth-Token'] = token;
+    return headers;
+}
+
+async function promptGlobalLogsToken() {
+    const current =
+        sessionStorage.getItem('logs_read_token') ||
+        localStorage.getItem('logs_read_token') ||
+        '';
+    const input = window.prompt(
+        'Global logs access requires LOGS_READ_AUTH_TOKEN (X-Auth-Token).\nEnter token (saved in current session only):',
+        current
+    );
+    if (input === null) return false;
+    const token = String(input || '').trim();
+    if (!token) return false;
+    sessionStorage.setItem('logs_read_token', token);
+    return true;
+}
+
+async function fetchGlobalLogsWithRetry() {
+    let headers = getGlobalLogsHeaders();
+    let resp = await fetch('/api/logs/global', { headers });
+    let data = await resp.json().catch(() => ({}));
+
+    if (resp.status === 403 && GLOBAL_LOGS_AUTH_REQUIRED) {
+        const updated = await promptGlobalLogsToken();
+        if (updated) {
+            headers = getGlobalLogsHeaders();
+            resp = await fetch('/api/logs/global', { headers });
+            data = await resp.json().catch(() => ({}));
+        }
+    }
+
+    return { resp, data };
+}
+
 async function openGlobalLogs() {
+    if (!CAN_VIEW_GLOBAL_LOGS) {
+        showNotification('Global logs are not available in the current configuration.', 'error');
+        return;
+    }
     try {
-        const resp = await fetch('/api/logs/global');
-        const data = await resp.json();
-        const logs = data.logs || data.error || 'No logs';
+        const { resp, data } = await fetchGlobalLogsWithRetry();
+        let logs = '';
+        if (resp.ok) {
+            logs = data.logs || '(no logs)';
+        } else if (resp.status === 403 && GLOBAL_LOGS_AUTH_REQUIRED) {
+            logs = 'Failed to load global logs: Forbidden (missing or invalid LOGS_READ_AUTH_TOKEN).';
+        } else {
+            logs = 'Failed to load global logs: ' + (data.error || 'unknown');
+        }
         let modal = document.getElementById('global-log-modal');
         if (!modal) {
             modal = document.createElement('div');

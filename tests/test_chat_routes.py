@@ -24,6 +24,7 @@ if "schedule" not in sys.modules:
     sys.modules["schedule"] = types.ModuleType("schedule")
 
 from ai_actuarial.web.app import FLASK_AVAILABLE, create_app
+from ai_actuarial.chatbot.exceptions import NoResultsException
 
 
 class TestChatRoutes(unittest.TestCase):
@@ -554,6 +555,69 @@ class TestChatRoutes(unittest.TestCase):
         data = json.loads(response.data)
         self.assertFalse(data["success"])
         self.assertIn("error", data)
+
+    @patch('ai_actuarial.chatbot.retrieval.RAGRetriever.retrieve')
+    @patch('ai_actuarial.chatbot.llm.LLMClient.generate_response')
+    def test_chat_query_no_results_returns_friendly_response(self, mock_generate_response, mock_retrieve):
+        """No retrieval hits should return a user-facing response instead of 500."""
+        mock_retrieve.side_effect = NoResultsException("No results found")
+
+        response = self.client.post(
+            "/api/chat/query",
+            headers=self.auth_header,
+            json={
+                "message": "AI insurance",
+                "kb_ids": ["test_kb1"]
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertIn("response", data["data"])
+        self.assertEqual(data["data"]["citations"], [])
+        self.assertTrue(data["data"]["metadata"]["no_results"])
+        self.assertIn("don't have enough information", data["data"]["response"].lower())
+        mock_generate_response.assert_not_called()
+
+    @patch('ai_actuarial.chatbot.retrieval.RAGRetriever.retrieve')
+    @patch('ai_actuarial.chatbot.llm.LLMClient.generate_response')
+    def test_chat_query_fallback_threshold_recovers_results(self, mock_generate_response, mock_retrieve):
+        """If default threshold has no hits, fallback threshold should recover results."""
+        mock_retrieve.side_effect = [
+            NoResultsException("No results at default threshold"),
+            [
+                {
+                    'content': 'Generative AI investment framework summary',
+                    'metadata': {
+                        'filename': 'first_test.pdf',
+                        'kb_id': 'test_kb1',
+                        'kb_name': 'General KB',
+                        'similarity_score': 0.12,
+                        'chunk_id': 'chunk_1',
+                        'file_url': ''
+                    }
+                }
+            ],
+        ]
+        mock_generate_response.return_value = "Recovered answer."
+
+        response = self.client.post(
+            "/api/chat/query",
+            headers=self.auth_header,
+            json={
+                "message": "Generative AI investment framework",
+                "kb_ids": ["test_kb1"]
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["data"]["response"], "Recovered answer.")
+        self.assertFalse(data["data"]["metadata"]["no_results"])
+        self.assertEqual(data["data"]["metadata"]["used_threshold"], 0.1)
+        self.assertEqual(mock_retrieve.call_count, 2)
     
     def test_invalid_json_request(self):
         """Test endpoints handle invalid JSON gracefully."""

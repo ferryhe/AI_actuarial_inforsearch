@@ -37,6 +37,7 @@ def register_chat_routes(
         from ai_actuarial.chatbot.conversation import ConversationManager
         from ai_actuarial.chatbot.router import QueryRouter
         from ai_actuarial.chatbot.config import ChatbotConfig
+        from ai_actuarial.chatbot.exceptions import NoResultsException
         from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
         chatbot_available = True
     except ImportError as e:
@@ -67,14 +68,29 @@ def register_chat_routes(
     
     def _get_user_id() -> str:
         """Get user ID from session or request."""
-        # Try to get from session (authenticated user)
         from flask import session, g
-        if hasattr(g, 'auth_subject') and g.auth_subject:
-            return g.auth_subject
-        if 'auth_subject' in session:
-            return session['auth_subject']
-        # Fallback to guest user
-        return "guest"
+
+        # Authenticated token from app auth middleware.
+        token = getattr(g, "_auth_token", None) or {}
+        subject = str(token.get("subject") or "").strip()
+        if subject:
+            return f"user:{subject}"
+
+        token_id = token.get("id")
+        if token_id is not None:
+            return f"token:{token_id}"
+
+        # Backward-compatible session keys (if present).
+        legacy_subject = str(session.get("auth_subject") or "").strip()
+        if legacy_subject:
+            return f"user:{legacy_subject}"
+
+        # Anonymous users should be isolated per browser session.
+        guest_id = str(session.get("guest_chat_user_id") or "").strip()
+        if not guest_id:
+            guest_id = f"guest:{uuid.uuid4().hex[:16]}"
+            session["guest_chat_user_id"] = guest_id
+        return guest_id
     
     # ========================================================================
     # Chat Page Route
@@ -218,7 +234,7 @@ def register_chat_routes(
                 if kb_ids == "auto":
                     # Use query router for automatic KB selection
                     router = QueryRouter(storage, config)
-                    kb_ids = router.select_kbs(message)
+                    kb_ids = router.select_kb(message)
                 elif kb_ids is None or kb_ids == "all":
                     # Query all available KBs
                     kb_ids = None
@@ -227,12 +243,47 @@ def register_chat_routes(
                     kb_ids = [kb_ids]
                 
                 # Retrieve chunks
-                chunks = retriever.retrieve(
-                    query=message,
-                    kb_ids=kb_ids,
-                    top_k=config.top_k,
-                    threshold=config.similarity_threshold
-                )
+                no_results = False
+                used_threshold = config.similarity_threshold
+                try:
+                    chunks = retriever.retrieve(
+                        query=message,
+                        kb_ids=kb_ids,
+                        top_k=config.top_k,
+                        threshold=used_threshold
+                    )
+                except NoResultsException:
+                    # Retry once with a lower threshold before giving up.
+                    fallback_threshold = 0.1
+                    if used_threshold > fallback_threshold:
+                        try:
+                            chunks = retriever.retrieve(
+                                query=message,
+                                kb_ids=kb_ids,
+                                top_k=config.top_k,
+                                threshold=fallback_threshold,
+                            )
+                            used_threshold = fallback_threshold
+                            logger.info(
+                                "No hits at threshold %.3f; recovered with fallback threshold %.3f (conversation %s)",
+                                config.similarity_threshold,
+                                fallback_threshold,
+                                conversation_id,
+                            )
+                        except NoResultsException:
+                            chunks = []
+                            no_results = True
+                    else:
+                        chunks = []
+                        no_results = True
+
+                    if no_results:
+                        # No relevant chunks is a valid user-facing outcome, not a server error.
+                        logger.info(
+                            "No retrieval results for conversation %s (query=%s...)",
+                            conversation_id,
+                            message[:80],
+                        )
                 
                 retrieval_time_ms = int((time.time() - retrieval_start) * 1000)
                 
@@ -240,15 +291,22 @@ def register_chat_routes(
                 history = conv_manager.get_messages(conversation_id, limit=10)
                 
                 # Generate response
-                generation_start = time.time()
-                response_text = llm_client.generate_response(
-                    query=message,
-                    chunks=chunks,
-                    mode=mode,
-                    conversation_history=history[:-1]  # Exclude the message we just added
-                )
-                
-                generation_time_ms = int((time.time() - generation_start) * 1000)
+                if no_results:
+                    response_text = (
+                        "I don't have enough information in the knowledge base to answer "
+                        "this question. Please try a different knowledge base, ask a more "
+                        "specific question, or lower the retrieval threshold."
+                    )
+                    generation_time_ms = 0
+                else:
+                    generation_start = time.time()
+                    response_text = llm_client.generate_response(
+                        query=message,
+                        chunks=chunks,
+                        mode=mode,
+                        conversation_history=history[:-1]  # Exclude the message we just added
+                    )
+                    generation_time_ms = int((time.time() - generation_start) * 1000)
                 
                 # Extract citations from chunks
                 citations = []
@@ -288,7 +346,9 @@ def register_chat_routes(
                         "mode": mode,
                         "retrieval_time_ms": retrieval_time_ms,
                         "generation_time_ms": generation_time_ms,
-                        "num_chunks": len(chunks)
+                        "num_chunks": len(chunks),
+                        "no_results": no_results,
+                        "used_threshold": used_threshold,
                     }
                 )
                 
@@ -308,7 +368,10 @@ def register_chat_routes(
                         "retrieval_time_ms": retrieval_time_ms,
                         "generation_time_ms": generation_time_ms,
                         "model": config.model,
-                        "mode": mode
+                        "mode": mode,
+                        "num_chunks": len(chunks),
+                        "no_results": no_results,
+                        "used_threshold": used_threshold,
                     }
                 })
                 
