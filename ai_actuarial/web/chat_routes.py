@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import datetime
 from typing import Any, Callable
+from urllib.parse import quote
 
 from flask import Flask, jsonify, request, render_template
 
@@ -65,6 +66,42 @@ def register_chat_routes(
         if not chatbot_available:
             return _api_error("Chatbot functionality not available", status_code=503)
         return None
+
+    def _build_file_links(raw_file_url: str, *, return_to: str = "/chat") -> dict[str, str]:
+        """Build stable links for file detail and file preview."""
+        source_url = str(raw_file_url or "").strip()
+        if not source_url:
+            return {
+                "source_url": "",
+                "file_detail_url": "",
+                "file_preview_url": "",
+            }
+
+        if source_url.startswith("/file/"):
+            return {
+                "source_url": source_url,
+                "file_detail_url": source_url,
+                "file_preview_url": "",
+            }
+        if source_url.startswith("/file_preview"):
+            return {
+                "source_url": source_url,
+                "file_detail_url": "",
+                "file_preview_url": source_url,
+            }
+        if source_url.startswith("/database/"):
+            return {
+                "source_url": source_url,
+                "file_detail_url": source_url,
+                "file_preview_url": "",
+            }
+
+        encoded_source = quote(source_url, safe="")
+        return {
+            "source_url": source_url,
+            "file_detail_url": f"/file/{encoded_source}?return_to={quote(return_to, safe='')}",
+            "file_preview_url": f"/file_preview?file_url={encoded_source}",
+        }
     
     def _get_user_id() -> str:
         """Get user ID from session or request."""
@@ -311,28 +348,41 @@ def register_chat_routes(
                 # Extract citations from chunks
                 citations = []
                 seen_files = set()
+                retrieved_blocks = []
                 for chunk in chunks:
                     metadata = chunk.get("metadata", {})
                     filename = metadata.get("filename", "unknown")
+                    score = float(metadata.get("similarity_score", 0.0) or 0.0)
+                    links = _build_file_links(metadata.get("file_url", ""))
+
+                    retrieved_blocks.append({
+                        "filename": filename,
+                        "kb_id": metadata.get("kb_id", ""),
+                        "kb_name": metadata.get("kb_name", ""),
+                        "chunk_id": metadata.get("chunk_id", ""),
+                        "similarity_score": score,
+                        "content": chunk.get("content", ""),
+                        "source_url": links["source_url"],
+                        "file_detail_url": links["file_detail_url"],
+                        "file_preview_url": links["file_preview_url"],
+                    })
                     
                     # Avoid duplicate citations
                     if filename in seen_files:
                         continue
                     seen_files.add(filename)
                     
-                    # Build file URL for linking
-                    file_url = metadata.get("file_url", "")
-                    if not file_url and filename:
-                        # Construct URL from filename
-                        file_url = f"/database/{filename}"
-                    
                     citations.append({
                         "filename": filename,
                         "kb_id": metadata.get("kb_id", ""),
                         "kb_name": metadata.get("kb_name", ""),
                         "chunk_id": metadata.get("chunk_id", ""),
-                        "similarity_score": metadata.get("similarity_score", 0.0),
-                        "file_url": file_url
+                        "similarity_score": score,
+                        "source_url": links["source_url"],
+                        # Keep legacy key for old frontend behavior.
+                        "file_url": links["file_detail_url"],
+                        "file_detail_url": links["file_detail_url"],
+                        "file_preview_url": links["file_preview_url"],
                     })
                 
                 # Add assistant message
@@ -349,6 +399,7 @@ def register_chat_routes(
                         "num_chunks": len(chunks),
                         "no_results": no_results,
                         "used_threshold": used_threshold,
+                        "retrieved_blocks": retrieved_blocks,
                     }
                 )
                 
@@ -364,6 +415,7 @@ def register_chat_routes(
                     "message_id": assistant_msg_id,
                     "response": response_text,
                     "citations": citations,
+                    "retrieved_blocks": retrieved_blocks,
                     "metadata": {
                         "retrieval_time_ms": retrieval_time_ms,
                         "generation_time_ms": generation_time_ms,
@@ -485,7 +537,7 @@ def register_chat_routes(
                 
                 if request.method == "GET":
                     # Get messages
-                    messages = conv_manager.get_messages(conversation_id)
+                    messages = conv_manager.get_messages(conversation_id, include_metadata=True)
                     
                     return _api_success({
                         "conversation": conv,
