@@ -192,6 +192,17 @@
         transform: translateX(-50%) translateY(0);
     }
 
+    .chat-help-right::after {
+        left: auto;
+        right: 0;
+        transform: translateY(-4px);
+    }
+
+    .chat-help-right:hover::after,
+    .chat-help-right:focus-visible::after {
+        transform: translateY(0);
+    }
+
     .chat-controls select {
         padding: 0.5rem 0.75rem;
         border: 1px solid var(--border-color);
@@ -329,6 +340,76 @@
     
     [data-theme="dark"] .chat-citation:hover {
         background: var(--primary-800);
+    }
+
+    .chat-retrieved-blocks {
+        margin-top: 0.75rem;
+    }
+
+    .chat-retrieved-toggle {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .chat-retrieved-list {
+        margin-top: 0.5rem;
+        display: grid;
+        gap: 0.5rem;
+    }
+
+    .chat-retrieved-item {
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--card-bg);
+        padding: 0.55rem;
+    }
+
+    .chat-retrieved-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem 0.5rem;
+        margin-bottom: 0.35rem;
+        font-size: var(--text-xs);
+    }
+
+    .chat-retrieved-badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid var(--border-color);
+        padding: 0.1rem 0.45rem;
+        background: var(--gray-100);
+        color: var(--text-secondary);
+    }
+
+    [data-theme="dark"] .chat-retrieved-badge {
+        background: var(--gray-700);
+    }
+
+    .chat-retrieved-links {
+        display: inline-flex;
+        gap: 0.45rem;
+    }
+
+    .chat-retrieved-links a {
+        color: var(--primary-700);
+        text-decoration: none;
+    }
+
+    [data-theme="dark"] .chat-retrieved-links a {
+        color: var(--primary-200);
+    }
+
+    .chat-retrieved-content {
+        font-size: var(--text-xs);
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: var(--text-primary);
+        margin: 0;
     }
     
     .chat-input-area {
@@ -544,7 +625,7 @@
                         <div class="chat-control-label">
                             Model Selection
                             <span
-                                class="chat-help"
+                                class="chat-help chat-help-right"
                                 tabindex="0"
                                 data-tooltip="Controls answer style (response mode, not base LLM engine). Expert is deep/technical, Summary is concise, Tutorial is step-by-step, Comparison is side-by-side analysis.">
                                 ?
@@ -766,17 +847,10 @@
         }
         
         chatMessages.innerHTML = messages.map(msg => {
-            const citations = msg.citations ? JSON.parse(msg.citations) : [];
-            const citationsHtml = citations.length > 0 ? `
-                <div class="chat-citations">
-                    <div class="chat-citations-title">Sources</div>
-                    ${citations.map(citation => `
-                        <a href="${citation.file_url}" class="chat-citation" target="_blank">
-                            ${escapeHtml(citation.filename)}
-                        </a>
-                    `).join('')}
-                </div>
-            ` : '';
+            const citations = toArray(msg.citations);
+            const metadata = toObject(msg.metadata);
+            const retrievedBlocks = toArray(metadata.retrieved_blocks);
+            const evidenceHtml = buildEvidenceHtml(citations, retrievedBlocks);
             
             return `
                 <div class="chat-message ${msg.role}">
@@ -786,7 +860,7 @@
                     <div class="chat-message-content">
                         <div class="chat-message-bubble">
                             ${escapeHtml(msg.content).replace(/\n/g, '<br>')}
-                            ${citationsHtml}
+                            ${evidenceHtml}
                         </div>
                         <div class="chat-message-time">${formatTime(msg.created_at)}</div>
                     </div>
@@ -840,7 +914,12 @@
             removeLoadingMessage(loadingId);
             
             if (result.success && result.data) {
-                const { conversation_id, response: aiResponse, citations } = result.data;
+                const {
+                    conversation_id,
+                    response: aiResponse,
+                    citations = [],
+                    retrieved_blocks: retrievedBlocks = [],
+                } = result.data;
                 
                 // Update conversation ID if new
                 if (!currentConversationId) {
@@ -849,7 +928,7 @@
                 }
                 
                 // Add AI response to UI
-                addMessageToUI('assistant', aiResponse, citations);
+                addMessageToUI('assistant', aiResponse, citations, retrievedBlocks);
                 
                 // Reload conversation list to update counts
                 await loadConversations();
@@ -866,23 +945,13 @@
         }
     }
     
-    function addMessageToUI(role, content, citations = []) {
+    function addMessageToUI(role, content, citations = [], retrievedBlocks = []) {
         // Remove empty state if present
         const emptyState = chatMessages.querySelector('.chat-empty-state');
         if (emptyState) {
             emptyState.remove();
         }
-        
-        const citationsHtml = citations && citations.length > 0 ? `
-            <div class="chat-citations">
-                <div class="chat-citations-title">Sources</div>
-                ${citations.map(citation => `
-                    <a href="${citation.file_url}" class="chat-citation" target="_blank">
-                        ${escapeHtml(citation.filename)}
-                    </a>
-                `).join('')}
-            </div>
-        ` : '';
+        const evidenceHtml = buildEvidenceHtml(toArray(citations), toArray(retrievedBlocks));
         
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${role}`;
@@ -893,7 +962,7 @@
             <div class="chat-message-content">
                 <div class="chat-message-bubble">
                     ${escapeHtml(content).replace(/\n/g, '<br>')}
-                    ${citationsHtml}
+                    ${evidenceHtml}
                 </div>
                 <div class="chat-message-time">Just now</div>
             </div>
@@ -901,6 +970,122 @@
         
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function buildEvidenceHtml(citations, retrievedBlocks) {
+        const sourceHtml = citations.length > 0 ? `
+            <div class="chat-citations">
+                <div class="chat-citations-title">Sources (${citations.length})</div>
+                ${citations.map((citation, index) => {
+                    const href = resolveFileDetailUrl(citation);
+                    // Extract basename from filename for cleaner display
+                    const rawFilename = citation.filename || 'Unknown source';
+                    const basename = extractBasename(rawFilename);
+                    const label = escapeHtml(basename);
+                    const title = escapeHtml(rawFilename); // Full path in tooltip
+                    if (!href) {
+                        return `<span class="chat-citation" title="${title}">${label}</span>`;
+                    }
+                    return `<a href="${escapeHtml(href)}" class="chat-citation" target="_blank" rel="noopener noreferrer" title="${title}">${label}</a>`;
+                }).join('')}
+            </div>
+        ` : '';
+
+        const blocksHtml = retrievedBlocks.length > 0 ? `
+            <details class="chat-retrieved-blocks">
+                <summary class="chat-retrieved-toggle">Retrieved blocks (${retrievedBlocks.length})</summary>
+                <div class="chat-retrieved-list">
+                    ${retrievedBlocks.map((block, index) => {
+                        const detailUrl = resolveFileDetailUrl(block);
+                        const previewUrl = resolveFilePreviewUrl(block);
+                        const score = Number(block.similarity_score);
+                        const scoreText = Number.isFinite(score) ? score.toFixed(3) : '-';
+                        const kbName = escapeHtml(block.kb_name || block.kb_id || 'Unknown KB');
+                        const chunkId = escapeHtml(block.chunk_id || 'n/a');
+                        const rawFilename = block.filename || 'unknown';
+                        const basename = extractBasename(rawFilename);
+                        const filename = escapeHtml(basename);
+                        const fullPath = escapeHtml(rawFilename);
+                        const content = escapeHtml(String(block.content || '').trim() || '(empty chunk)');
+                        return `
+                            <div class="chat-retrieved-item">
+                                <div class="chat-retrieved-head">
+                                    <strong title="${fullPath}">${filename}</strong>
+                                    <span class="chat-retrieved-badge">KB: ${kbName}</span>
+                                    <span class="chat-retrieved-badge">Chunk: ${chunkId}</span>
+                                    <span class="chat-retrieved-badge">Score: ${scoreText}</span>
+                                    <span class="chat-retrieved-links">
+                                        ${detailUrl ? `<a href="${escapeHtml(detailUrl)}" target="_blank" rel="noopener noreferrer">File details</a>` : ''}
+                                        ${previewUrl ? `<a href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener noreferrer">Preview</a>` : ''}
+                                    </span>
+                                </div>
+                                <pre class="chat-retrieved-content">${content}</pre>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </details>
+        ` : '';
+
+        return sourceHtml + blocksHtml;
+    }
+
+    function resolveFileDetailUrl(item) {
+        if (!item || typeof item !== 'object') return '';
+        const direct = String(item.file_detail_url || item.file_url || '').trim();
+        if (direct) return direct;
+        const source = String(item.source_url || '').trim();
+        if (!source) return '';
+        return `/file/${encodeURIComponent(source)}?return_to=${encodeURIComponent('/chat')}`;
+    }
+
+    function resolveFilePreviewUrl(item) {
+        if (!item || typeof item !== 'object') return '';
+        const direct = String(item.file_preview_url || '').trim();
+        if (direct) return direct;
+        const source = String(item.source_url || '').trim();
+        if (!source) return '';
+        return `/file_preview?file_url=${encodeURIComponent(source)}`;
+    }
+
+    function toArray(value) {
+        if (Array.isArray(value)) {
+            return value;
+        }
+        if (typeof value === 'string') {
+            try {
+                const parsed = JSON.parse(value);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        }
+        return [];
+    }
+
+    function toObject(value) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            return value;
+        }
+        if (typeof value === 'string') {
+            try {
+                const parsed = JSON.parse(value);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    return parsed;
+                }
+            } catch (e) {
+                return {};
+            }
+        }
+        return {};
+    }
+    
+    function extractBasename(filepath) {
+        if (!filepath || typeof filepath !== 'string') return 'unknown';
+        // Handle both Windows and Unix paths
+        const normalized = filepath.replace(/\\/g, '/');
+        const parts = normalized.split('/');
+        return parts[parts.length - 1] || filepath;
     }
     
     function addLoadingMessage() {
