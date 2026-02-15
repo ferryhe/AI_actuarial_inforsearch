@@ -278,6 +278,3 @@ class TestYAMLConfigLoader:
             assert ai_config["chatbot"]["temperature"] == 0.8
             assert rag_config["max_chunk_tokens"] == 900
 
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
