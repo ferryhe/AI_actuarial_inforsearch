@@ -1395,6 +1395,140 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error deleting site")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    # AI model configuration constants
+    # Available models for each provider with their capabilities
+    AI_AVAILABLE_MODELS = {
+        "openai": [
+            {"name": "gpt-4-turbo", "display_name": "GPT-4 Turbo", "types": ["chatbot", "catalog"]},
+            {"name": "gpt-4", "display_name": "GPT-4", "types": ["chatbot", "catalog"]},
+            {"name": "gpt-4o", "display_name": "GPT-4o", "types": ["chatbot", "catalog"]},
+            {"name": "gpt-4o-mini", "display_name": "GPT-4o Mini", "types": ["chatbot", "catalog"]},
+            {"name": "gpt-3.5-turbo", "display_name": "GPT-3.5 Turbo", "types": ["chatbot", "catalog"]},
+            {"name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "types": ["embeddings"]},
+            {"name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "types": ["embeddings"]},
+            {"name": "text-embedding-ada-002", "display_name": "Text Embedding Ada 002", "types": ["embeddings"]},
+        ],
+        "mistral": [
+            {"name": "mistral-ocr-latest", "display_name": "Mistral OCR Latest", "types": ["ocr"]},
+            {"name": "pixtral-12b-2409", "display_name": "Pixtral 12B", "types": ["ocr"]},
+        ],
+        "siliconflow": [
+            {"name": "deepseek-ai/DeepSeek-OCR", "display_name": "DeepSeek OCR", "types": ["ocr"]},
+        ],
+        "local": [
+            {"name": "sentence-transformers", "display_name": "Sentence Transformers", "types": ["embeddings"]},
+            {"name": "docling", "display_name": "Docling", "types": ["ocr"]},
+            {"name": "marker", "display_name": "Marker", "types": ["ocr"]},
+        ],
+    }
+    
+    AI_SUPPORTED_PROVIDERS = {"openai", "mistral", "siliconflow", "local"}
+    
+    @app.route("/api/config/ai-models")
+    @require_permissions("config.read")
+    def api_config_ai_models():
+        """Get AI model configuration and available models."""
+        try:
+            config_data = _load_yaml(_get_sites_config_path(), default={})
+            ai_config = config_data.get("ai_config") or {}
+            
+            # Get current configuration with defaults
+            current_config = {
+                "catalog": {
+                    "provider": ai_config.get("catalog", {}).get("provider", "openai"),
+                    "model": ai_config.get("catalog", {}).get("model", "gpt-4o-mini"),
+                },
+                "embeddings": {
+                    "provider": ai_config.get("embeddings", {}).get("provider", "openai"),
+                    "model": ai_config.get("embeddings", {}).get("model", "text-embedding-3-large"),
+                },
+                "chatbot": {
+                    "provider": ai_config.get("chatbot", {}).get("provider", "openai"),
+                    "model": ai_config.get("chatbot", {}).get("model", "gpt-4-turbo"),
+                },
+                "ocr": {
+                    "provider": ai_config.get("ocr", {}).get("provider", "local"),
+                    "model": ai_config.get("ocr", {}).get("model", "docling"),
+                },
+            }
+            
+            return jsonify({
+                "current": current_config,
+                "available": AI_AVAILABLE_MODELS,
+            })
+        except Exception as e:
+            logger.exception("Error getting AI models config")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/ai-models", methods=["POST"])
+    @require_permissions("config.write")
+    def api_config_ai_models_update():
+        """Update AI model configuration."""
+        nonlocal site_config
+        try:
+            # Authentication check
+            expected_token = app.config.get("CONFIG_WRITE_AUTH_TOKEN") or os.getenv(
+                "CONFIG_WRITE_AUTH_TOKEN"
+            )
+            if expected_token:
+                provided_token = request.headers.get("X-Auth-Token")
+                if not provided_token or provided_token != expected_token:
+                    logger.warning("AI config write attempt rejected: authentication failed")
+                    return jsonify({"error": "Forbidden"}), 403
+            
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"error": "Invalid JSON body"}), 400
+
+            config_data = _load_yaml(_get_sites_config_path(), default={})
+            config_data.setdefault("ai_config", {})
+            
+            # Update each AI function configuration with validation
+            for function in ["catalog", "embeddings", "chatbot", "ocr"]:
+                if function in data and isinstance(data[function], dict):
+                    func_cfg = data[function]
+                    config_data["ai_config"].setdefault(function, {})
+                    
+                    if "provider" in func_cfg:
+                        provider = str(func_cfg["provider"]).strip().lower()
+                        if provider and provider not in AI_SUPPORTED_PROVIDERS:
+                            return jsonify({
+                                "error": f"Invalid provider '{provider}' for function '{function}'. "
+                                        f"Supported providers: {sorted(AI_SUPPORTED_PROVIDERS)}"
+                            }), 400
+                        config_data["ai_config"][function]["provider"] = provider
+                    
+                    if "model" in func_cfg:
+                        model = str(func_cfg["model"]).strip()
+                        if not model:
+                            return jsonify({
+                                "error": f"Model for function '{function}' must be a non-empty string."
+                            }), 400
+                        
+                        # Validate model is compatible with function
+                        provider = config_data["ai_config"][function].get("provider", "")
+                        if provider in AI_AVAILABLE_MODELS:
+                            provider_models = AI_AVAILABLE_MODELS[provider]
+                            compatible_models = [m for m in provider_models if function in m.get("types", [])]
+                            valid_model_names = [m["name"] for m in compatible_models]
+                            
+                            if model not in valid_model_names and len(valid_model_names) > 0:
+                                return jsonify({
+                                    "error": f"Model '{model}' is not compatible with function '{function}' "
+                                            f"for provider '{provider}'. Valid models: {valid_model_names}"
+                                }), 400
+                        
+                        config_data["ai_config"][function]["model"] = model
+            
+            _write_yaml(_get_sites_config_path(), config_data)
+            site_config = config_data
+            return jsonify({"success": True})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.exception("Error updating AI models config")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
     @app.route("/api/utils/browse-folder")
     @require_permissions("tasks.run")
     def api_browse_folder():
