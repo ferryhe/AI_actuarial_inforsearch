@@ -169,7 +169,7 @@
             </button>
 
             <a id="file-preview-link"
-               class="btn btn-secondary btn-small file-preview-top-btn"
+               class="btn btn-secondary file-preview-top-btn"
                href="/file_preview?file_url={{ file.url|urlencode }}">
                 File Preview
             </a>
@@ -244,7 +244,7 @@
     <p class="hint">Generate summary, keywords, and category for this file.</p>
     <form id="file-catalog-form" onsubmit="submitFileCatalog(event)">
       <div class="form-group">
-        <label>Catalog From</label>
+        <label for="file-catalog-input-source">Catalog From</label>
         <select name="input_source" id="file-catalog-input-source">
           <option value="markdown" selected>Markdown</option>
           <option value="source">Source file</option>
@@ -258,7 +258,7 @@
         <small class="form-hint">Unchecked = Skip already cataloged</small>
       </div>
       <div class="form-group">
-        <label>AI Provider</label>
+        <label for="file-catalog-provider">AI Provider</label>
         <select name="provider" id="file-catalog-provider">
           <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
             OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
@@ -288,19 +288,19 @@
     <p class="hint">Submit a single-file chunk generation task. Choose a profile and overwrite policy.</p>
     <form id="file-chunk-task-form" onsubmit="submitChunkTask(event)">
       <div class="form-group">
-        <label>Chunk Profile</label>
+        <label for="file-chunk-profile-select">Chunk Profile</label>
         <select name="profile_id" id="file-chunk-profile-select" required></select>
         <small class="form-hint">Same profile + overwrite = replace current chunk set. Different profile = add a new chunk set.</small>
       </div>
       <div class="form-group">
-        <label>Bind To Knowledge Base (Optional)</label>
+        <label for="file-chunk-kb-select">Bind To Knowledge Base (Optional)</label>
         <select name="kb_id" id="file-chunk-kb-select">
           <option value="">Do not bind to KB</option>
         </select>
         <small class="form-hint">If selected, this file's generated chunk set will be bound to that KB.</small>
       </div>
       <div class="form-group">
-        <label>Binding Mode</label>
+        <label for="file-chunk-binding-mode-select">Binding Mode</label>
         <select name="binding_mode" id="file-chunk-binding-mode-select">
           <option value="follow_latest" selected>Follow Latest (Recommended)</option>
           <option value="pin">Pin (Fixed Version)</option>
@@ -344,6 +344,16 @@
     }
 
     function openFileCatalogModal() {
+        // Check for other open modals
+        const otherModals = document.querySelectorAll('[id$="-modal"]');
+        const hasOpenModal = Array.from(otherModals).some(m => 
+            m.id !== 'file-catalog-modal' && (m.style.display === 'flex' || m.style.display === 'block')
+        );
+        if (hasOpenModal) {
+            Toast.error('Please close the current dialog first');
+            return;
+        }
+        
         const modal = document.getElementById('file-catalog-modal');
         if (!modal) return;
         _bindFileCatalogModal();
@@ -444,8 +454,17 @@
     function formatLocalTimestamp(value) {
         const raw = String(value || '').trim();
         if (!raw) return '-';
-        const parsed = new Date(raw);
+        
+        // Ensure proper ISO format parsing
+        // If the string doesn't include 'Z' or timezone, append 'Z' to indicate UTC
+        let dateStr = raw;
+        if (!raw.includes('Z') && !raw.includes('+') && !raw.includes('-', 10)) {
+            dateStr = raw + 'Z';
+        }
+        
+        const parsed = new Date(dateStr);
         if (isNaN(parsed.getTime())) return raw;
+        
         return parsed.toLocaleString(undefined, {
             year: 'numeric',
             month: '2-digit',
@@ -618,6 +637,16 @@
     }
 
     async function openChunkTaskModal() {
+        // Check for other open modals
+        const otherModals = document.querySelectorAll('[id$="-modal"]');
+        const hasOpenModal = Array.from(otherModals).some(m => 
+            m.id !== 'file-chunk-task-modal' && (m.style.display === 'flex' || m.style.display === 'block')
+        );
+        if (hasOpenModal) {
+            Toast.error('Please close the current dialog first');
+            return;
+        }
+        
         if (!hasMarkdownForChunk) {
             Toast.error('This file has no markdown yet. Generate markdown first.');
             return;
@@ -811,6 +840,90 @@
         }
     }
     
+    // Helper function to disable/enable other buttons during edit modes
+    function setOtherButtonsDisabled(disabled) {
+        // Buttons to disable during Edit Details mode
+        const catalogBtn = document.getElementById('catalog-btn');
+        const aiExplainBtn = document.getElementById('ai-explain-btn');
+        const filePreviewLink = document.getElementById('file-preview-link');
+        const chunkModifyBtn = document.getElementById('chunk-modify-btn');
+        const markdownEditTab = document.getElementById('markdown-edit-tab');
+        
+        // Disable/enable buttons
+        if (catalogBtn) catalogBtn.disabled = disabled;
+        if (aiExplainBtn) aiExplainBtn.disabled = disabled;
+        if (filePreviewLink) {
+            if (disabled) {
+                filePreviewLink.classList.add('disabled');
+                filePreviewLink.style.pointerEvents = 'none';
+                filePreviewLink.style.opacity = '0.5';
+            } else {
+                filePreviewLink.classList.remove('disabled');
+                filePreviewLink.style.pointerEvents = '';
+                filePreviewLink.style.opacity = '';
+            }
+        }
+        if (chunkModifyBtn) chunkModifyBtn.disabled = disabled;
+        if (markdownEditTab) markdownEditTab.disabled = disabled;
+        
+        // Handle Download and Delete buttons (may have permission checks)
+        const downloadBtn = document.querySelector('a[href^="/api/download"]');
+        const deleteBtn = document.querySelector('button[onclick*="deleteFile"]');
+        if (downloadBtn) {
+            if (disabled) {
+                downloadBtn.classList.add('disabled');
+                downloadBtn.style.pointerEvents = 'none';
+                downloadBtn.style.opacity = '0.5';
+            } else {
+                downloadBtn.classList.remove('disabled');
+                downloadBtn.style.pointerEvents = '';
+                downloadBtn.style.opacity = '';
+            }
+        }
+        if (deleteBtn) deleteBtn.disabled = disabled;
+    }
+    
+    // Helper function to disable/enable buttons during Markdown edit mode
+    function setMarkdownEditModeButtons(inEditMode) {
+        const editBtn = document.getElementById('edit-btn');
+        const catalogBtn = document.getElementById('catalog-btn');
+        const aiExplainBtn = document.getElementById('ai-explain-btn');
+        const filePreviewLink = document.getElementById('file-preview-link');
+        const chunkModifyBtn = document.getElementById('chunk-modify-btn');
+        
+        if (editBtn) editBtn.disabled = inEditMode;
+        if (catalogBtn) catalogBtn.disabled = inEditMode;
+        if (aiExplainBtn) aiExplainBtn.disabled = inEditMode;
+        if (filePreviewLink) {
+            if (inEditMode) {
+                filePreviewLink.classList.add('disabled');
+                filePreviewLink.style.pointerEvents = 'none';
+                filePreviewLink.style.opacity = '0.5';
+            } else {
+                filePreviewLink.classList.remove('disabled');
+                filePreviewLink.style.pointerEvents = '';
+                filePreviewLink.style.opacity = '';
+            }
+        }
+        if (chunkModifyBtn) chunkModifyBtn.disabled = inEditMode;
+        
+        // Handle Download and Delete buttons
+        const downloadBtn = document.querySelector('a[href^="/api/download"]');
+        const deleteBtn = document.querySelector('button[onclick*="deleteFile"]');
+        if (downloadBtn) {
+            if (inEditMode) {
+                downloadBtn.classList.add('disabled');
+                downloadBtn.style.pointerEvents = 'none';
+                downloadBtn.style.opacity = '0.5';
+            } else {
+                downloadBtn.classList.remove('disabled');
+                downloadBtn.style.pointerEvents = '';
+                downloadBtn.style.opacity = '';
+            }
+        }
+        if (deleteBtn) deleteBtn.disabled = inEditMode;
+    }
+    
     async function toggleEditMode() {
         await ensureCategoryOptions();
         editMode = true;
@@ -833,13 +946,41 @@
         document.getElementById('edit-btn').style.display = 'none';
         document.getElementById('save-btn').style.display = 'inline-block';
         document.getElementById('cancel-btn').style.display = 'inline-block';
+        
+        // Disable other buttons during edit mode
+        setOtherButtonsDisabled(true);
     }
     
     function cancelEdit() {
+        // Check if there are unsaved changes
+        const category = categoryListToString(selectedCategories);
+        const summary = document.getElementById('summary-input').value.trim();
+        const keywordsText = document.getElementById('keywords-input').value.trim();
+        const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
+        
+        const categoryInput = document.getElementById('category-input');
+        const summaryInput = document.getElementById('summary-input');
+        const keywordsInput = document.getElementById('keywords-input');
+        
+        const originalCategory = categoryInput.dataset.currentValue || '';
+        const originalSummary = summaryInput.dataset.currentValue || '';
+        const originalKeywords = keywordsInput.dataset.currentValue || '';
+        const originalKeywordsArray = originalKeywords ? originalKeywords.split(',').map(k => k.trim()).filter(k => k) : [];
+        
+        const categoryChanged = category !== originalCategory;
+        const summaryChanged = summary !== originalSummary;
+        const keywordsChanged = JSON.stringify(keywords.sort()) !== JSON.stringify(originalKeywordsArray.sort());
+        
+        // If there are changes, confirm before canceling
+        if (categoryChanged || summaryChanged || keywordsChanged) {
+            if (!confirm('You have unsaved changes. Are you sure you want to discard them?')) {
+                return;
+            }
+        }
+        
         editMode = false;
         
         // Hide input fields, show display fields
-        const categoryInput = document.getElementById('category-input');
         selectedCategories = parseCategoryString(categoryInput.dataset.currentValue || '');
         renderCategoryOptionsPanel();
         renderCategorySelectedPreview();
@@ -848,7 +989,6 @@
         closeCategoryOptionsPanel();
         document.getElementById('category-display').style.display = 'block';
         
-        const summaryInput = document.getElementById('summary-input');
         const summaryDisplay = document.getElementById('summary-display');
         if (summaryInput) {
             const savedSummary = (summaryInput.dataset && typeof summaryInput.dataset.currentValue !== 'undefined')
@@ -866,7 +1006,6 @@
             }
         }
         
-        const keywordsInput = document.getElementById('keywords-input');
         const keywordsDisplay = document.getElementById('keywords-display');
         if (keywordsInput) {
             let savedKeywords = '';
@@ -894,6 +1033,9 @@
         document.getElementById('edit-btn').style.display = 'inline-block';
         document.getElementById('save-btn').style.display = 'none';
         document.getElementById('cancel-btn').style.display = 'none';
+        
+        // Re-enable other buttons after exiting edit mode
+        setOtherButtonsDisabled(false);
     }
     
     async function saveChanges() {
@@ -901,6 +1043,26 @@
         const summary = document.getElementById('summary-input').value.trim();
         const keywordsText = document.getElementById('keywords-input').value.trim();
         const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
+        
+        // Check if anything actually changed
+        const categoryInput = document.getElementById('category-input');
+        const summaryInput = document.getElementById('summary-input');
+        const keywordsInput = document.getElementById('keywords-input');
+        
+        const originalCategory = categoryInput.dataset.currentValue || '';
+        const originalSummary = summaryInput.dataset.currentValue || '';
+        const originalKeywords = keywordsInput.dataset.currentValue || '';
+        const originalKeywordsArray = originalKeywords ? originalKeywords.split(',').map(k => k.trim()).filter(k => k) : [];
+        
+        const categoryChanged = category !== originalCategory;
+        const summaryChanged = summary !== originalSummary;
+        const keywordsChanged = JSON.stringify(keywords.sort()) !== JSON.stringify(originalKeywordsArray.sort());
+        
+        if (!categoryChanged && !summaryChanged && !keywordsChanged) {
+            Toast.info('No changes detected');
+            cancelEdit();
+            return;
+        }
         
         try {
             const response = await fetch('/api/files/update', {
@@ -996,6 +1158,49 @@
         });
     });
     
+    // Add beforeunload warning for unsaved changes
+    window.addEventListener('beforeunload', (e) => {
+        if (editMode || markdownMode === 'edit') {
+            e.preventDefault();
+            e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+            return e.returnValue;
+        }
+    });
+    
+    // Global modal management to prevent overlaps
+    let openModals = [];
+    
+    window.syncModalState = function() {
+        // Track which modals are currently open
+        openModals = [];
+        const modals = document.querySelectorAll('[id$="-modal"]');
+        modals.forEach(modal => {
+            if (modal.style.display === 'flex' || modal.style.display === 'block') {
+                openModals.push(modal.id);
+            }
+        });
+    };
+    
+    // Override modal open functions to prevent overlaps
+    const originalOpenCatalogModal = window.openFileCatalogModal || function() {};
+    const originalOpenChunkModal = window.openChunkTaskModal || function() {};
+    
+    window.openFileCatalogModal = function() {
+        if (openModals.length > 0) {
+            Toast.error('Please close the current dialog first');
+            return;
+        }
+        openFileCatalogModal();
+    };
+    
+    window.openChunkTaskModal = function() {
+        if (openModals.length > 0) {
+            Toast.error('Please close the current dialog first');
+            return;
+        }
+        openChunkTaskModal();
+    };
+    
     // ===== Markdown functionality =====
     let currentMarkdownContent = '';
     let markdownMode = 'view';
@@ -1034,6 +1239,12 @@
                 if (aiExplainBtn) {
                     aiExplainBtn.style.display = 'inline-block';
                 }
+                
+                // Initialize tab visibility (hide View tab by default in view mode, show Edit tab)
+                const viewTab = document.getElementById('markdown-view-tab');
+                const editTab = document.getElementById('markdown-edit-tab');
+                if (viewTab) viewTab.style.display = 'none';
+                if (editTab) editTab.style.display = 'inline-block';
             } else {
                 // No markdown content (but request was successful)
                 currentMarkdownContent = '';
@@ -1134,19 +1345,40 @@
             editTab.classList.remove('active');
             viewMode.style.display = 'block';
             editMode.style.display = 'none';
+            
+            // Hide View tab in view mode (it's redundant), show Edit tab
+            viewTab.style.display = 'none';
+            if (editTab) editTab.style.display = 'inline-block';
+            
+            // Re-enable other buttons when exiting markdown edit mode
+            setMarkdownEditModeButtons(false);
         } else {
             viewTab.classList.remove('active');
             editTab.classList.add('active');
             viewMode.style.display = 'none';
             editMode.style.display = 'block';
             
+            // Show View tab in edit mode (to allow return), hide Edit tab
+            viewTab.style.display = 'inline-block';
+            editTab.style.display = 'none';
+            
             // Load current content into editor
             document.getElementById('markdown-editor').value = currentMarkdownContent;
+            
+            // Disable other buttons during markdown edit mode
+            setMarkdownEditModeButtons(true);
         }
     }
     
     async function saveMarkdown() {
         const content = document.getElementById('markdown-editor').value;
+        
+        // Check if content has actually changed
+        if (content === currentMarkdownContent) {
+            Toast.info('No changes detected');
+            switchMarkdownTab('view');
+            return;
+        }
         
         try {
             const encodedUrl = encodeURIComponent(fileUrl);
@@ -1189,8 +1421,18 @@
     }
     
     function cancelMarkdownEdit() {
+        // Check if there are unsaved changes
+        const editor = document.getElementById('markdown-editor');
+        const currentContent = editor.value;
+        
+        if (currentContent !== currentMarkdownContent) {
+            if (!confirm('You have unsaved changes. Are you sure you want to discard them?')) {
+                return;
+            }
+        }
+        
         // Revert to current content and switch to view mode
-        document.getElementById('markdown-editor').value = currentMarkdownContent;
+        editor.value = currentMarkdownContent;
         switchMarkdownTab('view');
     }
 
@@ -1292,6 +1534,17 @@
     }
     
     async function deleteFile(url) {
+        // Check for other open modals (catalog and chunk task modals)
+        const catalogModal = document.getElementById('file-catalog-modal');
+        const chunkModal = document.getElementById('file-chunk-task-modal');
+        const isCatalogOpen = catalogModal && (catalogModal.style.display === 'flex' || catalogModal.style.display === 'block');
+        const isChunkOpen = chunkModal && (chunkModal.style.display === 'flex' || chunkModal.style.display === 'block');
+        
+        if (isCatalogOpen || isChunkOpen) {
+            Toast.error('Please close the current dialog first');
+            return;
+        }
+        
         // Create a custom modal for text confirmation
         const modal = document.createElement('div');
         modal.className = 'modal';
@@ -1311,6 +1564,7 @@
         
         document.body.appendChild(modal);
         document.body.classList.add('modal-open');
+        if (window.syncModalState) window.syncModalState();
         
         const input = modal.querySelector('#delete-confirm-input');
         const confirmBtn = modal.querySelector('#confirm-delete');
@@ -1322,6 +1576,7 @@
         const closeModal = () => {
             modal.remove();
             document.body.classList.remove('modal-open');
+            if (window.syncModalState) window.syncModalState();
         };
         
         const handleConfirm = async () => {

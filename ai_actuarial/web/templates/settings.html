@@ -559,7 +559,17 @@ function isModuleDirty(name) {
   if (snap === undefined) return false;
   return JSON.stringify(getModuleData(name)) !== JSON.stringify(snap);
 }
-function enterEditMode(name) { moduleState.editing[name] = true; moduleState.snapshots[name] = deepClone(getModuleData(name)); setModuleEditable(name, true); }
+function enterEditMode(name) { 
+  // Check if any other module is being edited
+  const otherEditing = Object.keys(moduleState.editing).find(m => m !== name && moduleState.editing[m]);
+  if (otherEditing) {
+    notifyError(`Please save or cancel "${otherEditing}" first before editing another module`);
+    return;
+  }
+  moduleState.editing[name] = true; 
+  moduleState.snapshots[name] = deepClone(getModuleData(name)); 
+  setModuleEditable(name, true); 
+}
 function cancelModule(name) { if (moduleState.snapshots[name] !== undefined) applyModuleData(name, deepClone(moduleState.snapshots[name])); moduleState.editing[name] = false; setModuleEditable(name, false); }
 async function exitModuleEdit(name) { if (!isModuleDirty(name)) { moduleState.editing[name] = false; setModuleEditable(name, false); return; } const save = await customConfirm('You have unsaved changes. Save before exiting edit mode?', 'Unsaved Changes'); if (save) await saveModule(name); else cancelModule(name); }
 
@@ -795,6 +805,16 @@ async function revokeAuthToken(tokenId) {
 function initReadonlyModules() { ['categories','ai_keywords','crawler_defaults','paths','search_defaults'].forEach(name => { moduleState.editing[name] = false; setModuleEditable(name, false); }); }
 async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens()]); } catch (err) { notifyError(err.message || String(err)); } }
 initPage();
+
+// Add beforeunload warning for unsaved changes
+window.addEventListener('beforeunload', (e) => {
+  const hasUnsavedChanges = Object.keys(moduleState.editing).some(name => moduleState.editing[name] && isModuleDirty(name));
+  if (hasUnsavedChanges) {
+    e.preventDefault();
+    e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+    return e.returnValue;
+  }
+});
 </script>
 
 <style>

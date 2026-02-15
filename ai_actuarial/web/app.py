@@ -3581,7 +3581,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_files_get_markdown(file_url):
         """Get markdown content for a file."""
         try:
-            url = file_url
+            from urllib.parse import unquote
+            url = unquote(file_url)
             
             logger.info(f"Fetching markdown content for URL: {url}")
             storage = Storage(db_path)
