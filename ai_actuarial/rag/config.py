@@ -66,6 +66,66 @@ class RAGConfig:
             data_dir=os.getenv("RAG_DATA_DIR", "data/rag"),
         )
     
+    @classmethod
+    def from_yaml(cls, yaml_config: dict) -> "RAGConfig":
+        """Create configuration from sites.yaml rag_config and ai_config sections."""
+        rag_cfg = yaml_config.get("rag_config", {})
+        ai_cfg = yaml_config.get("ai_config", {}).get("embeddings", {})
+        
+        return cls(
+            # Chunking configuration from rag_config
+            chunk_strategy=rag_cfg.get("chunk_strategy", "semantic_structure"),
+            max_chunk_tokens=int(rag_cfg.get("max_chunk_tokens", 800)),
+            min_chunk_tokens=int(rag_cfg.get("min_chunk_tokens", 100)),
+            preserve_headers=bool(rag_cfg.get("preserve_headers", True)),
+            preserve_citations=bool(rag_cfg.get("preserve_citations", True)),
+            include_hierarchy=bool(rag_cfg.get("include_hierarchy", True)),
+            
+            # Embedding configuration from ai_config.embeddings
+            embedding_provider=ai_cfg.get("provider", "openai"),
+            embedding_model=ai_cfg.get("model", "text-embedding-3-large"),
+            embedding_batch_size=int(ai_cfg.get("batch_size", 64)),
+            embedding_cache_enabled=bool(ai_cfg.get("cache_enabled", True)),
+            
+            # Vector store configuration from ai_config.embeddings
+            similarity_threshold=float(ai_cfg.get("similarity_threshold", 0.4)),
+            index_type=rag_cfg.get("index_type", "Flat"),
+            
+            # API configuration (still from environment for sensitive data)
+            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+            openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+            openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "60")),
+            
+            # Storage paths (can be overridden by environment)
+            data_dir=os.getenv("RAG_DATA_DIR", "data/rag"),
+        )
+    
+    @classmethod
+    def from_config(cls) -> "RAGConfig":
+        """
+        Create configuration from sites.yaml with .env fallback.
+        
+        This is the recommended method for loading configuration. It will:
+        1. Try to load from sites.yaml rag_config and ai_config sections
+        2. Fall back to environment variables if not found
+        """
+        try:
+            from config.yaml_config import load_yaml_config
+            yaml_config = load_yaml_config()
+            
+            # Check if either rag_config or ai_config.embeddings exist
+            has_rag_config = "rag_config" in yaml_config
+            has_ai_embeddings = "ai_config" in yaml_config and "embeddings" in yaml_config.get("ai_config", {})
+            
+            if has_rag_config or has_ai_embeddings:
+                return cls.from_yaml(yaml_config)
+        except Exception:
+            # If import fails or YAML loading fails, fall back to env
+            pass
+        
+        # Fallback to environment variables
+        return cls.from_env()
+    
     def validate(self) -> None:
         """Validate configuration."""
         if self.embedding_provider == "openai" and not self.openai_api_key:

@@ -109,7 +109,7 @@ class KnowledgeBaseManager:
             config: RAG configuration
         """
         self.storage = storage
-        self.config = config or RAGConfig.from_env()
+        self.config = config or RAGConfig.from_config()
         
         # Ensure RAG tables exist
         self._ensure_rag_tables()

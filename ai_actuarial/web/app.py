@@ -1522,6 +1522,15 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
+            
+            # Invalidate configuration cache so backend picks up changes immediately
+            try:
+                from config.yaml_config import invalidate_config_cache
+                invalidate_config_cache()
+                logger.info("Configuration cache invalidated after AI config update")
+            except Exception as cache_err:
+                logger.warning(f"Could not invalidate config cache: {cache_err}")
+            
             return jsonify({"success": True})
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
