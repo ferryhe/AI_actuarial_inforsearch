@@ -1404,14 +1404,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             ai_config = config_data.get("ai_config") or {}
             
             # Define available models for each provider
-            # Each model has: name, display_name, types (list of: chat, embeddings, catalog, ocr)
+            # Each model has: name, display_name, types (list of: chatbot, embeddings, catalog, ocr)
             available_models = {
                 "openai": [
-                    {"name": "gpt-4-turbo", "display_name": "GPT-4 Turbo", "types": ["chat", "catalog"]},
-                    {"name": "gpt-4", "display_name": "GPT-4", "types": ["chat", "catalog"]},
-                    {"name": "gpt-4o", "display_name": "GPT-4o", "types": ["chat", "catalog"]},
-                    {"name": "gpt-4o-mini", "display_name": "GPT-4o Mini", "types": ["chat", "catalog"]},
-                    {"name": "gpt-3.5-turbo", "display_name": "GPT-3.5 Turbo", "types": ["chat", "catalog"]},
+                    {"name": "gpt-4-turbo", "display_name": "GPT-4 Turbo", "types": ["chatbot", "catalog"]},
+                    {"name": "gpt-4", "display_name": "GPT-4", "types": ["chatbot", "catalog"]},
+                    {"name": "gpt-4o", "display_name": "GPT-4o", "types": ["chatbot", "catalog"]},
+                    {"name": "gpt-4o-mini", "display_name": "GPT-4o Mini", "types": ["chatbot", "catalog"]},
+                    {"name": "gpt-3.5-turbo", "display_name": "GPT-3.5 Turbo", "types": ["chatbot", "catalog"]},
                     {"name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "types": ["embeddings"]},
                     {"name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "types": ["embeddings"]},
                     {"name": "text-embedding-ada-002", "display_name": "Text Embedding Ada 002", "types": ["embeddings"]},
