@@ -5,6 +5,7 @@
   <div class="page-header"><h2>Backend Settings</h2></div>
   <div class="tabs">
     <button class="tab-link active" onclick="openTab(event,'tab-categories')">Categories</button>
+    <button class="tab-link" onclick="openTab(event,'tab-ai-config')">AI Configuration</button>
     <button class="tab-link" onclick="openTab(event,'tab-backend')">Other Settings</button>
     <button class="tab-link" onclick="openTab(event,'tab-tokens')">Tokens</button>
     <button class="tab-link" onclick="openTab(event,'tab-history')">Task History</button>
@@ -59,6 +60,87 @@
       <div class="card">
         <label for="ai-shared-keywords">ai_filter_keywords (one per line)</label>
         <textarea id="ai-shared-keywords" class="module-field" data-module="ai_keywords" rows="8"></textarea>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-ai-config" class="tab-content">
+    <section class="settings-module" data-module="ai_models">
+      <div class="module-header">
+        <div>
+          <h3>AI Model Selection</h3>
+          <p class="module-help">Configure which AI provider and model to use for each function. Models are filtered by their capabilities.</p>
+        </div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_models')">Edit</button></div>
+        <div class="module-actions-edit" style="display:none;">
+          <button class="btn btn-primary" onclick="saveModule('ai_models')">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('ai_models')">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('ai_models')">Exit Edit</button>
+        </div>
+      </div>
+      <div class="card form-grid">
+        <div>
+          <label for="ai-catalog-provider">Catalog LLM Provider</label>
+          <p class="field-help">Used for document summarization and categorization</p>
+          <select id="ai-catalog-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('catalog')">
+            <option value="openai">OpenAI</option>
+            <option value="mistral">Mistral</option>
+            <option value="siliconflow">SiliconFlow</option>
+          </select>
+        </div>
+        <div>
+          <label for="ai-catalog-model">Catalog LLM Model</label>
+          <select id="ai-catalog-model" class="module-field" data-module="ai_models">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+        
+        <div>
+          <label for="ai-embeddings-provider">Embeddings Provider</label>
+          <p class="field-help">Used for RAG vector embeddings</p>
+          <select id="ai-embeddings-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('embeddings')">
+            <option value="openai">OpenAI</option>
+            <option value="local">Local (Sentence Transformers)</option>
+          </select>
+        </div>
+        <div>
+          <label for="ai-embeddings-model">Embeddings Model</label>
+          <select id="ai-embeddings-model" class="module-field" data-module="ai_models">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+        
+        <div>
+          <label for="ai-chatbot-provider">Chatbot Provider</label>
+          <p class="field-help">Used for AI chatbot responses</p>
+          <select id="ai-chatbot-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('chatbot')">
+            <option value="openai">OpenAI</option>
+            <option value="mistral">Mistral</option>
+            <option value="siliconflow">SiliconFlow</option>
+          </select>
+        </div>
+        <div>
+          <label for="ai-chatbot-model">Chatbot Model</label>
+          <select id="ai-chatbot-model" class="module-field" data-module="ai_models">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+        
+        <div>
+          <label for="ai-ocr-provider">OCR/Markdown Provider</label>
+          <p class="field-help">Used for document to markdown conversion</p>
+          <select id="ai-ocr-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('ocr')">
+            <option value="local">Local (Docling/Marker)</option>
+            <option value="mistral">Mistral</option>
+            <option value="siliconflow">SiliconFlow</option>
+          </select>
+        </div>
+        <div>
+          <label for="ai-ocr-model">OCR/Markdown Model</label>
+          <select id="ai-ocr-model" class="module-field" data-module="ai_models">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
       </div>
     </section>
   </div>
@@ -578,6 +660,11 @@ async function saveModule(name) {
       categoriesConfig.ai_keywords = shared;
       await saveCategoriesPayload();
       notifySuccess('AI keyword settings saved');
+    } else if (name === 'ai_models') {
+      await saveAiModelsConfig();
+      moduleState.editing[name] = false;
+      setModuleEditable(name, false);
+      return; // Don't reload all configs
     } else if (name === 'crawler_defaults') {
       const resp = await fetch('/api/config/backend-settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ defaults: getModuleData('crawler_defaults') }) });
       const data = await resp.json(); if (!resp.ok || !data.success) throw new Error(data.error || 'Save failed');
@@ -739,8 +826,130 @@ async function revokeAuthToken(tokenId) {
   }
 }
 
-function initReadonlyModules() { ['categories','ai_keywords','crawler_defaults','paths','search_defaults'].forEach(name => { moduleState.editing[name] = false; setModuleEditable(name, false); }); }
-async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens()]); } catch (err) { notifyError(err.message || String(err)); } }
+function initReadonlyModules() { ['categories','ai_keywords','crawler_defaults','paths','search_defaults','ai_models'].forEach(name => { moduleState.editing[name] = false; setModuleEditable(name, false); }); }
+
+// AI Models Configuration
+let aiModelsData = { current: {}, available: {} };
+
+async function loadAiModelsConfig() {
+  try {
+    const resp = await fetch('/api/config/ai-models');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to load AI models config');
+    aiModelsData = data;
+    renderAiModelsConfig();
+  } catch (err) {
+    notifyError('Failed to load AI models config: ' + (err.message || String(err)));
+  }
+}
+
+function renderAiModelsConfig() {
+  const { current, available } = aiModelsData;
+  
+  // Set provider selections
+  document.getElementById('ai-catalog-provider').value = current.catalog?.provider || 'openai';
+  document.getElementById('ai-embeddings-provider').value = current.embeddings?.provider || 'openai';
+  document.getElementById('ai-chatbot-provider').value = current.chatbot?.provider || 'openai';
+  document.getElementById('ai-ocr-provider').value = current.ocr?.provider || 'local';
+  
+  // Populate model dropdowns
+  populateAiModels('catalog', current.catalog?.provider || 'openai', current.catalog?.model);
+  populateAiModels('embeddings', current.embeddings?.provider || 'openai', current.embeddings?.model);
+  populateAiModels('chatbot', current.chatbot?.provider || 'openai', current.chatbot?.model);
+  populateAiModels('ocr', current.ocr?.provider || 'local', current.ocr?.model);
+}
+
+function populateAiModels(aiFunction, provider, currentModel) {
+  const select = document.getElementById(`ai-${aiFunction}-model`);
+  select.innerHTML = '';
+  
+  const { available } = aiModelsData;
+  const providerModels = available[provider] || [];
+  
+  // Filter models that support this AI function type
+  const compatibleModels = providerModels.filter(m => m.types.includes(aiFunction));
+  
+  // Handle special cases
+  if (provider === 'local') {
+    if (aiFunction === 'embeddings') {
+      select.innerHTML = '<option value="sentence-transformers">Sentence Transformers</option>';
+      select.value = 'sentence-transformers';
+      return;
+    } else if (aiFunction === 'ocr') {
+      select.innerHTML = '<option value="docling">Docling</option><option value="marker">Marker</option>';
+      select.value = currentModel || 'docling';
+      return;
+    }
+  }
+  
+  if (compatibleModels.length === 0) {
+    select.innerHTML = '<option value="">No compatible models</option>';
+    select.disabled = true;
+    return;
+  }
+  
+  select.disabled = false;
+  compatibleModels.forEach(model => {
+    const option = document.createElement('option');
+    option.value = model.name;
+    option.textContent = model.display_name;
+    select.appendChild(option);
+  });
+  
+  // Set current selection
+  if (currentModel && Array.from(select.options).some(o => o.value === currentModel)) {
+    select.value = currentModel;
+  } else if (select.options.length > 0) {
+    select.value = select.options[0].value;
+  }
+}
+
+function onAiProviderChange(aiFunction) {
+  const provider = document.getElementById(`ai-${aiFunction}-provider`).value;
+  populateAiModels(aiFunction, provider, null);
+}
+
+async function saveAiModelsConfig() {
+  try {
+    const config = {
+      catalog: {
+        provider: document.getElementById('ai-catalog-provider').value,
+        model: document.getElementById('ai-catalog-model').value,
+      },
+      embeddings: {
+        provider: document.getElementById('ai-embeddings-provider').value,
+        model: document.getElementById('ai-embeddings-model').value,
+      },
+      chatbot: {
+        provider: document.getElementById('ai-chatbot-provider').value,
+        model: document.getElementById('ai-chatbot-model').value,
+      },
+      ocr: {
+        provider: document.getElementById('ai-ocr-provider').value,
+        model: document.getElementById('ai-ocr-model').value,
+      },
+    };
+    
+    const token = window.AUTH_TOKEN || '';
+    const resp = await fetch('/api/config/ai-models', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': token
+      },
+      body: JSON.stringify(config)
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Save failed');
+    
+    notifySuccess('AI models configuration saved');
+    await loadAiModelsConfig();
+  } catch (err) {
+    notifyError('Failed to save: ' + (err.message || String(err)));
+  }
+}
+
+async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens(), loadAiModelsConfig()]); } catch (err) { notifyError(err.message || String(err)); } }
 initPage();
 </script>
 
