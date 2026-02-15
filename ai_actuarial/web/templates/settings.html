@@ -868,19 +868,6 @@ function populateAiModels(aiFunction, provider, currentModel) {
   // Filter models that support this AI function type
   const compatibleModels = providerModels.filter(model => model.types.includes(aiFunction));
   
-  // Handle special cases
-  if (provider === 'local') {
-    if (aiFunction === 'embeddings') {
-      select.innerHTML = '<option value="sentence-transformers">Sentence Transformers</option>';
-      select.value = 'sentence-transformers';
-      return;
-    } else if (aiFunction === 'ocr') {
-      select.innerHTML = '<option value="docling">Docling</option><option value="marker">Marker</option>';
-      select.value = currentModel || 'docling';
-      return;
-    }
-  }
-  
   if (compatibleModels.length === 0) {
     select.innerHTML = '<option value="">No compatible models</option>';
     select.disabled = true;
@@ -910,6 +897,16 @@ function onAiProviderChange(aiFunction) {
 
 async function saveAiModelsConfig() {
   try {
+    // Validate that no model selects are disabled or empty
+    const functions = ['catalog', 'embeddings', 'chatbot', 'ocr'];
+    for (const func of functions) {
+      const modelSelect = document.getElementById(`ai-${func}-model`);
+      if (modelSelect.disabled || !modelSelect.value) {
+        notifyError(`Please select a valid model for ${func}. Current provider has no compatible models.`);
+        return;
+      }
+    }
+    
     const config = {
       catalog: {
         provider: document.getElementById('ai-catalog-provider').value,
