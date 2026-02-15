@@ -209,6 +209,11 @@ def register_chat_routes(
             mode = data.get("mode", "expert")
             stream = data.get("stream", False)
             
+            # Document explanation parameters
+            document_content = data.get("document_content", "").strip()
+            document_filename = data.get("document_filename", "document").strip()
+            document_file_url = data.get("document_file_url", "").strip()
+            
             # Validate mode
             valid_modes = ["expert", "summary", "tutorial", "comparison"]
             if mode not in valid_modes:
@@ -267,60 +272,87 @@ def register_chat_routes(
                 # Retrieve relevant chunks
                 retrieval_start = time.time()
                 
-                # Handle KB selection
-                if kb_ids == "auto":
-                    # Use query router for automatic KB selection
-                    router = QueryRouter(storage, config)
-                    kb_ids = router.select_kb(message)
-                elif kb_ids is None or kb_ids == "all":
-                    # Query all available KBs
-                    kb_ids = None
-                elif isinstance(kb_ids, str):
-                    # Single KB ID
-                    kb_ids = [kb_ids]
-                
-                # Retrieve chunks
-                no_results = False
-                used_threshold = config.similarity_threshold
-                try:
-                    chunks = retriever.retrieve(
-                        query=message,
-                        kb_ids=kb_ids,
-                        top_k=config.top_k,
-                        threshold=used_threshold
-                    )
-                except NoResultsException:
-                    # Retry once with a lower threshold before giving up.
-                    fallback_threshold = 0.1
-                    if used_threshold > fallback_threshold:
-                        try:
-                            chunks = retriever.retrieve(
-                                query=message,
-                                kb_ids=kb_ids,
-                                top_k=config.top_k,
-                                threshold=fallback_threshold,
-                            )
-                            used_threshold = fallback_threshold
-                            logger.info(
-                                "No hits at threshold %.3f; recovered with fallback threshold %.3f (conversation %s)",
-                                config.similarity_threshold,
-                                fallback_threshold,
-                                conversation_id,
-                            )
-                        except NoResultsException:
+                # If document content is provided, use it instead of RAG retrieval
+                if document_content:
+                    # Truncate document if too long (max ~15K characters, ~4K tokens)
+                    MAX_DOC_LENGTH = 15000
+                    truncated = False
+                    if len(document_content) > MAX_DOC_LENGTH:
+                        document_content = document_content[:MAX_DOC_LENGTH]
+                        truncated = True
+                    
+                    # Create a special chunk with the full document content
+                    chunks = [{
+                        "content": document_content,
+                        "metadata": {
+                            "filename": document_filename,
+                            "file_url": document_file_url,
+                            "kb_id": "document_explanation",
+                            "kb_name": "Full Document",
+                            "chunk_id": "full_document",
+                            "similarity_score": 1.0,
+                            "is_full_document": True,
+                            "truncated": truncated
+                        }
+                    }]
+                    no_results = False
+                    used_threshold = 1.0
+                else:
+                    # Normal RAG retrieval
+                    # Handle KB selection
+                    if kb_ids == "auto":
+                        # Use query router for automatic KB selection
+                        router = QueryRouter(storage, config)
+                        kb_ids = router.select_kb(message)
+                    elif kb_ids is None or kb_ids == "all":
+                        # Query all available KBs
+                        kb_ids = None
+                    elif isinstance(kb_ids, str):
+                        # Single KB ID
+                        kb_ids = [kb_ids]
+                    
+                    # Retrieve chunks
+                    no_results = False
+                    used_threshold = config.similarity_threshold
+                    try:
+                        chunks = retriever.retrieve(
+                            query=message,
+                            kb_ids=kb_ids,
+                            top_k=config.top_k,
+                            threshold=used_threshold
+                        )
+                    except NoResultsException:
+                        # Retry once with a lower threshold before giving up.
+                        fallback_threshold = 0.1
+                        if used_threshold > fallback_threshold:
+                            try:
+                                chunks = retriever.retrieve(
+                                    query=message,
+                                    kb_ids=kb_ids,
+                                    top_k=config.top_k,
+                                    threshold=fallback_threshold,
+                                )
+                                used_threshold = fallback_threshold
+                                logger.info(
+                                    "No hits at threshold %.3f; recovered with fallback threshold %.3f (conversation %s)",
+                                    config.similarity_threshold,
+                                    fallback_threshold,
+                                    conversation_id,
+                                )
+                            except NoResultsException:
+                                chunks = []
+                                no_results = True
+                        else:
                             chunks = []
                             no_results = True
-                    else:
-                        chunks = []
-                        no_results = True
 
-                    if no_results:
-                        # No relevant chunks is a valid user-facing outcome, not a server error.
-                        logger.info(
-                            "No retrieval results for conversation %s (query=%s...)",
-                            conversation_id,
-                            message[:80],
-                        )
+                        if no_results:
+                            # No relevant chunks is a valid user-facing outcome, not a server error.
+                            logger.info(
+                                "No retrieval results for conversation %s (query=%s...)",
+                                conversation_id,
+                                message[:80],
+                            )
                 
                 retrieval_time_ms = int((time.time() - retrieval_start) * 1000)
                 
@@ -561,7 +593,117 @@ def register_chat_routes(
                 detail=str(e)
             )
     
+    @app.route("/api/chat/available-documents", methods=["GET"])
+    @require_permissions("chat.view")
+    def api_chat_available_documents():
+        """
+        Get list of documents that have markdown content available.
+        These documents can be explained via the document explorer.
+        
+        Query parameters:
+            category: Filter by category (optional)
+            keywords: Comma-separated keywords to search (optional)
+        
+        Response JSON:
+            {
+                "success": true,
+                "data": {
+                    "documents": [
+                        {
+                            "file_url": "/database/...",
+                            "filename": "document.pdf",
+                            "title": "Document Title",
+                            "category": "SOA",
+                            "keywords": ["keyword1", "keyword2"]
+                        }
+                    ]
+                }
+            }
+        """
+        error = _check_chatbot_available()
+        if error:
+            return error
+        
+        try:
+            storage = Storage(db_path)
+            
+            try:
+                # Get query parameters
+                category_filter = request.args.get("category", "").strip()
+                keywords_filter = request.args.get("keywords", "").strip()
+                
+                # Query files with markdown content
+                query = """
+                    SELECT DISTINCT 
+                        f.file_url,
+                        f.filename,
+                        f.title,
+                        f.category,
+                        f.keywords
+                    FROM files f
+                    INNER JOIN file_markdown m ON f.file_url = m.file_url
+                    WHERE m.markdown_content IS NOT NULL
+                        AND m.markdown_content != ''
+                """
+                params = []
+                
+                # Apply category filter
+                if category_filter:
+                    query += " AND f.category = ?"
+                    params.append(category_filter)
+                
+                # Apply keywords filter
+                if keywords_filter:
+                    keyword_list = [k.strip() for k in keywords_filter.split(",") if k.strip()]
+                    if keyword_list:
+                        # Search in title, filename, or keywords
+                        keyword_conditions = []
+                        for kw in keyword_list:
+                            keyword_conditions.append("(f.title LIKE ? OR f.filename LIKE ? OR f.keywords LIKE ?)")
+                            params.extend([f"%{kw}%", f"%{kw}%", f"%{kw}%"])
+                        
+                        query += " AND (" + " OR ".join(keyword_conditions) + ")"
+                
+                query += " ORDER BY f.title, f.filename LIMIT 1000"
+                
+                # Execute query
+                conn = storage.get_connection()
+                cursor = conn.execute(query, params)
+                rows = cursor.fetchall()
+                
+                # Format results
+                documents = []
+                for row in rows:
+                    file_url, filename, title, category, keywords_str = row
+                    
+                    # Parse keywords (stored as comma-separated string)
+                    keywords = []
+                    if keywords_str:
+                        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+                    
+                    documents.append({
+                        "file_url": file_url or "",
+                        "filename": filename or "",
+                        "title": title or filename or "Untitled",
+                        "category": category or "",
+                        "keywords": keywords
+                    })
+                
+                return _api_success({"documents": documents})
+                
+            finally:
+                storage.close()
+        
+        except Exception as e:
+            logger.exception("Error listing available documents")
+            return _api_error(
+                "Internal server error",
+                status_code=500,
+                detail=str(e)
+            )
+    
     @app.route("/api/chat/knowledge-bases", methods=["GET"])
+
     @require_permissions("chat.view")
     def api_chat_knowledge_bases():
         """Get list of available knowledge bases for chat."""

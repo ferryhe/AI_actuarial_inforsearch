@@ -22,6 +22,123 @@
         overflow: hidden;
     }
     
+    /* Document Explorer */
+    .doc-explorer {
+        border-bottom: 1px solid var(--border-color);
+        max-height: 350px;
+        transition: max-height 0.3s ease;
+        overflow: hidden;
+    }
+    
+    .doc-explorer.collapsed {
+        max-height: 44px;
+    }
+    
+    .doc-explorer-header {
+        padding: 0.75rem 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+        user-select: none;
+        background: var(--gray-50);
+    }
+    
+    [data-theme="dark"] .doc-explorer-header {
+        background: var(--gray-800);
+    }
+    
+    .doc-explorer-header:hover {
+        background: var(--gray-100);
+    }
+    
+    [data-theme="dark"] .doc-explorer-header:hover {
+        background: var(--gray-750);
+    }
+    
+    .doc-explorer-title {
+        font-size: var(--text-sm);
+        font-weight: var(--font-semibold);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .doc-explorer-toggle {
+        transition: transform 0.3s ease;
+    }
+    
+    .doc-explorer.collapsed .doc-explorer-toggle {
+        transform: rotate(-90deg);
+    }
+    
+    .doc-explorer-content {
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    
+    .doc-filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .doc-filter-label {
+        font-size: var(--text-xs);
+        font-weight: var(--font-semibold);
+        color: var(--text-secondary);
+        text-transform: uppercase;
+    }
+    
+    .doc-filter-input,
+    .doc-selector {
+        padding: 0.5rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-size: var(--text-sm);
+    }
+    
+    .doc-filter-input:focus,
+    .doc-selector:focus {
+        outline: none;
+        border-color: var(--primary-color);
+    }
+    
+    .doc-explain-btn {
+        width: 100%;
+        padding: 0.5rem;
+        background: var(--primary-500);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-weight: var(--font-medium);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        transition: background-color 0.2s;
+    }
+    
+    .doc-explain-btn:hover:not(:disabled) {
+        background: var(--primary-600);
+    }
+    
+    .doc-explain-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .doc-count {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        text-align: center;
+    }
+    
     .chat-sidebar-header {
         padding: 1rem;
         border-bottom: 1px solid var(--border-color);
@@ -579,6 +696,46 @@
 <div class="chat-container">
     <!-- Sidebar with conversations -->
     <div class="chat-sidebar">
+        <!-- Document Explorer -->
+        <div class="doc-explorer" id="doc-explorer">
+            <div class="doc-explorer-header" onclick="toggleDocExplorer()">
+                <div class="doc-explorer-title">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <span>Explain Document</span>
+                </div>
+                <svg class="doc-explorer-toggle" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </div>
+            <div class="doc-explorer-content">
+                <div class="doc-filter-group">
+                    <label class="doc-filter-label">Filter by Category</label>
+                    <select id="doc-category-filter" class="doc-filter-input">
+                        <option value="">All Categories</option>
+                    </select>
+                </div>
+                <div class="doc-filter-group">
+                    <label class="doc-filter-label">Search Keywords</label>
+                    <input type="text" id="doc-keyword-filter" class="doc-filter-input" placeholder="Type to search...">
+                </div>
+                <div class="doc-filter-group">
+                    <label class="doc-filter-label">Select Document</label>
+                    <select id="doc-selector" class="doc-selector" size="5">
+                        <option value="">Loading documents...</option>
+                    </select>
+                    <div class="doc-count" id="doc-count">0 documents available</div>
+                </div>
+                <button id="doc-explain-btn" class="doc-explain-btn" disabled>
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                    </svg>
+                    Explain Selected
+                </button>
+            </div>
+        </div>
+        
         <div class="chat-sidebar-header">
             <h3>Conversations</h3>
             <button id="new-conversation-btn" class="btn btn-primary btn-sm" title="New Conversation">
@@ -680,6 +837,8 @@
     let conversations = [];
     let knowledgeBases = [];
     let isLoading = false;
+    let availableDocuments = [];
+    let filteredDocuments = [];
     
     // DOM elements
     const conversationsList = document.getElementById('conversations-list');
@@ -692,14 +851,26 @@
     const chatTitle = document.getElementById('chat-title');
     const chatSubtitle = document.getElementById('chat-subtitle');
     
+    // Document Explorer elements
+    const docExplorer = document.getElementById('doc-explorer');
+    const docCategoryFilter = document.getElementById('doc-category-filter');
+    const docKeywordFilter = document.getElementById('doc-keyword-filter');
+    const docSelector = document.getElementById('doc-selector');
+    const docCount = document.getElementById('doc-count');
+    const docExplainBtn = document.getElementById('doc-explain-btn');
+    
     // Initialize
     init();
     
     function init() {
         loadKnowledgeBases();
         loadConversations();
+        loadAvailableDocuments();
         setupEventListeners();
         autoResizeTextarea();
+        
+        // Check if we're in AI explain mode (from file detail page)
+        checkAIExplainMode();
     }
     
     function setupEventListeners() {
@@ -720,6 +891,14 @@
         
         // New conversation
         newConvBtn.addEventListener('click', startNewConversation);
+        
+        // Document Explorer events
+        docCategoryFilter.addEventListener('change', filterDocuments);
+        docKeywordFilter.addEventListener('input', filterDocuments);
+        docSelector.addEventListener('change', () => {
+            docExplainBtn.disabled = !docSelector.value;
+        });
+        docExplainBtn.addEventListener('click', explainSelectedDocument);
     }
     
     function autoResizeTextarea() {
@@ -894,18 +1073,33 @@
         const loadingId = addLoadingMessage();
         
         try {
+            // Prepare request body
+            const requestBody = {
+                conversation_id: currentConversationId,
+                message: message,
+                kb_ids: kbIds,
+                mode: mode,
+                stream: false
+            };
+            
+            // Include document content if available (from Document Explorer or AI Explain)
+            if (window.explainDocumentContent) {
+                requestBody.document_content = window.explainDocumentContent;
+                requestBody.document_filename = window.explainDocumentFilename || 'document';
+                requestBody.document_file_url = window.explainDocumentFileUrl || '';
+                
+                // Clear the temporary storage
+                delete window.explainDocumentContent;
+                delete window.explainDocumentFilename;
+                delete window.explainDocumentFileUrl;
+            }
+            
             const response = await fetch('/api/chat/query', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    conversation_id: currentConversationId,
-                    message: message,
-                    kb_ids: kbIds,
-                    mode: mode,
-                    stream: false
-                })
+                body: JSON.stringify(requestBody)
             });
             
             const result = await response.json();
@@ -1179,6 +1373,171 @@
         if (!dateStr) return '';
         const date = new Date(dateStr);
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    
+    // Handle AI Explain mode (triggered from file detail page)
+    async function checkAIExplainMode() {
+        const isExplainMode = sessionStorage.getItem('ai_explain_mode');
+        if (isExplainMode === 'true') {
+            const filename = sessionStorage.getItem('ai_explain_filename');
+            const fileUrl = sessionStorage.getItem('ai_explain_file_url');
+            const content = sessionStorage.getItem('ai_explain_content');
+            const prompt = sessionStorage.getItem('ai_explain_prompt');
+            
+            // Clear the session storage
+            sessionStorage.removeItem('ai_explain_mode');
+            sessionStorage.removeItem('ai_explain_filename');
+            sessionStorage.removeItem('ai_explain_file_url');
+            sessionStorage.removeItem('ai_explain_content');
+            sessionStorage.removeItem('ai_explain_prompt');
+            
+            if (content && prompt) {
+                // Wait for KB data to load
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Set input value and trigger send
+                chatInput.value = prompt;
+                
+                // Store document content for the API
+                window.explainDocumentContent = content;
+                window.explainDocumentFilename = filename;
+                window.explainDocumentFileUrl = fileUrl;
+                
+                // Auto-send the message
+                setTimeout(() => sendMessage(), 100);
+            }
+        }
+    }
+    
+    // ===== Document Explorer Functions =====
+    
+    function toggleDocExplorer() {
+        docExplorer.classList.toggle('collapsed');
+    }
+    
+    async function loadAvailableDocuments() {
+        try {
+            const response = await fetch('/api/chat/available-documents');
+            const result = await response.json();
+            
+            if (result.success && result.data) {
+                availableDocuments = result.data.documents || [];
+                filteredDocuments = [...availableDocuments];
+                
+                // Populate category filter
+                const categories = [...new Set(availableDocuments
+                    .map(doc => doc.category)
+                    .filter(cat => cat))];
+                
+                docCategoryFilter.innerHTML = '<option value="">All Categories</option>';
+                categories.forEach(cat => {
+                    const option = document.createElement('option');
+                    option.value = cat;
+                    option.textContent = cat;
+                    docCategoryFilter.appendChild(option);
+                });
+                
+                // Initial document list
+                filterDocuments();
+            }
+        } catch (error) {
+            console.error('Error loading documents:', error);
+            docSelector.innerHTML = '<option value="">Error loading documents</option>';
+        }
+    }
+    
+    function filterDocuments() {
+        const categoryFilter = docCategoryFilter.value.toLowerCase();
+        const keywordFilter = docKeywordFilter.value.toLowerCase().trim();
+        
+        filteredDocuments = availableDocuments.filter(doc => {
+            // Category filter
+            if (categoryFilter && doc.category !== categoryFilter) {
+                return false;
+            }
+            
+            // Keyword filter (search in title and keywords)
+            if (keywordFilter) {
+                const titleMatch = (doc.title || '').toLowerCase().includes(keywordFilter);
+                const keywordsMatch = (doc.keywords || []).some(kw => 
+                    kw.toLowerCase().includes(keywordFilter)
+                );
+                const filenameMatch = (doc.filename || '').toLowerCase().includes(keywordFilter);
+                
+                if (!titleMatch && !keywordsMatch && !filenameMatch) {
+                    return false;
+                }
+            }
+            
+            return true;
+        });
+        
+        // Update document selector
+        docSelector.innerHTML = '';
+        if (filteredDocuments.length === 0) {
+            docSelector.innerHTML = '<option value="">No documents found</option>';
+            docExplainBtn.disabled = true;
+        } else {
+            filteredDocuments.forEach(doc => {
+                const option = document.createElement('option');
+                option.value = doc.file_url;
+                option.textContent = doc.title || doc.filename || 'Untitled';
+                option.dataset.filename = doc.filename || '';
+                option.dataset.title = doc.title || '';
+                docSelector.appendChild(option);
+            });
+            docExplainBtn.disabled = false;
+        }
+        
+        // Update count
+        docCount.textContent = `${filteredDocuments.length} document${filteredDocuments.length !== 1 ? 's' : ''} available`;
+    }
+    
+    async function explainSelectedDocument() {
+        const selectedUrl = docSelector.value;
+        if (!selectedUrl) {
+            showError('Please select a document');
+            return;
+        }
+        
+        const selectedOption = docSelector.selectedOptions[0];
+        const filename = selectedOption.dataset.filename || selectedOption.textContent;
+        const title = selectedOption.dataset.title || filename;
+        
+        try {
+            // Get markdown content from the server
+            const encodedUrl = encodeURIComponent(selectedUrl);
+            const response = await fetch(`/api/files/${encodedUrl}/markdown`);
+            const result = await response.json();
+            
+            if (!result.success || !result.markdown || !result.markdown.markdown_content) {
+                showError('No markdown content available for this document');
+                return;
+            }
+            
+            const content = result.markdown.markdown_content;
+            
+            // Build the explanation prompt
+            const prompt = `Please provide a detailed explanation of this document:\n\nTitle: ${title}\n\n[Document content has been loaded for analysis]`;
+            
+            // Store document content for the API
+            window.explainDocumentContent = content;
+            window.explainDocumentFilename = filename;
+            window.explainDocumentFileUrl = selectedUrl;
+            
+            // Set input and auto-send
+            chatInput.value = prompt;
+            
+            // Collapse doc explorer to give more space
+            docExplorer.classList.add('collapsed');
+            
+            // Send message
+            await sendMessage();
+            
+        } catch (error) {
+            console.error('Error loading document:', error);
+            showError('Failed to load document content');
+        }
     }
 })();
 </script>
