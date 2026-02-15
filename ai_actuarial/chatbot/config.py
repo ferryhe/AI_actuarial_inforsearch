@@ -40,35 +40,57 @@ class ChatbotConfig:
     enable_response_validation: bool = True  # Validate responses before returning
     max_query_length: int = 1000  # Maximum query length in characters
     
+    @staticmethod
+    def _get_int_env(var_name: str, default: int) -> int:
+        """Get integer from environment with clear error messages."""
+        value = os.getenv(var_name)
+        if not value:
+            return default
+        try:
+            return int(value)
+        except ValueError as e:
+            raise ValueError(f"Invalid value for {var_name}: {value!r}. Expected an integer.") from e
+    
+    @staticmethod
+    def _get_float_env(var_name: str, default: float) -> float:
+        """Get float from environment with clear error messages."""
+        value = os.getenv(var_name)
+        if not value:
+            return default
+        try:
+            return float(value)
+        except ValueError as e:
+            raise ValueError(f"Invalid value for {var_name}: {value!r}. Expected a float.") from e
+    
     @classmethod
     def from_env(cls) -> "ChatbotConfig":
         """Create configuration from environment variables."""
         return cls(
             # LLM configuration
             model=os.getenv("CHATBOT_MODEL", "gpt-4-turbo"),
-            temperature=float(os.getenv("CHATBOT_TEMPERATURE", "0.7")),
-            max_tokens=int(os.getenv("CHATBOT_MAX_TOKENS", "1000")),
+            temperature=cls._get_float_env("CHATBOT_TEMPERATURE", 0.7),
+            max_tokens=cls._get_int_env("CHATBOT_MAX_TOKENS", 1000),
             streaming_enabled=os.getenv("CHATBOT_STREAMING_ENABLED", "true").lower() == "true",
             
             # Conversation configuration
-            max_context_messages=int(os.getenv("CHATBOT_MAX_CONTEXT_MESSAGES", "10")),
+            max_context_messages=cls._get_int_env("CHATBOT_MAX_CONTEXT_MESSAGES", 10),
             default_mode=os.getenv("CHATBOT_DEFAULT_MODE", "expert"),
             
             # API configuration (reuse from main settings)
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "60")),
-            openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+            openai_timeout=cls._get_int_env("OPENAI_TIMEOUT", 60),
+            openai_max_retries=cls._get_int_env("OPENAI_MAX_RETRIES", 3),
             
             # Response quality configuration
             enable_citation=os.getenv("CHATBOT_ENABLE_CITATION", "true").lower() == "true",
-            min_citation_score=float(os.getenv("CHATBOT_MIN_CITATION_SCORE", "0.4")),
-            max_citations_per_response=int(os.getenv("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5")),
+            min_citation_score=cls._get_float_env("CHATBOT_MIN_CITATION_SCORE", 0.4),
+            max_citations_per_response=cls._get_int_env("CHATBOT_MAX_CITATIONS_PER_RESPONSE", 5),
             
             # Safety and validation
             enable_query_validation=os.getenv("CHATBOT_ENABLE_QUERY_VALIDATION", "true").lower() == "true",
             enable_response_validation=os.getenv("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true").lower() == "true",
-            max_query_length=int(os.getenv("CHATBOT_MAX_QUERY_LENGTH", "1000")),
+            max_query_length=cls._get_int_env("CHATBOT_MAX_QUERY_LENGTH", 1000),
         )
     
     def validate(self) -> None:
