@@ -25,13 +25,16 @@
     /* Document Explorer */
     .doc-explorer {
         border-bottom: 1px solid var(--border-color);
-        max-height: 350px;
+        flex-shrink: 0;
+        max-height: 500px;
         transition: max-height 0.3s ease;
-        overflow: hidden;
+        display: flex;
+        flex-direction: column;
     }
     
     .doc-explorer.collapsed {
         max-height: 44px;
+        overflow: hidden;
     }
     
     .doc-explorer-header {
@@ -42,6 +45,7 @@
         cursor: pointer;
         user-select: none;
         background: var(--gray-50);
+        flex-shrink: 0;
     }
     
     [data-theme="dark"] .doc-explorer-header {
@@ -77,6 +81,13 @@
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
+        overflow-y: auto;
+        flex: 1;
+        min-height: 0;
+    }
+    
+    .doc-explorer.collapsed .doc-explorer-content {
+        display: none;
     }
     
     .doc-filter-group {
@@ -106,6 +117,12 @@
     .doc-selector:focus {
         outline: none;
         border-color: var(--primary-color);
+    }
+    
+    .doc-selector {
+        max-height: 120px;
+        min-height: 80px;
+        overflow-y: auto;
     }
     
     .doc-explain-btn {
@@ -145,6 +162,7 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+        flex-shrink: 0;
     }
     
     .chat-sidebar-header h3 {
@@ -730,7 +748,7 @@
                             Load Documents
                         </button>
                     </div>
-                    <select id="doc-selector" class="doc-selector" size="5">
+                    <select id="doc-selector" class="doc-selector" size="5" multiple>
                         <option value="">Click "Load Documents" to start</option>
                     </select>
                     <div class="doc-count" id="doc-count">Click load button above</div>
@@ -875,7 +893,8 @@
     function init() {
         loadKnowledgeBases();
         loadConversations();
-        // Don't auto-load documents - wait for user to click load button
+        // Load category filter on init
+        populateCategoryFilter();
         setupEventListeners();
         autoResizeTextarea();
         
@@ -907,7 +926,15 @@
         docCategoryFilter.addEventListener('change', filterDocuments);
         docKeywordFilter.addEventListener('input', filterDocuments);
         docSelector.addEventListener('change', () => {
-            docExplainBtn.disabled = !docSelector.value;
+            // Enable button if any documents are selected
+            const selectedCount = Array.from(docSelector.selectedOptions).filter(opt => opt.value).length;
+            docExplainBtn.disabled = selectedCount === 0;
+            // Update button text
+            if (selectedCount > 1) {
+                docExplainBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Compare ' + selectedCount + ' Docs';
+            } else {
+                docExplainBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Explain Selected';
+            }
         });
         docExplainBtn.addEventListener('click', explainSelectedDocument);
     }
@@ -1426,6 +1453,49 @@
         docExplorer.classList.toggle('collapsed');
     }
     
+    // Make toggleDocExplorer globally accessible for onclick handler
+    window.toggleDocExplorer = toggleDocExplorer;
+    
+    async function populateCategoryFilter() {
+        try {
+            // Save current selection before repopulating
+            const currentSelection = docCategoryFilter.value;
+            
+            const response = await fetch('/api/categories?mode=used');
+            const data = await response.json();
+            
+            docCategoryFilter.innerHTML = '<option value="">All Categories</option>';
+            
+            // Add Uncategorized option
+            const optUncat = document.createElement('option');
+            optUncat.value = '__uncategorized__';
+            optUncat.textContent = 'Uncategorized';
+            docCategoryFilter.appendChild(optUncat);
+            
+            // Add categories from API
+            if (data.categories) {
+                data.categories.forEach(cat => {
+                    const option = document.createElement('option');
+                    option.value = cat;
+                    option.textContent = cat;
+                    docCategoryFilter.appendChild(option);
+                });
+            }
+            
+            // Restore previous selection if it still exists
+            if (currentSelection) {
+                const optionExists = Array.from(docCategoryFilter.options).some(opt => opt.value === currentSelection);
+                if (optionExists) {
+                    docCategoryFilter.value = currentSelection;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading categories:', error);
+            // Fallback to basic filter
+            docCategoryFilter.innerHTML = '<option value="">All Categories</option>';
+        }
+    }
+    
     async function loadAvailableDocuments() {
         // Prevent multiple simultaneous loads
         if (docLoadBtn.disabled) return;
@@ -1445,18 +1515,8 @@
                 filteredDocuments = [...availableDocuments];
                 documentsLoaded = true;
                 
-                // Populate category filter
-                const categories = [...new Set(availableDocuments
-                    .map(doc => doc.category)
-                    .filter(cat => cat))];
-                
-                docCategoryFilter.innerHTML = '<option value="">All Categories</option>';
-                categories.forEach(cat => {
-                    const option = document.createElement('option');
-                    option.value = cat;
-                    option.textContent = cat;
-                    docCategoryFilter.appendChild(option);
-                });
+                // Populate category filter from API (same as database page)
+                await populateCategoryFilter();
                 
                 // Initial document list
                 filterDocuments();
@@ -1468,7 +1528,7 @@
             }
         } catch (error) {
             console.error('Error loading documents:', error);
-            docSelector.innerHTML = '<option value="">Error loading - click Refresh to retry</option>';
+            docSelector.innerHTML = '<option value="">Error loading - click Retry to try again</option>';
             docCount.textContent = 'Error loading documents';
             docLoadBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Retry';
         } finally {
@@ -1477,13 +1537,24 @@
     }
     
     function filterDocuments() {
-        const categoryFilter = docCategoryFilter.value.toLowerCase();
+        const categoryFilter = docCategoryFilter.value;  // Keep original case
         const keywordFilter = docKeywordFilter.value.toLowerCase().trim();
         
         filteredDocuments = availableDocuments.filter(doc => {
-            // Category filter
-            if (categoryFilter && doc.category !== categoryFilter) {
-                return false;
+            // Category filter (handle special __uncategorized__ value)
+            if (categoryFilter) {
+                if (categoryFilter === '__uncategorized__') {
+                    // Show only documents without a category
+                    if (doc.category && doc.category.trim()) {
+                        return false;
+                    }
+                } else {
+                    // Use includes for partial match (supports multiple categories per document)
+                    const docCategory = (doc.category || '').toLowerCase();
+                    if (!docCategory.includes(categoryFilter.toLowerCase())) {
+                        return false;
+                    }
+                }
             }
             
             // Keyword filter (search in title and keywords)
@@ -1511,12 +1582,16 @@
             filteredDocuments.forEach(doc => {
                 const option = document.createElement('option');
                 option.value = doc.file_url;
-                option.textContent = doc.title || doc.filename || 'Untitled';
+                const displayText = doc.title || doc.filename || 'Untitled';
+                option.textContent = displayText;
+                // Add tooltip for full name on hover
+                option.title = displayText;
                 option.dataset.filename = doc.filename || '';
                 option.dataset.title = doc.title || '';
                 docSelector.appendChild(option);
             });
-            docExplainBtn.disabled = false;
+            // Keep button disabled until user selects something
+            docExplainBtn.disabled = true;
         }
         
         // Update count
@@ -1524,39 +1599,75 @@
     }
     
     async function explainSelectedDocument() {
-        const selectedUrl = docSelector.value;
-        if (!selectedUrl) {
-            showError('Please select a document');
+        // Get all selected documents
+        const selectedOptions = Array.from(docSelector.selectedOptions).filter(opt => opt.value);
+        if (selectedOptions.length === 0) {
+            showError('Please select at least one document');
             return;
         }
         
-        const selectedOption = docSelector.selectedOptions[0];
-        const filename = selectedOption.dataset.filename || selectedOption.textContent;
-        const title = selectedOption.dataset.title || filename;
-        
         try {
-            // Get markdown content from the server
-            const encodedUrl = encodeURIComponent(selectedUrl);
-            const response = await fetch(`/api/files/${encodedUrl}/markdown`);
-            const result = await response.json();
+            // Show loading state
+            docExplainBtn.disabled = true;
+            docExplainBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Loading...';
             
-            if (!result.success || !result.markdown || !result.markdown.markdown_content) {
-                showError('No markdown content available for this document');
+            // Load markdown content for all selected documents
+            const documentContents = [];
+            for (const opt of selectedOptions) {
+                const url = opt.value;
+                const title = opt.dataset.title || opt.dataset.filename || opt.textContent;
+                const encodedUrl = encodeURIComponent(url);
+                
+                const response = await fetch(`/api/files/${encodedUrl}/markdown`);
+                const result = await response.json();
+                
+                if (result.success && result.markdown && result.markdown.markdown_content) {
+                    documentContents.push({
+                        url: url,
+                        title: title,
+                        filename: opt.dataset.filename || title,
+                        content: result.markdown.markdown_content
+                    });
+                } else {
+                    console.warn(`No markdown content for: ${title}`);
+                }
+            }
+            
+            if (documentContents.length === 0) {
+                showError('No markdown content available for selected document(s)');
                 return;
             }
             
-            const content = result.markdown.markdown_content;
-            
-            // Build the explanation prompt
-            const prompt = `Please provide a detailed explanation of this document:\n\nTitle: ${title}\n\n[Document content has been loaded for analysis]`;
-            
-            // Store document content for the API
-            window.explainDocumentContent = content;
-            window.explainDocumentFilename = filename;
-            window.explainDocumentFileUrl = selectedUrl;
-            
-            // Set input and auto-send
-            chatInput.value = prompt;
+            // For multiple documents, create comparison prompt and combined content
+            if (documentContents.length > 1) {
+                const titles = documentContents.map((doc, i) => `${i+1}. ${doc.title}`).join('\n');
+                const prompt = `Please compare and analyze these ${documentContents.length} documents:\n${titles}\n\nProvide a comprehensive comparison highlighting key similarities and differences.`;
+                
+                // Combine all document contents with clear separators
+                const combinedContent = documentContents.map((doc, i) => 
+                    `\n\n========== DOCUMENT ${i+1}: ${doc.title} ==========\n\n${doc.content}`
+                ).join('\n\n');
+                
+                // Store combined content for the API
+                window.explainDocumentContent = combinedContent;
+                window.explainDocumentFilename = `Comparison of ${documentContents.length} documents`;
+                window.explainDocumentFileUrl = documentContents.map(d => d.url).join('|');
+                
+                // Set input and send
+                chatInput.value = prompt;
+            } else {
+                // Single document
+                const doc = documentContents[0];
+                const prompt = `Please provide a detailed explanation of this document:\n\nTitle: ${doc.title}\n\n[Document content has been loaded for analysis]`;
+                
+                // Store document content for the API
+                window.explainDocumentContent = doc.content;
+                window.explainDocumentFilename = doc.filename;
+                window.explainDocumentFileUrl = doc.url;
+                
+                // Set input and send
+                chatInput.value = prompt;
+            }
             
             // Collapse doc explorer to give more space
             docExplorer.classList.add('collapsed');
@@ -1567,6 +1678,13 @@
         } catch (error) {
             console.error('Error loading document:', error);
             showError('Failed to load document content');
+        } finally {
+            // Restore button state
+            docExplainBtn.disabled = false;
+            const selectedCount = selectedOptions.length;
+            docExplainBtn.innerHTML = selectedCount > 1 
+                ? `<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Compare ${selectedCount} Docs`
+                : '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Explain Selected';
         }
     }
 })();

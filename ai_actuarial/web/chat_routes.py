@@ -635,22 +635,27 @@ def register_chat_routes(
                 # Query files with markdown content
                 query = """
                     SELECT DISTINCT 
-                        f.file_url,
-                        f.filename,
+                        f.url,
+                        f.original_filename,
                         f.title,
-                        f.category,
-                        f.keywords
+                        c.category,
+                        c.keywords
                     FROM files f
-                    INNER JOIN file_markdown m ON f.file_url = m.file_url
-                    WHERE m.markdown_content IS NOT NULL
-                        AND m.markdown_content != ''
+                    INNER JOIN catalog_items c ON f.url = c.file_url
+                    WHERE c.markdown_content IS NOT NULL
+                        AND c.markdown_content != ''
                 """
                 params = []
                 
                 # Apply category filter
                 if category_filter:
-                    query += " AND f.category = ?"
-                    params.append(category_filter)
+                    if category_filter == '__uncategorized__':
+                        # Show only documents without a category
+                        query += " AND (c.category IS NULL OR c.category = '')"
+                    else:
+                        # Use LIKE for partial match (supports multiple categories per document)
+                        query += " AND c.category LIKE ?"
+                        params.append(f"%{category_filter}%")
                 
                 # Apply keywords filter
                 if keywords_filter:
@@ -659,12 +664,12 @@ def register_chat_routes(
                         # Search in title, filename, or keywords
                         keyword_conditions = []
                         for kw in keyword_list:
-                            keyword_conditions.append("(f.title LIKE ? OR f.filename LIKE ? OR f.keywords LIKE ?)")
+                            keyword_conditions.append("(f.title LIKE ? OR f.original_filename LIKE ? OR c.keywords LIKE ?)")
                             params.extend([f"%{kw}%", f"%{kw}%", f"%{kw}%"])
                         
                         query += " AND (" + " OR ".join(keyword_conditions) + ")"
                 
-                query += " ORDER BY f.title, f.filename LIMIT 1000"
+                query += " ORDER BY f.title, f.original_filename LIMIT 1000"
                 
                 # Execute query using storage's internal connection
                 cursor = storage._conn.execute(query, params)
