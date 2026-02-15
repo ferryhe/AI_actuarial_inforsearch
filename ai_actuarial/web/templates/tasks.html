@@ -1860,12 +1860,19 @@ function startTask(type, payload) {
 }
 
 // --- Monitoring (Existing Logic Adapted) ---
+let previouslyActiveTaskIds = new Set();
+
 function loadActiveTasks() {
     fetch('/api/tasks/active')
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('active-tasks-container');
+            const currentTaskIds = new Set();
+            
             if (data.tasks && data.tasks.length > 0) {
+                // Track current task IDs
+                data.tasks.forEach(task => currentTaskIds.add(task.id));
+                
                 container.innerHTML = data.tasks.map(task => `
                     <div class="task-card active-task">
                         <div class="task-header">
@@ -1902,6 +1909,43 @@ function loadActiveTasks() {
             } else {
                 container.innerHTML = '<p class="no-data">No active tasks currently running.</p>';
             }
+            
+            // Check for completed tasks (tasks that were active but now aren't)
+            if (previouslyActiveTaskIds.size > 0) {
+                previouslyActiveTaskIds.forEach(taskId => {
+                    if (!currentTaskIds.has(taskId)) {
+                        // Task completed - show notification
+                        // Fetch task history to get the final status
+                        fetch('/api/tasks/history?limit=20')
+                            .then(res => res.json())
+                            .then(historyData => {
+                                const completedTask = historyData.tasks?.find(t => t.id === taskId);
+                                if (completedTask) {
+                                    const status = completedTask.status;
+                                    let message = `Task completed: ${completedTask.name}`;
+                                    let type = 'success';
+                                    
+                                    if (status === 'failed' || status === 'error') {
+                                        message = `Task failed: ${completedTask.name}`;
+                                        type = 'error';
+                                    } else if (status === 'stopped') {
+                                        message = `Task stopped: ${completedTask.name}`;
+                                        type = 'warning';
+                                    }
+                                    
+                                    showNotification(message, type);
+                                    
+                                    // Refresh history to show the completed task
+                                    loadTaskHistory();
+                                }
+                            })
+                            .catch(console.error);
+                    }
+                });
+            }
+            
+            // Update the set of previously active tasks
+            previouslyActiveTaskIds = currentTaskIds;
         })
         .catch(console.error);
 }

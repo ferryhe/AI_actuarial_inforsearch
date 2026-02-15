@@ -210,6 +210,17 @@ function displayResults(data) {
     document.getElementById('results-count').textContent = `${data.total} files`;
 
     if (data.files && data.files.length > 0) {
+        // Cache the results for faster back navigation
+        try {
+            sessionStorage.setItem('db_last_results', JSON.stringify({
+                data: data,
+                timestamp: Date.now(),
+                scroll: 0 // Will be updated on beforeunload
+            }));
+        } catch (e) {
+            console.warn('Failed to cache results:', e);
+        }
+        
         // Use Phase 3 DataTable component
         const rowsWithSequence = data.files.map((row, index) => ({
             ...row,
@@ -420,12 +431,68 @@ document.getElementById('include-deleted').checked = initialState.includeDeleted
 document.getElementById('sort-by').value = initialState.sortBy;
 currentPage = initialState.page;
 
+// Cache management for faster back navigation
+let isRestoringFromCache = false;
+
+// Try to restore from cache if navigating back
+function tryRestoreFromCache() {
+    try {
+        const cached = sessionStorage.getItem('db_last_results');
+        if (cached) {
+            const cacheData = JSON.parse(cached);
+            // Only restore if cache is less than 5 minutes old
+            if (Date.now() - cacheData.timestamp < 300000) {
+                isRestoringFromCache = true;
+                displayResults(cacheData.data);
+                // Restore scroll position
+                if (cacheData.scroll) {
+                    setTimeout(() => window.scrollTo(0, cacheData.scroll), 50);
+                }
+                return true;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to restore from cache:', e);
+    }
+    return false;
+}
+
+// Save scroll position before navigating away  
+window.addEventListener('beforeunload', () => {
+    try {
+        const cached = sessionStorage.getItem('db_last_results');
+        if (cached) {
+            const cacheData = JSON.parse(cached);
+            cacheData.scroll = window.scrollY;
+            sessionStorage.setItem('db_last_results', JSON.stringify(cacheData));
+        }
+    } catch (e) {
+        console.warn('Failed to save scroll position:', e);
+    }
+});
+
+// Detect back navigation
+window.addEventListener('pageshow', (event) => {
+    if (event.persisted || (window.performance && window.performance.navigation.type === 2)) {
+        // Page was loaded from cache (back/forward button)
+        const restored = tryRestoreFromCache();
+        if (!restored) {
+            // If cache restore failed, load normally
+            isRestoringFromCache = false;
+        }
+    }
+});
+
 function applyDeferredFilterDefaults() {
     const sourceFilter = document.getElementById('source-filter');
     const categoryFilter = document.getElementById('category-filter');
     if (initialState.source) sourceFilter.value = initialState.source;
     if (initialState.category) categoryFilter.value = initialState.category;
-    searchFiles(currentPage);
+    
+    // Try cache first on initial load
+    if (!tryRestoreFromCache()) {
+        searchFiles(currentPage);
+    }
 }
 
 Promise.allSettled([sourceFilterPromise, categoryFilterPromise]).then(() => {

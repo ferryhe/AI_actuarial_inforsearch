@@ -666,9 +666,8 @@ def register_chat_routes(
                 
                 query += " ORDER BY f.title, f.filename LIMIT 1000"
                 
-                # Execute query
-                conn = storage.get_connection()
-                cursor = conn.execute(query, params)
+                # Execute query using storage's internal connection
+                cursor = storage._conn.execute(query, params)
                 rows = cursor.fetchall()
                 
                 # Format results
@@ -701,6 +700,183 @@ def register_chat_routes(
                 status_code=500,
                 detail=str(e)
             )
+    
+    @app.route("/api/chat/summarize-document", methods=["POST"])
+    @require_permissions("chat.query")
+    def api_chat_summarize_document():
+        """
+        Generate a summary or explanation of a full document.
+        
+        This endpoint is optimized for document summarization using the
+        complete markdown content rather than RAG chunks.
+        
+        Request JSON:
+            {
+                "document_content": "Full markdown content...",
+                "document_title": "Document Title",
+                "mode": "summary" | "detailed" | "tutorial",
+                "user_prompt": "Optional custom instructions"
+            }
+        
+        Response JSON:
+            {
+                "success": true,
+                "data": {
+                    "summary": "Generated summary text...",
+                    "metadata": {
+                        "mode": "summary",
+                        "content_length": 12345,
+                        "truncated": false,
+                        "generation_time_ms": 1500,
+                        "model": "gpt-4"
+                    }
+                }
+            }
+        """
+        error = _check_chatbot_available()
+        if error:
+            return error
+        
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return _api_error("Invalid or missing JSON body", status_code=400)
+            
+            # Extract parameters
+            document_content = data.get("document_content", "").strip()
+            if not document_content:
+                return _api_error("document_content is required", status_code=400)
+            
+            document_title = data.get("document_title", "").strip() or "Document"
+            mode = data.get("mode", "summary")
+            user_prompt = data.get("user_prompt", "").strip()
+            
+            # Validate mode
+            valid_modes = ["summary", "detailed", "tutorial"]
+            if mode not in valid_modes:
+                return _api_error(
+                    f"Invalid mode. Must be one of: {', '.join(valid_modes)}", 
+                    status_code=400
+                )
+            
+            # Truncate document if too long (max ~15K characters, ~4K tokens)
+            MAX_DOC_LENGTH = 15000
+            truncated = False
+            original_length = len(document_content)
+            if original_length > MAX_DOC_LENGTH:
+                document_content = document_content[:MAX_DOC_LENGTH]
+                truncated = True
+                logger.info(f"Document truncated from {original_length} to {MAX_DOC_LENGTH} chars")
+            
+            # Initialize LLM client
+            config = ChatbotConfig()
+            llm_client = LLMClient(config)
+            
+            # Build summarization prompt based on mode
+            system_prompt = _build_summarization_system_prompt(mode)
+            
+            # Build user message
+            user_message_parts = []
+            
+            if user_prompt:
+                user_message_parts.append(f"User Instructions: {user_prompt}\n")
+            
+            user_message_parts.append(f"Document Title: {document_title}\n")
+            
+            if truncated:
+                user_message_parts.append(f"Note: Document was truncated to {MAX_DOC_LENGTH} characters from {original_length} characters.\n")
+            
+            user_message_parts.append(f"\n--- DOCUMENT CONTENT ---\n{document_content}\n--- END DOCUMENT ---\n")
+            
+            # Add mode-specific instructions
+            if mode == "summary":
+                user_message_parts.append("\nProvide a concise summary highlighting the key points and main takeaways.")
+            elif mode == "detailed":
+                user_message_parts.append("\nProvide a comprehensive explanation of this document, covering all major sections and important details.")
+            elif mode == "tutorial":
+                user_message_parts.append("\nExplain this document in a tutorial format, breaking down concepts step-by-step for someone learning the topic.")
+            
+            user_message = "".join(user_message_parts)
+            
+            # Generate response
+            generation_start = time.time()
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+            
+            response_text = llm_client.generate(messages=messages)
+            generation_time_ms = int((time.time() - generation_start) * 1000)
+            
+            return _api_success({
+                "summary": response_text,
+                "metadata": {
+                    "mode": mode,
+                    "content_length": len(document_content),
+                    "original_length": original_length,
+                    "truncated": truncated,
+                    "generation_time_ms": generation_time_ms,
+                    "model": config.model
+                }
+            })
+        
+        except Exception as e:
+            logger.exception("Error generating document summary")
+            return _api_error(
+                "Internal server error",
+                status_code=500,
+                detail=str(e)
+            )
+    
+    def _build_summarization_system_prompt(mode: str) -> str:
+        """Build system prompt for document summarization."""
+        base_prompt = """You are an AI assistant specialized in analyzing and explaining documents related to actuarial science, insurance, and related topics.
+
+Your task is to analyze the provided document and generate a clear, accurate response based on the document's content.
+
+RULES:
+1. Base your response ONLY on the content provided in the document.
+2. Do not invent facts, figures, or information not present in the document.
+3. If the document doesn't contain enough information to fully answer, acknowledge what's missing.
+4. Maintain accuracy and cite specific sections when referencing details.
+5. Use clear, professional language appropriate for the insurance/actuarial field.
+"""
+        
+        mode_prompts = {
+            "summary": """
+SUMMARY MODE: Provide a concise summary (200-400 words) that captures:
+- The main purpose and scope of the document
+- Key findings, recommendations, or conclusions
+- Critical numbers, dates, or thresholds mentioned
+- Primary stakeholders or audience
+
+Focus on what a busy professional needs to know at a glance.
+""",
+            "detailed": """
+DETAILED MODE: Provide a comprehensive explanation that covers:
+- Document structure and organization
+- All major sections and their key points
+- Important definitions, formulas, or technical content
+- Supporting evidence, data, and examples
+- Relationships between different sections
+- Implications and practical applications
+
+Be thorough while maintaining clarity. This is for someone who wants to understand the document deeply without reading the full text.
+""",
+            "tutorial": """
+TUTORIAL MODE: Explain the document in an educational, step-by-step manner:
+- Start with the basics and build up progressively
+- Define technical terms before using them
+- Break down complex concepts into digestible parts
+- Use analogies or examples to clarify difficult points
+- Organize information logically for learning
+- Include a brief recap of key takeaways
+
+Write as if teaching someone who is new to this specific topic but has general knowledge of the field.
+"""
+        }
+        
+        return base_prompt + mode_prompts.get(mode, mode_prompts["summary"])
     
     @app.route("/api/chat/knowledge-bases", methods=["GET"])
 
