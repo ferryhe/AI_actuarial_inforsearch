@@ -722,10 +722,18 @@
                 </div>
                 <div class="doc-filter-group">
                     <label class="doc-filter-label">Select Document</label>
+                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                        <button id="doc-load-btn" class="btn btn-secondary btn-sm" style="flex: 1; font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            Load Documents
+                        </button>
+                    </div>
                     <select id="doc-selector" class="doc-selector" size="5">
-                        <option value="">Loading documents...</option>
+                        <option value="">Click "Load Documents" to start</option>
                     </select>
-                    <div class="doc-count" id="doc-count">0 documents available</div>
+                    <div class="doc-count" id="doc-count">Click load button above</div>
                 </div>
                 <button id="doc-explain-btn" class="doc-explain-btn" disabled>
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -858,6 +866,8 @@
     const docSelector = document.getElementById('doc-selector');
     const docCount = document.getElementById('doc-count');
     const docExplainBtn = document.getElementById('doc-explain-btn');
+    const docLoadBtn = document.getElementById('doc-load-btn');
+    let documentsLoaded = false;
     
     // Initialize
     init();
@@ -865,7 +875,7 @@
     function init() {
         loadKnowledgeBases();
         loadConversations();
-        loadAvailableDocuments();
+        // Don't auto-load documents - wait for user to click load button
         setupEventListeners();
         autoResizeTextarea();
         
@@ -893,6 +903,7 @@
         newConvBtn.addEventListener('click', startNewConversation);
         
         // Document Explorer events
+        docLoadBtn.addEventListener('click', loadAvailableDocuments);
         docCategoryFilter.addEventListener('change', filterDocuments);
         docKeywordFilter.addEventListener('input', filterDocuments);
         docSelector.addEventListener('change', () => {
@@ -1416,13 +1427,23 @@
     }
     
     async function loadAvailableDocuments() {
+        // Prevent multiple simultaneous loads
+        if (docLoadBtn.disabled) return;
+        
         try {
+            // Show loading state
+            docLoadBtn.disabled = true;
+            docLoadBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle; animation: spin 1s linear infinite;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Loading...';
+            docSelector.innerHTML = '<option value="">Loading...</option>';
+            docCount.textContent = 'Loading...';
+            
             const response = await fetch('/api/chat/available-documents');
             const result = await response.json();
             
             if (result.success && result.data) {
                 availableDocuments = result.data.documents || [];
                 filteredDocuments = [...availableDocuments];
+                documentsLoaded = true;
                 
                 // Populate category filter
                 const categories = [...new Set(availableDocuments
@@ -1439,10 +1460,19 @@
                 
                 // Initial document list
                 filterDocuments();
+                
+                // Update button text
+                docLoadBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Refresh';
+            } else {
+                throw new Error(result.error || 'Failed to load documents');
             }
         } catch (error) {
             console.error('Error loading documents:', error);
-            docSelector.innerHTML = '<option value="">Error loading documents</option>';
+            docSelector.innerHTML = '<option value="">Error loading - click Refresh to retry</option>';
+            docCount.textContent = 'Error loading documents';
+            docLoadBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Retry';
+        } finally {
+            docLoadBtn.disabled = false;
         }
     }
     
