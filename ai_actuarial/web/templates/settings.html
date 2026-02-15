@@ -75,7 +75,6 @@
         <div class="module-actions-edit" style="display:none;">
           <button class="btn btn-primary" onclick="saveModule('ai_models')">Save</button>
           <button class="btn btn-secondary" onclick="cancelModule('ai_models')">Cancel</button>
-          <button class="btn btn-secondary" onclick="exitModuleEdit('ai_models')">Exit Edit</button>
         </div>
       </div>
       <div class="card form-grid">
@@ -867,7 +866,7 @@ function populateAiModels(aiFunction, provider, currentModel) {
   const providerModels = available[provider] || [];
   
   // Filter models that support this AI function type
-  const compatibleModels = providerModels.filter(m => m.types.includes(aiFunction));
+  const compatibleModels = providerModels.filter(model => model.types.includes(aiFunction));
   
   // Handle special cases
   if (provider === 'local') {
@@ -897,7 +896,7 @@ function populateAiModels(aiFunction, provider, currentModel) {
   });
   
   // Set current selection
-  if (currentModel && Array.from(select.options).some(o => o.value === currentModel)) {
+  if (currentModel && Array.from(select.options).some(option => option.value === currentModel)) {
     select.value = currentModel;
   } else if (select.options.length > 0) {
     select.value = select.options[0].value;
