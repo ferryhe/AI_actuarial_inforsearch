@@ -83,9 +83,9 @@ class EmbeddingGenerator:
         Initialize embedding generator.
         
         Args:
-            config: RAG configuration (defaults to env-based config)
+            config: RAG configuration (defaults to config-based config)
         """
-        self.config = config or RAGConfig.from_env()
+        self.config = config or RAGConfig.from_config()
         self.cache = EmbeddingCache(f"{self.config.data_dir}/embeddings_cache") if self.config.embedding_cache_enabled else None
         
         # Initialize OpenAI client if using OpenAI

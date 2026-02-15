@@ -93,6 +93,65 @@ class ChatbotConfig:
             max_query_length=cls._get_int_env("CHATBOT_MAX_QUERY_LENGTH", 1000),
         )
     
+    @classmethod
+    def from_yaml(cls, yaml_config: dict) -> "ChatbotConfig":
+        """Create configuration from sites.yaml ai_config section."""
+        chatbot = yaml_config.get("ai_config", {}).get("chatbot", {})
+        
+        # Helper to get nested values with defaults
+        def get_val(key: str, default):
+            return chatbot.get(key, default)
+        
+        return cls(
+            # LLM configuration
+            model=get_val("model", "gpt-4-turbo"),
+            temperature=float(get_val("temperature", 0.7)),
+            max_tokens=int(get_val("max_tokens", 1000)),
+            streaming_enabled=bool(get_val("streaming_enabled", True)),
+            
+            # Conversation configuration
+            max_context_messages=int(get_val("max_context_messages", 10)),
+            default_mode=get_val("default_mode", "expert"),
+            
+            # API configuration (still from environment for sensitive data)
+            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+            openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            openai_timeout=int(get_val("timeout_seconds", 60)),
+            openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+            
+            # Response quality configuration
+            enable_citation=bool(get_val("enable_citation", True)),
+            min_citation_score=float(get_val("min_citation_score", 0.4)),
+            max_citations_per_response=int(get_val("max_citations_per_response", 5)),
+            
+            # Safety and validation
+            enable_query_validation=bool(get_val("enable_query_validation", True)),
+            enable_response_validation=bool(get_val("enable_response_validation", True)),
+            max_query_length=int(get_val("max_query_length", 1000)),
+        )
+    
+    @classmethod
+    def from_config(cls) -> "ChatbotConfig":
+        """
+        Create configuration from sites.yaml with .env fallback.
+        
+        This is the recommended method for loading configuration. It will:
+        1. Try to load from sites.yaml ai_config.chatbot section
+        2. Fall back to environment variables if not found
+        """
+        try:
+            from config.yaml_config import load_yaml_config
+            yaml_config = load_yaml_config()
+            
+            if "ai_config" in yaml_config and "chatbot" in yaml_config.get("ai_config", {}):
+                return cls.from_yaml(yaml_config)
+        except Exception:
+            # If import fails or YAML loading fails, fall back to env
+            pass
+        
+        # Fallback to environment variables
+        return cls.from_env()
+    
     def validate(self) -> None:
         """Validate configuration."""
         # Validate API key
