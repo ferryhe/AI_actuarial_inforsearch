@@ -263,6 +263,8 @@ let categoriesConfig = { categories: {}, ai_filter_keywords: [], ai_keywords: []
 let selectedCategory = '';
 const moduleState = { editing: {}, snapshots: {} };
 let authTokens = [];
+const GLOBAL_LOGS_API_ENABLED = {{ 'true' if enable_global_logs_api else 'false' }};
+const GLOBAL_LOGS_AUTH_REQUIRED = {{ 'true' if logs_read_auth_required else 'false' }};
 
 function openTab(evt, tabId) {
   document.querySelectorAll('.tab-content').forEach(tab => tab.style.display = 'none');
@@ -358,7 +360,7 @@ function historyShowLog(task) {
         <pre id="settings-task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
         <div style="margin-top: 8px; display: flex; gap: 8px;">
           <button class="btn-small" onclick="historyReloadTaskLog('${String(task.id || '')}')">Reload</button>
-          {% if auth_group == 'admin' %}
+          {% if auth_group == 'admin' and enable_global_logs_api %}
           <button class="btn-small" onclick="historyOpenGlobalLogs()">Global Logs</button>
           {% endif %}
         </div>
@@ -396,26 +398,77 @@ async function historyReloadTaskLog(taskId) {
   }
 }
 
-function historyOpenGlobalLogs() {
+function getGlobalLogsHeaders() {
+  const headers = {};
+  const token =
+    sessionStorage.getItem('logs_read_token') ||
+    localStorage.getItem('logs_read_token') ||
+    sessionStorage.getItem('config_write_token') ||
+    localStorage.getItem('config_write_token') ||
+    '';
+  if (token) headers['X-Auth-Token'] = token;
+  return headers;
+}
+
+async function promptGlobalLogsToken() {
+  const current =
+    sessionStorage.getItem('logs_read_token') ||
+    localStorage.getItem('logs_read_token') ||
+    '';
+  const input = window.prompt(
+    'Global logs access requires LOGS_READ_AUTH_TOKEN (X-Auth-Token).\nEnter token (saved in current session only):',
+    current
+  );
+  if (input === null) return false;
+  const token = String(input || '').trim();
+  if (!token) return false;
+  sessionStorage.setItem('logs_read_token', token);
+  return true;
+}
+
+async function fetchGlobalLogsWithRetry() {
+  let headers = getGlobalLogsHeaders();
+  let resp = await fetch('/api/logs/global', { headers });
+  let data = await resp.json().catch(() => ({}));
+
+  if (resp.status === 403 && GLOBAL_LOGS_AUTH_REQUIRED) {
+    const updated = await promptGlobalLogsToken();
+    if (updated) {
+      headers = getGlobalLogsHeaders();
+      resp = await fetch('/api/logs/global', { headers });
+      data = await resp.json().catch(() => ({}));
+    }
+  }
+
+  return { resp, data };
+}
+
+async function historyOpenGlobalLogs() {
   const pre = document.getElementById('settings-global-log-content');
   const modal = document.getElementById('settings-global-log-modal');
-  if (pre) pre.textContent = 'Loading...';
-  fetch('/api/logs/global')
-    .then(r => r.json().then(j => ({ ok: r.ok, j })))
-    .then(({ ok, j }) => {
-      if (pre) pre.textContent = ok ? (j.logs || '(no logs)') : ('Failed to load global logs: ' + (j.error || 'unknown'));
-      if (modal) {
-        modal.style.display = 'flex';
-        if (window.syncModalState) window.syncModalState();
+  if (pre) {
+    if (!GLOBAL_LOGS_API_ENABLED) {
+      pre.textContent = 'Failed to load global logs: Global logs API is disabled (ENABLE_GLOBAL_LOGS_API=false).';
+    } else {
+      pre.textContent = 'Loading...';
+      try {
+        const { resp, data } = await fetchGlobalLogsWithRetry();
+        if (resp.ok) {
+          pre.textContent = data.logs || '(no logs)';
+        } else if (resp.status === 403 && GLOBAL_LOGS_AUTH_REQUIRED) {
+          pre.textContent = 'Failed to load global logs: Forbidden (missing or invalid LOGS_READ_AUTH_TOKEN).';
+        } else {
+          pre.textContent = 'Failed to load global logs: ' + (data.error || 'unknown');
+        }
+      } catch (e) {
+        pre.textContent = 'Failed to load global logs: ' + e.message;
       }
-    })
-    .catch(e => {
-      if (pre) pre.textContent = 'Failed to load global logs: ' + e.message;
-      if (modal) {
-        modal.style.display = 'flex';
-        if (window.syncModalState) window.syncModalState();
-      }
-    });
+    }
+  }
+  if (modal) {
+    modal.style.display = 'flex';
+    if (window.syncModalState) window.syncModalState();
+  }
 }
 
 function historyCloseGlobalLogModal() {
@@ -506,7 +559,17 @@ function isModuleDirty(name) {
   if (snap === undefined) return false;
   return JSON.stringify(getModuleData(name)) !== JSON.stringify(snap);
 }
-function enterEditMode(name) { moduleState.editing[name] = true; moduleState.snapshots[name] = deepClone(getModuleData(name)); setModuleEditable(name, true); }
+function enterEditMode(name) { 
+  // Check if any other module is being edited
+  const otherEditing = Object.keys(moduleState.editing).find(m => m !== name && moduleState.editing[m]);
+  if (otherEditing) {
+    notifyError(`Please save or cancel "${otherEditing}" first before editing another module`);
+    return;
+  }
+  moduleState.editing[name] = true; 
+  moduleState.snapshots[name] = deepClone(getModuleData(name)); 
+  setModuleEditable(name, true); 
+}
 function cancelModule(name) { if (moduleState.snapshots[name] !== undefined) applyModuleData(name, deepClone(moduleState.snapshots[name])); moduleState.editing[name] = false; setModuleEditable(name, false); }
 async function exitModuleEdit(name) { if (!isModuleDirty(name)) { moduleState.editing[name] = false; setModuleEditable(name, false); return; } const save = await customConfirm('You have unsaved changes. Save before exiting edit mode?', 'Unsaved Changes'); if (save) await saveModule(name); else cancelModule(name); }
 
@@ -742,6 +805,16 @@ async function revokeAuthToken(tokenId) {
 function initReadonlyModules() { ['categories','ai_keywords','crawler_defaults','paths','search_defaults'].forEach(name => { moduleState.editing[name] = false; setModuleEditable(name, false); }); }
 async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens()]); } catch (err) { notifyError(err.message || String(err)); } }
 initPage();
+
+// Add beforeunload warning for unsaved changes
+window.addEventListener('beforeunload', (e) => {
+  const hasUnsavedChanges = Object.keys(moduleState.editing).some(name => moduleState.editing[name] && isModuleDirty(name));
+  if (hasUnsavedChanges) {
+    e.preventDefault();
+    e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+    return e.returnValue;
+  }
+});
 </script>
 
 <style>
