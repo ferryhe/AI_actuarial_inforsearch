@@ -98,37 +98,52 @@ class ChatbotConfig:
         """Create configuration from sites.yaml ai_config section."""
         chatbot = yaml_config.get("ai_config", {}).get("chatbot", {})
         
-        # Helper to get nested values with defaults
-        def get_val(key: str, default):
-            return chatbot.get(key, default)
+        # Helper to get nested values with defaults and type conversion
+        def get_val(key: str, default, converter=None):
+            value = chatbot.get(key, default)
+            if converter and value != default:
+                try:
+                    return converter(value)
+                except (ValueError, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid value for chatbot.{key} in sites.yaml: {value!r}. "
+                        f"Expected {converter.__name__} type."
+                    ) from e
+            return value
         
-        return cls(
-            # LLM configuration
-            model=get_val("model", "gpt-4-turbo"),
-            temperature=float(get_val("temperature", 0.7)),
-            max_tokens=int(get_val("max_tokens", 1000)),
-            streaming_enabled=bool(get_val("streaming_enabled", True)),
-            
-            # Conversation configuration
-            max_context_messages=int(get_val("max_context_messages", 10)),
-            default_mode=get_val("default_mode", "expert"),
-            
-            # API configuration (still from environment for sensitive data)
-            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-            openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            openai_timeout=int(get_val("timeout_seconds", 60)),
-            openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
-            
-            # Response quality configuration
-            enable_citation=bool(get_val("enable_citation", True)),
-            min_citation_score=float(get_val("min_citation_score", 0.4)),
-            max_citations_per_response=int(get_val("max_citations_per_response", 5)),
-            
-            # Safety and validation
-            enable_query_validation=bool(get_val("enable_query_validation", True)),
-            enable_response_validation=bool(get_val("enable_response_validation", True)),
-            max_query_length=int(get_val("max_query_length", 1000)),
-        )
+        try:
+            return cls(
+                # LLM configuration
+                model=get_val("model", "gpt-4-turbo"),
+                temperature=get_val("temperature", 0.7, float),
+                max_tokens=get_val("max_tokens", 1000, int),
+                streaming_enabled=get_val("streaming_enabled", True, bool),
+                
+                # Conversation configuration
+                max_context_messages=get_val("max_context_messages", 10, int),
+                default_mode=get_val("default_mode", "expert"),
+                
+                # API configuration (still from environment for sensitive data)
+                openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+                openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                openai_timeout=get_val("timeout_seconds", 60, int),
+                openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+                
+                # Response quality configuration
+                enable_citation=get_val("enable_citation", True, bool),
+                min_citation_score=get_val("min_citation_score", 0.4, float),
+                max_citations_per_response=get_val("max_citations_per_response", 5, int),
+                
+                # Safety and validation
+                enable_query_validation=get_val("enable_query_validation", True, bool),
+                enable_response_validation=get_val("enable_response_validation", True, bool),
+                max_query_length=get_val("max_query_length", 1000, int),
+            )
+        except ValueError:
+            # Re-raise configuration errors with context
+            raise
+        except Exception as e:
+            raise ValueError(f"Error loading chatbot configuration from sites.yaml: {e}") from e
     
     @classmethod
     def from_config(cls) -> "ChatbotConfig":
@@ -138,18 +153,27 @@ class ChatbotConfig:
         This is the recommended method for loading configuration. It will:
         1. Try to load from sites.yaml ai_config.chatbot section
         2. Fall back to environment variables if not found
+        
+        Raises:
+            ValueError: If configuration values are invalid in sites.yaml
         """
         try:
             from config.yaml_config import load_yaml_config
-            yaml_config = load_yaml_config()
-            
-            if "ai_config" in yaml_config and "chatbot" in yaml_config.get("ai_config", {}):
-                return cls.from_yaml(yaml_config)
-        except Exception:
-            # If import fails or YAML loading fails, fall back to env
-            pass
+        except (ImportError, ModuleNotFoundError):
+            # If the YAML config loader is not available, fall back to env
+            return cls.from_env()
         
-        # Fallback to environment variables
+        try:
+            yaml_config = load_yaml_config()
+        except (FileNotFoundError, OSError):
+            # If the YAML file is missing or inaccessible, fall back to env
+            return cls.from_env()
+        
+        if "ai_config" in yaml_config and "chatbot" in yaml_config.get("ai_config", {}):
+            # This may raise ValueError if configuration is invalid
+            return cls.from_yaml(yaml_config)
+        
+        # Fallback to environment variables if ai_config.chatbot section is not present
         return cls.from_env()
     
     def validate(self) -> None:

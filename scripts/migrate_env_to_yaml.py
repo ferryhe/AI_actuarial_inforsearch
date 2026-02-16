@@ -46,115 +46,155 @@ def get_float_env(key: str, default: str) -> float:
 
 
 def extract_ai_config() -> dict:
-    """Extract AI configuration from environment variables."""
-    return {
-        "catalog": {
-            "provider": "openai",
-            "model": os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            "temperature": get_float_env("CATALOG_TEMPERATURE", "0.7"),
-            "timeout_seconds": get_int_env("OPENAI_TIMEOUT_SECONDS", "60"),
-        },
-        "embeddings": {
-            "provider": os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
-            "model": os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-            "batch_size": get_int_env("RAG_EMBEDDING_BATCH_SIZE", "64"),
-            "similarity_threshold": get_float_env("RAG_SIMILARITY_THRESHOLD", "0.4"),
-            "cache_enabled": get_bool_env("RAG_EMBEDDING_CACHE_ENABLED", "true"),
-        },
-        "chatbot": {
-            "provider": "openai",
-            "model": os.getenv("CHATBOT_MODEL", "gpt-4-turbo"),
-            "temperature": get_float_env("CHATBOT_TEMPERATURE", "0.7"),
-            "max_tokens": get_int_env("CHATBOT_MAX_TOKENS", "1000"),
-            "streaming_enabled": get_bool_env("CHATBOT_STREAMING_ENABLED", "true"),
-            "max_context_messages": get_int_env("CHATBOT_MAX_CONTEXT_MESSAGES", "10"),
-            "default_mode": os.getenv("CHATBOT_DEFAULT_MODE", "expert"),
-            "enable_citation": get_bool_env("CHATBOT_ENABLE_CITATION", "true"),
-            "min_citation_score": get_float_env("CHATBOT_MIN_CITATION_SCORE", "0.4"),
-            "max_citations_per_response": get_int_env("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5"),
-            "enable_query_validation": get_bool_env("CHATBOT_ENABLE_QUERY_VALIDATION", "true"),
-            "enable_response_validation": get_bool_env("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true"),
-            "max_query_length": get_int_env("CHATBOT_MAX_QUERY_LENGTH", "1000"),
-        },
-        "ocr": {
-            "provider": os.getenv("DEFAULT_ENGINE", "local"),
-            "model": "docling",
-            "mistral": {
-                "max_pdf_tokens": get_int_env("MISTRAL_MAX_PDF_TOKENS", "9000"),
-                "max_pages_per_chunk": get_int_env("MISTRAL_MAX_PAGES_PER_CHUNK", "10"),
-                "timeout_seconds": get_int_env("MISTRAL_TIMEOUT_SECONDS", "60"),
-                "retry_attempts": get_int_env("MISTRAL_RETRY_ATTEMPTS", "3"),
-                "extract_header": get_bool_env("MISTRAL_EXTRACT_HEADER", "true"),
-                "extract_footer": get_bool_env("MISTRAL_EXTRACT_FOOTER", "true"),
+    """
+    Extract AI configuration from environment variables.
+    
+    Raises:
+        ValueError: If environment variables contain invalid values with context about which section failed
+    """
+    try:
+        return {
+            "catalog": {
+                "provider": "openai",
+                "model": os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
+                "temperature": get_float_env("CATALOG_TEMPERATURE", "0.7"),
+                "timeout_seconds": get_int_env("OPENAI_TIMEOUT_SECONDS", "60"),
             },
-            "siliconflow": {
-                "max_input_tokens": get_int_env("SILICONFLOW_MAX_INPUT_TOKENS", "3500"),
-                "chunk_overlap_tokens": get_int_env("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200"),
-                "timeout_seconds": get_int_env("SILICONFLOW_TIMEOUT_SECONDS", "60"),
-                "retry_attempts": get_int_env("SILICONFLOW_RETRY_ATTEMPTS", "3"),
+            "embeddings": {
+                "provider": os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
+                "model": os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
+                "batch_size": get_int_env("RAG_EMBEDDING_BATCH_SIZE", "64"),
+                "similarity_threshold": get_float_env("RAG_SIMILARITY_THRESHOLD", "0.4"),
+                "cache_enabled": get_bool_env("RAG_EMBEDDING_CACHE_ENABLED", "true"),
             },
-        },
-    }
+            "chatbot": {
+                "provider": "openai",
+                "model": os.getenv("CHATBOT_MODEL", "gpt-4-turbo"),
+                "temperature": get_float_env("CHATBOT_TEMPERATURE", "0.7"),
+                "max_tokens": get_int_env("CHATBOT_MAX_TOKENS", "1000"),
+                "streaming_enabled": get_bool_env("CHATBOT_STREAMING_ENABLED", "true"),
+                "max_context_messages": get_int_env("CHATBOT_MAX_CONTEXT_MESSAGES", "10"),
+                "default_mode": os.getenv("CHATBOT_DEFAULT_MODE", "expert"),
+                "enable_citation": get_bool_env("CHATBOT_ENABLE_CITATION", "true"),
+                "min_citation_score": get_float_env("CHATBOT_MIN_CITATION_SCORE", "0.4"),
+                "max_citations_per_response": get_int_env("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5"),
+                "enable_query_validation": get_bool_env("CHATBOT_ENABLE_QUERY_VALIDATION", "true"),
+                "enable_response_validation": get_bool_env("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true"),
+                "max_query_length": get_int_env("CHATBOT_MAX_QUERY_LENGTH", "1000"),
+            },
+            "ocr": {
+                "provider": os.getenv("DEFAULT_ENGINE", "local"),
+                "model": "docling",
+                "mistral": {
+                    "max_pdf_tokens": get_int_env("MISTRAL_MAX_PDF_TOKENS", "9000"),
+                    "max_pages_per_chunk": get_int_env("MISTRAL_MAX_PAGES_PER_CHUNK", "10"),
+                    "timeout_seconds": get_int_env("MISTRAL_TIMEOUT_SECONDS", "60"),
+                    "retry_attempts": get_int_env("MISTRAL_RETRY_ATTEMPTS", "3"),
+                    "extract_header": get_bool_env("MISTRAL_EXTRACT_HEADER", "true"),
+                    "extract_footer": get_bool_env("MISTRAL_EXTRACT_FOOTER", "true"),
+                },
+                "siliconflow": {
+                    "max_input_tokens": get_int_env("SILICONFLOW_MAX_INPUT_TOKENS", "3500"),
+                    "chunk_overlap_tokens": get_int_env("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200"),
+                    "timeout_seconds": get_int_env("SILICONFLOW_TIMEOUT_SECONDS", "60"),
+                    "retry_attempts": get_int_env("SILICONFLOW_RETRY_ATTEMPTS", "3"),
+                },
+            },
+        }
+    except ValueError as e:
+        raise ValueError(f"Error extracting AI configuration from environment variables: {e}") from e
 
 
 def extract_rag_config() -> dict:
-    """Extract RAG configuration from environment variables."""
-    return {
-        "chunk_strategy": os.getenv("RAG_CHUNK_STRATEGY", "semantic_structure"),
-        "max_chunk_tokens": get_int_env("RAG_MAX_CHUNK_TOKENS", "800"),
-        "min_chunk_tokens": get_int_env("RAG_MIN_CHUNK_TOKENS", "100"),
-        "preserve_headers": get_bool_env("RAG_PRESERVE_HEADERS", "true"),
-        "preserve_citations": get_bool_env("RAG_PRESERVE_CITATIONS", "true"),
-        "include_hierarchy": get_bool_env("RAG_INCLUDE_HIERARCHY", "true"),
-        "index_type": os.getenv("RAG_INDEX_TYPE", "Flat"),
-    }
+    """
+    Extract RAG configuration from environment variables.
+    
+    Raises:
+        ValueError: If environment variables contain invalid values
+    """
+    try:
+        return {
+            "chunk_strategy": os.getenv("RAG_CHUNK_STRATEGY", "semantic_structure"),
+            "max_chunk_tokens": get_int_env("RAG_MAX_CHUNK_TOKENS", "800"),
+            "min_chunk_tokens": get_int_env("RAG_MIN_CHUNK_TOKENS", "100"),
+            "preserve_headers": get_bool_env("RAG_PRESERVE_HEADERS", "true"),
+            "preserve_citations": get_bool_env("RAG_PRESERVE_CITATIONS", "true"),
+            "include_hierarchy": get_bool_env("RAG_INCLUDE_HIERARCHY", "true"),
+            "index_type": os.getenv("RAG_INDEX_TYPE", "Flat"),
+        }
+    except ValueError as e:
+        raise ValueError(f"Error extracting RAG configuration from environment variables: {e}") from e
 
 
 def extract_features() -> dict:
-    """Extract feature flags from environment variables."""
-    return {
-        "enable_file_deletion": get_bool_env("ENABLE_FILE_DELETION", "false"),
-        "require_auth": get_bool_env("REQUIRE_AUTH", "false"),
-        "enable_csrf": get_bool_env("ENABLE_CSRF", "false"),
-        "enable_security_headers": get_bool_env("ENABLE_SECURITY_HEADERS", "true"),
-        "expose_error_details": get_bool_env("EXPOSE_ERROR_DETAILS", "false"),
-        "enable_global_logs_api": get_bool_env("ENABLE_GLOBAL_LOGS_API", "false"),
-        "enable_rate_limiting": get_bool_env("ENABLE_RATE_LIMITING", "false"),
-        "rate_limit_defaults": os.getenv("RATE_LIMIT_DEFAULTS", "200 per hour, 50 per minute"),
-        "rate_limit_storage_uri": os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
-        "content_security_policy": os.getenv("CONTENT_SECURITY_POLICY", ""),
-    }
+    """
+    Extract feature flags from environment variables.
+    
+    Raises:
+        ValueError: If environment variables contain invalid values
+    """
+    try:
+        return {
+            "enable_file_deletion": get_bool_env("ENABLE_FILE_DELETION", "false"),
+            "require_auth": get_bool_env("REQUIRE_AUTH", "false"),
+            "enable_csrf": get_bool_env("ENABLE_CSRF", "false"),
+            "enable_security_headers": get_bool_env("ENABLE_SECURITY_HEADERS", "true"),
+            "expose_error_details": get_bool_env("EXPOSE_ERROR_DETAILS", "false"),
+            "enable_global_logs_api": get_bool_env("ENABLE_GLOBAL_LOGS_API", "false"),
+            "enable_rate_limiting": get_bool_env("ENABLE_RATE_LIMITING", "false"),
+            "rate_limit_defaults": os.getenv("RATE_LIMIT_DEFAULTS", "200 per hour, 50 per minute"),
+            "rate_limit_storage_uri": os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
+            "content_security_policy": os.getenv("CONTENT_SECURITY_POLICY", ""),
+        }
+    except ValueError as e:
+        raise ValueError(f"Error extracting feature flags from environment variables: {e}") from e
 
 
 def extract_server_config() -> dict:
-    """Extract server configuration from environment variables."""
-    return {
-        "host": os.getenv("FLASK_HOST", "0.0.0.0"),
-        "port": get_int_env("FLASK_PORT", "5000"),
-        "max_content_length": get_int_env("MAX_CONTENT_LENGTH", "52428800"),
-        "flask_env": os.getenv("FLASK_ENV", "production"),
-        "flask_debug": get_bool_env("FLASK_DEBUG", "false"),
-    }
+    """
+    Extract server configuration from environment variables.
+    
+    Raises:
+        ValueError: If environment variables contain invalid values
+    """
+    try:
+        return {
+            "host": os.getenv("FLASK_HOST", "0.0.0.0"),
+            "port": get_int_env("FLASK_PORT", "5000"),
+            "max_content_length": get_int_env("MAX_CONTENT_LENGTH", "52428800"),
+            "flask_env": os.getenv("FLASK_ENV", "production"),
+            "flask_debug": get_bool_env("FLASK_DEBUG", "false"),
+        }
+    except ValueError as e:
+        raise ValueError(f"Error extracting server configuration from environment variables: {e}") from e
 
 
 def extract_database_config() -> dict:
-    """Extract database configuration from environment variables."""
-    db_type = os.getenv("DB_TYPE", "sqlite")
+    """
+    Extract database configuration from environment variables.
     
-    config = {
-        "type": db_type,
-    }
-    
-    if db_type == "sqlite":
-        config["path"] = os.getenv("DB_PATH", "data/index.db")
-    elif db_type == "postgresql":
-        config["host"] = os.getenv("DB_HOST", "localhost")
-        config["port"] = get_int_env("DB_PORT", "5432")
-        config["database"] = os.getenv("DB_NAME", "ai_actuarial")
-        config["username"] = os.getenv("DB_USER", "postgres")
-        # Password remains in .env
-    
-    return config
+    Raises:
+        ValueError: If environment variables contain invalid values
+    """
+    try:
+        db_type = os.getenv("DB_TYPE", "sqlite")
+        
+        config = {
+            "type": db_type,
+        }
+        
+        if db_type == "sqlite":
+            config["path"] = os.getenv("DB_PATH", "data/index.db")
+        elif db_type == "postgresql":
+            config["host"] = os.getenv("DB_HOST", "localhost")
+            config["port"] = get_int_env("DB_PORT", "5432")
+            config["database"] = os.getenv("DB_NAME", "ai_actuarial")
+            config["username"] = os.getenv("DB_USER", "postgres")
+            # Password remains in .env
+        
+        return config
+    except ValueError as e:
+        raise ValueError(f"Error extracting database configuration from environment variables: {e}") from e
 
 
 def migrate(dry_run: bool = False, create_backup: bool = True) -> None:
