@@ -1,129 +1,95 @@
 """
-Configuration for AI Chatbot module.
-
-Provides centralized configuration management for chatbot components with
-environment variable support and sensible defaults.
+Configuration for the AI chatbot module.
 """
 
 import os
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 
 @dataclass
 class ChatbotConfig:
-    """Configuration for AI chatbot system."""
+    """Configuration for the chatbot system."""
     
-    # LLM configuration
-    model: str = "gpt-4-turbo"  # OpenAI model to use
-    temperature: float = 0.7  # Sampling temperature (0.0-2.0)
-    max_tokens: int = 1000  # Maximum tokens in response
-    streaming_enabled: bool = True  # Enable streaming responses
+    # LLM Settings
+    llm_provider: str = "openai"  # openai, anthropic, ollama
+    model: str = "gpt-4"  # gpt-4, gpt-4-turbo, gpt-3.5-turbo
+    temperature: float = 0.7
+    max_tokens: int = 1000
+    api_key: Optional[str] = None
     
-    # Conversation configuration
-    max_context_messages: int = 10  # Maximum messages to include in context
-    default_mode: Literal["expert", "summary", "tutorial", "comparison"] = "expert"
+    # Retrieval Settings
+    top_k: int = 5  # Number of chunks to retrieve
+    similarity_threshold: float = 0.4
+    min_results: int = 1  # Minimum results required
     
-    # API configuration
-    openai_api_key: str = ""  # OpenAI API key (shared with RAG)
-    openai_base_url: str = "https://api.openai.com/v1"  # OpenAI API base URL
-    openai_timeout: int = 60  # Request timeout in seconds
-    openai_max_retries: int = 3  # Maximum retry attempts
+    # Conversation Settings
+    max_messages: int = 20  # Maximum messages to keep in context
+    max_context_tokens: int = 8000  # Maximum tokens in context window
+    summarization_threshold: int = 15  # When to start summarizing old messages
     
-    # Response quality configuration
-    enable_citation: bool = True  # Include citations in responses
-    min_citation_score: float = 0.4  # Minimum similarity score for citations
-    max_citations_per_response: int = 5  # Maximum number of citations
+    # Mode Settings
+    default_mode: str = "expert"
+    available_modes: List[str] = field(default_factory=lambda: [
+        "expert", "summary", "tutorial", "comparison"
+    ])
     
-    # Safety and validation
-    enable_query_validation: bool = True  # Validate queries before processing
-    enable_response_validation: bool = True  # Validate responses before returning
-    max_query_length: int = 1000  # Maximum query length in characters
+    # Retry & Rate Limiting
+    max_retries: int = 3
+    retry_delay: float = 1.0  # seconds
+    exponential_backoff: bool = True
+    rate_limit_rpm: int = 60  # requests per minute
     
-    @staticmethod
-    def _get_int_env(var_name: str, default: int) -> int:
-        """Get integer from environment with clear error messages."""
-        value = os.getenv(var_name)
-        if not value:
-            return default
-        try:
-            return int(value)
-        except ValueError as e:
-            raise ValueError(f"Invalid value for {var_name}: {value!r}. Expected an integer.") from e
+    # Quality & Validation
+    require_citations: bool = True
+    validate_citations: bool = True
+    hallucination_check: bool = True
     
-    @staticmethod
-    def _get_float_env(var_name: str, default: float) -> float:
-        """Get float from environment with clear error messages."""
-        value = os.getenv(var_name)
-        if not value:
-            return default
-        try:
-            return float(value)
-        except ValueError as e:
-            raise ValueError(f"Invalid value for {var_name}: {value!r}. Expected a float.") from e
+    # Multi-KB Query Settings
+    multi_kb_enabled: bool = True
+    min_results_per_kb: int = 2  # Minimum results from each KB in multi-KB query
+    kb_diversity_weight: float = 0.3  # Weight for diversity in ranking
     
-    @classmethod
-    def from_env(cls) -> "ChatbotConfig":
-        """Create configuration from environment variables."""
-        return cls(
-            # LLM configuration
-            model=os.getenv("CHATBOT_MODEL", "gpt-4-turbo"),
-            temperature=cls._get_float_env("CHATBOT_TEMPERATURE", 0.7),
-            max_tokens=cls._get_int_env("CHATBOT_MAX_TOKENS", 1000),
-            streaming_enabled=os.getenv("CHATBOT_STREAMING_ENABLED", "true").lower() == "true",
-            
-            # Conversation configuration
-            max_context_messages=cls._get_int_env("CHATBOT_MAX_CONTEXT_MESSAGES", 10),
-            default_mode=os.getenv("CHATBOT_DEFAULT_MODE", "expert"),
-            
-            # API configuration (reuse from main settings)
-            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-            openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            openai_timeout=cls._get_int_env("OPENAI_TIMEOUT", 60),
-            openai_max_retries=cls._get_int_env("OPENAI_MAX_RETRIES", 3),
-            
-            # Response quality configuration
-            enable_citation=os.getenv("CHATBOT_ENABLE_CITATION", "true").lower() == "true",
-            min_citation_score=cls._get_float_env("CHATBOT_MIN_CITATION_SCORE", 0.4),
-            max_citations_per_response=cls._get_int_env("CHATBOT_MAX_CITATIONS_PER_RESPONSE", 5),
-            
-            # Safety and validation
-            enable_query_validation=os.getenv("CHATBOT_ENABLE_QUERY_VALIDATION", "true").lower() == "true",
-            enable_response_validation=os.getenv("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true").lower() == "true",
-            max_query_length=cls._get_int_env("CHATBOT_MAX_QUERY_LENGTH", 1000),
-        )
-    
-    def validate(self) -> None:
-        """Validate configuration."""
-        # Validate API key
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required for chatbot functionality")
+    def __post_init__(self):
+        """Load configuration from environment variables."""
+        # Load API key from environment if not provided
+        if not self.api_key:
+            self.api_key = os.getenv("OPENAI_API_KEY")
         
-        # Validate temperature
-        if not 0.0 <= self.temperature <= 2.0:
-            raise ValueError("temperature must be between 0.0 and 2.0")
+        # Load other settings from environment
+        self.model = os.getenv("CHATBOT_MODEL", self.model)
+        self.temperature = float(os.getenv("CHATBOT_TEMPERATURE", str(self.temperature)))
+        self.max_tokens = int(os.getenv("CHATBOT_MAX_TOKENS", str(self.max_tokens)))
+        self.top_k = int(os.getenv("CHATBOT_TOP_K", str(self.top_k)))
+        self.similarity_threshold = float(os.getenv("RAG_SIMILARITY_THRESHOLD", str(self.similarity_threshold)))
+    
+    def validate(self):
+        """Validate configuration parameters."""
+        errors = []
         
-        # Validate max_tokens
-        if self.max_tokens <= 0:
-            raise ValueError("max_tokens must be positive")
+        if not self.api_key:
+            errors.append("API key is required (OPENAI_API_KEY environment variable)")
         
-        # Validate max_context_messages
-        if self.max_context_messages <= 0:
-            raise ValueError("max_context_messages must be positive")
+        if self.temperature < 0 or self.temperature > 2:
+            errors.append(f"Temperature must be between 0 and 2, got {self.temperature}")
         
-        # Validate citation score
-        if not 0.0 <= self.min_citation_score <= 1.0:
-            raise ValueError("min_citation_score must be between 0.0 and 1.0")
+        if self.max_tokens < 1:
+            errors.append(f"max_tokens must be positive, got {self.max_tokens}")
         
-        # Validate max_citations_per_response
-        if self.max_citations_per_response <= 0:
-            raise ValueError("max_citations_per_response must be positive")
+        if self.top_k < 1:
+            errors.append(f"top_k must be positive, got {self.top_k}")
         
-        # Validate max_query_length
-        if self.max_query_length <= 0:
-            raise ValueError("max_query_length must be positive")
+        if self.similarity_threshold < 0 or self.similarity_threshold > 1:
+            errors.append(f"similarity_threshold must be between 0 and 1, got {self.similarity_threshold}")
         
-        # Validate default_mode
-        valid_modes = ["expert", "summary", "tutorial", "comparison"]
-        if self.default_mode not in valid_modes:
-            raise ValueError(f"default_mode must be one of {valid_modes}")
+        if self.default_mode not in self.available_modes:
+            errors.append(f"default_mode '{self.default_mode}' not in available_modes")
+        
+        if errors:
+            raise ValueError(f"Invalid chatbot configuration: {'; '.join(errors)}")
+        
+        return True
+
+
+# Default configuration instance
+default_config = ChatbotConfig()

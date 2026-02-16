@@ -152,16 +152,22 @@ _PERMISSIONS: frozenset[str] = frozenset(
         "logs.system.read",
         "export.read",
         "tokens.manage",
+        "chat.view",
+        "chat.query",
+        "chat.conversations",
     }
 )
 
-# When REQUIRE_AUTH=false, we still run the app in a "public read-only" mode:
-# endpoints that require any permission outside this allowlist will require a token.
+# When REQUIRE_AUTH=false, we run the app in a "guest-enabled" mode:
+# only allowlisted permissions are available without a token.
 _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
         "markdown.read",
+        "chat.view",
+        "chat.query",
+        "chat.conversations",
     }
 )
 
@@ -173,6 +179,9 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "files.download",
             "catalog.read",
             "markdown.read",
+            "chat.view",
+            "chat.query",
+            "chat.conversations",
         }
     ),
     "operator": frozenset(
@@ -191,6 +200,9 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "tasks.run",
             "tasks.stop",
             "logs.task.read",
+            "chat.view",
+            "chat.query",
+            "chat.conversations",
         }
     ),
     "admin": frozenset(_PERMISSIONS),
@@ -666,6 +678,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             "auth_subject": (token or {}).get("subject"),
             "require_auth": require_auth,
             "openai_configured": openai_configured,
+            "enable_global_logs_api": _env_flag("ENABLE_GLOBAL_LOGS_API", False),
+            "logs_read_auth_required": bool(os.getenv("LOGS_READ_AUTH_TOKEN")),
         }
 
     # Register routes
@@ -3701,7 +3715,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_files_get_markdown(file_url):
         """Get markdown content for a file."""
         try:
-            url = file_url
+            from urllib.parse import unquote
+            url = unquote(file_url)
             
             logger.info(f"Fetching markdown content for URL: {url}")
             storage = Storage(db_path)
@@ -3838,6 +3853,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         logger.warning(f"RAG routes not available: {e}")
     except Exception as e:
         logger.error(f"Failed to register RAG routes: {e}")
+    
+    # ========================================================================
+    # Chat API Routes
+    # ========================================================================
+    try:
+        from ai_actuarial.web.chat_routes import register_chat_routes
+        register_chat_routes(
+            app,
+            db_path,
+            require_permissions,
+        )
+        logger.info("Chat routes registered")
+    except ImportError as e:
+        logger.warning(f"Chat routes not available: {e}")
+    except Exception as e:
+        logger.error(f"Failed to register chat routes: {e}")
 
     # Scheduler Initialization
     def init_scheduler():
