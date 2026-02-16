@@ -1213,7 +1213,7 @@ def teardown_method(self):
 
 #### 2. Future Work Plan
 
-**File**: `docs/FUTURE_DYNAMIC_MODEL_FETCHING.md`  
+**File**: `docs/20260216_FUTURE_DYNAMIC_MODEL_FETCHING.md`  
 **Size**: 464 lines  
 **Content**:
 - Feature overview
@@ -1229,7 +1229,7 @@ def teardown_method(self):
 
 #### 3. This PR Summary
 
-**File**: `docs/PR_SUMMARY_CONFIG_MIGRATION.md`  
+**File**: `docs/20260216_PR_SUMMARY_CONFIG_MIGRATION.md`  
 **Size**: This document  
 **Content**:
 - Comprehensive change log
@@ -1687,7 +1687,7 @@ f801c43 - Code review fix: Remove unnecessary pytest main block
    - [ ] Test migration script with actual .env file
 
 2. **Dynamic Model Fetching** (Priority: Medium)
-   - See `docs/FUTURE_DYNAMIC_MODEL_FETCHING.md`
+   - See `docs/20260216_FUTURE_DYNAMIC_MODEL_FETCHING.md`
    - Estimated: 3-5 days
    - Depends on: This PR merged
 
