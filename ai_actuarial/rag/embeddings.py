@@ -160,6 +160,27 @@ class EmbeddingGenerator:
                 return self._generate_openai_embeddings(texts)
             else:
                 return self._generate_local_embeddings(texts)
+
+    def generate_single(self, text: str) -> List[float]:
+        """
+        Generate embedding for a single text.
+
+        This is a compatibility helper for callers that use a single-item API.
+        Internally it reuses the batched implementation.
+
+        Args:
+            text: Text string to embed
+
+        Returns:
+            Embedding vector for the input text
+
+        Raises:
+            EmbeddingException: If embedding generation fails or returns no result
+        """
+        embeddings = self.generate_embeddings([text])
+        if not embeddings:
+            raise EmbeddingException("Failed to generate embedding for input text")
+        return embeddings[0]
     
     def _generate_openai_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
