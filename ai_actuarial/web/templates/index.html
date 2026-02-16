@@ -57,6 +57,15 @@
     <div class="quick-actions">
         <h3>Quick Actions</h3>
         <div class="action-grid">
+            <div class="action-card" onclick="location.href='/database'">
+                <div class="action-icon">
+                    <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
+                        <use xlink:href="#icon-search"></use>
+                    </svg>
+                </div>
+                <h4>Browse Database</h4>
+                <p>Search and manage collected files</p>
+            </div>
             {% if auth_group in ['admin', 'operator'] %}
             <div class="action-card" onclick="location.href='/tasks'">
                 <div class="action-icon">
@@ -79,15 +88,17 @@
                 <p>Manage RAG knowledge bases</p>
             </div>
             {% endif %}
-            <div class="action-card" onclick="location.href='/database'">
+            {% if auth_group in ['admin', 'operator', 'reader'] %}
+            <div class="action-card" onclick="location.href='/chat'">
                 <div class="action-icon">
                     <svg class="icon-lg" fill="none" stroke="currentColor" stroke-width="2">
-                        <use xlink:href="#icon-search"></use>
+                        <use xlink:href="#icon-eye"></use>
                     </svg>
                 </div>
-                <h4>Browse Database</h4>
-                <p>Search and manage collected files</p>
+                <h4>Chat</h4>
+                <p>Ask questions with indexed knowledge</p>
             </div>
+            {% endif %}
         </div>
     </div>
 

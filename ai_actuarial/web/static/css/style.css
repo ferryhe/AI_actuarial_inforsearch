@@ -479,6 +479,36 @@ tr:last-child td {
     outline-offset: 2px;
 }
 
+.btn-info {
+    background: linear-gradient(135deg, #0ea5e9, #0284c7);
+    color: white;
+    box-shadow: 0 2px 4px rgba(14, 165, 233, 0.2);
+}
+
+[data-theme="dark"] .btn-info {
+    background: linear-gradient(135deg, #0284c7, #0369a1);
+}
+
+.btn-info:hover {
+    background: linear-gradient(135deg, #0284c7, #0369a1);
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+    transform: translateY(-1px);
+}
+
+[data-theme="dark"] .btn-info:hover {
+    background: linear-gradient(135deg, #0369a1, #075985);
+}
+
+.btn-info:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(14, 165, 233, 0.2);
+}
+
+.btn-info:focus-visible {
+    outline: 2px solid #0ea5e9;
+    outline-offset: 2px;
+}
+
 .btn:active {
     transform: scale(0.98);
 }

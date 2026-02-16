@@ -1053,7 +1053,8 @@
 </style>
 
 <script>
-const CAN_VIEW_GLOBAL_LOGS = {{ 'true' if auth_group == 'admin' else 'false' }};
+const CAN_VIEW_GLOBAL_LOGS = {{ 'true' if auth_group == 'admin' and enable_global_logs_api else 'false' }};
+const GLOBAL_LOGS_AUTH_REQUIRED = {{ 'true' if logs_read_auth_required else 'false' }};
 // --- File Format Selector Helper Functions ---
 // 获取选中的文件格式（带校验）
 function getSelectedFormats(formElement) {
@@ -1859,12 +1860,19 @@ function startTask(type, payload) {
 }
 
 // --- Monitoring (Existing Logic Adapted) ---
+let previouslyActiveTaskIds = new Set();
+
 function loadActiveTasks() {
     fetch('/api/tasks/active')
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('active-tasks-container');
+            const currentTaskIds = new Set();
+            
             if (data.tasks && data.tasks.length > 0) {
+                // Track current task IDs
+                data.tasks.forEach(task => currentTaskIds.add(task.id));
+                
                 container.innerHTML = data.tasks.map(task => `
                     <div class="task-card active-task">
                         <div class="task-header">
@@ -1901,6 +1909,43 @@ function loadActiveTasks() {
             } else {
                 container.innerHTML = '<p class="no-data">No active tasks currently running.</p>';
             }
+            
+            // Check for completed tasks (tasks that were active but now aren't)
+            if (previouslyActiveTaskIds.size > 0) {
+                previouslyActiveTaskIds.forEach(taskId => {
+                    if (!currentTaskIds.has(taskId)) {
+                        // Task completed - show notification
+                        // Fetch task history to get the final status
+                        fetch('/api/tasks/history?limit=20')
+                            .then(res => res.json())
+                            .then(historyData => {
+                                const completedTask = historyData.tasks?.find(t => t.id === taskId);
+                                if (completedTask) {
+                                    const status = completedTask.status;
+                                    let message = `Task completed: ${completedTask.name}`;
+                                    let type = 'success';
+                                    
+                                    if (status === 'failed' || status === 'error') {
+                                        message = `Task failed: ${completedTask.name}`;
+                                        type = 'error';
+                                    } else if (status === 'stopped') {
+                                        message = `Task stopped: ${completedTask.name}`;
+                                        type = 'warning';
+                                    }
+                                    
+                                    showNotification(message, type);
+                                    
+                                    // Refresh history to show the completed task
+                                    loadTaskHistory();
+                                }
+                            })
+                            .catch(console.error);
+                    }
+                });
+            }
+            
+            // Update the set of previously active tasks
+            previouslyActiveTaskIds = currentTaskIds;
         })
         .catch(console.error);
 }
@@ -2043,11 +2088,66 @@ async function reloadTaskLog(taskId) {
     }
 }
 
+function getGlobalLogsHeaders() {
+    const headers = {};
+    const token =
+        sessionStorage.getItem('logs_read_token') ||
+        localStorage.getItem('logs_read_token') ||
+        sessionStorage.getItem('config_write_token') ||
+        localStorage.getItem('config_write_token') ||
+        '';
+    if (token) headers['X-Auth-Token'] = token;
+    return headers;
+}
+
+async function promptGlobalLogsToken() {
+    const current =
+        sessionStorage.getItem('logs_read_token') ||
+        localStorage.getItem('logs_read_token') ||
+        '';
+    const input = window.prompt(
+        'Global logs access requires LOGS_READ_AUTH_TOKEN (X-Auth-Token).\nEnter token (saved in current session only):',
+        current
+    );
+    if (input === null) return false;
+    const token = String(input || '').trim();
+    if (!token) return false;
+    sessionStorage.setItem('logs_read_token', token);
+    return true;
+}
+
+async function fetchGlobalLogsWithRetry() {
+    let headers = getGlobalLogsHeaders();
+    let resp = await fetch('/api/logs/global', { headers });
+    let data = await resp.json().catch(() => ({}));
+
+    if (resp.status === 403 && GLOBAL_LOGS_AUTH_REQUIRED) {
+        const updated = await promptGlobalLogsToken();
+        if (updated) {
+            headers = getGlobalLogsHeaders();
+            resp = await fetch('/api/logs/global', { headers });
+            data = await resp.json().catch(() => ({}));
+        }
+    }
+
+    return { resp, data };
+}
+
 async function openGlobalLogs() {
+    if (!CAN_VIEW_GLOBAL_LOGS) {
+        showNotification('Global logs are not available in the current configuration.', 'error');
+        return;
+    }
     try {
-        const resp = await fetch('/api/logs/global');
-        const data = await resp.json();
-        const logs = data.logs || data.error || 'No logs';
+        const { resp, data } = await fetchGlobalLogsWithRetry();
+        let logs = '';
+        if (resp.ok) {
+            logs = data.logs || '(no logs)';
+        } else if (resp.status === 403 && GLOBAL_LOGS_AUTH_REQUIRED) {
+            logs = 'Failed to load global logs: Forbidden (missing or invalid LOGS_READ_AUTH_TOKEN).';
+        } else {
+            logs = 'Failed to load global logs: ' + (data.error || 'unknown');
+        }
         let modal = document.getElementById('global-log-modal');
         if (!modal) {
             modal = document.createElement('div');

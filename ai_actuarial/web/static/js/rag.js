@@ -1295,13 +1295,19 @@
                 const fileUrl = String(f.file_url || '');
                 const rowNo = start + idx + 1;
                 const checked = state.detailFileSelection.has(fileUrl);
+                const returnToUrl = `/rag/${encodeURIComponent(context.kbId)}`;
+                const fileDetailUrl = `/file/${encodeURIComponent(fileUrl)}?return_to=${encodeURIComponent(returnToUrl)}`;
                 return `
                 <tr>
                     <td class="row-select">
                         <input type="checkbox" data-detail-file-check="${esc(fileUrl)}" ${checked ? 'checked' : ''}>
                     </td>
                     <td>${rowNo}</td>
-                    <td title="${esc(fileUrl)}">${esc(f.title || f.file_url)}</td>
+                    <td title="${esc(fileUrl)}">
+                        <a href="${esc(fileDetailUrl)}" style="color: var(--primary-500); text-decoration: none;">
+                            ${esc(f.title || f.file_url)}
+                        </a>
+                    </td>
                     <td>${f.chunk_count || 0}</td>
                     <td>${Number(f.chunk_version_count || 0)}</td>
                     <td>${esc(formatDate(f.chunk_set_updated_at || f.bound_at || ''))}</td>
@@ -1310,7 +1316,6 @@
                     <td>${esc(formatDate(f.indexed_at))}</td>
                     <td>
                         <div class="rag-actions">
-                            <button class="btn btn-secondary btn-sm" data-preview-file="${esc(fileUrl)}">View</button>
                             <button class="btn btn-secondary btn-sm" data-remove-detail-file="${esc(fileUrl)}">Delete</button>
                         </div>
                     </td>
@@ -1334,15 +1339,6 @@
                     checkAll.checked = paged.length > 0 && paged.every((f) => state.detailFileSelection.has(String(f.file_url || '')));
                 }
                 updateDetailBulkRemoveButton();
-            });
-        });
-
-        body.querySelectorAll('[data-preview-file]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const fileUrl = btn.getAttribute('data-preview-file');
-                if (!fileUrl) return;
-                const previewUrl = `/file_preview?file_url=${encodeURIComponent(fileUrl)}&kb_id=${encodeURIComponent(context.kbId)}`;
-                window.location.href = previewUrl;
             });
         });
 
