@@ -74,7 +74,7 @@ class RAGConfig:
         
         def safe_int(value, key: str, default: int):
             """Safely convert value to int with helpful error message."""
-            if value == default or value is None:
+            if value is None:
                 return default
             try:
                 return int(value)
@@ -85,7 +85,7 @@ class RAGConfig:
         
         def safe_float(value, key: str, default: float):
             """Safely convert value to float with helpful error message."""
-            if value == default or value is None:
+            if value is None:
                 return default
             try:
                 return float(value)
@@ -94,30 +94,42 @@ class RAGConfig:
                     f"Invalid value for {key} in sites.yaml: {value!r}. Expected float."
                 ) from e
         
-        def safe_bool(value, default: bool):
-            """Safely convert value to bool."""
-            if value == default or value is None:
+        def safe_bool(value, key: str, default: bool):
+            """Safely convert value to bool with proper string handling."""
+            if value is None:
                 return default
+            # Handle string boolean values
+            if isinstance(value, str):
+                if value.lower() in ('true', '1', 'yes'):
+                    return True
+                elif value.lower() in ('false', '0', 'no'):
+                    return False
+                else:
+                    raise ValueError(
+                        f"Invalid boolean value for {key} in sites.yaml: {value!r}. "
+                        f"Expected true/false, yes/no, 1/0, or boolean type."
+                    )
+            # Handle actual boolean values from YAML
             return bool(value)
         
         try:
             return cls(
                 # Chunking configuration from rag_config
                 chunk_strategy=rag_cfg.get("chunk_strategy", "semantic_structure"),
-                max_chunk_tokens=safe_int(rag_cfg.get("max_chunk_tokens", 800), "rag_config.max_chunk_tokens", 800),
-                min_chunk_tokens=safe_int(rag_cfg.get("min_chunk_tokens", 100), "rag_config.min_chunk_tokens", 100),
-                preserve_headers=safe_bool(rag_cfg.get("preserve_headers", True), True),
-                preserve_citations=safe_bool(rag_cfg.get("preserve_citations", True), True),
-                include_hierarchy=safe_bool(rag_cfg.get("include_hierarchy", True), True),
+                max_chunk_tokens=safe_int(rag_cfg.get("max_chunk_tokens"), "rag_config.max_chunk_tokens", 800),
+                min_chunk_tokens=safe_int(rag_cfg.get("min_chunk_tokens"), "rag_config.min_chunk_tokens", 100),
+                preserve_headers=safe_bool(rag_cfg.get("preserve_headers"), "rag_config.preserve_headers", True),
+                preserve_citations=safe_bool(rag_cfg.get("preserve_citations"), "rag_config.preserve_citations", True),
+                include_hierarchy=safe_bool(rag_cfg.get("include_hierarchy"), "rag_config.include_hierarchy", True),
                 
                 # Embedding configuration from ai_config.embeddings
                 embedding_provider=ai_cfg.get("provider", "openai"),
                 embedding_model=ai_cfg.get("model", "text-embedding-3-large"),
-                embedding_batch_size=safe_int(ai_cfg.get("batch_size", 64), "ai_config.embeddings.batch_size", 64),
-                embedding_cache_enabled=safe_bool(ai_cfg.get("cache_enabled", True), True),
+                embedding_batch_size=safe_int(ai_cfg.get("batch_size"), "ai_config.embeddings.batch_size", 64),
+                embedding_cache_enabled=safe_bool(ai_cfg.get("cache_enabled"), "ai_config.embeddings.cache_enabled", True),
                 
                 # Vector store configuration from ai_config.embeddings
-                similarity_threshold=safe_float(ai_cfg.get("similarity_threshold", 0.4), "ai_config.embeddings.similarity_threshold", 0.4),
+                similarity_threshold=safe_float(ai_cfg.get("similarity_threshold"), "ai_config.embeddings.similarity_threshold", 0.4),
                 index_type=rag_cfg.get("index_type", "Flat"),
                 
                 # API configuration (still from environment for sensitive data)
