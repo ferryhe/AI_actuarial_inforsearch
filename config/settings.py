@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     openai_default_model: str = Field(default="gpt-4o-mini", alias="OPENAI_DEFAULT_MODEL")
     openai_timeout_seconds: float = Field(default=60.0, alias="OPENAI_TIMEOUT_SECONDS")
 
+    # Chatbot configuration (for future AI chatbot feature)
+    chatbot_model: str = Field(default="gpt-4-turbo", alias="CHATBOT_MODEL")
+    chatbot_temperature: float = Field(default=0.7, alias="CHATBOT_TEMPERATURE")
+    chatbot_max_tokens: int = Field(default=1000, alias="CHATBOT_MAX_TOKENS")
+    chatbot_streaming_enabled: bool = Field(default=True, alias="CHATBOT_STREAMING_ENABLED")
+    chatbot_max_context_messages: int = Field(default=10, alias="CHATBOT_MAX_CONTEXT_MESSAGES")
+    chatbot_default_mode: str = Field(default="expert", alias="CHATBOT_DEFAULT_MODE")
+
     # Mistral OCR tuning
     mistral_timeout_seconds: float = Field(default=60.0, alias="MISTRAL_TIMEOUT_SECONDS")
     mistral_retry_attempts: int = Field(default=3, alias="MISTRAL_RETRY_ATTEMPTS")
@@ -100,6 +108,20 @@ class Settings(BaseSettings):
 
         if self.docling_max_pages is not None and self.docling_max_pages < 1:
             raise ValueError("DOCLING_MAX_PAGES must be at least 1 when provided")
+
+        # Validate chatbot settings
+        if not 0.0 <= self.chatbot_temperature <= 2.0:
+            raise ValueError("CHATBOT_TEMPERATURE must be between 0.0 and 2.0")
+        
+        if self.chatbot_max_tokens < 1:
+            raise ValueError("CHATBOT_MAX_TOKENS must be at least 1")
+        
+        if self.chatbot_max_context_messages < 1:
+            raise ValueError("CHATBOT_MAX_CONTEXT_MESSAGES must be at least 1")
+        
+        valid_chatbot_modes = ["expert", "summary", "tutorial", "comparison"]
+        if self.chatbot_default_mode not in valid_chatbot_modes:
+            raise ValueError(f"CHATBOT_DEFAULT_MODE must be one of {valid_chatbot_modes}")
 
         return self
 
