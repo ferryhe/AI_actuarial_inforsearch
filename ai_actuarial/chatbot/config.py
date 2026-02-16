@@ -100,8 +100,10 @@ class ChatbotConfig:
         
         # Helper to get nested values with defaults and type conversion
         def get_val(key: str, default, converter=None):
-            value = chatbot.get(key, default)
-            if converter and value != default:
+            value = chatbot.get(key)
+            if value is None:
+                return default
+            if converter:
                 try:
                     return converter(value)
                 except (ValueError, TypeError) as e:
