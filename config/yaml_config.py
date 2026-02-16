@@ -106,51 +106,74 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
     
     Returns:
         Dict in ai_config format extracted from environment
+        
+    Raises:
+        ValueError: If environment variables contain invalid numeric values
     """
+    def safe_int(var_name: str, default: str) -> int:
+        """Safely convert env var to int with clear error message."""
+        value = os.getenv(var_name, default)
+        try:
+            return int(value)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for environment variable {var_name}: {value!r}. Expected integer."
+            ) from e
+    
+    def safe_float(var_name: str, default: str) -> float:
+        """Safely convert env var to float with clear error message."""
+        value = os.getenv(var_name, default)
+        try:
+            return float(value)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for environment variable {var_name}: {value!r}. Expected float."
+            ) from e
+    
     return {
         "catalog": {
             "provider": "openai",
             "model": os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            "temperature": float(os.getenv("CATALOG_TEMPERATURE", "0.7")),
-            "timeout_seconds": int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60")),
+            "temperature": safe_float("CATALOG_TEMPERATURE", "0.7"),
+            "timeout_seconds": safe_int("OPENAI_TIMEOUT_SECONDS", "60"),
         },
         "embeddings": {
             "provider": os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
             "model": os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-            "batch_size": int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "64")),
-            "similarity_threshold": float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.4")),
+            "batch_size": safe_int("RAG_EMBEDDING_BATCH_SIZE", "64"),
+            "similarity_threshold": safe_float("RAG_SIMILARITY_THRESHOLD", "0.4"),
         },
         "chatbot": {
             "provider": "openai",
             "model": os.getenv("CHATBOT_MODEL", "gpt-4-turbo"),
-            "temperature": float(os.getenv("CHATBOT_TEMPERATURE", "0.7")),
-            "max_tokens": int(os.getenv("CHATBOT_MAX_TOKENS", "1000")),
+            "temperature": safe_float("CHATBOT_TEMPERATURE", "0.7"),
+            "max_tokens": safe_int("CHATBOT_MAX_TOKENS", "1000"),
             "streaming_enabled": os.getenv("CHATBOT_STREAMING_ENABLED", "true").lower() == "true",
-            "max_context_messages": int(os.getenv("CHATBOT_MAX_CONTEXT_MESSAGES", "10")),
+            "max_context_messages": safe_int("CHATBOT_MAX_CONTEXT_MESSAGES", "10"),
             "default_mode": os.getenv("CHATBOT_DEFAULT_MODE", "expert"),
             "enable_citation": os.getenv("CHATBOT_ENABLE_CITATION", "true").lower() == "true",
-            "min_citation_score": float(os.getenv("CHATBOT_MIN_CITATION_SCORE", "0.4")),
-            "max_citations_per_response": int(os.getenv("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5")),
+            "min_citation_score": safe_float("CHATBOT_MIN_CITATION_SCORE", "0.4"),
+            "max_citations_per_response": safe_int("CHATBOT_MAX_CITATIONS_PER_RESPONSE", "5"),
             "enable_query_validation": os.getenv("CHATBOT_ENABLE_QUERY_VALIDATION", "true").lower() == "true",
             "enable_response_validation": os.getenv("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true").lower() == "true",
-            "max_query_length": int(os.getenv("CHATBOT_MAX_QUERY_LENGTH", "1000")),
+            "max_query_length": safe_int("CHATBOT_MAX_QUERY_LENGTH", "1000"),
         },
         "ocr": {
             "provider": os.getenv("DEFAULT_ENGINE", "local"),
             "model": "docling",  # Default for local provider
             "mistral": {
-                "max_pdf_tokens": int(os.getenv("MISTRAL_MAX_PDF_TOKENS", "9000")),
-                "max_pages_per_chunk": int(os.getenv("MISTRAL_MAX_PAGES_PER_CHUNK", "10")),
-                "timeout_seconds": int(os.getenv("MISTRAL_TIMEOUT_SECONDS", "60")),
-                "retry_attempts": int(os.getenv("MISTRAL_RETRY_ATTEMPTS", "3")),
+                "max_pdf_tokens": safe_int("MISTRAL_MAX_PDF_TOKENS", "9000"),
+                "max_pages_per_chunk": safe_int("MISTRAL_MAX_PAGES_PER_CHUNK", "10"),
+                "timeout_seconds": safe_int("MISTRAL_TIMEOUT_SECONDS", "60"),
+                "retry_attempts": safe_int("MISTRAL_RETRY_ATTEMPTS", "3"),
                 "extract_header": os.getenv("MISTRAL_EXTRACT_HEADER", "true").lower() == "true",
                 "extract_footer": os.getenv("MISTRAL_EXTRACT_FOOTER", "true").lower() == "true",
             },
             "siliconflow": {
-                "max_input_tokens": int(os.getenv("SILICONFLOW_MAX_INPUT_TOKENS", "3500")),
-                "chunk_overlap_tokens": int(os.getenv("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200")),
-                "timeout_seconds": int(os.getenv("SILICONFLOW_TIMEOUT_SECONDS", "60")),
-                "retry_attempts": int(os.getenv("SILICONFLOW_RETRY_ATTEMPTS", "3")),
+                "max_input_tokens": safe_int("SILICONFLOW_MAX_INPUT_TOKENS", "3500"),
+                "chunk_overlap_tokens": safe_int("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200"),
+                "timeout_seconds": safe_int("SILICONFLOW_TIMEOUT_SECONDS", "60"),
+                "retry_attempts": safe_int("SILICONFLOW_RETRY_ATTEMPTS", "3"),
             },
         },
     }
@@ -182,11 +205,24 @@ def _extract_rag_config_from_env() -> Dict[str, Any]:
     
     Returns:
         Dict in rag_config format extracted from environment
+        
+    Raises:
+        ValueError: If environment variables contain invalid numeric values
     """
+    def safe_int(var_name: str, default: str) -> int:
+        """Safely convert env var to int with clear error message."""
+        value = os.getenv(var_name, default)
+        try:
+            return int(value)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for environment variable {var_name}: {value!r}. Expected integer."
+            ) from e
+    
     return {
         "chunk_strategy": os.getenv("RAG_CHUNK_STRATEGY", "semantic_structure"),
-        "max_chunk_tokens": int(os.getenv("RAG_MAX_CHUNK_TOKENS", "800")),
-        "min_chunk_tokens": int(os.getenv("RAG_MIN_CHUNK_TOKENS", "100")),
+        "max_chunk_tokens": safe_int("RAG_MAX_CHUNK_TOKENS", "800"),
+        "min_chunk_tokens": safe_int("RAG_MIN_CHUNK_TOKENS", "100"),
         "preserve_headers": True,  # Not in .env, default
         "preserve_citations": True,  # Not in .env, default
         "include_hierarchy": True,  # Not in .env, default
@@ -260,11 +296,24 @@ def _extract_server_config_from_env() -> Dict[str, Any]:
     
     Returns:
         Dict with server config extracted from environment
+        
+    Raises:
+        ValueError: If environment variables contain invalid numeric values
     """
+    def safe_int(var_name: str, default: str) -> int:
+        """Safely convert env var to int with clear error message."""
+        value = os.getenv(var_name, default)
+        try:
+            return int(value)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for environment variable {var_name}: {value!r}. Expected integer."
+            ) from e
+    
     return {
         "host": os.getenv("FLASK_HOST", "0.0.0.0"),
-        "port": int(os.getenv("FLASK_PORT", "5000")),
-        "max_content_length": int(os.getenv("MAX_CONTENT_LENGTH", "52428800")),
+        "port": safe_int("FLASK_PORT", "5000"),
+        "max_content_length": safe_int("MAX_CONTENT_LENGTH", "52428800"),
         "flask_env": os.getenv("FLASK_ENV", "production"),
         "flask_debug": os.getenv("FLASK_DEBUG", "false").lower() == "true",
     }
@@ -295,7 +344,20 @@ def _extract_database_config_from_env() -> Dict[str, Any]:
     
     Returns:
         Dict with database config extracted from environment
+        
+    Raises:
+        ValueError: If environment variables contain invalid numeric values
     """
+    def safe_int(var_name: str, default: str) -> int:
+        """Safely convert env var to int with clear error message."""
+        value = os.getenv(var_name, default)
+        try:
+            return int(value)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for environment variable {var_name}: {value!r}. Expected integer."
+            ) from e
+    
     db_type = os.getenv("DB_TYPE", "sqlite")
     
     config = {
@@ -306,7 +368,7 @@ def _extract_database_config_from_env() -> Dict[str, Any]:
         config["path"] = os.getenv("DB_PATH", "data/index.db")
     elif db_type == "postgresql":
         config["host"] = os.getenv("DB_HOST", "localhost")
-        config["port"] = int(os.getenv("DB_PORT", "5432"))
+        config["port"] = safe_int("DB_PORT", "5432")
         config["database"] = os.getenv("DB_NAME", "ai_actuarial")
         config["username"] = os.getenv("DB_USER", "postgres")
         # Password should still come from .env
