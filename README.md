@@ -224,37 +224,46 @@ See `.env.example` for all available environment variables.
 
 ## Documentation Index
 
+Documentation is organized by category in the `docs/` folder. See [docs/README.md](docs/README.md) for the complete structure.
+
 ### Quick Start & Guides
-- Quick start: `docs/guides/QUICK_START_NEW_FEATURES.md`
-- Quick reference: `docs/guides/QUICK_REFERENCE.md`
-- Service start guide: `docs/guides/SERVICE_START_GUIDE.md`
-- Database backend: `docs/guides/DATABASE_BACKEND_GUIDE.md`
-- Modular system: `docs/guides/MODULAR_SYSTEM_GUIDE.md`
+- Quick start: [docs/guides/QUICK_START_NEW_FEATURES.md](docs/guides/QUICK_START_NEW_FEATURES.md)
+- Quick reference: [docs/guides/QUICK_REFERENCE.md](docs/guides/QUICK_REFERENCE.md)
+- Service start guide: [docs/guides/SERVICE_START_GUIDE.md](docs/guides/SERVICE_START_GUIDE.md)
+- Database backend: [docs/guides/DATABASE_BACKEND_GUIDE.md](docs/guides/DATABASE_BACKEND_GUIDE.md)
+- Modular system: [docs/guides/MODULAR_SYSTEM_GUIDE.md](docs/guides/MODULAR_SYSTEM_GUIDE.md)
 
 ### AI Chatbot Documentation
-- Roadmap: `docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md`
-- Quick start: `docs/guides/AI_CHATBOT_QUICK_START.md`
-- Implementation plan: `docs/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md`
-- Completion summary: `docs/20260212_PHASE2_COMPLETION_SUMMARY.md`
-- Integration summary: `docs/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md`
-- API documentation: `docs/API文档-2026-02-12-聊天机器人API接口说明.md`
-- User guide: `docs/用户指南-2026-02-12-AI聊天机器人使用说明.md`
+- Roadmap: [docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md](docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md)
+- Quick start: [docs/guides/AI_CHATBOT_QUICK_START.md](docs/guides/AI_CHATBOT_QUICK_START.md)
+- Implementation plan: [docs/plans/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md](docs/plans/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md)
+- Architecture: [docs/architecture/20260212_PHASE2_1_CHATBOT_ARCHITECTURE_DESIGN.md](docs/architecture/20260212_PHASE2_1_CHATBOT_ARCHITECTURE_DESIGN.md)
+- Completion summary: [docs/implementation/20260212_PHASE2_COMPLETION_SUMMARY.md](docs/implementation/20260212_PHASE2_COMPLETION_SUMMARY.md)
+- Integration summary: [docs/implementation/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md](docs/implementation/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md)
+- API documentation (中文): [docs/zh-cn/20260212_API_CHATBOT_API_REFERENCE.md](docs/zh-cn/20260212_API_CHATBOT_API_REFERENCE.md)
+- User guide (中文): [docs/zh-cn/20260212_USER_GUIDE_CHATBOT.md](docs/zh-cn/20260212_USER_GUIDE_CHATBOT.md)
 
 ### Configuration & Migration
-- Config migration plan: `docs/20260215_CONFIG_MIGRATION_PLAN.md`
-- Implementation report: `docs/20260215_CONFIG_MIGRATION_IMPLEMENTATION_REPORT.md`
-- Multi-AI provider design: `docs/20260214_MULTI_AI_PROVIDER_DESIGN.md`
-- AI configuration summary: `docs/20260215_AI_CONFIGURATION_SUMMARY_CN.md`
+- Config migration plan: [docs/plans/20260215_CONFIG_MIGRATION_PLAN.md](docs/plans/20260215_CONFIG_MIGRATION_PLAN.md)
+- Implementation report: [docs/implementation/20260215_CONFIG_MIGRATION_IMPLEMENTATION_REPORT.md](docs/implementation/20260215_CONFIG_MIGRATION_IMPLEMENTATION_REPORT.md)
+- Multi-AI provider design: [docs/plans/20260214_MULTI_AI_PROVIDER_DESIGN.md](docs/plans/20260214_MULTI_AI_PROVIDER_DESIGN.md)
+- AI configuration summary (中文): [docs/zh-cn/20260215_AI_CONFIGURATION_SUMMARY_CN.md](docs/zh-cn/20260215_AI_CONFIGURATION_SUMMARY_CN.md)
 
 ### Testing & Security
-- Manual testing guide: `docs/20260215_MANUAL_TESTING_GUIDE.md`
-- Manual testing checklist: `docs/MANUAL_TESTING_CHECKLIST.md`
-- Security summary: `docs/20260213_PHASE2_SECURITY_SUMMARY.md`
-- Security guide: `docs/guides/SECURITY_IMPROVEMENTS_GUIDE.md`
+- Manual testing guide: [docs/testing/20260215_MANUAL_TESTING_GUIDE.md](docs/testing/20260215_MANUAL_TESTING_GUIDE.md)
+- Manual testing checklist: [docs/testing/MANUAL_TESTING_CHECKLIST.md](docs/testing/MANUAL_TESTING_CHECKLIST.md)
+- Phase 2 security: [docs/security/20260213_PHASE2_SECURITY_SUMMARY.md](docs/security/20260213_PHASE2_SECURITY_SUMMARY.md)
+- Security guide: [docs/guides/SECURITY_IMPROVEMENTS_GUIDE.md](docs/guides/SECURITY_IMPROVEMENTS_GUIDE.md)
 
-### Implementation Details
-- See `docs/` folder for detailed implementation notes, architecture designs, and progress reports
-- Archive: `docs/archive/` contains historical documentation and deprecated guides
+### Documentation Categories
+- **Plans** (`docs/plans/`) - Planning and design documents
+- **Implementation** (`docs/implementation/`) - Implementation reports and summaries
+- **Architecture** (`docs/architecture/`) - System architecture and technical design
+- **Security** (`docs/security/`) - Security analysis and hardening reports
+- **Testing** (`docs/testing/`) - Testing guides and checklists
+- **Guides** (`docs/guides/`) - User and developer operational guides
+- **Chinese Docs** (`docs/zh-cn/`) - Chinese language documentation
+- **Archive** (`docs/archive/`) - Historical and deprecated documentation
 
 ## Output Artifacts
 
