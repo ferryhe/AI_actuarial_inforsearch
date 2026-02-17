@@ -24,19 +24,6 @@ paths:
   db: data/index.db
   last_run_new: data/last_run_new.json
   updates_dir: data/updates
-# Database configuration (optional)
-# If not specified, uses the legacy SQLite path from paths.db
-# Supports SQLite (local dev) and PostgreSQL (production)
-#database:
-#  type: sqlite  # or 'postgresql'
-#  path: data/index.db  # for SQLite
-#  # For PostgreSQL, use:
-#  #type: postgresql
-#  #host: localhost
-#  #port: 5432
-#  #database: ai_actuarial
-#  #username: postgres
-#  #password: your_password
 search:
   enabled: true
   max_results: 5
@@ -613,26 +600,18 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
-
-# ===================================
-# AI Model Configuration
-# ===================================
-# This section configures AI model selections for different functions.
-# Edit via Web UI Settings page or directly in this file.
 ai_config:
   catalog:
-    provider: openai  # openai, mistral, siliconflow
+    provider: openai
     model: gpt-4o-mini
     temperature: 0.7
     timeout_seconds: 60
-  
   embeddings:
-    provider: openai  # openai, local
+    provider: openai
     model: text-embedding-3-large
     batch_size: 64
     similarity_threshold: 0.4
     cache_enabled: true
-  
   chatbot:
     provider: openai
     model: gpt-4-turbo
@@ -640,17 +619,16 @@ ai_config:
     max_tokens: 1000
     streaming_enabled: true
     max_context_messages: 10
-    default_mode: expert  # expert, summary, tutorial, comparison
+    default_mode: expert
     enable_citation: true
     min_citation_score: 0.4
     max_citations_per_response: 5
     enable_query_validation: true
     enable_response_validation: true
     max_query_length: 1000
-  
   ocr:
-    provider: local  # local, mistral, siliconflow
-    model: docling  # docling, marker, mistral-ocr-latest, deepseek-ai/DeepSeek-OCR
+    provider: local
+    model: docling
     mistral:
       max_pdf_tokens: 9000
       max_pages_per_chunk: 10
@@ -663,24 +641,14 @@ ai_config:
       chunk_overlap_tokens: 200
       timeout_seconds: 60
       retry_attempts: 3
-
-# ===================================
-# RAG Configuration
-# ===================================
-# Configure chunking, indexing, and retrieval settings
 rag_config:
-  chunk_strategy: semantic_structure  # semantic_structure, token_based
+  chunk_strategy: semantic_structure
   max_chunk_tokens: 800
   min_chunk_tokens: 100
   preserve_headers: true
   preserve_citations: true
   include_hierarchy: true
-  index_type: Flat  # Flat, IVF, HNSW
-
-# ===================================
-# Feature Flags
-# ===================================
-# Enable or disable application features
+  index_type: Flat
 features:
   enable_file_deletion: false
   require_auth: false
@@ -689,32 +657,15 @@ features:
   expose_error_details: false
   enable_global_logs_api: false
   enable_rate_limiting: false
-  rate_limit_defaults: "200 per hour, 50 per minute"
-  rate_limit_storage_uri: "memory://"
-  content_security_policy: ""
-
-# ===================================
-# Web Server Configuration
-# ===================================
-# Configure Flask web server settings
+  rate_limit_defaults: 200 per hour, 50 per minute
+  rate_limit_storage_uri: memory://
+  content_security_policy: ''
 server:
   host: 0.0.0.0
   port: 5000
-  max_content_length: 52428800  # 50MB in bytes
+  max_content_length: 52428800
   flask_env: production
   flask_debug: false
-
-# ===================================
-# Database Configuration
-# ===================================
-# Configure database connection (SQLite or PostgreSQL)
 database:
-  type: sqlite  # sqlite or postgresql
+  type: sqlite
   path: data/index.db
-  # For PostgreSQL, uncomment and configure:
-  # type: postgresql
-  # host: localhost
-  # port: 5432
-  # database: ai_actuarial
-  # username: postgres
-  # password is read from .env DB_PASSWORD
