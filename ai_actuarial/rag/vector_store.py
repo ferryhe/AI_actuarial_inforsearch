@@ -47,7 +47,7 @@ class VectorStore:
             index_path: Path to save/load index (optional)
         """
         self.dimension = dimension
-        self.config = config or RAGConfig.from_env()
+        self.config = config or RAGConfig.from_config()
         self.index_path = Path(index_path) if index_path else None
         
         # Create or load FAISS index

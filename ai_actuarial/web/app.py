@@ -1536,6 +1536,25 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
+            
+            # Invalidate configuration cache so backend picks up changes immediately
+            try:
+                from config.yaml_config import invalidate_config_cache
+            except ImportError as import_err:
+                logger.warning(
+                    "Configuration cache invalidation skipped; "
+                    "yaml_config module is not available: %s",
+                    import_err,
+                )
+            else:
+                try:
+                    invalidate_config_cache()
+                    logger.info("Configuration cache invalidated after AI config update")
+                except Exception as cache_err:
+                    # Unexpected cache invalidation failures should be logged and raised
+                    logger.error(f"Failed to invalidate config cache: {cache_err}")
+                    raise
+            
             return jsonify({"success": True})
         except ValueError as e:
             return jsonify({"error": str(e)}), 400

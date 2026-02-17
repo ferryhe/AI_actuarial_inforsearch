@@ -180,7 +180,7 @@
                 <div id="chunk-meta" class="markdown-meta rag-meta" style="display:none;"></div>
                 {% if can_run_rag_tasks %}
                 <div id="chunk-actions" class="rag-index-actions" style="display:none;">
-                    <button id="chunk-modify-btn" class="btn btn-secondary" onclick="openChunkTaskModal()">
+                    <button id="chunk-modify-btn" class="btn btn-secondary">
                         Modify Chunk
                     </button>
                 </div>
@@ -333,6 +333,7 @@
     let fileChunkProfiles = [];
     let fileChunkKbs = [];
     let chunkKbControlBound = false;
+    let chunkButtonBound = false;
     let categoryOptionsLoaded = false;
     let categoryOptions = [];
     let selectedCategories = [];
@@ -633,26 +634,83 @@
         if (chunkActions && canRunRagTasks) {
             const showModifyChunk = hasMarkdownForChunk;
             chunkActions.style.display = showModifyChunk ? 'flex' : 'none';
+            
+            console.log('renderChunkStatusMeta: updating button', { 
+                hasChunk, 
+                hasMarkdownForChunk, 
+                showModifyChunk,
+                chunkButtonBound 
+            });
+            
+            // Update button text based on whether chunks exist
+            const chunkBtn = document.getElementById('chunk-modify-btn');
+            if (chunkBtn) {
+                const buttonText = hasChunk ? 'Modify Chunk' : 'Add Chunk';
+                chunkBtn.textContent = buttonText;
+                
+                console.log('renderChunkStatusMeta: button found and updated', { buttonText });
+                
+                // Bind event listener once (keep inline onclick as backup)
+                if (!chunkButtonBound) {
+                    console.log('renderChunkStatusMeta: adding event listener');
+                    chunkBtn.addEventListener('click', function(e) {
+                        console.log('Button clicked via addEventListener');
+                        openChunkTaskModal();
+                    });
+                    chunkButtonBound = true;
+                } else {
+                    console.log('renderChunkStatusMeta: event listener already bound');
+                }
+            } else {
+                console.warn('renderChunkStatusMeta: button not found!');
+            }
+            
+            // Update modal title and hint based on whether chunks exist
+            const modalTitle = document.querySelector('#file-chunk-task-modal h3');
+            if (modalTitle) {
+                const iconSvg = modalTitle.querySelector('svg');
+                const titleText = hasChunk ? 'Modify Chunk (This File)' : 'Add Chunk (This File)';
+                modalTitle.innerHTML = '';
+                if (iconSvg) modalTitle.appendChild(iconSvg.cloneNode(true));
+                modalTitle.appendChild(document.createTextNode('\n      ' + titleText + '\n    '));
+            }
+            
+            // Update modal hint text
+            const modalHint = document.querySelector('#file-chunk-task-modal .hint');
+            if (modalHint) {
+                const hintText = hasChunk 
+                    ? 'Submit a single-file chunk generation task. Choose a profile and overwrite policy.'
+                    : 'Submit a single-file chunk generation task. Choose a profile to create chunks for this file.';
+                modalHint.textContent = hintText;
+            }
         }
     }
 
     async function openChunkTaskModal() {
+        console.log('openChunkTaskModal: function called');
+        
         // Check for other open modals
         const otherModals = document.querySelectorAll('[id$="-modal"]');
         const hasOpenModal = Array.from(otherModals).some(m => 
             m.id !== 'file-chunk-task-modal' && (m.style.display === 'flex' || m.style.display === 'block')
         );
         if (hasOpenModal) {
+            console.log('openChunkTaskModal: blocked by another modal');
             Toast.error('Please close the current dialog first');
             return;
         }
         
         if (!hasMarkdownForChunk) {
+            console.log('openChunkTaskModal: no markdown available');
             Toast.error('This file has no markdown yet. Generate markdown first.');
             return;
         }
+        
+        console.log('openChunkTaskModal: loading profiles and KBs');
         await Promise.all([loadFileChunkProfiles(), loadFileChunkKbs()]);
+        
         if (!Array.isArray(fileChunkProfiles) || fileChunkProfiles.length === 0) {
+            console.log('openChunkTaskModal: no profiles available');
             Toast.error('No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
             return;
         }
@@ -664,7 +722,11 @@
         }
         toggleBindingModeControl();
         const modal = document.getElementById('file-chunk-task-modal');
-        if (!modal) return;
+        if (!modal) {
+            console.error('openChunkTaskModal: modal element not found!');
+            return;
+        }
+        console.log('openChunkTaskModal: showing modal');
         modal.style.display = 'flex';
         if (window.syncModalState) window.syncModalState();
     }
@@ -1181,25 +1243,8 @@
         });
     };
     
-    // Override modal open functions to prevent overlaps
-    const originalOpenCatalogModal = window.openFileCatalogModal || function() {};
-    const originalOpenChunkModal = window.openChunkTaskModal || function() {};
-    
-    window.openFileCatalogModal = function() {
-        if (openModals.length > 0) {
-            Toast.error('Please close the current dialog first');
-            return;
-        }
-        openFileCatalogModal();
-    };
-    
-    window.openChunkTaskModal = function() {
-        if (openModals.length > 0) {
-            Toast.error('Please close the current dialog first');
-            return;
-        }
-        openChunkTaskModal();
-    };
+    // Note: openFileCatalogModal and openChunkTaskModal already have modal overlap checks
+    // No need to wrap them with additional window.* functions that cause recursion
     
     // ===== Markdown functionality =====
     let currentMarkdownContent = '';
