@@ -1,6 +1,14 @@
 ﻿# AI Actuarial Info Search
 
-AI Actuarial Info Search is a system for discovering, downloading, and cataloging AI-related documents from actuarial organizations worldwide, with a modern web interface for managing collections and data.
+AI Actuarial Info Search is a system for discovering, downloading, and cataloging AI-related documents from actuarial organizations worldwide, with a modern web interface, AI chatbot, and RAG-powered Q&A capabilities.
+
+## Recent Updates (February 2026)
+
+- ✅ **AI Chatbot Implemented** - Full RAG-based chatbot with multi-provider support
+- ✅ **Configuration Migration** - Migrated from `.env` to YAML config with backward compatibility
+- ✅ **Multi-AI Provider Support** - OpenAI, DeepSeek, Mistral, and custom providers
+- ✅ **File Detail Page Improvements** - Enhanced chunk management with dynamic Add/Modify buttons
+- ✅ **Documentation Reorganization** - Consolidated and timestamped all project documentation
 
 ## Purpose
 
@@ -15,17 +23,23 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 - SHA256-based deduplication to prevent duplicates
 - Incremental cataloging with summaries, keywords, and categories
 - **Markdown content management** - view, edit, and convert documents to markdown
+- **AI Chatbot with RAG** - intelligent Q&A with document retrieval and citations
+- **Multi-AI Provider Support** - configurable providers (OpenAI, DeepSeek, Mistral, etc.)
 - SQLite for local use and PostgreSQL for production
 - Web interface for search, export, and operational management
 - Per-task application logs and global operational logs
 
 ## Web Interface Capabilities
 
-- Database browser with sorting, selection, and CSV export
-- Site management with keyword and prefix exclusions
-- Task center for running and monitoring collections
-- **Markdown conversion** - convert locally-available PDFs and documents to markdown format (batch + per-file)
-- **File detail pages** - view, edit, preview markdown, and submit conversion tasks
+- **Dashboard** - overview of collections, tasks, and system status
+- **Database Browser** - search, filter, sort, and export catalog items
+- **Site Management** - configure sites, keywords, and prefix exclusions
+- **Task Center** - run and monitor crawling, cataloging, and conversion tasks
+- **RAG Management** - manage chunk profiles, knowledge bases, and indexing
+- **AI Chat** - interactive chat interface with knowledge base selection
+- **Markdown Conversion** - batch or per-file document to markdown conversion
+- **File Detail Pages** - view, edit, preview markdown, and submit tasks
+- **Settings** - AI provider configuration, model selection, and system settings
 - Global logs and per-task logs for operational visibility
 - Local file import with directory browsing
 - Admin-only catalog CSV export endpoint: `GET /api/export?format=csv`
@@ -38,24 +52,30 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
   - Guests cannot download stored files or run/edit tasks.
   - Tasks / Schedule / Settings and all write operations require a token.
 
-## AI Chatbot (Planned)
+## AI Chatbot with RAG ✅
 
-A comprehensive AI-powered chatbot with RAG (Retrieval-Augmented Generation) capabilities is planned for implementation:
+A comprehensive AI-powered chatbot with RAG (Retrieval-Augmented Generation) capabilities has been implemented:
 
-### Planned Features
+### Features
 - **Knowledge Base Management**: Create and manage multiple RAG-based knowledge bases from markdown documents
+- **Chunk Management**: Generate and manage document chunks with customizable profiles
 - **Intelligent Q&A**: Ask questions and get accurate answers with citations from source documents
-- **Multiple Chatbot Modes**: Expert, Summary, Tutorial, and Comparison modes for different use cases
+- **Multiple AI Providers**: Support for OpenAI, DeepSeek, Mistral, and other providers
 - **Conversation History**: Persistent multi-turn conversations with context awareness
-- **Smart Routing**: Automatic knowledge base selection based on query analysis
+- **Web Interface**: Chat UI with knowledge base selection, conversation management, and settings
 
-### Implementation Plan
-- Detailed planning documents available in repository
-- 3-phase implementation: (1) RAG Database, (2) AI Chatbot, (3) System Integration
-- Estimated timeline: 10-13 weeks for full implementation
-- Reference project: [AI_Knowledge_Base](https://github.com/ferryhe/AI_Knowledge_Base)
-- See `AI_CHATBOT_PROJECT_ROADMAP.md` for quick overview
-- See `docs/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md` for detailed plan
+### Components
+- **RAG Database**: Vector storage with chunk indexing and similarity search
+- **Chunk Profiles**: Configurable chunking strategies (size, overlap, method)
+- **Knowledge Bases**: Group and organize chunks for domain-specific Q&A
+- **Chat Engine**: Multi-turn conversation with RAG retrieval and response generation
+- **API & UI**: RESTful endpoints and modern chat interface
+
+### Documentation
+- Implementation complete: See `docs/20260212_PHASE2_COMPLETION_SUMMARY.md`
+- Integration summary: See `docs/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md`
+- API documentation: See `docs/API文档-2026-02-12-聊天机器人API接口说明.md`
+- User guide: See `docs/用户指南-2026-02-12-AI聊天机器人使用说明.md`
 
 ## Markdown Feature
 
@@ -169,18 +189,81 @@ flowchart LR
 
 ## Configuration Notes
 
+### Environment Variables
 - Web search keys: `BRAVE_API_KEY`, `SERPAPI_API_KEY`
 - Markdown conversion API keys: `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `SILICONFLOW_BASE_URL`
 - File deletion: set `ENABLE_FILE_DELETION=true` before starting the web service
+- Authentication: `REQUIRE_AUTH=true` (default: false for guest read-only mode)
+
+### Configuration Migration (2026-02-15)
+The project has migrated from `.env` file configuration to YAML-based configuration with backward compatibility:
+
+- **New**: AI provider settings in `config/sites.yaml` under `ai_providers` section
+- **Backward Compatible**: `.env` file still supported for API keys and basic settings
+- **Flexible**: Mix and match - use `.env` for secrets and `sites.yaml` for structured config
+- **Migration Guide**: See `docs/20260215_CONFIG_MIGRATION_PLAN.md`
+
+### AI Provider Configuration
+Configure AI providers in `config/sites.yaml`:
+```yaml
+ai_providers:
+  openai:
+    enabled: true
+    api_key: "${OPENAI_API_KEY}"  # From environment variable
+    default_model: "gpt-4o-mini"
+    models:
+      - "gpt-4o"
+      - "gpt-4o-mini"
+  deepseek:
+    enabled: true
+    api_key: "${DEEPSEEK_API_KEY}"
+    default_model: "deepseek-chat"
+```
+
+See `.env.example` for all available environment variables.
 
 ## Documentation Index
 
-- Quick start: `QUICK_START_NEW_FEATURES.md`
-- Reference: `QUICK_REFERENCE.md`
-- Database backend guide: `DATABASE_BACKEND_GUIDE.md`
-- Modular system guide: `MODULAR_SYSTEM_GUIDE.md`
-- **AI chatbot & RAG implementation plan**: `AI_CHATBOT_PROJECT_ROADMAP.md` and `docs/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md`
-- Implementation and summaries: `docs/`
+Documentation is organized by category in the `docs/` folder. See [docs/README.md](docs/README.md) for the complete structure.
+
+### Quick Start & Guides
+- Quick start: [docs/guides/QUICK_START_NEW_FEATURES.md](docs/guides/QUICK_START_NEW_FEATURES.md)
+- Quick reference: [docs/guides/QUICK_REFERENCE.md](docs/guides/QUICK_REFERENCE.md)
+- Service start guide: [docs/guides/SERVICE_START_GUIDE.md](docs/guides/SERVICE_START_GUIDE.md)
+- Database backend: [docs/guides/DATABASE_BACKEND_GUIDE.md](docs/guides/DATABASE_BACKEND_GUIDE.md)
+- Modular system: [docs/guides/MODULAR_SYSTEM_GUIDE.md](docs/guides/MODULAR_SYSTEM_GUIDE.md)
+
+### AI Chatbot Documentation
+- Roadmap: [docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md](docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md)
+- Quick start: [docs/guides/AI_CHATBOT_QUICK_START.md](docs/guides/AI_CHATBOT_QUICK_START.md)
+- Implementation plan: [docs/plans/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md](docs/plans/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md)
+- Architecture: [docs/architecture/20260212_PHASE2_1_CHATBOT_ARCHITECTURE_DESIGN.md](docs/architecture/20260212_PHASE2_1_CHATBOT_ARCHITECTURE_DESIGN.md)
+- Completion summary: [docs/implementation/20260212_PHASE2_COMPLETION_SUMMARY.md](docs/implementation/20260212_PHASE2_COMPLETION_SUMMARY.md)
+- Integration summary: [docs/implementation/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md](docs/implementation/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md)
+- API documentation (中文): [docs/zh-cn/20260212_API_CHATBOT_API_REFERENCE.md](docs/zh-cn/20260212_API_CHATBOT_API_REFERENCE.md)
+- User guide (中文): [docs/zh-cn/20260212_USER_GUIDE_CHATBOT.md](docs/zh-cn/20260212_USER_GUIDE_CHATBOT.md)
+
+### Configuration & Migration
+- Config migration plan: [docs/plans/20260215_CONFIG_MIGRATION_PLAN.md](docs/plans/20260215_CONFIG_MIGRATION_PLAN.md)
+- Implementation report: [docs/implementation/20260215_CONFIG_MIGRATION_IMPLEMENTATION_REPORT.md](docs/implementation/20260215_CONFIG_MIGRATION_IMPLEMENTATION_REPORT.md)
+- Multi-AI provider design: [docs/plans/20260214_MULTI_AI_PROVIDER_DESIGN.md](docs/plans/20260214_MULTI_AI_PROVIDER_DESIGN.md)
+- AI configuration summary (中文): [docs/zh-cn/20260215_AI_CONFIGURATION_SUMMARY_CN.md](docs/zh-cn/20260215_AI_CONFIGURATION_SUMMARY_CN.md)
+
+### Testing & Security
+- Manual testing guide: [docs/testing/20260215_MANUAL_TESTING_GUIDE.md](docs/testing/20260215_MANUAL_TESTING_GUIDE.md)
+- Manual testing checklist: [docs/testing/MANUAL_TESTING_CHECKLIST.md](docs/testing/MANUAL_TESTING_CHECKLIST.md)
+- Phase 2 security: [docs/security/20260213_PHASE2_SECURITY_SUMMARY.md](docs/security/20260213_PHASE2_SECURITY_SUMMARY.md)
+- Security guide: [docs/guides/SECURITY_IMPROVEMENTS_GUIDE.md](docs/guides/SECURITY_IMPROVEMENTS_GUIDE.md)
+
+### Documentation Categories
+- **Plans** (`docs/plans/`) - Planning and design documents
+- **Implementation** (`docs/implementation/`) - Implementation reports and summaries
+- **Architecture** (`docs/architecture/`) - System architecture and technical design
+- **Security** (`docs/security/`) - Security analysis and hardening reports
+- **Testing** (`docs/testing/`) - Testing guides and checklists
+- **Guides** (`docs/guides/`) - User and developer operational guides
+- **Chinese Docs** (`docs/zh-cn/`) - Chinese language documentation
+- **Archive** (`docs/archive/`) - Historical and deprecated documentation
 
 ## Output Artifacts
 

@@ -66,6 +66,121 @@ class RAGConfig:
             data_dir=os.getenv("RAG_DATA_DIR", "data/rag"),
         )
     
+    @classmethod
+    def from_yaml(cls, yaml_config: dict) -> "RAGConfig":
+        """Create configuration from sites.yaml rag_config and ai_config sections."""
+        rag_cfg = yaml_config.get("rag_config", {})
+        ai_cfg = yaml_config.get("ai_config", {}).get("embeddings", {})
+        
+        def safe_int(value, key: str, default: int):
+            """Safely convert value to int with helpful error message."""
+            if value is None:
+                return default
+            try:
+                return int(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"Invalid value for {key} in sites.yaml: {value!r}. Expected integer."
+                ) from e
+        
+        def safe_float(value, key: str, default: float):
+            """Safely convert value to float with helpful error message."""
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"Invalid value for {key} in sites.yaml: {value!r}. Expected float."
+                ) from e
+        
+        def safe_bool(value, key: str, default: bool):
+            """Safely convert value to bool with proper string handling."""
+            if value is None:
+                return default
+            # Handle string boolean values
+            if isinstance(value, str):
+                if value.lower() in ('true', '1', 'yes'):
+                    return True
+                elif value.lower() in ('false', '0', 'no'):
+                    return False
+                else:
+                    raise ValueError(
+                        f"Invalid boolean value for {key} in sites.yaml: {value!r}. "
+                        f"Expected true/false, yes/no, 1/0, or boolean type."
+                    )
+            # Handle actual boolean values from YAML
+            return bool(value)
+        
+        try:
+            return cls(
+                # Chunking configuration from rag_config
+                chunk_strategy=rag_cfg.get("chunk_strategy", "semantic_structure"),
+                max_chunk_tokens=safe_int(rag_cfg.get("max_chunk_tokens"), "rag_config.max_chunk_tokens", 800),
+                min_chunk_tokens=safe_int(rag_cfg.get("min_chunk_tokens"), "rag_config.min_chunk_tokens", 100),
+                preserve_headers=safe_bool(rag_cfg.get("preserve_headers"), "rag_config.preserve_headers", True),
+                preserve_citations=safe_bool(rag_cfg.get("preserve_citations"), "rag_config.preserve_citations", True),
+                include_hierarchy=safe_bool(rag_cfg.get("include_hierarchy"), "rag_config.include_hierarchy", True),
+                
+                # Embedding configuration from ai_config.embeddings
+                embedding_provider=ai_cfg.get("provider", "openai"),
+                embedding_model=ai_cfg.get("model", "text-embedding-3-large"),
+                embedding_batch_size=safe_int(ai_cfg.get("batch_size"), "ai_config.embeddings.batch_size", 64),
+                embedding_cache_enabled=safe_bool(ai_cfg.get("cache_enabled"), "ai_config.embeddings.cache_enabled", True),
+                
+                # Vector store configuration from ai_config.embeddings
+                similarity_threshold=safe_float(ai_cfg.get("similarity_threshold"), "ai_config.embeddings.similarity_threshold", 0.4),
+                index_type=rag_cfg.get("index_type", "Flat"),
+                
+                # API configuration (still from environment for sensitive data)
+                openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+                openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+                openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "60")),
+                
+                # Storage paths (can be overridden by environment)
+                data_dir=os.getenv("RAG_DATA_DIR", "data/rag"),
+            )
+        except ValueError:
+            # Re-raise configuration errors with context
+            raise
+        except Exception as e:
+            raise ValueError(f"Error loading RAG configuration from sites.yaml: {e}") from e
+    
+    @classmethod
+    def from_config(cls) -> "RAGConfig":
+        """
+        Create configuration from sites.yaml with .env fallback.
+        
+        This is the recommended method for loading configuration. It will:
+        1. Try to load from sites.yaml rag_config and ai_config sections
+        2. Fall back to environment variables if not found
+        
+        Raises:
+            ValueError: If configuration values are invalid in sites.yaml
+        """
+        try:
+            from config.yaml_config import load_yaml_config
+        except (ImportError, ModuleNotFoundError):
+            # If the YAML config loader is not available, fall back to env
+            return cls.from_env()
+        
+        try:
+            yaml_config = load_yaml_config()
+        except (FileNotFoundError, OSError):
+            # If the YAML file is missing or inaccessible, fall back to env
+            return cls.from_env()
+        
+        # Check if either rag_config or ai_config.embeddings exist
+        has_rag_config = "rag_config" in yaml_config
+        has_ai_embeddings = "ai_config" in yaml_config and "embeddings" in yaml_config.get("ai_config", {})
+        
+        if has_rag_config or has_ai_embeddings:
+            # This may raise ValueError if configuration is invalid
+            return cls.from_yaml(yaml_config)
+        
+        # Fallback to environment variables if sections are not present
+        return cls.from_env()
+    
     def validate(self) -> None:
         """Validate configuration."""
         if self.embedding_provider == "openai" and not self.openai_api_key:
