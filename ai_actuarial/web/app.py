@@ -3985,7 +3985,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 initialize_models()
                 logger.info("AI model cache initialized successfully")
             except Exception as e:
-                logger.error(f"Model cache initialization failed: {e}")
+                logger.exception("Model cache initialization failed")
         
         # Run in background thread to avoid blocking startup
         threading.Thread(target=init_models, daemon=True).start()

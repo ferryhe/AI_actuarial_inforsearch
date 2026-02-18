@@ -65,7 +65,7 @@ class TestModelCache:
         """Test forcing a cache refresh."""
         cache = ModelCache(refresh_interval_hours=1)
         
-        with patch.object(cache, '_refresh_models') as mock_refresh:
+        with patch.object(cache, '_perform_refresh') as mock_refresh:
             cache.force_refresh()
             mock_refresh.assert_called_once()
     
@@ -75,17 +75,19 @@ class TestModelCache:
         results = []
         
         def get_models():
-            with patch.object(cache, '_fetch_openai_models', return_value=DEFAULT_MODELS['openai']), \
-                 patch.object(cache, '_fetch_mistral_models', return_value=DEFAULT_MODELS['mistral']), \
-                 patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']):
-                models = cache.get_models()
-                results.append(models)
+            models = cache.get_models()
+            results.append(models)
         
-        threads = [threading.Thread(target=get_models) for _ in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        # Patch fetch methods once, outside the threads
+        with patch.object(cache, '_fetch_openai_models', return_value=DEFAULT_MODELS['openai']), \
+             patch.object(cache, '_fetch_mistral_models', return_value=DEFAULT_MODELS['mistral']), \
+             patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']):
+            
+            threads = [threading.Thread(target=get_models) for _ in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
         
         # All threads should get the same result
         assert len(results) == 5

@@ -66,43 +66,58 @@ class ModelCache:
             provider: Specific provider to get models for, or None for all
             
         Returns:
-            Dictionary of models by provider
+            Dictionary of models by provider (deep copy to prevent mutation)
         """
+        # Check if refresh is needed (with lock)
+        needs_refresh = False
         with self._lock:
-            # Initialize on first access
             if not self._initialized:
-                self._refresh_models()
-                self._initialized = True
-            
-            # Refresh if cache is stale
+                needs_refresh = True
             elif self._last_refresh and datetime.now() - self._last_refresh > self._refresh_interval:
-                logger.info("Model cache is stale, refreshing...")
-                self._refresh_models()
-            
+                needs_refresh = True
+        
+        # Perform refresh outside lock to avoid blocking
+        if needs_refresh:
+            self._perform_refresh()
+        
+        # Return cached models (with lock for consistency)
+        with self._lock:
             if provider:
-                return {provider: self._models.get(provider, DEFAULT_MODELS.get(provider, []))}
-            return self._models.copy()
+                # Deep copy to prevent mutation
+                provider_models = self._models.get(provider, DEFAULT_MODELS.get(provider, []))
+                return {provider: [model.copy() for model in provider_models]}
+            # Deep copy all models to prevent mutation
+            return {
+                prov: [model.copy() for model in models]
+                for prov, models in self._models.items()
+            }
     
     def force_refresh(self):
         """Force an immediate refresh of the model cache."""
-        with self._lock:
-            self._refresh_models()
+        self._perform_refresh()
     
-    def _refresh_models(self):
-        """Refresh models from all providers (must be called with lock held)."""
+    def _perform_refresh(self):
+        """Perform model refresh with minimal lock duration."""
         logger.info("Refreshing model cache from providers...")
         
+        # Fetch from all providers (without holding lock)
         new_models = {}
-        
-        # Fetch from each provider
         new_models["openai"] = self._fetch_openai_models()
         new_models["mistral"] = self._fetch_mistral_models()
         new_models["siliconflow"] = self._fetch_siliconflow_models()
         new_models["local"] = DEFAULT_MODELS["local"]  # Local models are static
         
-        self._models = new_models
-        self._last_refresh = datetime.now()
+        # Atomically swap in the new cache (with lock)
+        with self._lock:
+            self._models = new_models
+            self._last_refresh = datetime.now()
+            self._initialized = True
+        
         logger.info(f"Model cache refreshed at {self._last_refresh}")
+    
+    def _refresh_models(self):
+        """Deprecated: Use _perform_refresh() instead. Kept for compatibility."""
+        self._perform_refresh()
     
     def _fetch_openai_models(self) -> List[Dict]:
         """
@@ -144,8 +159,9 @@ class ModelCache:
             
             models = []
             for model_id, info in known_models.items():
-                # Check if the model or any of its variants are available
-                if any(mid.startswith(model_id) for mid in available_model_ids):
+                # Check if the model or any of its dated variants are available
+                # Use exact match or dated variant (e.g., gpt-4-0613) to avoid false positives
+                if any(mid == model_id or mid.startswith(model_id + '-') for mid in available_model_ids):
                     models.append({
                         "name": model_id,
                         "display_name": info["display_name"],
@@ -178,7 +194,7 @@ class ModelCache:
                 logger.warning("MISTRAL_API_KEY not set, using default models")
                 return DEFAULT_MODELS["mistral"]
             
-            client = Mistral(api_key=api_key, timeout=10)
+            client = Mistral(api_key=api_key, timeout_ms=10000)
             
             # Fetch available models
             response = client.models.list()
