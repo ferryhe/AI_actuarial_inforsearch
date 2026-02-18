@@ -115,10 +115,6 @@ class ModelCache:
         
         logger.info(f"Model cache refreshed at {self._last_refresh}")
     
-    def _refresh_models(self):
-        """Deprecated: Use _perform_refresh() instead. Kept for compatibility."""
-        self._perform_refresh()
-    
     def _fetch_openai_models(self) -> List[Dict]:
         """
         Fetch available models from OpenAI API.
