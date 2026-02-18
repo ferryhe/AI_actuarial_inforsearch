@@ -490,6 +490,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     from ..collectors.url import URLCollector
     from ..collectors.file import FileCollector
     from ..collectors.scheduled import ScheduledCollector
+    from ..llm_models import initialize_models, get_available_models
 
     # Bootstrap admin token (one-time initial setup for public deployments)
     bootstrap_token = os.getenv("BOOTSTRAP_ADMIN_TOKEN")
@@ -1409,33 +1410,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error deleting site")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
-    # AI model configuration constants
-    # Available models for each provider with their capabilities
-    AI_AVAILABLE_MODELS = {
-        "openai": [
-            {"name": "gpt-4-turbo", "display_name": "GPT-4 Turbo", "types": ["chatbot", "catalog"]},
-            {"name": "gpt-4", "display_name": "GPT-4", "types": ["chatbot", "catalog"]},
-            {"name": "gpt-4o", "display_name": "GPT-4o", "types": ["chatbot", "catalog"]},
-            {"name": "gpt-4o-mini", "display_name": "GPT-4o Mini", "types": ["chatbot", "catalog"]},
-            {"name": "gpt-3.5-turbo", "display_name": "GPT-3.5 Turbo", "types": ["chatbot", "catalog"]},
-            {"name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "types": ["embeddings"]},
-            {"name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "types": ["embeddings"]},
-            {"name": "text-embedding-ada-002", "display_name": "Text Embedding Ada 002", "types": ["embeddings"]},
-        ],
-        "mistral": [
-            {"name": "mistral-ocr-latest", "display_name": "Mistral OCR Latest", "types": ["ocr"]},
-            {"name": "pixtral-12b-2409", "display_name": "Pixtral 12B", "types": ["ocr"]},
-        ],
-        "siliconflow": [
-            {"name": "deepseek-ai/DeepSeek-OCR", "display_name": "DeepSeek OCR", "types": ["ocr"]},
-        ],
-        "local": [
-            {"name": "sentence-transformers", "display_name": "Sentence Transformers", "types": ["embeddings"]},
-            {"name": "docling", "display_name": "Docling", "types": ["ocr"]},
-            {"name": "marker", "display_name": "Marker", "types": ["ocr"]},
-        ],
-    }
-    
+    # AI model configuration
+    # Models are now fetched dynamically from LLM provider APIs
+    # See ai_actuarial/llm_models.py for implementation
     AI_SUPPORTED_PROVIDERS = {"openai", "mistral", "siliconflow", "local"}
     
     @app.route("/api/config/ai-models")
@@ -1466,9 +1443,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 },
             }
             
+            # Get available models from dynamic cache
+            available_models = get_available_models()
+            
             return jsonify({
                 "current": current_config,
-                "available": AI_AVAILABLE_MODELS,
+                "available": available_models,
             })
         except Exception as e:
             logger.exception("Error getting AI models config")
@@ -3997,6 +3977,18 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     # Only start scheduler if not in reloader or if main instance
     if not app.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         init_scheduler()
+        
+        # Initialize model cache on startup
+        def init_models():
+            try:
+                logger.info("Initializing AI model cache...")
+                initialize_models()
+                logger.info("AI model cache initialized successfully")
+            except Exception as e:
+                logger.exception("Model cache initialization failed")
+        
+        # Run in background thread to avoid blocking startup
+        threading.Thread(target=init_models, daemon=True).start()
 
     return app
 
