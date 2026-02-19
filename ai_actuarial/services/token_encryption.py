@@ -7,6 +7,7 @@ Based on RAGFlow best practices for secure token storage.
 """
 import os
 import logging
+import threading
 from cryptography.fernet import Fernet
 from typing import Optional
 
@@ -32,12 +33,16 @@ class TokenEncryption:
     
     _instance: Optional['TokenEncryption'] = None
     _cipher: Optional[Fernet] = None
+    _lock = threading.Lock()
     
     def __new__(cls):
-        """Singleton pattern to ensure one encryption instance."""
+        """Singleton pattern to ensure one encryption instance (thread-safe)."""
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialize()
+            with cls._lock:
+                # Double-check pattern for thread safety
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialize()
         return cls._instance
     
     def _initialize(self):
@@ -69,10 +74,14 @@ class TokenEncryption:
         )
         key = Fernet.generate_key()
         
-        # Log instruction for production setup
+        # Log instruction for production setup (without exposing the key)
         logger.warning(
-            f"Add this to your .env file:\n"
-            f"TOKEN_ENCRYPTION_KEY={key.decode()}"
+            "TOKEN_ENCRYPTION_KEY was not set and a key was auto-generated for this "
+            "process (development only). For production, generate a persistent key "
+            "using a command like:\n"
+            "  python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\"\n"
+            "and set it as TOKEN_ENCRYPTION_KEY in your environment or .env file."
         )
         
         return key
@@ -116,27 +125,29 @@ class TokenEncryption:
             decrypted_bytes = self._cipher.decrypt(encrypted.encode())
             return decrypted_bytes.decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt token: {e}")
+            logger.exception("Failed to decrypt token")
             raise ValueError(
                 "Failed to decrypt token. Key may be corrupted or encryption key changed."
-            )
+            ) from e
     
     @staticmethod
-    def mask_key(api_key: str, show_chars: int = 4) -> str:
+    def mask_key(api_key: Optional[str], show_chars: int = 4) -> str:
         """
         Mask an API key for display purposes.
         
         Args:
-            api_key: The API key to mask
+            api_key: The API key to mask (or None)
             show_chars: Number of characters to show at start and end (default: 4)
             
         Returns:
-            Masked key in format "sk-1234...wxyz" or "****" for short keys
+            Masked key in format "sk-1234...wxyz" or "****" for short/empty keys
             
         Examples:
             >>> TokenEncryption.mask_key("sk-1234567890abcdef")
             'sk-1...cdef'
             >>> TokenEncryption.mask_key("short")
+            '****'
+            >>> TokenEncryption.mask_key(None)
             '****'
         """
         if not api_key or len(api_key) < show_chars * 2:
