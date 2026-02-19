@@ -7,9 +7,8 @@ Based on RAGFlow best practices for secure token management.
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import Column, Integer, String, DateTime, Text, Index
-from sqlalchemy.ext.declarative import declarative_base
 
-Base = declarative_base()
+from ai_actuarial.db_models import Base
 
 
 class ApiToken(Base):
@@ -41,8 +40,8 @@ class ApiToken(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     
     # Provider and category (unique combination)
-    provider = Column(String(50), nullable=False, index=True)
-    category = Column(String(20), nullable=False, index=True)
+    provider = Column(String(50), nullable=False)
+    category = Column(String(20), nullable=False)
     
     # Encrypted credentials
     api_key_encrypted = Column(Text, nullable=False)
@@ -52,7 +51,7 @@ class ApiToken(Base):
     config_json = Column(Text, nullable=True)
     
     # Status tracking
-    status = Column(String(10), nullable=False, default='active', index=True)
+    status = Column(String(10), nullable=False, default='active')
     verification_status = Column(String(20), nullable=True)
     
     # Timestamps
