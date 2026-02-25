@@ -87,8 +87,14 @@
               <option value="">— select —</option>
               <option value="openai">OpenAI</option>
               <option value="mistral">Mistral AI</option>
-              <option value="siliconflow">SiliconFlow</option>
               <option value="anthropic">Anthropic</option>
+              <option value="google">Google Gemini</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="zhipuai">智谱AI (ZhipuAI)</option>
+              <option value="moonshot">Moonshot (Kimi)</option>
+              <option value="qwen">阿里通义 (Qwen)</option>
+              <option value="siliconflow">SiliconFlow</option>
+              <option value="cohere">Cohere</option>
             </select>
           </div>
           <div>
@@ -936,10 +942,16 @@ let llmProvidersData = { providers: [], known: {} };
 
 // Default base URLs per provider (mirrors KNOWN_LLM_PROVIDERS in app.py)
 const PROVIDER_DEFAULT_BASE_URLS = {
-  openai: 'https://api.openai.com/v1',
-  mistral: 'https://api.mistral.ai',
-  siliconflow: 'https://api.siliconflow.cn/v1',
-  anthropic: 'https://api.anthropic.com',
+  openai:     'https://api.openai.com/v1',
+  mistral:    'https://api.mistral.ai',
+  anthropic:  'https://api.anthropic.com',
+  google:     'https://generativelanguage.googleapis.com',
+  deepseek:   'https://api.deepseek.com/v1',
+  zhipuai:    'https://open.bigmodel.cn/api/paas/v4',
+  moonshot:   'https://api.moonshot.cn/v1',
+  qwen:       'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  siliconflow:'https://api.siliconflow.cn/v1',
+  cohere:     'https://api.cohere.com/v1',
 };
 
 async function loadLlmProviders() {
@@ -1039,7 +1051,7 @@ async function saveNewProvider() {
       body: JSON.stringify({ provider, api_key: apiKey, api_base_url: baseUrl || null }),
     });
     const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Save failed');
+    if (!resp.ok || !data.success) throw new Error(data.error || 'Save failed');
     notifySuccess(`Provider "${provider}" saved`);
     hideAddProviderForm();
     await loadLlmProviders();
@@ -1068,19 +1080,25 @@ let aiModelsData = { current: {}, available: {} };
 
 // Which providers support each AI function type
 const FUNCTION_PROVIDER_MAP = {
-  catalog:    ['openai', 'mistral', 'siliconflow', 'anthropic'],
-  embeddings: ['openai', 'local'],
-  chatbot:    ['openai', 'mistral', 'siliconflow', 'anthropic'],
+  catalog:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'qwen', 'siliconflow', 'cohere'],
+  embeddings: ['openai', 'google', 'zhipuai', 'qwen', 'siliconflow', 'cohere', 'local'],
+  chatbot:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'qwen', 'siliconflow', 'cohere'],
   ocr:        ['local', 'mistral', 'siliconflow'],
 };
 
 // Display names for known providers (local doesn't need an API key)
 const PROVIDER_DISPLAY_NAMES = {
-  openai: 'OpenAI',
-  mistral: 'Mistral AI',
-  siliconflow: 'SiliconFlow',
-  anthropic: 'Anthropic',
-  local: 'Local',
+  openai:     'OpenAI',
+  mistral:    'Mistral AI',
+  anthropic:  'Anthropic',
+  google:     'Google Gemini',
+  deepseek:   'DeepSeek',
+  zhipuai:    '智谱AI (ZhipuAI)',
+  moonshot:   'Moonshot (Kimi)',
+  qwen:       '阿里通义 (Qwen)',
+  siliconflow:'SiliconFlow',
+  cohere:     'Cohere',
+  local:      'Local',
 };
 
 async function loadAiModelsConfig() {
@@ -1246,7 +1264,7 @@ async function saveAiModelsConfig() {
   }
 }
 
-async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens(), loadLlmProviders(), loadAiModelsConfig()]); } catch (err) { notifyError(err.message || String(err)); } }
+async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens(), loadLlmProviders()]); await loadAiModelsConfig(); } catch (err) { notifyError(err.message || String(err)); } }
 initPage();
 
 // Add beforeunload warning for unsaved changes
