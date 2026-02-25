@@ -156,6 +156,9 @@ class ModelCache:
         new_models["siliconflow"] = self._fetch_siliconflow_models()
         new_models["anthropic"] = DEFAULT_MODELS["anthropic"]  # Static known models
         new_models["local"] = DEFAULT_MODELS["local"]  # Local models are static
+        # Additional providers with static model lists (no live discovery API yet)
+        for _provider in ("google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere"):
+            new_models[_provider] = DEFAULT_MODELS[_provider]
         
         # Atomically swap in the new cache (with lock)
         with self._lock:

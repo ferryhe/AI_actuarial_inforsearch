@@ -270,12 +270,15 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
         self.assertEqual(len(db_providers), 1)
 
     def test_delete_provider(self):
-        """DELETE /api/config/llm-providers/<provider> removes the DB entry."""
+        """DELETE /api/config/llm-providers/<provider> removes the DB entry and clears env var."""
         self.client.post(
             "/api/config/llm-providers",
             json={"provider": "siliconflow", "api_key": "sf-key"},
             headers=self.auth_header,
         )
+        # Confirm env var was set
+        self.assertEqual(os.environ.get("SILICONFLOW_API_KEY"), "sf-key")
+
         del_resp = self.client.delete(
             "/api/config/llm-providers/siliconflow",
             headers=self.auth_header,
@@ -283,11 +286,12 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
         self.assertEqual(del_resp.status_code, 200)
         self.assertTrue(del_resp.get_json()["success"])
 
-        # After deletion the DB entry is gone; env var may still be set
+        # After deletion: DB entry gone and env var cleared
         list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
         providers = list_resp.get_json()["providers"]
         db_providers = [p for p in providers if p["source"] == "db"]
         self.assertEqual(len(db_providers), 0)
+        self.assertIsNone(os.environ.get("SILICONFLOW_API_KEY"))
 
     def test_delete_nonexistent_provider_returns_404(self):
         """DELETE /api/config/llm-providers/<provider> returns 404 if not found."""

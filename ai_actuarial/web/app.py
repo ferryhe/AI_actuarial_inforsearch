@@ -515,20 +515,24 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             except Exception as exc:
                 logger.exception("Failed to close storage during bootstrap admin token setup")
 
-    # Load DB-stored LLM provider keys into env vars so existing backend code
-    # (llm_models, catalog_llm, chatbot, doc_to_md engines) picks them up on
-    # startup without requiring manual .env configuration.
+    # Eagerly load DB-stored LLM provider keys into os.environ at startup so that
+    # all downstream code (llm_models, catalog_llm, chatbot, doc_to_md engines)
+    # that reads os.getenv() has keys available immediately without requiring a
+    # manual restart.  DB values never override keys already present in the
+    # environment (i.e. .env takes priority over DB on startup).
+    #
+    # Tuple layout: (api_key_env_var, base_url_env_var | None)
     _PROVIDER_STARTUP_ENV_MAP = {
-        "openai": ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
-        "mistral": ("MISTRAL_API_KEY", "MISTRAL_BASE_URL"),
-        "siliconflow": ("SILICONFLOW_API_KEY", "SILICONFLOW_BASE_URL"),
-        "anthropic": ("ANTHROPIC_API_KEY", None),
-        "google": ("GOOGLE_API_KEY", None),
-        "deepseek": ("DEEPSEEK_API_KEY", None),
-        "zhipuai": ("ZHIPUAI_API_KEY", None),
-        "moonshot": ("MOONSHOT_API_KEY", None),
-        "qwen": ("DASHSCOPE_API_KEY", None),
-        "cohere": ("COHERE_API_KEY", None),
+        "openai":     ("OPENAI_API_KEY",    "OPENAI_BASE_URL"),
+        "mistral":    ("MISTRAL_API_KEY",   "MISTRAL_BASE_URL"),
+        "anthropic":  ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+        "google":     ("GOOGLE_API_KEY",    "GOOGLE_BASE_URL"),
+        "deepseek":   ("DEEPSEEK_API_KEY",  "DEEPSEEK_BASE_URL"),
+        "zhipuai":    ("ZHIPUAI_API_KEY",   "ZHIPUAI_BASE_URL"),
+        "moonshot":   ("MOONSHOT_API_KEY",  "MOONSHOT_BASE_URL"),
+        "qwen":       ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"),
+        "siliconflow":("SILICONFLOW_API_KEY","SILICONFLOW_BASE_URL"),
+        "cohere":     ("COHERE_API_KEY",    "COHERE_BASE_URL"),
     }
     _startup_storage = None
     try:
@@ -1632,8 +1636,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if env_var:
                 os.environ[env_var] = api_key
             if base_url:
-                base_url_var = f"{provider.upper()}_BASE_URL"
-                os.environ[base_url_var] = base_url
+                _, base_url_env_var = _PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+                if base_url_env_var:
+                    os.environ[base_url_env_var] = base_url
 
             return jsonify({"success": True})
         except Exception as e:
@@ -1657,6 +1662,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             deleted = storage.delete_llm_provider(provider)
             if not deleted:
                 return _api_error("Provider not found", status_code=404)
+            # Clear the corresponding env vars so the key is no longer usable
+            # in the current process after deletion.
+            key_env, url_env = _PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+            if key_env:
+                os.environ.pop(key_env, None)
+            if url_env:
+                os.environ.pop(url_env, None)
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error deleting LLM provider")
