@@ -650,7 +650,7 @@ rag_config:
   include_hierarchy: true
   index_type: Flat
 features:
-  enable_file_deletion: false
+  enable_file_deletion: true
   require_auth: false
   enable_csrf: false
   enable_security_headers: true
