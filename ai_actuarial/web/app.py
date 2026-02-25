@@ -1534,6 +1534,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 pass
 
 
+    @app.route("/api/config/ai-models")
     @require_permissions("config.read")
     def api_config_ai_models():
         """Get AI model configuration and available models."""
