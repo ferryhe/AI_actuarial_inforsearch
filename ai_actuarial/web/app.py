@@ -523,6 +523,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         "mistral": ("MISTRAL_API_KEY", "MISTRAL_BASE_URL"),
         "siliconflow": ("SILICONFLOW_API_KEY", "SILICONFLOW_BASE_URL"),
         "anthropic": ("ANTHROPIC_API_KEY", None),
+        "google": ("GOOGLE_API_KEY", None),
+        "deepseek": ("DEEPSEEK_API_KEY", None),
+        "zhipuai": ("ZHIPUAI_API_KEY", None),
+        "moonshot": ("MOONSHOT_API_KEY", None),
+        "qwen": ("DASHSCOPE_API_KEY", None),
+        "cohere": ("COHERE_API_KEY", None),
     }
     _startup_storage = None
     try:
@@ -1447,7 +1453,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     # AI model configuration
     # Models are now fetched dynamically from LLM provider APIs
     # See ai_actuarial/llm_models.py for implementation
-    AI_SUPPORTED_PROVIDERS = {"openai", "mistral", "siliconflow", "anthropic", "local"}
+    AI_SUPPORTED_PROVIDERS = {
+        "openai", "mistral", "siliconflow", "anthropic",
+        "google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere",
+        "local",
+    }
 
     # Known LLM providers that can be configured with API keys
     KNOWN_LLM_PROVIDERS = {
@@ -1461,15 +1471,45 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             "default_base_url": "https://api.mistral.ai",
             "api_key_hint": "...",
         },
+        "anthropic": {
+            "display_name": "Anthropic",
+            "default_base_url": "https://api.anthropic.com",
+            "api_key_hint": "sk-ant-...",
+        },
+        "google": {
+            "display_name": "Google Gemini",
+            "default_base_url": "https://generativelanguage.googleapis.com",
+            "api_key_hint": "AIza...",
+        },
+        "deepseek": {
+            "display_name": "DeepSeek",
+            "default_base_url": "https://api.deepseek.com/v1",
+            "api_key_hint": "sk-...",
+        },
+        "zhipuai": {
+            "display_name": "智谱AI (ZhipuAI)",
+            "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "api_key_hint": "...",
+        },
+        "moonshot": {
+            "display_name": "Moonshot (Kimi)",
+            "default_base_url": "https://api.moonshot.cn/v1",
+            "api_key_hint": "sk-...",
+        },
+        "qwen": {
+            "display_name": "阿里通义 (Qwen)",
+            "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "api_key_hint": "sk-...",
+        },
         "siliconflow": {
             "display_name": "SiliconFlow",
             "default_base_url": "https://api.siliconflow.cn/v1",
             "api_key_hint": "sk-...",
         },
-        "anthropic": {
-            "display_name": "Anthropic",
-            "default_base_url": "https://api.anthropic.com",
-            "api_key_hint": "sk-ant-...",
+        "cohere": {
+            "display_name": "Cohere",
+            "default_base_url": "https://api.cohere.com/v1",
+            "api_key_hint": "...",
         },
     }
 
@@ -1477,8 +1517,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     _PROVIDER_ENV_VARS = {
         "openai": "OPENAI_API_KEY",
         "mistral": "MISTRAL_API_KEY",
-        "siliconflow": "SILICONFLOW_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "zhipuai": "ZHIPUAI_API_KEY",
+        "moonshot": "MOONSHOT_API_KEY",
+        "qwen": "DASHSCOPE_API_KEY",
+        "siliconflow": "SILICONFLOW_API_KEY",
+        "cohere": "COHERE_API_KEY",
     }
 
     @app.route("/api/config/llm-providers")
@@ -1592,7 +1638,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error adding LLM provider")
-            return _api_error("Internal server error", status_code=500, detail=str(e))
+            # Always include the detail for this admin-only endpoint so users can diagnose
+            return jsonify({"success": False, "error": f"Failed to save provider: {e}"}), 500
         finally:
             try:
                 if storage is not None:
