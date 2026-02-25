@@ -1755,8 +1755,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         
                         # Validate model is compatible with function
                         provider = config_data["ai_config"][function].get("provider", "")
-                        if provider in AI_AVAILABLE_MODELS:
-                            provider_models = AI_AVAILABLE_MODELS[provider]
+                        available_models_map = get_available_models()
+                        if provider in available_models_map:
+                            provider_models = available_models_map[provider]
                             compatible_models = [m for m in provider_models if function in m.get("types", [])]
                             valid_model_names = [m["name"] for m in compatible_models]
                             
