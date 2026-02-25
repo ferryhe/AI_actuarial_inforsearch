@@ -515,6 +515,50 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             except Exception as exc:
                 logger.exception("Failed to close storage during bootstrap admin token setup")
 
+    # Eagerly load DB-stored LLM provider keys into os.environ at startup so that
+    # all downstream code (llm_models, catalog_llm, chatbot, doc_to_md engines)
+    # that reads os.getenv() has keys available immediately without requiring a
+    # manual restart.  DB values never override keys already present in the
+    # environment (i.e. .env takes priority over DB on startup).
+    #
+    # Tuple layout: (api_key_env_var, base_url_env_var | None)
+    _PROVIDER_STARTUP_ENV_MAP = {
+        "openai":     ("OPENAI_API_KEY",    "OPENAI_BASE_URL"),
+        "mistral":    ("MISTRAL_API_KEY",   "MISTRAL_BASE_URL"),
+        "anthropic":  ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
+        "google":     ("GOOGLE_API_KEY",    "GOOGLE_BASE_URL"),
+        "deepseek":   ("DEEPSEEK_API_KEY",  "DEEPSEEK_BASE_URL"),
+        "zhipuai":    ("ZHIPUAI_API_KEY",   "ZHIPUAI_BASE_URL"),
+        "moonshot":   ("MOONSHOT_API_KEY",  "MOONSHOT_BASE_URL"),
+        "qwen":       ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"),
+        "siliconflow":("SILICONFLOW_API_KEY","SILICONFLOW_BASE_URL"),
+        "cohere":     ("COHERE_API_KEY",    "COHERE_BASE_URL"),
+    }
+    _startup_storage = None
+    try:
+        from ..services.token_encryption import TokenEncryption as _TE
+        _startup_storage = Storage(db_path)
+        _enc = _TE()
+        for _p in _startup_storage.list_llm_providers():
+            _pname = _p["provider"]
+            _key_env, _url_env = _PROVIDER_STARTUP_ENV_MAP.get(_pname, (None, None))
+            if _key_env and not os.getenv(_key_env):  # Don't override .env values
+                try:
+                    os.environ[_key_env] = _enc.decrypt(_p["api_key_encrypted"])
+                except Exception:
+                    logger.warning("Could not decrypt stored key for provider: %s", _pname)
+            if _url_env and _p.get("api_base_url") and not os.getenv(_url_env):
+                os.environ[_url_env] = _p["api_base_url"]
+        logger.info("LLM provider keys loaded from database into environment")
+    except Exception:
+        logger.warning("Could not load LLM provider keys from database at startup")
+    finally:
+        try:
+            if _startup_storage is not None:
+                _startup_storage.close()
+        except Exception:
+            pass
+
     # Load task history from disk
     history_file = Path('data/job_history.jsonl')
     if history_file.exists():
@@ -1413,8 +1457,230 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     # AI model configuration
     # Models are now fetched dynamically from LLM provider APIs
     # See ai_actuarial/llm_models.py for implementation
-    AI_SUPPORTED_PROVIDERS = {"openai", "mistral", "siliconflow", "local"}
-    
+    AI_SUPPORTED_PROVIDERS = {
+        "openai", "mistral", "siliconflow", "anthropic",
+        "google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere",
+        "local",
+    }
+
+    # Known LLM providers that can be configured with API keys
+    KNOWN_LLM_PROVIDERS = {
+        "openai": {
+            "display_name": "OpenAI",
+            "default_base_url": "https://api.openai.com/v1",
+            "api_key_hint": "sk-...",
+        },
+        "mistral": {
+            "display_name": "Mistral AI",
+            "default_base_url": "https://api.mistral.ai",
+            "api_key_hint": "...",
+        },
+        "anthropic": {
+            "display_name": "Anthropic",
+            "default_base_url": "https://api.anthropic.com",
+            "api_key_hint": "sk-ant-...",
+        },
+        "google": {
+            "display_name": "Google Gemini",
+            "default_base_url": "https://generativelanguage.googleapis.com",
+            "api_key_hint": "AIza...",
+        },
+        "deepseek": {
+            "display_name": "DeepSeek",
+            "default_base_url": "https://api.deepseek.com/v1",
+            "api_key_hint": "sk-...",
+        },
+        "zhipuai": {
+            "display_name": "智谱AI (ZhipuAI)",
+            "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "api_key_hint": "...",
+        },
+        "moonshot": {
+            "display_name": "Moonshot (Kimi)",
+            "default_base_url": "https://api.moonshot.cn/v1",
+            "api_key_hint": "sk-...",
+        },
+        "qwen": {
+            "display_name": "阿里通义 (Qwen)",
+            "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "api_key_hint": "sk-...",
+        },
+        "siliconflow": {
+            "display_name": "SiliconFlow",
+            "default_base_url": "https://api.siliconflow.cn/v1",
+            "api_key_hint": "sk-...",
+        },
+        "cohere": {
+            "display_name": "Cohere",
+            "default_base_url": "https://api.cohere.com/v1",
+            "api_key_hint": "...",
+        },
+    }
+
+    # Mapping from provider name to the environment variable that holds its API key
+    _PROVIDER_ENV_VARS = {
+        "openai": "OPENAI_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "zhipuai": "ZHIPUAI_API_KEY",
+        "moonshot": "MOONSHOT_API_KEY",
+        "qwen": "DASHSCOPE_API_KEY",
+        "siliconflow": "SILICONFLOW_API_KEY",
+        "cohere": "COHERE_API_KEY",
+    }
+
+    @app.route("/api/config/llm-providers")
+    @require_permissions("config.read")
+    def api_config_llm_providers_list():
+        """List configured LLM provider API tokens.
+
+        Returns providers from the database (source='db') as well as providers
+        whose API key is present in the environment (source='env') that are not
+        already overridden by a DB entry.  This ensures backward compatibility
+        with deployments that still rely on .env / environment variables.
+        """
+        storage = None
+        try:
+            storage = Storage(db_path)
+            db_providers = storage.list_llm_providers()
+
+            # Build result from DB records first (these take priority)
+            db_provider_keys = {p["provider"] for p in db_providers}
+            result = []
+            for p in db_providers:
+                pinfo = KNOWN_LLM_PROVIDERS.get(p["provider"], {})
+                result.append({
+                    "provider": p["provider"],
+                    "display_name": pinfo.get("display_name", p["provider"]),
+                    "api_base_url": p["api_base_url"],
+                    "api_key_masked": "****",
+                    "status": p["status"],
+                    "source": "db",
+                    "created_at": p["created_at"],
+                    "updated_at": p["updated_at"],
+                })
+
+            # Add providers configured via environment variables that aren't in DB
+            for provider, env_var in _PROVIDER_ENV_VARS.items():
+                if provider in db_provider_keys:
+                    continue  # Already included from DB
+                api_key = os.getenv(env_var)
+                if api_key:
+                    pinfo = KNOWN_LLM_PROVIDERS.get(provider, {})
+                    base_url_var = f"{provider.upper()}_BASE_URL"
+                    base_url = os.getenv(base_url_var) or None
+                    result.append({
+                        "provider": provider,
+                        "display_name": pinfo.get("display_name", provider),
+                        "api_base_url": base_url,
+                        "api_key_masked": "****",
+                        "status": "active",
+                        "source": "env",
+                        "created_at": None,
+                        "updated_at": None,
+                    })
+
+            return jsonify({"providers": result, "known": KNOWN_LLM_PROVIDERS})
+        except Exception as e:
+            logger.exception("Error listing LLM providers")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/config/llm-providers", methods=["POST"])
+    @require_permissions("config.write")
+    def api_config_llm_providers_add():
+        """Add or update an LLM provider API token.
+
+        Saves the encrypted key to the database and also sets the corresponding
+        environment variable in the current process so that existing backend code
+        that reads os.getenv() (llm_models, catalog_llm, chatbot, doc_to_md) can
+        use the new key immediately without requiring a restart.
+        """
+        storage = None
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+
+            provider = str(data.get("provider") or "").strip().lower()
+            api_key = str(data.get("api_key") or "").strip()
+            base_url = str(data.get("api_base_url") or "").strip() or None
+            notes = str(data.get("notes") or "").strip() or None
+
+            if not provider:
+                return _api_error("provider is required", status_code=400)
+            if not api_key:
+                return _api_error("api_key is required", status_code=400)
+
+            from ..services.token_encryption import TokenEncryption
+            encryption = TokenEncryption()
+            encrypted_key = encryption.encrypt(api_key)
+
+            storage = Storage(db_path)
+            storage.upsert_llm_provider(
+                provider=provider,
+                api_key_encrypted=encrypted_key,
+                base_url=base_url,
+                notes=notes,
+            )
+
+            # Also set env var in-process for immediate backward-compatible use
+            env_var = _PROVIDER_ENV_VARS.get(provider)
+            if env_var:
+                os.environ[env_var] = api_key
+            if base_url:
+                _, base_url_env_var = _PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+                if base_url_env_var:
+                    os.environ[base_url_env_var] = base_url
+
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error adding LLM provider")
+            # Always include the detail for this admin-only endpoint so users can diagnose
+            return jsonify({"success": False, "error": f"Failed to save provider: {e}"}), 500
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/config/llm-providers/<provider>", methods=["DELETE"])
+    @require_permissions("config.write")
+    def api_config_llm_providers_delete(provider: str):
+        """Delete an LLM provider API token."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            deleted = storage.delete_llm_provider(provider)
+            if not deleted:
+                return _api_error("Provider not found", status_code=404)
+            # Clear the corresponding env vars so the key is no longer usable
+            # in the current process after deletion.
+            key_env, url_env = _PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+            if key_env:
+                os.environ.pop(key_env, None)
+            if url_env:
+                os.environ.pop(url_env, None)
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting LLM provider")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+
     @app.route("/api/config/ai-models")
     @require_permissions("config.read")
     def api_config_ai_models():
@@ -1501,8 +1767,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         
                         # Validate model is compatible with function
                         provider = config_data["ai_config"][function].get("provider", "")
-                        if provider in AI_AVAILABLE_MODELS:
-                            provider_models = AI_AVAILABLE_MODELS[provider]
+                        available_models_map = get_available_models()
+                        if provider in available_models_map:
+                            provider_models = available_models_map[provider]
                             compatible_models = [m for m in provider_models if function in m.get("types", [])]
                             valid_model_names = [m["name"] for m in compatible_models]
                             

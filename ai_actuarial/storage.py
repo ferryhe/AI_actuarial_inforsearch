@@ -21,6 +21,7 @@ class Storage:
             "catalog_items",
             "auth_tokens",
             "audit_events",
+            "api_tokens",
             "chunk_profiles",
             "file_chunk_sets",
             "global_chunks",
@@ -151,6 +152,29 @@ class Storage:
         self._conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at)
+            """
+        )
+
+        # api_tokens: encrypted API keys for LLM and other external service providers
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'llm',
+                api_key_encrypted TEXT NOT NULL,
+                api_base_url TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT,
+                updated_at TEXT,
+                notes TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_provider_category
+            ON api_tokens(provider, category)
             """
         )
         self._conn.commit()
@@ -598,6 +622,103 @@ class Storage:
             (ts, int(token_id)),
         )
         self._maybe_commit()
+
+    # ---------------------------------------------------------------------------
+    # LLM provider API token management
+    # ---------------------------------------------------------------------------
+
+    _LLM_TOKEN_COLS = (
+        "id", "provider", "category", "api_key_encrypted",
+        "api_base_url", "status", "created_at", "updated_at", "notes",
+    )
+
+    def upsert_llm_provider(
+        self,
+        provider: str,
+        api_key_encrypted: str,
+        base_url: str | None = None,
+        notes: str | None = None,
+        category: str = "llm",
+    ) -> None:
+        """Insert or update an LLM provider API token.
+
+        Args:
+            provider: Provider identifier (e.g. 'openai', 'mistral').
+            api_key_encrypted: Fernet-encrypted API key string.
+            base_url: Optional custom API base URL.
+            notes: Optional notes.
+            category: Token category (default 'llm').
+        """
+        ts = self.now()
+        self._conn.execute(
+            """
+            INSERT INTO api_tokens
+                (provider, category, api_key_encrypted, api_base_url, status, created_at, updated_at, notes)
+            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
+            ON CONFLICT(provider, category) DO UPDATE SET
+                api_key_encrypted = excluded.api_key_encrypted,
+                api_base_url = excluded.api_base_url,
+                notes = excluded.notes,
+                updated_at = excluded.updated_at
+            """,
+            (provider, category, api_key_encrypted, base_url, ts, ts, notes),
+        )
+        self._maybe_commit()
+
+    def get_llm_provider(
+        self, provider: str, category: str = "llm"
+    ) -> dict | None:
+        """Get a single LLM provider record.
+
+        Args:
+            provider: Provider identifier.
+            category: Token category (default 'llm').
+
+        Returns:
+            Dictionary with provider data or None if not found.
+        """
+        cur = self._conn.execute(
+            "SELECT id, provider, category, api_key_encrypted, api_base_url, status, "
+            "created_at, updated_at, notes FROM api_tokens WHERE provider=? AND category=?",
+            (provider, category),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return dict(zip(self._LLM_TOKEN_COLS, row))
+
+    def list_llm_providers(self, category: str = "llm") -> list[dict]:
+        """List all LLM provider records for the given category.
+
+        Args:
+            category: Token category (default 'llm').
+
+        Returns:
+            List of provider dictionaries ordered by provider name.
+        """
+        cur = self._conn.execute(
+            "SELECT id, provider, category, api_key_encrypted, api_base_url, status, "
+            "created_at, updated_at, notes FROM api_tokens WHERE category=? ORDER BY provider",
+            (category,),
+        )
+        return [dict(zip(self._LLM_TOKEN_COLS, row)) for row in cur.fetchall()]
+
+    def delete_llm_provider(self, provider: str, category: str = "llm") -> bool:
+        """Delete an LLM provider record.
+
+        Args:
+            provider: Provider identifier.
+            category: Token category (default 'llm').
+
+        Returns:
+            True if a record was deleted, False if not found.
+        """
+        cur = self._conn.execute(
+            "DELETE FROM api_tokens WHERE provider=? AND category=?",
+            (provider, category),
+        )
+        self._maybe_commit()
+        return cur.rowcount > 0
 
     def file_exists_by_hash(self, sha256: str) -> bool:
         """Check if a file with the given hash already exists in the database.

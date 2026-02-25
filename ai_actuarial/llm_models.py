@@ -28,11 +28,60 @@ DEFAULT_MODELS = {
         {"name": "text-embedding-ada-002", "display_name": "Text Embedding Ada 002", "types": ["embeddings"]},
     ],
     "mistral": [
+        {"name": "mistral-large-latest", "display_name": "Mistral Large", "types": ["chatbot", "catalog"]},
+        {"name": "mistral-medium-latest", "display_name": "Mistral Medium", "types": ["chatbot", "catalog"]},
+        {"name": "mistral-small-latest", "display_name": "Mistral Small", "types": ["chatbot", "catalog"]},
+        {"name": "open-mistral-7b", "display_name": "Mistral 7B", "types": ["chatbot", "catalog"]},
+        {"name": "pixtral-large-latest", "display_name": "Pixtral Large", "types": ["chatbot", "catalog", "ocr"]},
         {"name": "mistral-ocr-latest", "display_name": "Mistral OCR Latest", "types": ["ocr"]},
         {"name": "pixtral-12b-2409", "display_name": "Pixtral 12B", "types": ["ocr"]},
     ],
     "siliconflow": [
+        {"name": "deepseek-ai/DeepSeek-V3", "display_name": "DeepSeek V3", "types": ["chatbot", "catalog"]},
+        {"name": "deepseek-ai/DeepSeek-R1", "display_name": "DeepSeek R1", "types": ["chatbot", "catalog"]},
+        {"name": "Qwen/Qwen2.5-72B-Instruct", "display_name": "Qwen 2.5 72B", "types": ["chatbot", "catalog"]},
         {"name": "deepseek-ai/DeepSeek-OCR", "display_name": "DeepSeek OCR", "types": ["ocr"]},
+        {"name": "BAAI/bge-large-zh-v1.5", "display_name": "BGE Large ZH", "types": ["embeddings"]},
+        {"name": "BAAI/bge-m3", "display_name": "BGE M3", "types": ["embeddings"]},
+    ],
+    "anthropic": [
+        {"name": "claude-opus-4-5", "display_name": "Claude Opus 4.5", "types": ["chatbot", "catalog"]},
+        {"name": "claude-3-5-sonnet-20241022", "display_name": "Claude 3.5 Sonnet", "types": ["chatbot", "catalog"]},
+        {"name": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku", "types": ["chatbot", "catalog"]},
+        {"name": "claude-3-opus-20240229", "display_name": "Claude 3 Opus", "types": ["chatbot", "catalog"]},
+    ],
+    "google": [
+        {"name": "gemini-2.0-flash", "display_name": "Gemini 2.0 Flash", "types": ["chatbot", "catalog"]},
+        {"name": "gemini-2.0-pro-exp", "display_name": "Gemini 2.0 Pro Exp", "types": ["chatbot", "catalog"]},
+        {"name": "gemini-1.5-pro", "display_name": "Gemini 1.5 Pro", "types": ["chatbot", "catalog"]},
+        {"name": "gemini-1.5-flash", "display_name": "Gemini 1.5 Flash", "types": ["chatbot", "catalog"]},
+        {"name": "text-embedding-004", "display_name": "Text Embedding 004", "types": ["embeddings"]},
+    ],
+    "deepseek": [
+        {"name": "deepseek-chat", "display_name": "DeepSeek Chat (V3)", "types": ["chatbot", "catalog"]},
+        {"name": "deepseek-reasoner", "display_name": "DeepSeek Reasoner (R1)", "types": ["chatbot", "catalog"]},
+    ],
+    "zhipuai": [
+        {"name": "glm-4-plus", "display_name": "GLM-4 Plus", "types": ["chatbot", "catalog"]},
+        {"name": "glm-4-air", "display_name": "GLM-4 Air", "types": ["chatbot", "catalog"]},
+        {"name": "glm-4v-plus", "display_name": "GLM-4V Plus", "types": ["chatbot", "catalog"]},
+        {"name": "embedding-3", "display_name": "Embedding 3", "types": ["embeddings"]},
+    ],
+    "moonshot": [
+        {"name": "moonshot-v1-128k", "display_name": "Moonshot v1 128K", "types": ["chatbot", "catalog"]},
+        {"name": "moonshot-v1-32k", "display_name": "Moonshot v1 32K", "types": ["chatbot", "catalog"]},
+        {"name": "moonshot-v1-8k", "display_name": "Moonshot v1 8K", "types": ["chatbot", "catalog"]},
+    ],
+    "qwen": [
+        {"name": "qwen-max", "display_name": "Qwen Max", "types": ["chatbot", "catalog"]},
+        {"name": "qwen-plus", "display_name": "Qwen Plus", "types": ["chatbot", "catalog"]},
+        {"name": "qwen-long", "display_name": "Qwen Long", "types": ["chatbot", "catalog"]},
+        {"name": "text-embedding-v3", "display_name": "Qwen Text Embedding V3", "types": ["embeddings"]},
+    ],
+    "cohere": [
+        {"name": "command-r-plus", "display_name": "Command R+", "types": ["chatbot", "catalog"]},
+        {"name": "command-r", "display_name": "Command R", "types": ["chatbot", "catalog"]},
+        {"name": "embed-multilingual-v3.0", "display_name": "Embed Multilingual v3", "types": ["embeddings"]},
     ],
     "local": [
         {"name": "sentence-transformers", "display_name": "Sentence Transformers", "types": ["embeddings"]},
@@ -105,7 +154,11 @@ class ModelCache:
         new_models["openai"] = self._fetch_openai_models()
         new_models["mistral"] = self._fetch_mistral_models()
         new_models["siliconflow"] = self._fetch_siliconflow_models()
+        new_models["anthropic"] = DEFAULT_MODELS["anthropic"]  # Static known models
         new_models["local"] = DEFAULT_MODELS["local"]  # Local models are static
+        # Additional providers with static model lists (no live discovery API yet)
+        for _provider in ("google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere"):
+            new_models[_provider] = DEFAULT_MODELS[_provider]
         
         # Atomically swap in the new cache (with lock)
         with self._lock:
