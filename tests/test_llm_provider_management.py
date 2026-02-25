@@ -138,6 +138,13 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
         self._orig_categories = os.environ.get("CATEGORIES_CONFIG_PATH")
         self._orig_bootstrap = os.environ.get("BOOTSTRAP_ADMIN_TOKEN")
         self._orig_secret = os.environ.get("FLASK_SECRET_KEY")
+        # Clear any provider API key env vars that would pollute test isolation
+        self._orig_provider_keys = {}
+        for var in ("OPENAI_API_KEY", "MISTRAL_API_KEY", "SILICONFLOW_API_KEY",
+                    "ANTHROPIC_API_KEY", "OPENAI_BASE_URL", "MISTRAL_BASE_URL",
+                    "SILICONFLOW_BASE_URL"):
+            self._orig_provider_keys[var] = os.environ.pop(var, None)
+
         os.environ["CONFIG_PATH"] = self.sites_config_path
         os.environ["CATEGORIES_CONFIG_PATH"] = self.categories_config_path
         os.environ["BOOTSTRAP_ADMIN_TOKEN"] = "test-admin-token"
@@ -158,6 +165,12 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        # Restore provider env vars
+        for var, val in self._orig_provider_keys.items():
+            if val is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = val
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_list_providers_empty(self):
@@ -185,12 +198,13 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.get_json()["success"])
 
-        # Verify it appears in the list
+        # Verify it appears in the list with source='db'
         list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
         providers = list_resp.get_json()["providers"]
-        self.assertEqual(len(providers), 1)
-        self.assertEqual(providers[0]["provider"], "openai")
-        self.assertEqual(providers[0]["api_key_masked"], "****")  # Key is masked
+        db_providers = [p for p in providers if p["source"] == "db"]
+        self.assertEqual(len(db_providers), 1)
+        self.assertEqual(db_providers[0]["provider"], "openai")
+        self.assertEqual(db_providers[0]["api_key_masked"], "****")  # Key is masked
         # Actual plaintext key must NOT be in the response
         self.assertNotIn("sk-test-1234567890", str(providers))
 
@@ -205,7 +219,19 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
 
         list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
         providers = list_resp.get_json()["providers"]
-        self.assertEqual(providers[0]["api_base_url"], "https://custom.endpoint/v1")
+        db_providers = [p for p in providers if p["source"] == "db"]
+        self.assertEqual(db_providers[0]["api_base_url"], "https://custom.endpoint/v1")
+
+    def test_add_provider_sets_env_var(self):
+        """POST /api/config/llm-providers sets the env var for immediate use."""
+        import os
+        self.assertIsNone(os.environ.get("OPENAI_API_KEY"))
+        self.client.post(
+            "/api/config/llm-providers",
+            json={"provider": "openai", "api_key": "sk-env-test"},
+            headers=self.auth_header,
+        )
+        self.assertEqual(os.environ.get("OPENAI_API_KEY"), "sk-env-test")
 
     def test_add_provider_missing_fields(self):
         """POST /api/config/llm-providers returns 400 if required fields missing."""
@@ -226,7 +252,7 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
         self.assertIn(resp2.status_code, [400, 500])
 
     def test_update_existing_provider(self):
-        """POST /api/config/llm-providers updates an existing provider."""
+        """POST /api/config/llm-providers updates an existing provider (upsert)."""
         self.client.post(
             "/api/config/llm-providers",
             json={"provider": "mistral", "api_key": "old-key"},
@@ -237,13 +263,14 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
             json={"provider": "mistral", "api_key": "new-key"},
             headers=self.auth_header,
         )
-        # Should still be one entry (upsert, not duplicate)
+        # Should still be one DB entry (upsert, not duplicate)
         list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
         providers = list_resp.get_json()["providers"]
-        self.assertEqual(len(providers), 1)
+        db_providers = [p for p in providers if p["source"] == "db"]
+        self.assertEqual(len(db_providers), 1)
 
     def test_delete_provider(self):
-        """DELETE /api/config/llm-providers/<provider> removes the provider."""
+        """DELETE /api/config/llm-providers/<provider> removes the DB entry."""
         self.client.post(
             "/api/config/llm-providers",
             json={"provider": "siliconflow", "api_key": "sf-key"},
@@ -256,8 +283,11 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
         self.assertEqual(del_resp.status_code, 200)
         self.assertTrue(del_resp.get_json()["success"])
 
+        # After deletion the DB entry is gone; env var may still be set
         list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
-        self.assertEqual(len(list_resp.get_json()["providers"]), 0)
+        providers = list_resp.get_json()["providers"]
+        db_providers = [p for p in providers if p["source"] == "db"]
+        self.assertEqual(len(db_providers), 0)
 
     def test_delete_nonexistent_provider_returns_404(self):
         """DELETE /api/config/llm-providers/<provider> returns 404 if not found."""
@@ -278,9 +308,44 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
 
         list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
         providers = list_resp.get_json()["providers"]
-        self.assertEqual(len(providers), 3)
-        provider_names = {p["provider"] for p in providers}
+        db_providers = [p for p in providers if p["source"] == "db"]
+        self.assertEqual(len(db_providers), 3)
+        provider_names = {p["provider"] for p in db_providers}
         self.assertEqual(provider_names, {"openai", "mistral", "anthropic"})
+
+    def test_env_var_backward_compat(self):
+        """Providers configured via env vars appear in the list with source='env'."""
+        import os
+        os.environ["OPENAI_API_KEY"] = "sk-from-env"
+        try:
+            list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
+            providers = list_resp.get_json()["providers"]
+            env_providers = [p for p in providers if p["source"] == "env"]
+            self.assertEqual(len(env_providers), 1)
+            self.assertEqual(env_providers[0]["provider"], "openai")
+            self.assertNotIn("sk-from-env", str(providers))  # Key still masked
+        finally:
+            os.environ.pop("OPENAI_API_KEY", None)
+
+    def test_db_overrides_env_var(self):
+        """A DB-stored provider takes priority over the same provider's env var."""
+        import os
+        os.environ["OPENAI_API_KEY"] = "sk-from-env"
+        try:
+            # Also save to DB
+            self.client.post(
+                "/api/config/llm-providers",
+                json={"provider": "openai", "api_key": "sk-from-db"},
+                headers=self.auth_header,
+            )
+            list_resp = self.client.get("/api/config/llm-providers", headers=self.auth_header)
+            providers = list_resp.get_json()["providers"]
+            # Only one openai entry, from DB
+            openai_entries = [p for p in providers if p["provider"] == "openai"]
+            self.assertEqual(len(openai_entries), 1)
+            self.assertEqual(openai_entries[0]["source"], "db")
+        finally:
+            os.environ.pop("OPENAI_API_KEY", None)
 
 
 if __name__ == "__main__":
