@@ -38,6 +38,7 @@ class SiteConfig:
     file_exts: list[str] | None = None
     exclude_keywords: list[str] | None = None
     exclude_prefixes: list[str] | None = None
+    collect_page_content: bool = False  # Also save text extracted from HTML pages
 
 
 class Crawler:
@@ -293,6 +294,14 @@ class Crawler:
             page_text = html_to_text(html).lower()
             is_relevant = any(k in page_text for k in keywords) if keywords else True
 
+            # Optionally save the HTML page content itself as Markdown
+            if cfg.collect_page_content and is_relevant:
+                page_item = self._handle_page_content(
+                    final_url, html, page_title, published_time, cfg
+                )
+                if page_item:
+                    new_items.append(page_item)
+
             links = self._extract_links(final_url, html)
             for link, link_text in links:
                 if exclude and self._is_excluded(link, exclude):
@@ -349,6 +358,149 @@ class Crawler:
         logger.info("Crawl completed for %s: %d new files found, %d pages visited", 
                    cfg.name, len(new_items), pages_fetched)
         return new_items
+
+    def _extract_text_from_html(self, html: str, url: str) -> str | None:
+        """Extract clean article text from HTML using trafilatura.
+
+        Falls back to a basic tag-strip if trafilatura is unavailable.
+
+        Args:
+            html: Raw HTML source.
+            url: Source URL (used as a hint by trafilatura).
+
+        Returns:
+            Extracted Markdown/plain text, or ``None`` if extraction failed or
+            the content is too short to be useful.
+        """
+        _MIN_CONTENT_LENGTH = 100
+        try:
+            import trafilatura  # type: ignore
+
+            text = trafilatura.extract(
+                html,
+                url=url,
+                output_format="markdown",
+                include_comments=False,
+                include_tables=True,
+                favor_precision=True,
+            )
+        except ImportError:
+            text = html_to_text(html) or None
+
+        if text and len(text) >= _MIN_CONTENT_LENGTH:
+            return text
+        return None
+
+    def _handle_page_content(
+        self,
+        url: str,
+        html: str,
+        page_title: str | None,
+        published_time: str | None,
+        cfg: SiteConfig,
+    ) -> dict | None:
+        """Extract and store text content from an HTML page as a Markdown file.
+
+        This method is called by :meth:`crawl_site` when
+        ``cfg.collect_page_content`` is ``True``.  It mirrors the approach used
+        by ScrapeGraphAI: treat the page *content itself* as a collectible
+        document, not just the files it links to.
+
+        Args:
+            url: Final (possibly redirected) URL of the page.
+            html: Raw HTML source.
+            page_title: Title extracted from HTML (may be ``None``).
+            published_time: Publication time extracted from HTML (may be ``None``).
+            cfg: Site configuration.
+
+        Returns:
+            File-metadata dict on success, or ``None`` if the page should be
+            skipped (already stored, content too short, etc.).
+        """
+        if self.storage.file_exists(url):
+            return None
+
+        text_content = self._extract_text_from_html(html, url)
+        if not text_content:
+            return None
+
+        if page_title:
+            text_content = f"# {page_title}\n\n{text_content}"
+
+        sha256 = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
+        if self.storage.file_exists_by_hash(sha256):
+            logger.debug(
+                "Skipping page %s: same content already stored (sha256=%s)", url, sha256
+            )
+            return None
+
+        # Persist as a Markdown file under <domain>/_web_pages/
+        parsed = urlparse(url)
+        domain = parsed.netloc.replace(":", "_") or "unknown_domain"
+        target_dir = Path(self.download_dir) / domain / "_web_pages"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        path_part = parsed.path.strip("/").replace("/", "_") or "index"
+        safe_name = self._sanitize_filename(path_part)[:100] or "page"
+        path = self._resolve_conflict(target_dir, f"{safe_name}.md")
+        path.write_text(text_content, encoding="utf-8")
+
+        bytes_size = len(text_content.encode("utf-8"))
+
+        # Store relative path to keep it consistent with file downloads
+        base_dir = Path(self.download_dir).parent.resolve()
+        try:
+            relative_path = str(path.resolve().relative_to(base_dir))
+        except ValueError:
+            relative_path = str(path.resolve())
+
+        ts = self.storage.now()
+        self.storage._conn.execute(
+            """
+            INSERT OR IGNORE INTO files (
+                url, sha256, title, source_site, source_page_url,
+                original_filename, local_path, bytes, content_type,
+                published_time, first_seen, last_seen, crawl_time
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                url,
+                sha256,
+                page_title,
+                cfg.name,
+                url,
+                path.name,
+                relative_path,
+                bytes_size,
+                "text/markdown",
+                published_time,
+                ts,
+                ts,
+                ts,
+            ),
+        )
+        self.storage._conn.commit()
+
+        logger.info(
+            "Saved page content: %s (%d bytes) -> %s",
+            page_title or url,
+            bytes_size,
+            path,
+        )
+
+        return {
+            "url": url,
+            "sha256": sha256,
+            "title": page_title,
+            "source_site": cfg.name,
+            "source_page_url": url,
+            "original_filename": path.name,
+            "local_path": relative_path,
+            "bytes": bytes_size,
+            "content_type": "text/markdown",
+            "published_time": published_time,
+        }
 
     def _handle_file(
         self,
