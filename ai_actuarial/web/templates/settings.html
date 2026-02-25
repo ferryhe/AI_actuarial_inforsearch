@@ -70,7 +70,7 @@
       <div class="module-header">
         <div>
           <h3>Model Providers</h3>
-          <p class="module-help">Add API keys for LLM providers. Configured providers appear in the model selection below.</p>
+          <p class="module-help">Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via <code>.env</code> are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.</p>
         </div>
         <div>
           <button class="btn btn-primary" type="button" onclick="showAddProviderForm()">+ Add Provider</button>
@@ -937,7 +937,7 @@ let llmProvidersData = { providers: [], known: {} };
 // Default base URLs per provider (mirrors KNOWN_LLM_PROVIDERS in app.py)
 const PROVIDER_DEFAULT_BASE_URLS = {
   openai: 'https://api.openai.com/v1',
-  mistral: 'https://api.mistral.ai/v1',
+  mistral: 'https://api.mistral.ai',
   siliconflow: 'https://api.siliconflow.cn/v1',
   anthropic: 'https://api.anthropic.com',
 };
@@ -961,26 +961,31 @@ function renderLlmProviders() {
   const { providers, known } = llmProvidersData;
 
   if (!providers || providers.length === 0) {
-    list.innerHTML = '<p style="color:var(--text-secondary);padding:8px 0;">No providers configured. Click "+ Add Provider" to add one.</p>';
+    list.innerHTML = '<p style="color:var(--text-secondary);padding:8px 0;">No providers configured. Click "+ Add Provider" to add one, or set <code>OPENAI_API_KEY</code> / <code>MISTRAL_API_KEY</code> / <code>SILICONFLOW_API_KEY</code> in your <code>.env</code> file.</p>';
     return;
   }
 
   const cards = providers.map(p => {
     const displayName = (known[p.provider] || {}).display_name || p.provider;
     const baseUrl = p.api_base_url || PROVIDER_DEFAULT_BASE_URLS[p.provider] || '—';
+    const isEnv = p.source === 'env';
+    const badge = isEnv
+      ? `<span class="provider-badge provider-badge-env">via .env</span>`
+      : `<span class="provider-badge provider-badge-active">Active</span>`;
+    const actions = isEnv
+      ? `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Save to DB</button>`
+      : `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Update Key</button>
+         <button class="btn btn-danger btn-sm" type="button" onclick="deleteProvider('${escapeHtml(p.provider)}')">Remove</button>`;
     return `
       <div class="provider-card">
         <div class="provider-card-info">
           <strong>${escapeHtml(displayName)}</strong>
-          <span class="provider-badge provider-badge-active">Active</span>
+          ${badge}
         </div>
         <div class="provider-card-detail" style="color:var(--text-secondary);font-size:0.85em;margin-top:4px;">
           Base URL: ${escapeHtml(baseUrl)}&nbsp;&nbsp;|&nbsp;&nbsp;Key: ****
         </div>
-        <div style="margin-top:8px;">
-          <button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Update Key</button>
-          <button class="btn btn-danger btn-sm" type="button" onclick="deleteProvider('${escapeHtml(p.provider)}')">Remove</button>
-        </div>
+        <div style="margin-top:8px;">${actions}</div>
       </div>
     `;
   }).join('');
@@ -1277,6 +1282,7 @@ window.addEventListener('beforeunload', (e) => {
 .provider-card-info{display:flex;align-items:center;gap:8px;font-size:1em}
 .provider-badge{font-size:0.75em;padding:2px 8px;border-radius:12px;font-weight:600}
 .provider-badge-active{background:rgba(34,197,94,.15);color:#16a34a}
+.provider-badge-env{background:rgba(234,179,8,.15);color:#92400e}
 .btn-sm{padding:4px 10px;font-size:0.82em}
 @media (max-width:900px){.settings-grid,.form-grid{grid-template-columns:1fr}.module-header{flex-direction:column}}
 </style>
