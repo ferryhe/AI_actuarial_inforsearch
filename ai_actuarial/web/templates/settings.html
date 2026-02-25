@@ -65,6 +65,54 @@
   </div>
 
   <div id="tab-ai-config" class="tab-content">
+    <!-- Model Providers Section -->
+    <section class="settings-module" data-module="llm_providers">
+      <div class="module-header">
+        <div>
+          <h3>Model Providers</h3>
+          <p class="module-help">Add API keys for LLM providers. Configured providers appear in the model selection below.</p>
+        </div>
+        <div>
+          <button class="btn btn-primary" type="button" onclick="showAddProviderForm()">+ Add Provider</button>
+        </div>
+      </div>
+
+      <!-- Add Provider Form (hidden by default) -->
+      <div id="add-provider-form" class="card" style="display:none; margin-bottom:12px;">
+        <h4>Add / Update Provider</h4>
+        <div class="form-grid">
+          <div>
+            <label for="new-provider-name">Provider</label>
+            <select id="new-provider-name" onchange="onNewProviderChange()">
+              <option value="">— select —</option>
+              <option value="openai">OpenAI</option>
+              <option value="mistral">Mistral AI</option>
+              <option value="siliconflow">SiliconFlow</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </div>
+          <div>
+            <label for="new-provider-baseurl">Base URL <span style="font-weight:normal;color:var(--text-secondary)">(optional)</span></label>
+            <input id="new-provider-baseurl" type="text" placeholder="Leave blank for default">
+          </div>
+          <div style="grid-column:1/-1;">
+            <label for="new-provider-apikey">API Key</label>
+            <input id="new-provider-apikey" type="password" placeholder="Paste your API key here" autocomplete="off">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn btn-primary" type="button" onclick="saveNewProvider()">Save</button>
+          <button class="btn btn-secondary" type="button" onclick="hideAddProviderForm()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Configured Providers List -->
+      <div id="llm-provider-list">
+        <p class="loading" style="color:var(--text-secondary)">Loading providers...</p>
+      </div>
+    </section>
+
+    <!-- AI Model Selection Section -->
     <section class="settings-module" data-module="ai_models">
       <div class="module-header">
         <div>
@@ -82,9 +130,7 @@
           <label for="ai-catalog-provider">Catalog LLM Provider</label>
           <p class="field-help">Used for document summarization and categorization</p>
           <select id="ai-catalog-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('catalog')">
-            <option value="openai">OpenAI</option>
-            <option value="mistral">Mistral</option>
-            <option value="siliconflow">SiliconFlow</option>
+            <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
@@ -98,8 +144,7 @@
           <label for="ai-embeddings-provider">Embeddings Provider</label>
           <p class="field-help">Used for RAG vector embeddings</p>
           <select id="ai-embeddings-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('embeddings')">
-            <option value="openai">OpenAI</option>
-            <option value="local">Local (Sentence Transformers)</option>
+            <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
@@ -113,9 +158,7 @@
           <label for="ai-chatbot-provider">Chatbot Provider</label>
           <p class="field-help">Used for AI chatbot responses</p>
           <select id="ai-chatbot-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('chatbot')">
-            <option value="openai">OpenAI</option>
-            <option value="mistral">Mistral</option>
-            <option value="siliconflow">SiliconFlow</option>
+            <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
@@ -129,9 +172,7 @@
           <label for="ai-ocr-provider">OCR/Markdown Provider</label>
           <p class="field-help">Used for document to markdown conversion</p>
           <select id="ai-ocr-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('ocr')">
-            <option value="local">Local (Docling/Marker)</option>
-            <option value="mistral">Mistral</option>
-            <option value="siliconflow">SiliconFlow</option>
+            <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
@@ -890,8 +931,152 @@ async function revokeAuthToken(tokenId) {
 
 function initReadonlyModules() { ['categories','ai_keywords','crawler_defaults','paths','search_defaults','ai_models'].forEach(name => { moduleState.editing[name] = false; setModuleEditable(name, false); }); }
 
-// AI Models Configuration
+// ===== LLM Provider Management =====
+let llmProvidersData = { providers: [], known: {} };
+
+// Default base URLs per provider (mirrors KNOWN_LLM_PROVIDERS in app.py)
+const PROVIDER_DEFAULT_BASE_URLS = {
+  openai: 'https://api.openai.com/v1',
+  mistral: 'https://api.mistral.ai/v1',
+  siliconflow: 'https://api.siliconflow.cn/v1',
+  anthropic: 'https://api.anthropic.com',
+};
+
+async function loadLlmProviders() {
+  try {
+    const resp = await fetch('/api/config/llm-providers');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to load providers');
+    llmProvidersData = data;
+    renderLlmProviders();
+  } catch (err) {
+    const list = document.getElementById('llm-provider-list');
+    if (list) list.innerHTML = `<p style="color:var(--danger-color)">Failed to load providers: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderLlmProviders() {
+  const list = document.getElementById('llm-provider-list');
+  if (!list) return;
+  const { providers, known } = llmProvidersData;
+
+  if (!providers || providers.length === 0) {
+    list.innerHTML = '<p style="color:var(--text-secondary);padding:8px 0;">No providers configured. Click "+ Add Provider" to add one.</p>';
+    return;
+  }
+
+  const cards = providers.map(p => {
+    const displayName = (known[p.provider] || {}).display_name || p.provider;
+    const baseUrl = p.api_base_url || PROVIDER_DEFAULT_BASE_URLS[p.provider] || '—';
+    return `
+      <div class="provider-card">
+        <div class="provider-card-info">
+          <strong>${escapeHtml(displayName)}</strong>
+          <span class="provider-badge provider-badge-active">Active</span>
+        </div>
+        <div class="provider-card-detail" style="color:var(--text-secondary);font-size:0.85em;margin-top:4px;">
+          Base URL: ${escapeHtml(baseUrl)}&nbsp;&nbsp;|&nbsp;&nbsp;Key: ****
+        </div>
+        <div style="margin-top:8px;">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Update Key</button>
+          <button class="btn btn-danger btn-sm" type="button" onclick="deleteProvider('${escapeHtml(p.provider)}')">Remove</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  list.innerHTML = `<div class="provider-card-grid">${cards}</div>`;
+}
+
+function showAddProviderForm(provider) {
+  const form = document.getElementById('add-provider-form');
+  if (form) {
+    form.style.display = 'block';
+    if (provider) {
+      document.getElementById('new-provider-name').value = provider;
+      onNewProviderChange();
+    }
+    document.getElementById('new-provider-apikey').value = '';
+    document.getElementById('new-provider-apikey').focus();
+  }
+}
+
+function hideAddProviderForm() {
+  const form = document.getElementById('add-provider-form');
+  if (form) form.style.display = 'none';
+}
+
+function editProvider(provider) {
+  showAddProviderForm(provider);
+}
+
+function onNewProviderChange() {
+  const sel = document.getElementById('new-provider-name');
+  const urlInput = document.getElementById('new-provider-baseurl');
+  if (sel && urlInput) {
+    const defaultUrl = PROVIDER_DEFAULT_BASE_URLS[sel.value] || '';
+    urlInput.placeholder = defaultUrl || 'Leave blank for default';
+  }
+}
+
+async function saveNewProvider() {
+  const provider = (document.getElementById('new-provider-name').value || '').trim();
+  const apiKey = (document.getElementById('new-provider-apikey').value || '').trim();
+  const baseUrl = (document.getElementById('new-provider-baseurl').value || '').trim();
+
+  if (!provider) { notifyError('Please select a provider'); return; }
+  if (!apiKey) { notifyError('API key is required'); return; }
+
+  try {
+    const resp = await fetch('/api/config/llm-providers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, api_key: apiKey, api_base_url: baseUrl || null }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Save failed');
+    notifySuccess(`Provider "${provider}" saved`);
+    hideAddProviderForm();
+    await loadLlmProviders();
+    await loadAiModelsConfig();  // Refresh model dropdowns
+  } catch (err) {
+    notifyError('Failed to save provider: ' + (err.message || String(err)));
+  }
+}
+
+async function deleteProvider(provider) {
+  if (!confirm(`Remove provider "${provider}"? This will delete the stored API key.`)) return;
+  try {
+    const resp = await fetch(`/api/config/llm-providers/${encodeURIComponent(provider)}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Delete failed');
+    notifySuccess(`Provider "${provider}" removed`);
+    await loadLlmProviders();
+    await loadAiModelsConfig();  // Refresh model dropdowns
+  } catch (err) {
+    notifyError('Failed to remove provider: ' + (err.message || String(err)));
+  }
+}
+
+// ===== AI Models Configuration =====
 let aiModelsData = { current: {}, available: {} };
+
+// Which providers support each AI function type
+const FUNCTION_PROVIDER_MAP = {
+  catalog:    ['openai', 'mistral', 'siliconflow', 'anthropic'],
+  embeddings: ['openai', 'local'],
+  chatbot:    ['openai', 'mistral', 'siliconflow', 'anthropic'],
+  ocr:        ['local', 'mistral', 'siliconflow'],
+};
+
+// Display names for known providers (local doesn't need an API key)
+const PROVIDER_DISPLAY_NAMES = {
+  openai: 'OpenAI',
+  mistral: 'Mistral AI',
+  siliconflow: 'SiliconFlow',
+  anthropic: 'Anthropic',
+  local: 'Local',
+};
 
 async function loadAiModelsConfig() {
   try {
@@ -899,44 +1084,92 @@ async function loadAiModelsConfig() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Failed to load AI models config');
     aiModelsData = data;
+    renderAiProviderDropdowns();
     renderAiModelsConfig();
   } catch (err) {
     notifyError('Failed to load AI models config: ' + (err.message || String(err)));
   }
 }
 
+function getConfiguredProviders() {
+  // Returns set of provider keys that are configured (have API keys) plus 'local'
+  const configured = new Set(['local']);
+  (llmProvidersData.providers || []).forEach(p => configured.add(p.provider));
+  return configured;
+}
+
+function renderAiProviderDropdowns() {
+  const configured = getConfiguredProviders();
+
+  ['catalog', 'embeddings', 'chatbot', 'ocr'].forEach(func => {
+    const sel = document.getElementById(`ai-${func}-provider`);
+    if (!sel) return;
+    const currentVal = sel.value;
+    sel.innerHTML = '';
+
+    const allowedProviders = FUNCTION_PROVIDER_MAP[func] || [];
+    allowedProviders.forEach(provider => {
+      if (!configured.has(provider)) return;  // Only show configured providers
+      const opt = document.createElement('option');
+      opt.value = provider;
+      opt.textContent = PROVIDER_DISPLAY_NAMES[provider] || provider;
+      sel.appendChild(opt);
+    });
+
+    if (sel.options.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '— No providers configured —';
+      sel.appendChild(opt);
+    }
+
+    // Restore previous selection if still valid
+    if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
+      sel.value = currentVal;
+    }
+  });
+}
+
 function renderAiModelsConfig() {
-  const { current, available } = aiModelsData;
-  
-  // Set provider selections
-  document.getElementById('ai-catalog-provider').value = current.catalog?.provider || 'openai';
-  document.getElementById('ai-embeddings-provider').value = current.embeddings?.provider || 'openai';
-  document.getElementById('ai-chatbot-provider').value = current.chatbot?.provider || 'openai';
-  document.getElementById('ai-ocr-provider').value = current.ocr?.provider || 'local';
-  
+  const { current } = aiModelsData;
+
+  // Set provider selections (only if option exists)
+  const setProvider = (id, val) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    if (val && Array.from(sel.options).some(o => o.value === val)) sel.value = val;
+    else if (sel.options.length > 0) sel.value = sel.options[0].value;
+  };
+
+  setProvider('ai-catalog-provider', current.catalog?.provider);
+  setProvider('ai-embeddings-provider', current.embeddings?.provider);
+  setProvider('ai-chatbot-provider', current.chatbot?.provider);
+  setProvider('ai-ocr-provider', current.ocr?.provider);
+
   // Populate model dropdowns
-  populateAiModels('catalog', current.catalog?.provider || 'openai', current.catalog?.model);
-  populateAiModels('embeddings', current.embeddings?.provider || 'openai', current.embeddings?.model);
-  populateAiModels('chatbot', current.chatbot?.provider || 'openai', current.chatbot?.model);
-  populateAiModels('ocr', current.ocr?.provider || 'local', current.ocr?.model);
+  populateAiModels('catalog', document.getElementById('ai-catalog-provider').value, current.catalog?.model);
+  populateAiModels('embeddings', document.getElementById('ai-embeddings-provider').value, current.embeddings?.model);
+  populateAiModels('chatbot', document.getElementById('ai-chatbot-provider').value, current.chatbot?.model);
+  populateAiModels('ocr', document.getElementById('ai-ocr-provider').value, current.ocr?.model);
 }
 
 function populateAiModels(aiFunction, provider, currentModel) {
   const select = document.getElementById(`ai-${aiFunction}-model`);
+  if (!select) return;
   select.innerHTML = '';
-  
+
   const { available } = aiModelsData;
   const providerModels = available[provider] || [];
-  
+
   // Filter models that support this AI function type
   const compatibleModels = providerModels.filter(model => model.types.includes(aiFunction));
-  
+
   if (compatibleModels.length === 0) {
     select.innerHTML = '<option value="">No compatible models</option>';
     select.disabled = true;
     return;
   }
-  
+
   select.disabled = false;
   compatibleModels.forEach(model => {
     const option = document.createElement('option');
@@ -944,7 +1177,7 @@ function populateAiModels(aiFunction, provider, currentModel) {
     option.textContent = model.display_name;
     select.appendChild(option);
   });
-  
+
   // Set current selection
   if (currentModel && Array.from(select.options).some(option => option.value === currentModel)) {
     select.value = currentModel;
@@ -969,7 +1202,7 @@ async function saveAiModelsConfig() {
         return;
       }
     }
-    
+
     const config = {
       catalog: {
         provider: document.getElementById('ai-catalog-provider').value,
@@ -988,7 +1221,7 @@ async function saveAiModelsConfig() {
         model: document.getElementById('ai-ocr-model').value,
       },
     };
-    
+
     const token = window.AUTH_TOKEN || '';
     const resp = await fetch('/api/config/ai-models', {
       method: 'POST',
@@ -1000,7 +1233,7 @@ async function saveAiModelsConfig() {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Save failed');
-    
+
     notifySuccess('AI models configuration saved');
     await loadAiModelsConfig();
   } catch (err) {
@@ -1008,7 +1241,7 @@ async function saveAiModelsConfig() {
   }
 }
 
-async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens(), loadAiModelsConfig()]); } catch (err) { notifyError(err.message || String(err)); } }
+async function initPage() { try { initReadonlyModules(); await Promise.all([loadCategoriesConfig(), loadBackendSettings(), loadAuthTokens(), loadLlmProviders(), loadAiModelsConfig()]); } catch (err) { notifyError(err.message || String(err)); } }
 initPage();
 
 // Add beforeunload warning for unsaved changes
@@ -1038,6 +1271,13 @@ window.addEventListener('beforeunload', (e) => {
 .settings-module select,.settings-module input,.settings-module textarea{width:100%;margin:6px 0 12px;padding:8px;border:1px solid var(--border-color);border-radius:6px;background:var(--card-bg);color:var(--text-primary);font-family:inherit}
 .settings-module input:disabled,.settings-module textarea:disabled,.settings-module select:disabled{opacity:.75;cursor:not-allowed}
 .runtime-flags{display:grid;gap:6px}
+/* Provider cards */
+.provider-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:8px}
+.provider-card{background:var(--card-bg);border:1px solid var(--border-color);border-radius:8px;padding:14px}
+.provider-card-info{display:flex;align-items:center;gap:8px;font-size:1em}
+.provider-badge{font-size:0.75em;padding:2px 8px;border-radius:12px;font-weight:600}
+.provider-badge-active{background:rgba(34,197,94,.15);color:#16a34a}
+.btn-sm{padding:4px 10px;font-size:0.82em}
 @media (max-width:900px){.settings-grid,.form-grid{grid-template-columns:1fr}.module-header{flex-direction:column}}
 </style>
 {% endblock %}

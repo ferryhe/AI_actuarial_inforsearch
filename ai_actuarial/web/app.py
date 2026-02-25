@@ -1413,9 +1413,127 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     # AI model configuration
     # Models are now fetched dynamically from LLM provider APIs
     # See ai_actuarial/llm_models.py for implementation
-    AI_SUPPORTED_PROVIDERS = {"openai", "mistral", "siliconflow", "local"}
-    
-    @app.route("/api/config/ai-models")
+    AI_SUPPORTED_PROVIDERS = {"openai", "mistral", "siliconflow", "anthropic", "local"}
+
+    # Known LLM providers that can be configured with API keys
+    KNOWN_LLM_PROVIDERS = {
+        "openai": {
+            "display_name": "OpenAI",
+            "default_base_url": "https://api.openai.com/v1",
+            "api_key_hint": "sk-...",
+        },
+        "mistral": {
+            "display_name": "Mistral AI",
+            "default_base_url": "https://api.mistral.ai/v1",
+            "api_key_hint": "...",
+        },
+        "siliconflow": {
+            "display_name": "SiliconFlow",
+            "default_base_url": "https://api.siliconflow.cn/v1",
+            "api_key_hint": "sk-...",
+        },
+        "anthropic": {
+            "display_name": "Anthropic",
+            "default_base_url": "https://api.anthropic.com",
+            "api_key_hint": "sk-ant-...",
+        },
+    }
+
+    @app.route("/api/config/llm-providers")
+    @require_permissions("config.read")
+    def api_config_llm_providers_list():
+        """List configured LLM provider API tokens."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            providers = storage.list_llm_providers()
+            result = []
+            for p in providers:
+                pinfo = KNOWN_LLM_PROVIDERS.get(p["provider"], {})
+                result.append({
+                    "provider": p["provider"],
+                    "display_name": pinfo.get("display_name", p["provider"]),
+                    "api_base_url": p["api_base_url"],
+                    "api_key_masked": "****",
+                    "status": p["status"],
+                    "created_at": p["created_at"],
+                    "updated_at": p["updated_at"],
+                })
+            return jsonify({"providers": result, "known": KNOWN_LLM_PROVIDERS})
+        except Exception as e:
+            logger.exception("Error listing LLM providers")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/config/llm-providers", methods=["POST"])
+    @require_permissions("config.write")
+    def api_config_llm_providers_add():
+        """Add or update an LLM provider API token."""
+        storage = None
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return _api_error("Invalid JSON body", status_code=400)
+
+            provider = str(data.get("provider") or "").strip().lower()
+            api_key = str(data.get("api_key") or "").strip()
+            base_url = str(data.get("api_base_url") or "").strip() or None
+            notes = str(data.get("notes") or "").strip() or None
+
+            if not provider:
+                return _api_error("provider is required", status_code=400)
+            if not api_key:
+                return _api_error("api_key is required", status_code=400)
+
+            from ..services.token_encryption import TokenEncryption
+            encryption = TokenEncryption()
+            encrypted_key = encryption.encrypt(api_key)
+
+            storage = Storage(db_path)
+            storage.upsert_llm_provider(
+                provider=provider,
+                api_key_encrypted=encrypted_key,
+                base_url=base_url,
+                notes=notes,
+            )
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error adding LLM provider")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/config/llm-providers/<provider>", methods=["DELETE"])
+    @require_permissions("config.write")
+    def api_config_llm_providers_delete(provider: str):
+        """Delete an LLM provider API token."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            deleted = storage.delete_llm_provider(provider)
+            if not deleted:
+                return _api_error("Provider not found", status_code=404)
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting LLM provider")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+
     @require_permissions("config.read")
     def api_config_ai_models():
         """Get AI model configuration and available models."""
