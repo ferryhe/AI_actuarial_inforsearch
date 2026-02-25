@@ -34,6 +34,11 @@ DEFAULT_MODELS = {
     "siliconflow": [
         {"name": "deepseek-ai/DeepSeek-OCR", "display_name": "DeepSeek OCR", "types": ["ocr"]},
     ],
+    "anthropic": [
+        {"name": "claude-3-5-sonnet-20241022", "display_name": "Claude 3.5 Sonnet", "types": ["chatbot", "catalog"]},
+        {"name": "claude-3-5-haiku-20241022", "display_name": "Claude 3.5 Haiku", "types": ["chatbot", "catalog"]},
+        {"name": "claude-3-opus-20240229", "display_name": "Claude 3 Opus", "types": ["chatbot", "catalog"]},
+    ],
     "local": [
         {"name": "sentence-transformers", "display_name": "Sentence Transformers", "types": ["embeddings"]},
         {"name": "docling", "display_name": "Docling", "types": ["ocr"]},
@@ -105,6 +110,7 @@ class ModelCache:
         new_models["openai"] = self._fetch_openai_models()
         new_models["mistral"] = self._fetch_mistral_models()
         new_models["siliconflow"] = self._fetch_siliconflow_models()
+        new_models["anthropic"] = DEFAULT_MODELS["anthropic"]  # Static known models
         new_models["local"] = DEFAULT_MODELS["local"]  # Local models are static
         
         # Atomically swap in the new cache (with lock)
