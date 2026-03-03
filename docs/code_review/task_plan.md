@@ -1,0 +1,19 @@
+# storage.py 重构详细改进计划
+
+## 背景
+项目已在重构中！storage.py (2553行) 和 storage_v2.py (468行) 并存。
+
+## 改进计划
+
+### 阶段 1: 代码分析 (已完成)
+- [x] 分析 storage.py 职责
+- [x] 分析 storage_v2.py 角色
+
+### 阶段 2: 选择方案
+- [ ] 方案 A: 完成 storage_v2.py (推荐)
+- [ ] 方案 B: 重构 storage.py
+
+### 待移植到 storage_v2.py 的功能
+- RAG 模块: 13 个方法
+- Auth 模块: 7 个方法
+- LLM Provider: 4 个方法
