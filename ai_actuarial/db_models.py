@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, Text, Index
+from sqlalchemy import Column, Integer, Text, Index, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -73,6 +74,153 @@ class CatalogItem(Base):
     
     __table_args__ = (
         Index("idx_catalog_items_status", "status"),
+    )
+
+
+# ============== RAG Models ==============
+
+class ChunkProfile(Base):
+    """Chunk configuration profiles."""
+    
+    __tablename__ = "chunk_profiles"
+    
+    profile_id = Column(Text, primary_key=True)
+    name = Column(Text, nullable=False)
+    config_hash = Column(Text, unique=True, nullable=False)
+    config_json = Column(Text, nullable=False)
+    chunk_size = Column(Integer, nullable=False)
+    chunk_overlap = Column(Integer, nullable=False)
+    splitter = Column(Text, nullable=False)
+    tokenizer = Column(Text, nullable=False)
+    version = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False)
+    updated_at = Column(Text, nullable=False)
+
+
+class FileChunkSet(Base):
+    """Chunk sets for files."""
+    
+    __tablename__ = "file_chunk_sets"
+    
+    chunk_set_id = Column(Text, primary_key=True)
+    file_url = Column(Text, nullable=False)
+    profile_id = Column(Text, nullable=False)
+    markdown_hash = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="ready")
+    chunk_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(Text, nullable=False)
+    updated_at = Column(Text, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint('file_url', 'profile_id', 'markdown_hash', name='uq_file_profile_hash'),
+    )
+
+
+class GlobalChunk(Base):
+    """Global chunks for KB composition."""
+    
+    __tablename__ = "global_chunks"
+    
+    chunk_id = Column(Text, primary_key=True)
+    chunk_set_id = Column(Text, nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    token_count = Column(Integer, nullable=False, default=0)
+    section_hierarchy = Column(Text)
+    content_hash = Column(Text)
+    created_at = Column(Text, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint('chunk_set_id', 'chunk_index', name='uq_chunk_set_index'),
+    )
+
+
+class ChunkEmbedding(Base):
+    """Chunk embeddings for vector search."""
+    
+    __tablename__ = "chunk_embeddings"
+    
+    chunk_id = Column(Text, primary_key=True)
+    embedding_model = Column(Text, primary_key=True)
+    dim = Column(Integer, default=0)
+    vector_json = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False)
+
+
+class KBChunkBinding(Base):
+    """KB-Chunk bindings for RAG."""
+    
+    __tablename__ = "kb_chunk_bindings"
+    
+    kb_id = Column(Text, primary_key=True)
+    file_url = Column(Text, primary_key=True)
+    chunk_set_id = Column(Text, primary_key=True)
+    bound_at = Column(Text, nullable=False)
+    bound_by = Column(Text)
+    binding_mode = Column(Text, nullable=False, default="pin")
+    target_profile_id = Column(Text)
+
+
+class KBIndexVersion(Base):
+    """KB index versions."""
+    
+    __tablename__ = "kb_index_versions"
+    
+    index_version_id = Column(Text, primary_key=True)
+    kb_id = Column(Text, nullable=False)
+    embedding_model = Column(Text, nullable=False)
+    index_type = Column(Text, nullable=False)
+    status = Column(Text, nullable=False)
+    artifact_path = Column(Text)
+    chunk_count = Column(Integer, nullable=False, default=0)
+    built_at = Column(Text)
+    created_at = Column(Text, nullable=False)
+
+
+class KBIndexItem(Base):
+    """KB index items (chunk references)."""
+    
+    __tablename__ = "kb_index_items"
+    
+    index_version_id = Column(Text, primary_key=True)
+    chunk_id = Column(Text, primary_key=True)
+
+
+# ============== Auth Models ==============
+
+class AuthToken(Base):
+    """Authentication tokens."""
+    
+    __tablename__ = "auth_tokens"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    subject = Column(Text, nullable=False)
+    group_name = Column(Text, nullable=False)
+    token_hash = Column(Text, unique=True, nullable=False)
+    is_active = Column(Integer, nullable=False, default=1)
+    created_at = Column(Text)
+    last_used_at = Column(Text)
+    revoked_at = Column(Text)
+    expires_at = Column(Text)
+
+
+class APIToken(Base):
+    """API tokens for LLM providers."""
+    
+    __tablename__ = "api_tokens"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(Text, nullable=False)
+    category = Column(Text, nullable=False, default='llm')
+    api_key_encrypted = Column(Text, nullable=False)
+    api_base_url = Column(Text)
+    status = Column(Text, nullable=False, default='active')
+    created_at = Column(Text)
+    updated_at = Column(Text)
+    notes = Column(Text)
+    
+    __table_args__ = (
+        UniqueConstraint('provider', 'category', name='uq_provider_category'),
     )
 
 
