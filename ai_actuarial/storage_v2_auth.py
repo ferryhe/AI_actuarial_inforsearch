@@ -9,12 +9,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, and_
 
-from .db_models import AuthToken, APIToken
+from .db_models import AuthToken
+# Import ApiToken from existing models to avoid duplicate
+try:
+    from ai_actuarial.models.api_token import ApiToken
+except ImportError:
+    # Fallback for backward compatibility
+    from .db_models import APIToken as ApiToken
 
 
 class StorageV2AuthMixin:
@@ -145,7 +148,6 @@ class StorageV2AuthMixin:
             self.backend._maybe_commit()
             return int(existing.id)
         
-        # Create new token
         token = AuthToken(
             subject=str(subject),
             group_name=str(group_name),
@@ -204,10 +206,10 @@ class StorageV2AuthMixin:
         """Insert or update an LLM provider API token."""
         ts = self.now()
         
-        existing = self._session.query(APIToken).filter(
+        existing = self._session.query(ApiToken).filter(
             and_(
-                APIToken.provider == provider,
-                APIToken.category == category
+                ApiToken.provider == provider,
+                ApiToken.category == category
             )
         ).first()
         
@@ -215,16 +217,16 @@ class StorageV2AuthMixin:
             existing.api_key_encrypted = api_key_encrypted
             existing.api_base_url = base_url
             existing.notes = notes
-            existing.updated_at = ts
+            existing.updated_at = datetime.now(timezone.utc)
         else:
-            api_token = APIToken(
+            api_token = ApiToken(
                 provider=provider,
                 category=category,
                 api_key_encrypted=api_key_encrypted,
                 api_base_url=base_url,
                 status="active",
-                created_at=ts,
-                updated_at=ts,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 notes=notes,
             )
             self._session.add(api_token)
@@ -235,10 +237,10 @@ class StorageV2AuthMixin:
         self, provider: str, category: str = "llm"
     ) -> dict | None:
         """Get a single LLM provider record."""
-        token = self._session.query(APIToken).filter(
+        token = self._session.query(ApiToken).filter(
             and_(
-                APIToken.provider == provider,
-                APIToken.category == category
+                ApiToken.provider == provider,
+                ApiToken.category == category
             )
         ).first()
         
@@ -252,16 +254,16 @@ class StorageV2AuthMixin:
             "api_key_encrypted": token.api_key_encrypted,
             "api_base_url": token.api_base_url,
             "status": token.status,
-            "created_at": token.created_at,
-            "updated_at": token.updated_at,
+            "created_at": str(token.created_at) if token.created_at else None,
+            "updated_at": str(token.updated_at) if token.updated_at else None,
             "notes": token.notes,
         }
     
     def list_llm_providers(self, category: str = "llm") -> list[dict]:
         """List all LLM provider records for the given category."""
-        tokens = self._session.query(APIToken).filter(
-            APIToken.category == category
-        ).order_by(APIToken.provider).all()
+        tokens = self._session.query(ApiToken).filter(
+            ApiToken.category == category
+        ).order_by(ApiToken.provider).all()
         
         return [
             {
@@ -271,8 +273,8 @@ class StorageV2AuthMixin:
                 "api_key_encrypted": t.api_key_encrypted,
                 "api_base_url": t.api_base_url,
                 "status": t.status,
-                "created_at": t.created_at,
-                "updated_at": t.updated_at,
+                "created_at": str(t.created_at) if t.created_at else None,
+                "updated_at": str(t.updated_at) if t.updated_at else None,
                 "notes": t.notes,
             }
             for t in tokens
@@ -280,10 +282,10 @@ class StorageV2AuthMixin:
     
     def delete_llm_provider(self, provider: str, category: str = "llm") -> bool:
         """Delete an LLM provider record."""
-        deleted = self._session.query(APIToken).filter(
+        deleted = self._session.query(ApiToken).filter(
             and_(
-                APIToken.provider == provider,
-                APIToken.category == category
+                ApiToken.provider == provider,
+                ApiToken.category == category
             )
         ).delete(synchronize_session=False)
         
