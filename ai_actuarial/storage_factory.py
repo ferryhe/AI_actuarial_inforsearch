@@ -13,13 +13,14 @@ from .storage import Storage
 
 if TYPE_CHECKING:
     from .storage_v2 import StorageV2
+    from .storage_v2_full import StorageV2Full
 
 
-def create_storage_from_config(config: dict[str, Any]) -> Union[Storage, "StorageV2"]:
+def create_storage_from_config(config: dict[str, Any]) -> Union[Storage, "StorageV2", "StorageV2Full"]:
     """Create a Storage instance from configuration.
     
-    This factory function supports two modes:
-    1. Legacy mode: Direct database path (SQLite only)
+    This factory function supports multiple modes:
+    1. Legacy mode: Direct database path (SQLite only) -> Storage
     2. Backend mode: Database configuration dict
     
     Args:
@@ -27,6 +28,8 @@ def create_storage_from_config(config: dict[str, Any]) -> Union[Storage, "Storag
             - {"paths": {"db": "data/index.db"}} for legacy SQLite
             - {"database": {"type": "sqlite", "path": "data/index.db"}}
             - {"database": {"type": "postgresql", "host": "...", ...}}
+            - {"storage_version": "v2"} for StorageV2
+            - {"storage_version": "v2_full"} for StorageV2Full (all features)
             
     Returns:
         Storage instance configured with the appropriate backend
@@ -52,24 +55,44 @@ def create_storage_from_config(config: dict[str, Any]) -> Union[Storage, "Storag
             }
         }
         storage = create_storage_from_config(config)
+        
+        # StorageV2 with all features
+        config = {
+            "database": {"type": "sqlite", "path": "data/index.db"},
+            "storage_version": "v2_full"
+        }
+        storage = create_storage_from_config(config)
     """
+    # Check for storage version preference
+    storage_version = config.get("storage_version", "v1").lower()
+    
     # Check if new database config is present
     if "database" in config:
         db_config = config["database"]
         db_type = db_config.get("type", "sqlite").lower()
         
         if db_type == "sqlite":
-            # SQLite with backend abstraction
             db_path = db_config.get("path", "data/index.db")
-            # For SQLite, we can still use the legacy Storage class
-            # since it's optimized for SQLite
-            return Storage(db_path)
+            
+            # Return appropriate storage version
+            if storage_version == "v2_full":
+                from .storage_v2_full import StorageV2Full
+                return StorageV2Full(db_config=db_config)
+            elif storage_version == "v2":
+                from .storage_v2 import StorageV2
+                return StorageV2(db_config=db_config)
+            else:
+                # Legacy mode
+                return Storage(db_path)
         
         elif db_type == "postgresql":
             # PostgreSQL requires the backend abstraction
-            # Import here to avoid circular dependency
-            from .storage_v2 import StorageV2
-            return StorageV2(db_config=db_config)
+            if storage_version == "v2_full":
+                from .storage_v2_full import StorageV2Full
+                return StorageV2Full(db_config=db_config)
+            else:
+                from .storage_v2 import StorageV2
+                return StorageV2(db_config=db_config)
         
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
@@ -96,19 +119,23 @@ def get_database_config_from_env() -> dict[str, Any]:
         DB_NAME: PostgreSQL database name (if DB_TYPE=postgresql)
         DB_USER: PostgreSQL username (if DB_TYPE=postgresql)
         DB_PASSWORD: PostgreSQL password (if DB_TYPE=postgresql)
+        STORAGE_VERSION: Storage version ('v1', 'v2', or 'v2_full')
         
     Returns:
         Database configuration dictionary
     """
     db_type = os.getenv("DB_TYPE", "sqlite").lower()
+    storage_version = os.getenv("STORAGE_VERSION", "v1").lower()
+    
+    config = {"storage_version": storage_version}
     
     if db_type == "sqlite":
-        return {
+        config["database"] = {
             "type": "sqlite",
             "path": os.getenv("DB_PATH", "data/index.db")
         }
     elif db_type == "postgresql":
-        return {
+        config["database"] = {
             "type": "postgresql",
             "host": os.getenv("DB_HOST", "localhost"),
             "port": int(os.getenv("DB_PORT", "5432")),
@@ -118,3 +145,5 @@ def get_database_config_from_env() -> dict[str, Any]:
         }
     else:
         raise ValueError(f"Unsupported DB_TYPE: {db_type}")
+    
+    return config
