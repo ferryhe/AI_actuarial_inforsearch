@@ -12,9 +12,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, and_
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import func, or_, and_, select
 
 from .db_models import (
     ChunkProfile, FileChunkSet, GlobalChunk, ChunkEmbedding,
@@ -185,22 +183,29 @@ class StorageV2RAGMixin:
         return {"chunk_set_id": chunk_set_id, "chunk_count": inserted, "replaced": current_n > 0, "inserted": inserted}
 
     def list_file_chunk_sets(self, file_url: str) -> list[dict]:
-        results = self._session.query(FileChunkSet, ChunkProfile).join(
-            ChunkProfile, ChunkProfile.profile_id == FileChunkSet.profile_id
-        ).filter(FileChunkSet.file_url == file_url).order_by(FileChunkSet.updated_at.desc()).all()
-        
+        results = (
+            self._session.query(
+                FileChunkSet,
+                ChunkProfile,
+                func.count(KBChunkBinding.chunk_set_id).label("bound_kb_count"),
+            )
+            .join(ChunkProfile, ChunkProfile.profile_id == FileChunkSet.profile_id)
+            .outerjoin(KBChunkBinding, KBChunkBinding.chunk_set_id == FileChunkSet.chunk_set_id)
+            .filter(FileChunkSet.file_url == file_url)
+            .group_by(FileChunkSet, ChunkProfile)
+            .order_by(FileChunkSet.updated_at.desc())
+            .all()
+        )
+
         out = []
-        for chunk_set, profile in results:
-            kb_count = self._session.query(func.count(KBChunkBinding.chunk_set_id)).filter(
-                KBChunkBinding.chunk_set_id == chunk_set.chunk_set_id).scalar() or 0
-            
+        for chunk_set, profile, kb_count in results:
             out.append({"chunk_set_id": chunk_set.chunk_set_id, "file_url": chunk_set.file_url,
                        "profile_id": chunk_set.profile_id, "profile_name": profile.name,
                        "chunk_size": profile.chunk_size, "chunk_overlap": profile.chunk_overlap,
                        "splitter": profile.splitter, "tokenizer": profile.tokenizer, "version": profile.version,
                        "markdown_hash": chunk_set.markdown_hash, "status": chunk_set.status,
                        "chunk_count": chunk_set.chunk_count, "created_at": chunk_set.created_at,
-                       "updated_at": chunk_set.updated_at, "bound_kb_count": kb_count})
+                       "updated_at": chunk_set.updated_at, "bound_kb_count": kb_count or 0})
         return out
 
     def bind_chunk_set_to_kb(self, *, kb_id: str, file_url: str, chunk_set_id: str,
@@ -222,11 +227,13 @@ class StorageV2RAGMixin:
 
         with self.backend.transaction():
             if mode == "follow_latest":
+                normalized_target_profile = target_profile_id or ""
                 self._session.query(KBChunkBinding).filter(
                     and_(KBChunkBinding.kb_id == kb_id, KBChunkBinding.file_url == file_url,
                          KBChunkBinding.binding_mode == "follow_latest", KBChunkBinding.chunk_set_id != chunk_set_id)
-                ).filter(or_(KBChunkBinding.target_profile_id == target_profile_id,
-                            and_(KBChunkBinding.target_profile_id.is_(None), target_profile_id == ""))).delete(synchronize_session=False)
+                ).filter(
+                    func.coalesce(KBChunkBinding.target_profile_id, "") == normalized_target_profile
+                ).delete(synchronize_session=False)
 
             existing = self._session.query(KBChunkBinding).filter(
                 and_(KBChunkBinding.kb_id == kb_id, KBChunkBinding.file_url == file_url,
@@ -248,6 +255,79 @@ class StorageV2RAGMixin:
             
             return {"kb_id": kb_id, "file_url": file_url, "chunk_set_id": chunk_set_id,
                    "binding_mode": mode, "target_profile_id": target_profile_id or "", "created": True}
+
+    def sync_follow_latest_bindings_for_chunk_set(
+        self,
+        *,
+        file_url: str,
+        profile_id: str,
+        chunk_set_id: str,
+        bound_by: str = "system_follow_latest",
+    ) -> dict:
+        """Move follow_latest bindings to the newest chunk_set for same file/profile."""
+        now = self._utcnow_iso()
+        normalized_profile = profile_id or ""
+
+        rows = self._session.query(KBChunkBinding).filter(
+            KBChunkBinding.file_url == file_url,
+            KBChunkBinding.binding_mode == "follow_latest",
+            func.coalesce(KBChunkBinding.target_profile_id, "") == normalized_profile,
+            KBChunkBinding.chunk_set_id != chunk_set_id,
+        ).all()
+
+        if not rows:
+            return {
+                "file_url": file_url,
+                "profile_id": profile_id,
+                "chunk_set_id": chunk_set_id,
+                "synced_bindings": 0,
+                "affected_kb_ids": [],
+            }
+
+        affected_kb_ids: set[str] = set()
+        synced = 0
+        with self.backend.transaction():
+            for row in rows:
+                kb_id = str(row.kb_id or "")
+                old_chunk_set_id = str(row.chunk_set_id or "")
+                if not kb_id or not old_chunk_set_id:
+                    continue
+
+                target_exists = self._session.query(KBChunkBinding).filter(
+                    KBChunkBinding.kb_id == kb_id,
+                    KBChunkBinding.file_url == file_url,
+                    KBChunkBinding.chunk_set_id == chunk_set_id,
+                ).first()
+
+                if target_exists:
+                    target_exists.bound_at = now
+                    target_exists.bound_by = bound_by
+                    target_exists.binding_mode = "follow_latest"
+                    target_exists.target_profile_id = profile_id
+                else:
+                    new_binding = KBChunkBinding(
+                        kb_id=kb_id, file_url=file_url, chunk_set_id=chunk_set_id,
+                        bound_at=now, bound_by=bound_by,
+                        binding_mode="follow_latest", target_profile_id=profile_id,
+                    )
+                    self._session.add(new_binding)
+
+                self._session.query(KBChunkBinding).filter(
+                    KBChunkBinding.kb_id == kb_id,
+                    KBChunkBinding.file_url == file_url,
+                    KBChunkBinding.chunk_set_id == old_chunk_set_id,
+                ).delete(synchronize_session=False)
+
+                synced += 1
+                affected_kb_ids.add(kb_id)
+
+        return {
+            "file_url": file_url,
+            "profile_id": profile_id,
+            "chunk_set_id": chunk_set_id,
+            "synced_bindings": synced,
+            "affected_kb_ids": sorted(affected_kb_ids),
+        }
 
     def list_file_index_status(self, file_url: str) -> list[dict]:
         results = self._session.query(KBChunkBinding.kb_id,
@@ -304,13 +384,39 @@ class StorageV2RAGMixin:
                               "built_at": (latest.built_at or latest.created_at) if latest else None} if latest else None}
 
     def list_kb_chunk_bindings(self, kb_id: str) -> list[dict]:
-        results = self._session.query(KBChunkBinding, FileChunkSet, ChunkProfile).outerjoin(
-            FileChunkSet, FileChunkSet.chunk_set_id == KBChunkBinding.chunk_set_id
-        ).outerjoin(ChunkProfile, ChunkProfile.profile_id == FileChunkSet.profile_id).filter(
-            KBChunkBinding.kb_id == kb_id).order_by(KBChunkBinding.bound_at.desc()).all()
-        
+        # Correlated scalar subquery for latest_chunk_set_id per file_url+profile_id,
+        # matching storage.py semantics. Uses FileChunkSet.profile_id (not the profile
+        # table) so it is correct even when the ChunkProfile row is absent.
+        LatestCS = FileChunkSet.__table__.alias("latest_cs")
+        latest_cset_sq = (
+            select(LatestCS.c.chunk_set_id)
+            .where(
+                and_(
+                    LatestCS.c.file_url == KBChunkBinding.file_url,
+                    LatestCS.c.profile_id == FileChunkSet.profile_id,
+                )
+            )
+            .order_by(LatestCS.c.updated_at.desc(), LatestCS.c.created_at.desc())
+            .limit(1)
+            .correlate(KBChunkBinding.__table__, FileChunkSet.__table__)
+            .scalar_subquery()
+        )
+
+        results = (
+            self._session.query(
+                KBChunkBinding, FileChunkSet, ChunkProfile,
+                latest_cset_sq.label("latest_chunk_set_id"),
+            )
+            .outerjoin(FileChunkSet, FileChunkSet.chunk_set_id == KBChunkBinding.chunk_set_id)
+            .outerjoin(ChunkProfile, ChunkProfile.profile_id == FileChunkSet.profile_id)
+            .filter(KBChunkBinding.kb_id == kb_id)
+            .order_by(KBChunkBinding.bound_at.desc())
+            .all()
+        )
+
         out = []
-        for binding, chunk_set, profile in results:
+        for binding, chunk_set, profile, latest_chunk_set_id in results:
+            lcsi = latest_chunk_set_id or ""
             out.append({"kb_id": binding.kb_id, "file_url": binding.file_url, "chunk_set_id": binding.chunk_set_id,
                        "bound_at": binding.bound_at, "bound_by": binding.bound_by,
                        "binding_mode": binding.binding_mode or "pin",
@@ -320,7 +426,8 @@ class StorageV2RAGMixin:
                        "chunk_count": chunk_set.chunk_count if chunk_set else 0,
                        "markdown_hash": chunk_set.markdown_hash if chunk_set else "",
                        "chunk_set_updated_at": chunk_set.updated_at if chunk_set else None,
-                       "latest_chunk_set_id": "", "is_latest_for_profile": True})
+                       "latest_chunk_set_id": lcsi,
+                       "is_latest_for_profile": lcsi == (binding.chunk_set_id or "")})
         return out
 
     def create_kb_index_version(self, *, kb_id: str, embedding_model: str, index_type: str,

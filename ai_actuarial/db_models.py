@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, Text, Index, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, Text, Index, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -103,8 +102,8 @@ class FileChunkSet(Base):
     __tablename__ = "file_chunk_sets"
     
     chunk_set_id = Column(Text, primary_key=True)
-    file_url = Column(Text, nullable=False, index=True)
-    profile_id = Column(Text, nullable=False, index=True)
+    file_url = Column(Text, nullable=False)
+    profile_id = Column(Text, nullable=False)
     markdown_hash = Column(Text, nullable=False)
     status = Column(Text, nullable=False, default="ready")
     chunk_count = Column(Integer, nullable=False, default=0)
@@ -124,7 +123,7 @@ class GlobalChunk(Base):
     __tablename__ = "global_chunks"
     
     chunk_id = Column(Text, primary_key=True)
-    chunk_set_id = Column(Text, nullable=False, index=True)
+    chunk_set_id = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     token_count = Column(Integer, nullable=False, default=0)
@@ -156,16 +155,17 @@ class KBChunkBinding(Base):
     __tablename__ = "kb_chunk_bindings"
     
     kb_id = Column(Text, primary_key=True)
-    file_url = Column(Text, primary_key=True, index=True)
-    chunk_set_id = Column(Text, primary_key=True, index=True)
+    file_url = Column(Text, primary_key=True)
+    chunk_set_id = Column(Text, primary_key=True)
     bound_at = Column(Text, nullable=False)
     bound_by = Column(Text)
     binding_mode = Column(Text, nullable=False, default="pin")
-    target_profile_id = Column(Text, index=True)
+    target_profile_id = Column(Text)
     
     __table_args__ = (
         Index('idx_kb_chunk_bindings_kb_id', 'kb_id'),
         Index('idx_kb_chunk_bindings_file_url', 'file_url'),
+        Index('idx_kb_chunk_bindings_target_profile_id', 'target_profile_id'),
     )
 
 
@@ -175,7 +175,7 @@ class KBIndexVersion(Base):
     __tablename__ = "kb_index_versions"
     
     index_version_id = Column(Text, primary_key=True)
-    kb_id = Column(Text, nullable=False, index=True)
+    kb_id = Column(Text, nullable=False)
     embedding_model = Column(Text, nullable=False)
     index_type = Column(Text, nullable=False)
     status = Column(Text, nullable=False)

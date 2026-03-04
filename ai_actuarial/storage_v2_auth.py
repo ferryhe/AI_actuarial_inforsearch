@@ -9,15 +9,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, and_
+from sqlalchemy import and_
 
 from .db_models import AuthToken
-# Import ApiToken from existing models to avoid duplicate
+# ApiToken maps to the 'api_tokens' table and is the only correct model for
+# LLM provider token CRUD.  If the import fails the module is mis-installed
+# and we must not silently continue with an incompatible AuthToken alias.
 try:
     from ai_actuarial.models.api_token import ApiToken
-except ImportError:
-    # Fallback for backward compatibility
-    from .db_models import APIToken as ApiToken
+except ImportError as exc:
+    raise ImportError(
+        "Cannot import ApiToken from ai_actuarial.models.api_token. "
+        "Ensure the package is installed correctly."
+    ) from exc
 
 
 class StorageV2AuthMixin:
