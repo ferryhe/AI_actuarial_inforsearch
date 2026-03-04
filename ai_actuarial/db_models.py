@@ -103,8 +103,8 @@ class FileChunkSet(Base):
     __tablename__ = "file_chunk_sets"
     
     chunk_set_id = Column(Text, primary_key=True)
-    file_url = Column(Text, nullable=False)
-    profile_id = Column(Text, nullable=False)
+    file_url = Column(Text, nullable=False, index=True)
+    profile_id = Column(Text, nullable=False, index=True)
     markdown_hash = Column(Text, nullable=False)
     status = Column(Text, nullable=False, default="ready")
     chunk_count = Column(Integer, nullable=False, default=0)
@@ -113,6 +113,8 @@ class FileChunkSet(Base):
     
     __table_args__ = (
         UniqueConstraint('file_url', 'profile_id', 'markdown_hash', name='uq_file_profile_hash'),
+        Index('idx_file_chunk_sets_file_url', 'file_url'),
+        Index('idx_file_chunk_sets_profile_id', 'profile_id'),
     )
 
 
@@ -122,7 +124,7 @@ class GlobalChunk(Base):
     __tablename__ = "global_chunks"
     
     chunk_id = Column(Text, primary_key=True)
-    chunk_set_id = Column(Text, nullable=False)
+    chunk_set_id = Column(Text, nullable=False, index=True)
     chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     token_count = Column(Integer, nullable=False, default=0)
@@ -132,6 +134,7 @@ class GlobalChunk(Base):
     
     __table_args__ = (
         UniqueConstraint('chunk_set_id', 'chunk_index', name='uq_chunk_set_index'),
+        Index('idx_global_chunks_chunk_set_id', 'chunk_set_id'),
     )
 
 
@@ -153,12 +156,17 @@ class KBChunkBinding(Base):
     __tablename__ = "kb_chunk_bindings"
     
     kb_id = Column(Text, primary_key=True)
-    file_url = Column(Text, primary_key=True)
-    chunk_set_id = Column(Text, primary_key=True)
+    file_url = Column(Text, primary_key=True, index=True)
+    chunk_set_id = Column(Text, primary_key=True, index=True)
     bound_at = Column(Text, nullable=False)
     bound_by = Column(Text)
     binding_mode = Column(Text, nullable=False, default="pin")
-    target_profile_id = Column(Text)
+    target_profile_id = Column(Text, index=True)
+    
+    __table_args__ = (
+        Index('idx_kb_chunk_bindings_kb_id', 'kb_id'),
+        Index('idx_kb_chunk_bindings_file_url', 'file_url'),
+    )
 
 
 class KBIndexVersion(Base):
@@ -167,7 +175,7 @@ class KBIndexVersion(Base):
     __tablename__ = "kb_index_versions"
     
     index_version_id = Column(Text, primary_key=True)
-    kb_id = Column(Text, nullable=False)
+    kb_id = Column(Text, nullable=False, index=True)
     embedding_model = Column(Text, nullable=False)
     index_type = Column(Text, nullable=False)
     status = Column(Text, nullable=False)
@@ -175,6 +183,10 @@ class KBIndexVersion(Base):
     chunk_count = Column(Integer, nullable=False, default=0)
     built_at = Column(Text)
     created_at = Column(Text, nullable=False)
+    
+    __table_args__ = (
+        Index('idx_kb_index_versions_kb_id', 'kb_id'),
+    )
 
 
 class KBIndexItem(Base):
@@ -204,24 +216,9 @@ class AuthToken(Base):
     expires_at = Column(Text)
 
 
-class APIToken(Base):
-    """API tokens for LLM providers."""
-    
-    __tablename__ = "api_tokens"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    provider = Column(Text, nullable=False)
-    category = Column(Text, nullable=False, default='llm')
-    api_key_encrypted = Column(Text, nullable=False)
-    api_base_url = Column(Text)
-    status = Column(Text, nullable=False, default='active')
-    created_at = Column(Text)
-    updated_at = Column(Text)
-    notes = Column(Text)
-    
-    __table_args__ = (
-        UniqueConstraint('provider', 'category', name='uq_provider_category'),
-    )
+# Note: APIToken is defined in ai_actuarial.models.api_token
+# Import it from there to avoid duplicate model definitions
+# from ai_actuarial.models.api_token import ApiToken
 
 
 def get_current_timestamp() -> str:
