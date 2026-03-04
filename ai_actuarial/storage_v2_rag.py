@@ -329,7 +329,7 @@ class StorageV2RAGMixin:
             "affected_kb_ids": sorted(affected_kb_ids),
         }
 
-
+    def list_file_index_status(self, file_url: str) -> list[dict]:
         results = self._session.query(KBChunkBinding.kb_id,
             func.count(func.distinct(KBChunkBinding.chunk_set_id)).label("chunk_set_count")
         ).filter(KBChunkBinding.file_url == file_url).group_by(KBChunkBinding.kb_id).all()
