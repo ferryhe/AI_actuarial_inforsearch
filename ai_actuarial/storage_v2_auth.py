@@ -9,15 +9,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, and_
+from sqlalchemy import and_
 
 from .db_models import AuthToken
 # Import ApiToken from existing models to avoid duplicate
 try:
     from ai_actuarial.models.api_token import ApiToken
 except ImportError:
-    # Fallback for backward compatibility
-    from .db_models import APIToken as ApiToken
+    # Fallback for backward compatibility: alias AuthToken as ApiToken
+    from .db_models import AuthToken as ApiToken
 
 
 class StorageV2AuthMixin:

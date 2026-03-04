@@ -66,6 +66,7 @@ class TestStorageV2RAG:
         assert hasattr(storage, 'get_chunk_profile')
         assert hasattr(storage, 'bind_chunk_set_to_kb')
         assert hasattr(storage, 'get_kb_composition_status')
+        assert hasattr(storage, 'sync_follow_latest_bindings_for_chunk_set')
 
 
 class TestStorageV2Auth:
@@ -136,11 +137,13 @@ class TestDBModels:
         from ai_actuarial.db_models import (
             File, Page, Blob, CatalogItem,
             ChunkProfile, FileChunkSet, GlobalChunk,
-            AuthToken, APIToken
+            AuthToken,
         )
+        from ai_actuarial.models.api_token import ApiToken
         assert File.__tablename__ == "files"
         assert ChunkProfile.__tablename__ == "chunk_profiles"
         assert AuthToken.__tablename__ == "auth_tokens"
+        assert getattr(ApiToken, "__tablename__", None) is not None
 
 
 if __name__ == "__main__":
