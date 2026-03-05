@@ -323,5 +323,265 @@ class TestI18nFlaskIntegration(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+TASKS_HTML = REPO_ROOT / "ai_actuarial" / "web" / "templates" / "tasks.html"
+FILE_VIEW_HTML = REPO_ROOT / "ai_actuarial" / "web" / "templates" / "file_view.html"
+CHAT_HTML = REPO_ROOT / "ai_actuarial" / "web" / "templates" / "chat.html"
+
+
+class TestTasksPageI18n(unittest.TestCase):
+    """Verify tasks.html carries data-i18n attributes for all sections."""
+
+    def setUp(self):
+        self.assertTrue(TASKS_HTML.exists(), f"tasks.html not found at {TASKS_HTML}")
+        self.src = TASKS_HTML.read_text(encoding="utf-8")
+
+    def test_page_title_attr(self):
+        self.assertIn('data-i18n="tasks.title"', self.src)
+
+    def test_task_card_attrs(self):
+        for key in (
+            "tasks.url_col", "tasks.url_col_desc",
+            "tasks.file_import", "tasks.file_import_desc",
+            "tasks.web_search", "tasks.web_search_desc",
+            "tasks.quick_check", "tasks.quick_check_desc",
+            "tasks.cataloging", "tasks.cataloging_desc",
+            "tasks.md_convert", "tasks.md_convert_desc",
+            "tasks.gen_chunks", "tasks.gen_chunks_desc",
+            "tasks.build_idx", "tasks.build_idx_desc",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_active_history_section_attrs(self):
+        for key in ("tasks.active", "tasks.loading_active", "tasks.history", "tasks.loading_history"):
+            self.assertIn(f'data-i18n="{key}"', self.src)
+
+    def test_web_search_modal_attrs(self):
+        for key in (
+            "tasks.web_search_modal_title", "tasks.search_query",
+            "tasks.search_engine", "tasks.max_results",
+            "tasks.site_filter", "tasks.use_defaults",
+            "tasks.language_opt", "tasks.country_opt",
+            "tasks.excl_kw_opt", "tasks.file_formats", "tasks.start_search",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_quick_check_modal_attrs(self):
+        for key in (
+            "tasks.quick_check_hint", "tasks.site_url",
+            "tasks.keywords_opt", "tasks.max_pages", "tasks.depth",
+            "tasks.start_quick_scan",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_catalog_modal_attrs(self):
+        for key in (
+            "tasks.catalog_title", "tasks.catalog_hint",
+            "tasks.task_scope", "tasks.by_index", "tasks.by_category",
+            "tasks.start_index", "tasks.scan_count", "tasks.retry_errors",
+            "tasks.overwrite_existing", "tasks.ai_provider", "tasks.start_cataloging",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_url_collection_modal_attrs(self):
+        for key in (
+            "tasks.url_col_hint", "tasks.urls_label",
+            "tasks.check_db", "tasks.start_url_col",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_file_import_modal_attrs(self):
+        for key in (
+            "tasks.file_import_hint", "tasks.dir_path",
+            "tasks.recursive", "tasks.start_import",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_markdown_conversion_modal_attrs(self):
+        for key in (
+            "tasks.md_convert_hint", "tasks.conv_tool",
+            "tasks.overwrite_md", "tasks.convert_files",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_chunk_generation_modal_attrs(self):
+        for key in (
+            "tasks.gen_chunks_hint", "tasks.chunk_profile",
+            "tasks.chunk_model", "tasks.profile_name",
+            "tasks.chunk_size", "tasks.chunk_overlap",
+            "tasks.splitter", "tasks.tokenizer", "tasks.profile_version",
+            "tasks.bind_to_kb", "tasks.no_bind", "tasks.binding_mode",
+            "tasks.overwrite_profile",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_kb_index_build_modal_attrs(self):
+        for key in (
+            "tasks.build_idx_hint", "tasks.kb_label",
+            "tasks.file_urls_opt", "tasks.incremental",
+            "tasks.force_reindex", "tasks.submit_kb_idx",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+
+class TestFileViewI18n(unittest.TestCase):
+    """Verify file_view.html carries data-i18n attributes."""
+
+    def setUp(self):
+        self.assertTrue(FILE_VIEW_HTML.exists(), f"file_view.html not found at {FILE_VIEW_HTML}")
+        self.src = FILE_VIEW_HTML.read_text(encoding="utf-8")
+
+    def test_page_header_attrs(self):
+        self.assertIn('data-i18n="fv.back"', self.src)
+        self.assertIn('data-i18n="fv.title"', self.src)
+
+    def test_table_header_attrs(self):
+        for key in (
+            "fv.source_site", "fv.orig_url", "fv.source_page",
+            "fv.content_type", "fv.file_size", "fv.local_path",
+            "fv.collected_date", "fv.category", "fv.status",
+            "fv.deletion_time",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_category_editor_attrs(self):
+        self.assertIn('data-i18n="fv.choose_cat"', self.src)
+        self.assertIn('data-i18n="fv.cat_hint"', self.src)
+
+    def test_summary_keywords_attrs(self):
+        for key in ("fv.summary", "fv.no_summary", "fv.keywords", "fv.no_keywords"):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_action_button_attrs(self):
+        for key in (
+            "fv.edit", "fv.save", "fv.cancel",
+            "fv.catalog", "fv.download", "fv.delete",
+            "fv.ai_explain", "fv.preview",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_markdown_section_attrs(self):
+        for key in (
+            "fv.md_content", "fv.view", "fv.md_edit", "fv.expand",
+            "fv.no_md", "fv.convert_engine", "fv.overwrite_md",
+            "fv.convert_btn", "fv.save_md",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_catalog_modal_attrs(self):
+        for key in (
+            "fv.catalog_modal_title", "fv.catalog_hint",
+            "fv.catalog_from", "fv.overwrite_recompute",
+            "fv.ai_provider", "fv.submit_catalog",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_chunk_modal_attrs(self):
+        for key in (
+            "fv.chunk_modal_title", "fv.chunk_hint",
+            "fv.chunk_profile", "fv.bind_kb", "fv.no_bind",
+            "fv.binding_mode", "fv.follow_latest", "fv.pin",
+            "fv.overwrite_same", "fv.submit_chunk",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_delete_modal_uses_i18n_t(self):
+        """JS-generated delete modal must use I18n.t()."""
+        for key in ("fv.confirm_delete", "fv.confirm_delete_msg", "fv.confirm_delete_type"):
+            self.assertIn(f"I18n.t('{key}')", self.src, f"Missing I18n.t for {key}")
+
+
+class TestChatPageI18n(unittest.TestCase):
+    """Verify chat.html carries data-i18n attributes."""
+
+    def setUp(self):
+        self.assertTrue(CHAT_HTML.exists(), f"chat.html not found at {CHAT_HTML}")
+        self.src = CHAT_HTML.read_text(encoding="utf-8")
+
+    def test_page_header_attrs(self):
+        self.assertIn('data-i18n="chat.title"', self.src)
+        self.assertIn('data-i18n="chat.subtitle"', self.src)
+
+    def test_doc_explorer_attrs(self):
+        for key in (
+            "chat.explain_doc", "chat.filter_cat", "chat.all_cats",
+            "chat.search_kw", "chat.select_doc", "chat.load_docs",
+            "chat.click_load", "chat.click_load2", "chat.explain_sel",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_sidebar_attrs(self):
+        self.assertIn('data-i18n="chat.conversations"', self.src)
+        self.assertIn('data-i18n="chat.loading_convs"', self.src)
+
+    def test_chat_controls_attrs(self):
+        for key in (
+            "chat.kb_select", "chat.auto_smart", "chat.all_kbs",
+            "chat.model_sel", "chat.expert_mode", "chat.summary_mode",
+            "chat.tutorial_mode", "chat.compare_mode",
+        ):
+            self.assertIn(f'data-i18n="{key}"', self.src, f"Missing data-i18n for {key}")
+
+    def test_empty_state_attrs(self):
+        self.assertIn('data-i18n="chat.start_title"', self.src)
+        self.assertIn('data-i18n="chat.start_hint"', self.src)
+
+    def test_input_send_attrs(self):
+        self.assertIn('data-i18n-placeholder="chat.input_ph"', self.src)
+        self.assertIn('data-i18n="chat.send"', self.src)
+
+    def test_js_empty_states_use_i18n_t(self):
+        """JS-generated empty state messages must use I18n.t()."""
+        for key in ("chat.start_title", "chat.start_hint"):
+            self.assertIn(f"I18n.t('{key}')", self.src, f"Missing I18n.t for {key}")
+
+    def test_js_title_subtitle_use_i18n_t(self):
+        """JS that sets chat-title textContent should use I18n.t."""
+        for key in ("chat.new_conv", "chat.select_kb_hint"):
+            self.assertIn(f"I18n.t('{key}')", self.src, f"Missing I18n.t for {key}")
+
+
+class TestNewI18nKeysInJs(unittest.TestCase):
+    """Verify specific new keys are present in both EN and ZH blocks."""
+
+    def setUp(self):
+        self.assertTrue(I18N_JS.exists())
+        src = I18N_JS.read_text(encoding="utf-8")
+        en_start = src.find("en: {")
+        zh_start = src.find("zh: {")
+        self.en_block = src[en_start:zh_start]
+        self.zh_block = src[zh_start:]
+
+    def _assert_in_both(self, key: str):
+        self.assertIn(f"'{key}'", self.en_block, f"EN key '{key}' missing from i18n.js")
+        self.assertIn(f"'{key}'", self.zh_block, f"ZH key '{key}' missing from i18n.js")
+
+    def test_tasks_modal_keys(self):
+        for key in (
+            "tasks.web_search_modal_title", "tasks.search_query", "tasks.search_engine",
+            "tasks.max_results", "tasks.start_search", "tasks.quick_check_hint",
+            "tasks.start_quick_scan", "tasks.catalog_title", "tasks.catalog_hint",
+            "tasks.start_cataloging", "tasks.url_col_hint", "tasks.start_url_col",
+            "tasks.file_import_hint", "tasks.start_import", "tasks.md_convert_hint",
+            "tasks.convert_files", "tasks.gen_chunks_hint", "tasks.submit_kb_idx",
+        ):
+            self._assert_in_both(key)
+
+    def test_file_view_modal_keys(self):
+        for key in (
+            "fv.catalog_modal_title", "fv.catalog_hint", "fv.chunk_modal_title",
+            "fv.chunk_hint", "fv.confirm_delete", "fv.overwrite_md",
+            "fv.save_md", "fv.convert_btn",
+        ):
+            self._assert_in_both(key)
+
+    def test_chat_new_keys(self):
+        for key in (
+            "chat.select_kb_hint", "chat.input_ph", "chat.type_search",
+            "chat.kb_select_title", "chat.mode_sel_title",
+        ):
+            self._assert_in_both(key)
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     unittest.main()

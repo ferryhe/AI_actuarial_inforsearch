@@ -399,7 +399,7 @@
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing">
-                    Overwrite existing content (recompute)
+                    <span data-i18n="tasks.overwrite_existing">Overwrite existing content (recompute)</span>
                 </label>
                 <small class="form-hint">Unchecked = Skip already cataloged</small>
             </div>
@@ -600,11 +600,11 @@
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_existing" id="overwrite-existing">
-                    Overwrite existing markdown content (recompute)
+                    <span data-i18n="tasks.overwrite_md">Overwrite existing markdown content (recompute)</span>
                 </label>
                 <small class="form-hint">Unchecked = Skip already converted</small>
             </div>
-            <button type="submit" class="btn btn-primary" id="markdown-convert-btn">Convert Files</button>
+            <button type="submit" class="btn btn-primary" id="markdown-convert-btn" data-i18n="tasks.convert_files">Convert Files</button>
         </form>
     </div>
 </div>
@@ -716,7 +716,7 @@
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_same_profile" id="chunk-overwrite-same-profile">
-                    Overwrite same-profile chunk sets
+                    <span data-i18n="tasks.overwrite_profile">Overwrite same-profile chunk sets</span>
                 </label>
                 <small class="form-hint">Unchecked = reuse existing same-profile chunk set.</small>
             </div>
