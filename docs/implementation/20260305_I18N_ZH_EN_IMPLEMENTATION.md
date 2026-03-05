@@ -139,13 +139,12 @@ document.addEventListener('langchange', function(e) {
 
 ## 6. 测试方案
 
-```
-tests/test_i18n.py — 28 个测试，4 个测试类
-├── TestI18nJsStructure   (8)  — 花括号平衡、API 完整性、EN/ZH 键一致性
-├── TestBaseHtmlI18n       (8)  — base.html 属性检查
-├── TestIndexHtmlI18n      (8)  — index.html 属性检查
-└── TestI18nFlaskIntegration (4) — Flask test client 端到端验证
-```
+`tests/test_i18n.py` 覆盖了以下几个方面（59 个测试，8 个测试类）：
+
+- **i18n.js 结构与键一致性**：花括号平衡、API 完整性、EN/ZH 键一致性，以及新增 i18n Key 的校验
+- **基础模板多语言渲染**：`base.html` / `index.html` 等模板的多语言属性与内容检查
+- **业务页面多语言行为**：任务列表（Tasks）、文件视图（FileView）、聊天界面（Chat）等页面在中英文下的显示与交互
+- **Flask 集成端到端验证**：通过 Flask test client 验证请求头 / Cookie / localStorage 条件下的语言选择逻辑
 
 运行方式：
 

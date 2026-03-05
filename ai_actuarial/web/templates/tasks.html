@@ -708,8 +708,8 @@
             <div class="form-group">
                 <label data-i18n="tasks.binding_mode">Binding Mode</label>
                 <select name="binding_mode" id="chunk-generation-binding-mode">
-                    <option value="follow_latest" selected>Follow Latest (Recommended)</option>
-                    <option value="pin">Pin (Fixed Version)</option>
+                    <option value="follow_latest" selected data-i18n="tasks.binding_mode_follow_latest">Follow Latest (Recommended)</option>
+                    <option value="pin" data-i18n="tasks.binding_mode_pin">Pin (Fixed Version)</option>
                 </select>
                 <small class="form-hint" data-i18n="tasks.fh_binding_mode">Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.</small>
             </div>
@@ -720,7 +720,7 @@
                 </label>
                 <small class="form-hint" data-i18n="tasks.fh_skip_same">Unchecked = reuse existing same-profile chunk set.</small>
             </div>
-            <button type="submit" class="btn btn-primary">Generate Chunks</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.gen_chunks">Generate Chunks</button>
         </form>
     </div>
 </div>
