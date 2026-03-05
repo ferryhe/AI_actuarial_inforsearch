@@ -414,17 +414,18 @@ function getModuleElement(name) { return document.querySelector(`.settings-modul
 // ===== Task History (Settings) =====
 function historyReload() {
   const container = document.getElementById('settings-task-history-container');
-  if (container) container.innerHTML = '<p class="loading">Loading task history...</p>';
+  const _t = k => window.I18n ? window.I18n.t(k) : k;
+  if (container) container.innerHTML = '<p class="loading">' + _t('stg.loading_history') + '</p>';
   fetch('/api/tasks/history?limit=30')
     .then(r => r.json().then(j => ({ ok: r.ok, j })))
     .then(({ ok, j }) => {
       const tasks = (j && j.tasks) || [];
       if (!ok) {
-        if (container) container.innerHTML = `<p class="error">Failed to load history: ${escapeHtml(j.error || 'unknown')}</p>`;
+        if (container) container.innerHTML = `<p class="error">${_t('stg.failed_load_history')} ${escapeHtml(j.error || 'unknown')}</p>`;
         return;
       }
       if (!tasks.length) {
-        if (container) container.innerHTML = '<p class="no-data">No history available.</p>';
+        if (container) container.innerHTML = '<p class="no-data">' + _t('tasks.hist_no_history') + '</p>';
         return;
       }
       if (container) {
@@ -432,12 +433,12 @@ function historyReload() {
           <table class="data-table">
             <thead>
               <tr>
-                <th>Task</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Items</th>
-                <th>Time</th>
-                <th>Log</th>
+                <th>${_t('tasks.th_task')}</th>
+                <th>${_t('tasks.th_type')}</th>
+                <th>${_t('tasks.th_status')}</th>
+                <th>${_t('tasks.th_items')}</th>
+                <th>${_t('tasks.th_time')}</th>
+                <th>${_t('stg.th_log')}</th>
               </tr>
             </thead>
             <tbody>
@@ -448,7 +449,7 @@ function historyReload() {
                   <td><span class="status-badge status-${escapeHtml(t.status || 'unknown')}">${escapeHtml(t.status || 'unknown')}</span></td>
                   <td>${t.items_processed || 0}</td>
                   <td>${formatDate(t.started_at)}</td>
-                  <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, "&#39;")})'>View Log</button></td>
+                  <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, "&#39;")})'>${_t('tasks.hist_view_log')}</button></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -457,31 +458,32 @@ function historyReload() {
       }
     })
     .catch(e => {
-      if (container) container.innerHTML = `<p class="error">Failed to load history: ${escapeHtml(e.message)}</p>`;
+      if (container) container.innerHTML = `<p class="error">${_t('stg.failed_load_history')} ${escapeHtml(e.message)}</p>`;
     });
 }
 
 function historyShowLog(task) {
   const body = document.getElementById('settings-history-log-body');
   if (!body) return;
+  const _t = k => window.I18n ? window.I18n.t(k) : k;
   const mainStats = `
-    <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
-    <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
-    <li><strong>Skipped:</strong> ${task.items_skipped || 0}</li>
-    <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+    <li><strong>${_t('stg.log_items_processed')}</strong> ${task.items_processed || 0}</li>
+    <li><strong>${_t('stg.log_new_updated')}</strong> ${task.items_downloaded || 0}</li>
+    <li><strong>${_t('stg.log_skipped')}</strong> ${task.items_skipped || 0}</li>
+    <li><strong>${_t('stg.log_errors')}</strong> ${task.errors ? task.errors.length : 0}</li>
   `;
   body.innerHTML = `
     <div style="padding: 10px;">
-      <h4>Task Log: ${escapeHtml(task.name || '')}</h4>
+      <h4>${_t('stg.task_log_title')} ${escapeHtml(task.name || '')}</h4>
       <ul style="list-style: none; padding: 0;">
-        <li><strong>Status:</strong> ${escapeHtml(task.status || '')}</li>
-        <li><strong>Started:</strong> ${formatDate(task.started_at)}</li>
-        <li><strong>Completed:</strong> ${formatDate(task.completed_at || '')}</li>
+        <li><strong>${_t('stg.log_status')}</strong> ${escapeHtml(task.status || '')}</li>
+        <li><strong>${_t('stg.log_started')}</strong> ${formatDate(task.started_at)}</li>
+        <li><strong>${_t('stg.log_completed')}</strong> ${formatDate(task.completed_at || '')}</li>
         ${mainStats}
       </ul>
       <div class="error-details-box">
         <h5>Error Details:</h5>
-        ${(task.errors && task.errors.length > 0) ? task.errors.map(e => `<div class=\"error-item\">• ${escapeHtml(e)}</div>`).join('') : 'No detailed errors logged.'}
+        ${(task.errors && task.errors.length > 0) ? task.errors.map(e => `<div class=\"error-item\">\u2022 ${escapeHtml(e)}</div>`).join('') : _t('stg.log_no_errors')}
       </div>
       <div class="error-details-box" style="margin-top: 12px;">
         <h5>Application Log (Task)</h5>
@@ -512,17 +514,18 @@ function historyCloseLogModal() {
 async function historyReloadTaskLog(taskId) {
   const pre = document.getElementById('settings-task-log-content');
   if (!pre) return;
-  pre.textContent = 'Loading...';
+  const _t = k => window.I18n ? window.I18n.t(k) : k;
+  pre.textContent = _t('common.loading');
   try {
     const resp = await fetch(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
     const data = await resp.json();
     if (resp.ok && data.success) {
-      pre.textContent = data.log || '(no task log yet)';
+      pre.textContent = data.log || _t('stg.log_no_log');
     } else {
-      pre.textContent = 'Failed to load task log: ' + (data.error || resp.status);
+      pre.textContent = _t('stg.failed_load_log') + ' ' + (data.error || resp.status);
     }
   } catch (e) {
-    pre.textContent = 'Failed to load task log: ' + e.message;
+    pre.textContent = _t('stg.failed_load_log') + ' ' + e.message;
   }
 }
 
