@@ -121,29 +121,29 @@
         </svg>
       </div>
       <div>
-        <h2 style="margin: 0;">Token Login</h2>
-        <div class="login-subtitle">Paste your API token to access the web UI.</div>
+        <h2 style="margin: 0;" data-i18n="login.page_title">Token Login</h2>
+        <div class="login-subtitle" data-i18n="login.subtitle">Paste your API token to access the web UI.</div>
       </div>
     </div>
 
     <form method="POST" action="{{ url_for('login', next=next) }}">
       <input type="hidden" name="next" value="{{ next }}">
       <div class="form-group">
-        <label for="token">API Token</label>
+        <label for="token" data-i18n="login.api_token">API Token</label>
         <div class="token-row">
           <input id="token" name="token" type="password" class="form-control" autocomplete="off" required placeholder="Bearer token">
-          <button type="button" class="btn btn-ghost" id="toggle-token-visibility">Show</button>
-          <button type="button" class="btn btn-ghost" id="paste-token">Paste</button>
+          <button type="button" class="btn btn-ghost" id="toggle-token-visibility" data-i18n="login.show">Show</button>
+          <button type="button" class="btn btn-ghost" id="paste-token" data-i18n="login.paste">Paste</button>
         </div>
       </div>
       <div style="display: flex; gap: 10px; margin-top: 1rem; align-items: center;">
-        <button type="submit" class="btn btn-primary">Login</button>
-        <a href="/" class="btn btn-secondary">Home</a>
+        <button type="submit" class="btn btn-primary" data-i18n="login.submit">Login</button>
+        <a href="/" class="btn btn-secondary" data-i18n="login.home">Home</a>
       </div>
     </form>
 
     {% if next and next != '/' %}
-    <div class="next-pill">After login you will return to: <code>{{ next }}</code></div>
+    <div class="next-pill"><span data-i18n="login.return_to">After login you will return to:</span> <code>{{ next }}</code></div>
     {% endif %}
 
     <div class="login-footnote">
@@ -163,7 +163,7 @@
       toggle.addEventListener('click', () => {
         const nextType = (input.type === 'password') ? 'text' : 'password';
         input.type = nextType;
-        toggle.textContent = (nextType === 'password') ? 'Show' : 'Hide';
+        toggle.textContent = window.I18n ? window.I18n.t(nextType === 'password' ? 'login.show' : 'login.hide') : (nextType === 'password' ? 'Show' : 'Hide');
         input.focus();
       });
     }
