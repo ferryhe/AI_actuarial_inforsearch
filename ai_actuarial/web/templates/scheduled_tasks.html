@@ -308,7 +308,7 @@ function renderSites(sites) {
     const container = document.getElementById('sites-container');
     if (sites && sites.length > 0) {
         const globalNote = globalSchedule
-            ? `<p style="margin-bottom:8px;">Global schedule: <strong>${escapeHtml(globalSchedule)}</strong> (applies to all sites unless overridden)</p>`
+            ? `<p style="margin-bottom:8px;">${(window.I18n ? window.I18n.t('sched.global_note').replace('{schedule}', `<strong>${escapeHtml(globalSchedule)}</strong>`) : `Global schedule: <strong>${escapeHtml(globalSchedule)}</strong> (applies to all sites unless overridden)`)}</p>`
             : '';
         const table = document.createElement('table');
         table.className = 'sites-table';
@@ -329,15 +329,15 @@ function renderSites(sites) {
                         <td><a href="${escapeHtml(site.url)}" target="_blank">${escapeHtml(site.url)}</a></td>
                         <td><small>${site.schedule_interval ? escapeHtml(site.schedule_interval) : (globalSchedule ? '<span style="color:var(--text-secondary)">(global)</span>' : '<span style="color:var(--text-secondary)">-</span>')}</small></td>
                         <td>
-                            <small>Max Pages: ${site.max_pages}</small><br>
-                            <small>Depth: ${site.max_depth}</small>
-                            ${site.exclude_keywords && site.exclude_keywords.length ? `<br><small style="color:#d9534f" title="${site.exclude_keywords.join(', ')}">Excl KW: ${site.exclude_keywords.length} items</small>` : ''}
-                            ${site.exclude_prefixes && site.exclude_prefixes.length ? `<br><small style="color:#d9534f" title="${site.exclude_prefixes.join(', ')}">Excl Pfx: ${site.exclude_prefixes.length} items</small>` : ''}
+                            <small>${window.I18n ? window.I18n.t('sched.max_pages') : 'Max Pages'}: ${site.max_pages}</small><br>
+                            <small>${window.I18n ? window.I18n.t('sched.depth') : 'Depth'}: ${site.max_depth}</small>
+                            ${site.exclude_keywords && site.exclude_keywords.length ? `<br><small style="color:#d9534f" title="${site.exclude_keywords.join(', ')}">${window.I18n ? window.I18n.t('sched.excl_kw_short') : 'Excl KW'}: ${window.I18n ? window.I18n.t('sched.items').replace('{n}', site.exclude_keywords.length) : site.exclude_keywords.length + ' items'}</small>` : ''}
+                            ${site.exclude_prefixes && site.exclude_prefixes.length ? `<br><small style="color:#d9534f" title="${site.exclude_prefixes.join(', ')}">${window.I18n ? window.I18n.t('sched.excl_pfx_short') : 'Excl Pfx'}: ${window.I18n ? window.I18n.t('sched.items').replace('{n}', site.exclude_prefixes.length) : site.exclude_prefixes.length + ' items'}</small>` : ''}
                         </td>
                         <td>
-                            ${CAN_EDIT_SITES ? `<button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">Edit</button>` : ''}
-                            ${CAN_EDIT_SITES ? `<button onclick="deleteSite('${escapeHtml(site.name)}')" class="btn-small btn-danger">Delete</button>` : ''}
-                            <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">Run</button>
+                            ${CAN_EDIT_SITES ? `<button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">${window.I18n ? window.I18n.t('common.edit') : 'Edit'}</button>` : ''}
+                            ${CAN_EDIT_SITES ? `<button onclick="deleteSite('${escapeHtml(site.name)}')" class="btn-small btn-danger">${window.I18n ? window.I18n.t('common.delete') : 'Delete'}</button>` : ''}
+                            <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">${window.I18n ? window.I18n.t('common.run') : 'Run'}</button>
                         </td>
                     </tr>
                 `).join('')}
@@ -383,7 +383,7 @@ function loadScheduleStatus() {
 
 function updateSelectOptions(sites) {
     const select = document.getElementById('site-select');
-    select.innerHTML = '<option value="">All Sites</option>';
+    select.innerHTML = `<option value="">${window.I18n ? window.I18n.t('sched.all_sites') : 'All Sites'}</option>`;
     sites.forEach(site => {
         const option = document.createElement('option');
         option.value = site.name;
@@ -588,6 +588,12 @@ function formatDate(dateStr) {
     if(!dateStr) return '-';
     return new Date(dateStr).toLocaleString();
 }
+
+// Re-render dynamic content when language changes
+document.addEventListener('langchange', () => {
+    renderSites(allSites);
+    updateSelectOptions(allSites);
+});
 
 // Init
 loadSites();

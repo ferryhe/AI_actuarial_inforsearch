@@ -367,6 +367,17 @@ class DataTable {
         wrapper.appendChild(table);
         this.container.innerHTML = '';
         this.container.appendChild(wrapper);
+
+        if (this.options.resizable) {
+            table.style.tableLayout = 'fixed';
+            requestAnimationFrame(() => {
+                table.querySelectorAll('th').forEach(th => {
+                    if (!th.style.width) {
+                        th.style.width = `${th.getBoundingClientRect().width}px`;
+                    }
+                });
+            });
+        }
     }
     
     createToolbar() {
