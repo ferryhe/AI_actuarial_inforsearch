@@ -151,6 +151,12 @@
             'db.common_term':     'Common search term',
             'db.n_files':         'files',
             'db.page_of':         'Page {0} of {1}',
+            'db.bulk_delete':           'Bulk Delete',
+            'db.export_filelist':       'Export Filelist',
+            'db.n_selected':            'selected',
+            'db.confirm_bulk_delete':   'Confirm Bulk Delete',
+            'db.confirm_bulk_delete_msg': 'You are about to delete {count} file(s). This action cannot be undone.',
+            'db.confirm_type':          'Type <strong>confirm delete</strong> to proceed:',
 
             // File Preview page
             'fp.title':           'File Preview',
@@ -161,6 +167,9 @@
             'fp.loading_chunks':  'Loading chunks...',
             'fp.error_no_file':   'Error: No file specified',
             'fp.no_url':          'No file URL provided',
+            'fp.preview_not_available': 'Preview not available for this file type.',
+            'fp.no_chunk_versions':     'No chunk versions available for this file.',
+            'fp.no_chunks':             'No chunks available for this file.',
 
             // Collection (URL) page
             'col_url.title':        'URL Collection',
@@ -426,6 +435,7 @@
             'tasks.history':           'Task History',
             'tasks.loading_history':   'Loading task history...',
             'tasks.no_active':         'No active tasks',
+            'tasks.no_active_msg':     'No active tasks currently running.',
             'tasks.no_history':        'No task history',
 
             // tasks modals — web search
@@ -478,6 +488,8 @@
             'tasks.browse':            'Browse...',
             'tasks.recursive':         'Recursive (include subdirectories)',
             'tasks.start_import':      'Start File Import',
+            'tasks.dir_path_hint':     'Enter the full path to your local directory',
+            'tasks.html_format_warning': 'HTML - Will download large amounts of webpage source code',
             // tasks modals — markdown conversion
             'tasks.md_convert_hint':   'Batch convert locally-available files to markdown format using the selected engine.',
             'tasks.conv_tool':         'Conversion Tool',
@@ -535,10 +547,12 @@
             'fv.ai_explain':     'AI Explain Document',
             'fv.preview':        'File Preview',
             'fv.modify_chunk':   'Modify Chunk',
+            'fv.add_chunk':      'Add Chunk',
             'fv.md_content':     'Markdown Content',
             'fv.view':           'View',
             'fv.md_edit':        'Edit',
             'fv.expand':         'Expand',
+            'fv.collapse':       'Collapse',
             'fv.no_md':          'No markdown content available',
             'fv.convert_engine': 'Convert engine',
             'fv.kw_ph':          'Comma-separated keywords',
@@ -559,6 +573,9 @@
             'fv.submit_catalog': 'Submit Catalog Task',
             'fv.chunk_modal_title':'Modify Chunk (This File)',
             'fv.chunk_hint':     'Submit a single-file chunk generation task. Choose a profile and overwrite policy.',
+            'fv.add_chunk_title': 'Add Chunk (This File)',
+            'fv.add_chunk_hint':  'Submit a single-file chunk generation task. Choose a profile to create chunks for this file.',
+            'fv.no_chunk_profiles': 'No chunk profiles available. Create one in RAG -> Chunk Profiles first.',
             'fv.chunk_profile':  'Chunk Profile',
             'fv.chunk_profile_hint':'Same profile + overwrite = replace current chunk set. Different profile = add a new chunk set.',
             'fv.bind_kb':        'Bind To Knowledge Base (Optional)',
@@ -609,6 +626,7 @@
 
             // Common (extended)
             'common.add':         'Add',
+            'common.delete':      'Delete',
 
             // RAG Detail — meta label aliases & new keys
             'rag_d.meta_kb_id':        'KB ID:',
@@ -647,6 +665,11 @@
             'sched.job_count':         'Server timezone is used. {n} job(s) registered.',
             'sched.col_next_run':      'Next Run',
             'sched.col_last_run':      'Last Run',
+            'sched.tooltip_max_pages':  'Maximum number of pages to crawl per execution. Prevents infinite loops on large sites.',
+            'sched.tooltip_max_depth':  "How deep to crawl links. 1 = Seed page only. 2 = Seed + Links on seed. 3 = Links on those links...",
+            'sched.tooltip_keywords':   'Relevant topics. If set, only pages/files containing at least one of these are kept.',
+            'sched.tooltip_excl_kw':    'Blacklist words. If a URL or Filename contains ANY of these, it is strictly skipped.',
+            'sched.tooltip_excl_pfx':   "Blacklist prefixes. If a Filename starts with these (e.g. 'exam'), it is skipped.",
 
             // Settings — new keys
             'stg.title':               'Backend Settings',
@@ -863,6 +886,12 @@
             'db.common_term':     '常用搜索词',
             'db.n_files':         '个文件',
             'db.page_of':         '第 {0} 页，共 {1} 页',
+            'db.bulk_delete':           '批量删除',
+            'db.export_filelist':       '导出文件列表',
+            'db.n_selected':            '已选',
+            'db.confirm_bulk_delete':   '确认批量删除',
+            'db.confirm_bulk_delete_msg': '即将删除 {count} 个文件，此操作不可撤销。',
+            'db.confirm_type':          '输入 <strong>confirm delete</strong> 以继续：',
 
             // File Preview page
             'fp.title':           '文件预览',
@@ -873,6 +902,9 @@
             'fp.loading_chunks':  '加载文本块…',
             'fp.error_no_file':   '错误：未指定文件',
             'fp.no_url':          '未提供文件 URL',
+            'fp.preview_not_available': '该文件类型不支持预览。',
+            'fp.no_chunk_versions':     '该文件暂无分块版本。',
+            'fp.no_chunks':             '该文件暂无分块。',
 
             // Collection (URL) page
             'col_url.title':        'URL 收集',
@@ -1138,6 +1170,7 @@
             'tasks.history':           '任务历史',
             'tasks.loading_history':   '加载任务历史…',
             'tasks.no_active':         '无活跃任务',
+            'tasks.no_active_msg':     '当前没有正在运行的任务。',
             'tasks.no_history':        '无任务历史',
 
             // tasks modals — web search
@@ -1190,6 +1223,8 @@
             'tasks.browse':            '浏览…',
             'tasks.recursive':         '递归（包含子目录）',
             'tasks.start_import':      '开始文件导入',
+            'tasks.dir_path_hint':     '输入本地目录的完整路径',
+            'tasks.html_format_warning': 'HTML - 将下载大量网页源代码',
             // tasks modals — markdown conversion
             'tasks.md_convert_hint':   '使用所选引擎批量将本地文件转换为 Markdown 格式。',
             'tasks.conv_tool':         '转换工具',
@@ -1247,10 +1282,12 @@
             'fv.ai_explain':     'AI 文档解析',
             'fv.preview':        '文件预览',
             'fv.modify_chunk':   '修改分块',
+            'fv.add_chunk':      '添加分块',
             'fv.md_content':     'Markdown 内容',
             'fv.view':           '查看',
             'fv.md_edit':        '编辑',
             'fv.expand':         '展开',
+            'fv.collapse':       '收起',
             'fv.no_md':          '暂无 Markdown 内容',
             'fv.convert_engine': '转换引擎',
             'fv.kw_ph':          '逗号分隔的关键词',
@@ -1271,6 +1308,9 @@
             'fv.submit_catalog': '提交目录任务',
             'fv.chunk_modal_title':'修改分块（此文件）',
             'fv.chunk_hint':     '提交单文件分块生成任务，选择配置和覆盖策略。',
+            'fv.add_chunk_title': '添加分块（此文件）',
+            'fv.add_chunk_hint':  '提交单文件分块任务，选择配置文件以为此文件创建分块。',
+            'fv.no_chunk_profiles': '暂无分块配置，请先在 RAG → 分块配置中创建。',
             'fv.chunk_profile':  '分块配置',
             'fv.chunk_profile_hint':'相同配置 + 覆盖 = 替换当前分块集；不同配置 = 新增分块集。',
             'fv.bind_kb':        '绑定到知识库（可选）',
@@ -1321,6 +1361,7 @@
 
             // Common (extended)
             'common.add':         '添加',
+            'common.delete':      '删除',
 
             // RAG Detail — meta label aliases & new keys
             'rag_d.meta_kb_id':        'KB ID：',
@@ -1359,6 +1400,11 @@
             'sched.job_count':         '以下时间均使用服务器时区，已注册 {n} 个任务。',
             'sched.col_next_run':      '下次运行',
             'sched.col_last_run':      '上次运行',
+            'sched.tooltip_max_pages':  '每次执行最大抓取页数，防止大型站点死循环。',
+            'sched.tooltip_max_depth':  '链接爬取深度。1=仅种子页，2=种子页+其链接，3=再进一层…',
+            'sched.tooltip_keywords':   '相关主题。若设置，仅保留包含其中至少一个词的页面/文件。',
+            'sched.tooltip_excl_kw':    '黑名单词。若 URL 或文件名包含其中任意词，则严格跳过。',
+            'sched.tooltip_excl_pfx':   '黑名单前缀。若文件名以此开头（如 "exam"），则跳过。',
 
             // Settings — new keys
             'stg.title':               '后台设置',
