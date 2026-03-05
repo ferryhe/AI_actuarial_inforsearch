@@ -1640,6 +1640,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 if base_url_env_var:
                     os.environ[base_url_env_var] = base_url
 
+            # Reload settings so that running tasks/engines pick up the new key immediately
+            from config.settings import reload_settings
+            reload_settings()
+
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error adding LLM provider")
