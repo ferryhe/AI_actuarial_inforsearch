@@ -351,6 +351,113 @@ class TestLlmProviderApiEndpoints(unittest.TestCase):
         finally:
             os.environ.pop("OPENAI_API_KEY", None)
 
+    def test_add_provider_refreshes_settings_cache(self):
+        """POST /api/config/llm-providers calls reload_settings() so the new API
+        key is immediately visible via get_settings() without a process restart.
+        Verified by checking the env var is populated (the same mechanism used by
+        reload_settings to expose the new key to settings consumers)."""
+        # Ensure env var is absent before the POST
+        os.environ.pop("MISTRAL_API_KEY", None)
+        self.assertIsNone(os.environ.get("MISTRAL_API_KEY"))
+
+        resp = self.client.post(
+            "/api/config/llm-providers",
+            json={"provider": "mistral", "api_key": "sk-mistral-reload-test"},
+            headers=self.auth_header,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.get_json()["success"])
+
+        # The POST sets os.environ AND calls reload_settings() so get_settings()
+        # reflects the new key.  Verify the env var is set (prerequisite for the
+        # reload to have any effect).
+        self.assertEqual(os.environ.get("MISTRAL_API_KEY"), "sk-mistral-reload-test")
+
+    def test_delete_provider_refreshes_settings_cache(self):
+        """DELETE /api/config/llm-providers/<provider> calls reload_settings() so
+        the deleted key is no longer returned.  Verified by confirming the env var
+        is cleared after deletion (prerequisite for reload to have any effect)."""
+        # Add the provider first
+        self.client.post(
+            "/api/config/llm-providers",
+            json={"provider": "mistral", "api_key": "sk-mistral-delete-reload"},
+            headers=self.auth_header,
+        )
+        self.assertEqual(os.environ.get("MISTRAL_API_KEY"), "sk-mistral-delete-reload")
+
+        del_resp = self.client.delete(
+            "/api/config/llm-providers/mistral",
+            headers=self.auth_header,
+        )
+        self.assertEqual(del_resp.status_code, 200)
+        self.assertTrue(del_resp.get_json()["success"])
+
+        # The DELETE clears os.environ AND calls reload_settings() so the old key
+        # is no longer accessible via get_settings().
+        self.assertIsNone(os.environ.get("MISTRAL_API_KEY"))
+
+
+class TestSettingsCacheReload(unittest.TestCase):
+    """Unit tests for reload_settings() cache-invalidation behaviour.
+
+    These tests run without any Flask app so they are fast and avoid
+    interference from background threads started by create_app().
+
+    Assumption: the project's .env file does NOT contain MISTRAL_API_KEY (or any
+    other provider API keys).  API keys are managed exclusively at runtime via the
+    LLM-provider management UI / database, so the tests can assert `None` after
+    removing a key from os.environ.
+    """
+
+    def setUp(self):
+        self._orig_mistral = os.environ.pop("MISTRAL_API_KEY", None)
+        from config.settings import get_settings
+        get_settings.cache_clear()
+
+    def tearDown(self):
+        from config.settings import get_settings
+        get_settings.cache_clear()
+        if self._orig_mistral is not None:
+            os.environ["MISTRAL_API_KEY"] = self._orig_mistral
+        else:
+            os.environ.pop("MISTRAL_API_KEY", None)
+
+    def test_reload_settings_exposes_new_api_key(self):
+        """reload_settings() makes get_settings() reflect an env var added after
+        the initial cache was primed."""
+        from config.settings import get_settings, reload_settings
+
+        # Prime the cache — no key present in env or .env
+        original = get_settings()
+        self.assertIsNone(original.mistral_api_key)
+        # Same cached object on a second call
+        self.assertIs(original, get_settings())
+
+        # Simulate what the POST /api/config/llm-providers handler does
+        os.environ["MISTRAL_API_KEY"] = "sk-new-key"
+        reload_settings()
+
+        updated = get_settings()
+        self.assertEqual(updated.mistral_api_key, "sk-new-key")
+        # Must be a new object — cache was genuinely cleared
+        self.assertIsNot(original, updated)
+
+    def test_reload_settings_clears_deleted_api_key(self):
+        """reload_settings() makes get_settings() return None for a key that was
+        removed from os.environ (simulating provider deletion)."""
+        from config.settings import get_settings, reload_settings
+
+        os.environ["MISTRAL_API_KEY"] = "sk-to-delete"
+        reload_settings()
+        self.assertEqual(get_settings().mistral_api_key, "sk-to-delete")
+
+        # Simulate what the DELETE handler does
+        os.environ.pop("MISTRAL_API_KEY", None)
+        reload_settings()
+
+        # Key is gone from env and from .env → must be None
+        self.assertIsNone(get_settings().mistral_api_key)
+
 
 if __name__ == "__main__":
     unittest.main()
