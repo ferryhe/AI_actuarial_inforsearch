@@ -14,8 +14,8 @@
 {% block content %}
 <div class="file-view-page">
     <div class="page-header">
-        <a href="{{ return_to or '/database' }}" class="btn btn-secondary">&larr; Back</a>
-        <h2>File Details</h2>
+        <a href="{{ return_to or '/database' }}" class="btn btn-secondary">&larr; <span data-i18n="fv.back">Back</span></a>
+        <h2 data-i18n="fv.title">File Details</h2>
     </div>
 
     <div class="file-details-card">
@@ -24,17 +24,17 @@
         <div class="details-section">
             <table class="details-table">
                 <tr>
-                    <th>Source Site</th>
+                    <th data-i18n="fv.source_site">Source Site</th>
                     <td>{{ file.source_site }}</td>
                 </tr>
                 {% if file.source_site != 'Local Import' and file.source_site != 'File Import' %}
                 <tr>
-                    <th>Original URL</th>
+                    <th data-i18n="fv.orig_url">Original URL</th>
                     <td><a href="{{ file.url }}" target="_blank">{{ file.url }}</a></td>
                 </tr>
                 {% elif file.source_site == 'Local Import' or file.source_site == 'File Import' %}
                 <tr>
-                    <th>Original URL</th>
+                    <th data-i18n="fv.orig_url">Original URL</th>
                     <td>
                         {% if file.url.startswith('file://') %}
                             {# Use source_site name and extract filename #}
@@ -47,12 +47,12 @@
                 {% endif %}
                 {% if file.source_page_url and file.source_site != 'Local Import' and file.source_site != 'File Import' %}
                 <tr>
-                    <th>Source Page</th>
+                    <th data-i18n="fv.source_page">Source Page</th>
                     <td><a href="{{ file.source_page_url }}" target="_blank">{{ file.source_page_url }}</a></td>
                 </tr>
                 {% elif (file.source_site == 'Local Import' or file.source_site == 'File Import') and file.source_page_url %}
                 <tr>
-                    <th>Source Page</th>
+                    <th data-i18n="fv.source_page">Source Page</th>
                     <td>
                         {% if file.source_page_url.startswith('file://') %}
                             {# Use source_site name and extract directory name #}
@@ -64,45 +64,45 @@
                 </tr>
                 {% endif %}
                 <tr>
-                    <th>Content Type</th>
+                    <th data-i18n="fv.content_type">Content Type</th>
                     <td>{{ file.content_type }}</td>
                 </tr>
                 <tr>
-                    <th>File Size</th>
+                    <th data-i18n="fv.file_size">File Size</th>
                     <td class="file-size" data-bytes="{{ file.bytes }}">{{ file.bytes }} bytes</td>
                 </tr>
                 <tr>
-                    <th>Local Path</th>
+                    <th data-i18n="fv.local_path">Local Path</th>
                     <td>{{ file.local_path or 'Not stored locally' }}</td>
                 </tr>
                 <tr>
-                    <th>Collected Date</th>
+                    <th data-i18n="fv.collected_date">Collected Date</th>
                     <td>{{ file.crawl_time or file.last_seen }}</td>
                 </tr>
                 <tr>
-                    <th>Category</th>
+                    <th data-i18n="fv.category">Category</th>
                     <td>
                         <div id="category-display" class="category-display-text">{{ file.category or 'Uncategorized' }}</div>
                         <div id="category-editor" style="display:none;">
                             <div class="category-picker">
-                                <button type="button" id="category-picker-toggle" class="btn btn-secondary btn-small">
+                                <button type="button" id="category-picker-toggle" class="btn btn-secondary btn-small" data-i18n="fv.choose_cat">
                                     Choose Categories
                                 </button>
                                 <div id="category-options-panel" class="category-options-panel" style="display:none;"></div>
                             </div>
                             <div id="category-selected-preview" class="category-selected-preview"></div>
-                            <small class="category-help-text">Category options are managed in the Settings page.</small>
+                            <small class="category-help-text" data-i18n="fv.cat_hint">Category options are managed in the Settings page.</small>
                         </div>
                         <input type="hidden" id="category-input" data-current-value="{{ file.category or '' }}">
                     </td>
                 </tr>
                 {% if file.deleted_at %}
                 <tr>
-                    <th>Status</th>
-                    <td><span style="color: var(--error-500); font-weight: 600;">Deleted</span></td>
+                    <th data-i18n="fv.status">Status</th>
+                    <td><span style="color: var(--error-500); font-weight: 600;" data-i18n="fv.deleted">Deleted</span></td>
                 </tr>
                 <tr>
-                    <th>Deletion Time</th>
+                    <th data-i18n="fv.deletion_time">Deletion Time</th>
                     <td>{{ file.deleted_at }}</td>
                 </tr>
                 {% endif %}
@@ -110,7 +110,7 @@
         </div>
 
         <div class="summary-section">
-            <h4>
+            <h4 data-i18n="fv.summary">
                 Summary
             </h4>
             <div id="summary-display" class="summary-box" {% if not file.summary %}style="display:none;"{% endif %}>
@@ -118,20 +118,20 @@
             </div>
             <textarea id="summary-input" class="edit-textarea" data-current-value="{{ file.summary or '' }}" style="display:none;">{{ file.summary or '' }}</textarea>
             {% if not file.summary %}
-            <div id="summary-empty" class="summary-box" style="color: var(--text-secondary);">No summary available</div>
+            <div id="summary-empty" class="summary-box" style="color: var(--text-secondary);" data-i18n="fv.no_summary">No summary available</div>
             {% endif %}
         </div>
 
         <div class="keywords-section">
-            <h4>Keywords</h4>
+            <h4 data-i18n="fv.keywords">Keywords</h4>
             <div id="keywords-display" class="keywords-list" {% if not file.keywords %}style="display:none;"{% endif %}>
                 {% for keyword in file.keywords %}
                 <span class="keyword-tag">{{ keyword }}</span>
                 {% endfor %}
             </div>
-            <input type="text" id="keywords-input" class="edit-input" placeholder="Comma-separated keywords" data-current-value="{{ file.keywords|join(', ') if file.keywords else '' }}" style="display:none;" value="{{ file.keywords|join(', ') if file.keywords else '' }}">
+            <input type="text" id="keywords-input" class="edit-input" data-i18n-placeholder="fv.kw_ph" placeholder="Comma-separated keywords" data-current-value="{{ file.keywords|join(', ') if file.keywords else '' }}" style="display:none;" value="{{ file.keywords|join(', ') if file.keywords else '' }}">
             {% if not file.keywords %}
-            <div id="keywords-empty" style="color: var(--text-secondary);">No keywords available</div>
+            <div id="keywords-empty" style="color: var(--text-secondary);" data-i18n="fv.no_keywords">No keywords available</div>
             {% endif %}
         </div>
 
@@ -145,32 +145,33 @@
 
         <div class="actions-section">
             {% if can_write_catalog %}
-            <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()">Edit Details</button>
-            <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;">Save Changes</button>
-            <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;">Cancel</button>
-            <button id="catalog-btn" class="btn btn-secondary" onclick="openFileCatalogModal()">Catalog (AI)</button>
+            <button id="edit-btn" class="btn btn-secondary" onclick="toggleEditMode()" data-i18n="fv.edit">Edit Details</button>
+            <button id="save-btn" class="btn btn-primary" onclick="saveChanges()" style="display:none;" data-i18n="fv.save">Save Changes</button>
+            <button id="cancel-btn" class="btn btn-secondary" onclick="cancelEdit()" style="display:none;" data-i18n="fv.cancel">Cancel</button>
+            <button id="catalog-btn" class="btn btn-secondary" onclick="openFileCatalogModal()" data-i18n="fv.catalog">Catalog (AI)</button>
             {% endif %}
             
             {% if can_download_file and file.local_path %}
-            <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary">Download File</a>
+            <a href="/api/download?url={{ file.url|urlencode }}" class="btn btn-primary" data-i18n="fv.download">Download File</a>
             {% elif can_download_file %}
-            <button class="btn btn-secondary" disabled>Download Unavailable</button>
+            <button class="btn btn-secondary" disabled data-i18n="fv.download_na">Download Unavailable</button>
             {% endif %}
               
             {% if can_delete_file %}
-            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger">Delete File</button>
+            <button onclick="deleteFile({{ file.url|tojson }})" class="btn btn-danger" data-i18n="fv.delete">Delete File</button>
             {% endif %}
 
             <button id="ai-explain-btn" class="btn btn-info" onclick="explainWithAI()" style="display:none;">
                 <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
                 </svg>
-                AI Explain Document
+                <span data-i18n="fv.ai_explain">AI Explain Document</span>
             </button>
 
             <a id="file-preview-link"
                class="btn btn-secondary file-preview-top-btn"
-               href="/file_preview?file_url={{ file.url|urlencode }}">
+               href="/file_preview?file_url={{ file.url|urlencode }}"
+               data-i18n="fv.preview">
                 File Preview
             </a>
         </div>
@@ -180,34 +181,34 @@
                 <div id="chunk-meta" class="markdown-meta rag-meta" style="display:none;"></div>
                 {% if can_run_rag_tasks %}
                 <div id="chunk-actions" class="rag-index-actions" style="display:none;">
-                    <button id="chunk-modify-btn" class="btn btn-secondary">
+                    <button id="chunk-modify-btn" class="btn btn-secondary" data-i18n="fv.modify_chunk">
                         Modify Chunk
                     </button>
                 </div>
                 {% endif %}
             </div>
             <div class="markdown-header">
-                <h4>Markdown Content</h4>
+                <h4 data-i18n="fv.md_content">Markdown Content</h4>
                 <div class="markdown-tabs">
-                    <button id="markdown-view-tab" class="markdown-tab active" onclick="switchMarkdownTab('view')">View</button>
+                    <button id="markdown-view-tab" class="markdown-tab active" onclick="switchMarkdownTab('view')" data-i18n="fv.view">View</button>
                     {% if can_write_markdown %}
-                    <button id="markdown-edit-tab" class="markdown-tab" onclick="switchMarkdownTab('edit')">Edit</button>
+                    <button id="markdown-edit-tab" class="markdown-tab" onclick="switchMarkdownTab('edit')" data-i18n="fv.md_edit">Edit</button>
                     {% endif %}
-                    <button id="markdown-expand-btn" class="markdown-tab" onclick="toggleMarkdownHeight()" style="display:none;">Expand</button>
+                    <button id="markdown-expand-btn" class="markdown-tab" onclick="toggleMarkdownHeight()" style="display:none;" data-i18n="fv.expand">Expand</button>
                 </div>
             </div>
             <div id="markdown-meta" class="markdown-meta" style="display:none;"></div>
             
             <div id="markdown-view-mode" class="markdown-content-box markdown-view-box">
                 <div id="markdown-rendered" class="markdown-body"></div>
-                <div id="markdown-empty" style="color: var(--text-secondary); padding: 1rem;">No markdown content available</div>
+                <div id="markdown-empty" style="color: var(--text-secondary); padding: 1rem;" data-i18n="fv.no_md">No markdown content available</div>
             </div>
             
             {% if can_write_markdown %}
             <div id="markdown-edit-mode" class="markdown-edit-box" style="display: none;">
-                <textarea id="markdown-editor" class="markdown-textarea" placeholder="Enter markdown content here..."></textarea>
+                <textarea id="markdown-editor" class="markdown-textarea" data-i18n-placeholder="fv.md_edit_ph" placeholder="Enter markdown content here..."></textarea>
                  <div class="markdown-convert-actions">
-                     <label for="markdown-convert-engine" class="markdown-convert-label">Convert engine</label>
+                     <label for="markdown-convert-engine" class="markdown-convert-label" data-i18n="fv.convert_engine">Convert engine</label>
                      <select id="markdown-convert-engine" class="markdown-convert-select">
                           <option value="docling">Docling</option>
                          <option value="marker">Marker</option>
@@ -216,13 +217,13 @@
                       </select>
                      <label class="markdown-convert-overwrite">
                           <input type="checkbox" id="markdown-convert-overwrite" checked>
-                         Overwrite (unchecked = skip existing markdown)
+                         <span data-i18n="fv.overwrite_md">Overwrite (unchecked = skip existing markdown)</span>
                       </label>
-                     <button id="markdown-convert-btn" class="btn btn-secondary" onclick="submitMarkdownConversion()">Convert From File</button>
+                     <button id="markdown-convert-btn" class="btn btn-secondary" onclick="submitMarkdownConversion()" data-i18n="fv.convert_btn">Convert From File</button>
                  </div>
                 <div class="markdown-edit-actions">
-                    <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()">Save Markdown</button>
-                    <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()">Cancel</button>
+                    <button id="markdown-save-btn" class="btn btn-primary" onclick="saveMarkdown()" data-i18n="fv.save_md">Save Markdown</button>
+                    <button id="markdown-cancel-btn" class="btn btn-secondary" onclick="cancelMarkdownEdit()" data-i18n="fv.cancel">Cancel</button>
                      <span id="markdown-last-updated" class="markdown-timestamp"></span>
                  </div>
             </div>
@@ -239,26 +240,26 @@
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <use xlink:href="#icon-tag"></use>
       </svg>
-      Catalog This File
+      <span data-i18n="fv.catalog_modal_title">Catalog This File</span>
     </h3>
-    <p class="hint">Generate summary, keywords, and category for this file.</p>
+    <p class="hint" data-i18n="fv.catalog_hint">Generate summary, keywords, and category for this file.</p>
     <form id="file-catalog-form" onsubmit="submitFileCatalog(event)">
       <div class="form-group">
-        <label for="file-catalog-input-source">Catalog From</label>
+        <label for="file-catalog-input-source" data-i18n="fv.catalog_from">Catalog From</label>
         <select name="input_source" id="file-catalog-input-source">
-          <option value="markdown" selected>Markdown</option>
-          <option value="source">Source file</option>
+          <option value="markdown" selected data-i18n="fv.catalog_from_md">Markdown</option>
+          <option value="source" data-i18n="fv.catalog_from_src">Source file</option>
         </select>
-        <small class="form-hint">Markdown uses converted/edited markdown content (if available).</small>
+        <small class="form-hint" data-i18n="fv.catalog_from_hint">Markdown uses converted/edited markdown content (if available).</small>
       </div>
       <div class="form-group">
         <label class="checkbox-label">
-          <input type="checkbox" name="overwrite_existing" id="file-catalog-overwrite-existing"> Overwrite existing content (recompute)
+          <input type="checkbox" name="overwrite_existing" id="file-catalog-overwrite-existing"> <span data-i18n="fv.overwrite_recompute">Overwrite existing content (recompute)</span>
         </label>
-        <small class="form-hint">Unchecked = Skip already cataloged</small>
+        <small class="form-hint" data-i18n="fv.overwrite_hint">Unchecked = Skip already cataloged</small>
       </div>
       <div class="form-group">
-        <label for="file-catalog-provider">AI Provider</label>
+        <label for="file-catalog-provider" data-i18n="fv.ai_provider">AI Provider</label>
         <select name="provider" id="file-catalog-provider">
           <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
             OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
@@ -267,8 +268,8 @@
         </select>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
-        <button type="button" class="btn btn-secondary" onclick="closeFileCatalogModal()">Cancel</button>
-        <button type="submit" class="btn btn-primary">Submit Catalog Task</button>
+        <button type="button" class="btn btn-secondary" onclick="closeFileCatalogModal()" data-i18n="fv.cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" data-i18n="fv.submit_catalog">Submit Catalog Task</button>
       </div>
     </form>
   </div>
@@ -283,39 +284,39 @@
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <use xlink:href="#icon-tag"></use>
       </svg>
-      Modify Chunk (This File)
+      <span data-i18n="fv.chunk_modal_title">Modify Chunk (This File)</span>
     </h3>
-    <p class="hint">Submit a single-file chunk generation task. Choose a profile and overwrite policy.</p>
+    <p class="hint" data-i18n="fv.chunk_hint">Submit a single-file chunk generation task. Choose a profile and overwrite policy.</p>
     <form id="file-chunk-task-form" onsubmit="submitChunkTask(event)">
       <div class="form-group">
-        <label for="file-chunk-profile-select">Chunk Profile</label>
+        <label for="file-chunk-profile-select" data-i18n="fv.chunk_profile">Chunk Profile</label>
         <select name="profile_id" id="file-chunk-profile-select" required></select>
-        <small class="form-hint">Same profile + overwrite = replace current chunk set. Different profile = add a new chunk set.</small>
+        <small class="form-hint" data-i18n="fv.chunk_profile_hint">Same profile + overwrite = replace current chunk set. Different profile = add a new chunk set.</small>
       </div>
       <div class="form-group">
-        <label for="file-chunk-kb-select">Bind To Knowledge Base (Optional)</label>
+        <label for="file-chunk-kb-select" data-i18n="fv.bind_kb">Bind To Knowledge Base (Optional)</label>
         <select name="kb_id" id="file-chunk-kb-select">
-          <option value="">Do not bind to KB</option>
+          <option value="" data-i18n="fv.no_bind">Do not bind to KB</option>
         </select>
-        <small class="form-hint">If selected, this file's generated chunk set will be bound to that KB.</small>
+        <small class="form-hint" data-i18n="fv.bind_kb_hint">If selected, this file's generated chunk set will be bound to that KB.</small>
       </div>
       <div class="form-group">
-        <label for="file-chunk-binding-mode-select">Binding Mode</label>
+        <label for="file-chunk-binding-mode-select" data-i18n="fv.binding_mode">Binding Mode</label>
         <select name="binding_mode" id="file-chunk-binding-mode-select">
-          <option value="follow_latest" selected>Follow Latest (Recommended)</option>
-          <option value="pin">Pin (Fixed Version)</option>
+          <option value="follow_latest" selected data-i18n="fv.follow_latest">Follow Latest (Recommended)</option>
+          <option value="pin" data-i18n="fv.pin">Pin (Fixed Version)</option>
         </select>
-        <small class="form-hint">Follow Latest auto-tracks new same-profile chunk sets. Pin keeps current chunk_set_id.</small>
+        <small class="form-hint" data-i18n="fv.binding_mode_hint">Follow Latest auto-tracks new same-profile chunk sets. Pin keeps current chunk_set_id.</small>
       </div>
       <div class="form-group">
         <label class="checkbox-label">
-          <input type="checkbox" name="overwrite_same_profile" id="file-chunk-overwrite-same-profile"> Overwrite same-profile chunk set
+          <input type="checkbox" name="overwrite_same_profile" id="file-chunk-overwrite-same-profile"> <span data-i18n="fv.overwrite_same">Overwrite same-profile chunk set</span>
         </label>
-        <small class="form-hint">Unchecked = keep existing same-profile chunk and reuse it.</small>
+        <small class="form-hint" data-i18n="fv.overwrite_same_hint">Unchecked = keep existing same-profile chunk and reuse it.</small>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
-        <button type="button" class="btn btn-secondary" onclick="closeChunkTaskModal()">Cancel</button>
-        <button type="submit" class="btn btn-primary">Submit Chunk Task</button>
+        <button type="button" class="btn btn-secondary" onclick="closeChunkTaskModal()" data-i18n="fv.cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" data-i18n="fv.submit_chunk">Submit Chunk Task</button>
       </div>
     </form>
   </div>
@@ -645,7 +646,9 @@
             // Update button text based on whether chunks exist
             const chunkBtn = document.getElementById('chunk-modify-btn');
             if (chunkBtn) {
-                const buttonText = hasChunk ? 'Modify Chunk' : 'Add Chunk';
+                const buttonText = hasChunk
+                    ? (window.I18n ? window.I18n.t('fv.modify_chunk') : 'Modify Chunk')
+                    : (window.I18n ? window.I18n.t('fv.add_chunk') : 'Add Chunk');
                 chunkBtn.textContent = buttonText;
                 
                 console.log('renderChunkStatusMeta: button found and updated', { buttonText });
@@ -669,7 +672,9 @@
             const modalTitle = document.querySelector('#file-chunk-task-modal h3');
             if (modalTitle) {
                 const iconSvg = modalTitle.querySelector('svg');
-                const titleText = hasChunk ? 'Modify Chunk (This File)' : 'Add Chunk (This File)';
+                const titleText = hasChunk
+                    ? (window.I18n ? window.I18n.t('fv.chunk_modal_title') : 'Modify Chunk (This File)')
+                    : (window.I18n ? window.I18n.t('fv.add_chunk_title') : 'Add Chunk (This File)');
                 modalTitle.innerHTML = '';
                 if (iconSvg) modalTitle.appendChild(iconSvg.cloneNode(true));
                 modalTitle.appendChild(document.createTextNode('\n      ' + titleText + '\n    '));
@@ -678,9 +683,9 @@
             // Update modal hint text
             const modalHint = document.querySelector('#file-chunk-task-modal .hint');
             if (modalHint) {
-                const hintText = hasChunk 
-                    ? 'Submit a single-file chunk generation task. Choose a profile and overwrite policy.'
-                    : 'Submit a single-file chunk generation task. Choose a profile to create chunks for this file.';
+                const hintText = hasChunk
+                    ? (window.I18n ? window.I18n.t('fv.chunk_hint') : 'Submit a single-file chunk generation task. Choose a profile and overwrite policy.')
+                    : (window.I18n ? window.I18n.t('fv.add_chunk_hint') : 'Submit a single-file chunk generation task. Choose a profile to create chunks for this file.');
                 modalHint.textContent = hintText;
             }
         }
@@ -711,7 +716,7 @@
         
         if (!Array.isArray(fileChunkProfiles) || fileChunkProfiles.length === 0) {
             console.log('openChunkTaskModal: no profiles available');
-            Toast.error('No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
+            Toast.error(window.I18n ? window.I18n.t('fv.no_chunk_profiles') : 'No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
             return;
         }
         const preferredProfile = fileChunkSets.length > 0 ? String(fileChunkSets[0].profile_id || '') : '';
@@ -1370,10 +1375,10 @@
         btn.style.display = 'inline-flex';
         if (markdownExpanded) {
             viewMode.classList.add('expanded');
-            btn.textContent = 'Collapse';
+            btn.textContent = window.I18n ? window.I18n.t('fv.collapse') : 'Collapse';
         } else {
             viewMode.classList.remove('expanded');
-            btn.textContent = 'Expand';
+            btn.textContent = window.I18n ? window.I18n.t('fv.expand') : 'Expand';
         }
     }
     
@@ -1596,13 +1601,13 @@
         modal.style.display = 'flex';
         modal.innerHTML = `
             <div class="modal-content confirm-dialog">
-                <h3>Confirm Delete</h3>
-                <p>You are about to permanently delete this file. This action cannot be undone.</p>
-                <p>Type <strong>confirm delete</strong> to proceed:</p>
+                <h3>${window.I18n ? window.I18n.t('fv.confirm_delete') : 'Confirm Delete'}</h3>
+                <p>${window.I18n ? window.I18n.t('fv.confirm_delete_msg') : 'You are about to permanently delete this file. This action cannot be undone.'}</p>
+                <p>${window.I18n ? window.I18n.t('fv.confirm_delete_type') : 'Type <strong>confirm delete</strong> to proceed:'}</p>
                 <input type="text" id="delete-confirm-input" class="form-control" placeholder="confirm delete" style="margin: 1rem 0; padding: 0.5rem; width: 100%; border: 1px solid var(--border-color); border-radius: 4px;">
                 <div class="confirm-buttons">
-                    <button class="btn btn-secondary" id="cancel-delete">Cancel</button>
-                    <button class="btn btn-danger" id="confirm-delete">Delete</button>
+                    <button class="btn btn-secondary" id="cancel-delete">${window.I18n ? window.I18n.t('fv.cancel') : 'Cancel'}</button>
+                    <button class="btn btn-danger" id="confirm-delete">${window.I18n ? window.I18n.t('fv.delete') : 'Delete'}</button>
                 </div>
             </div>
         `;

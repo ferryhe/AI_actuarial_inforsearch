@@ -267,7 +267,10 @@ function syncModalState() {
 window.syncModalState = syncModalState;
 
 // Custom confirm dialog
-function customConfirm(message, title = 'Confirm Action') {
+function customConfirm(message, title) {
+    if (title === undefined) {
+        title = (window.I18n ? window.I18n.t('modal.confirm_title') : 'Confirm Action');
+    }
     return new Promise((resolve) => {
         const modal = document.getElementById('confirm-modal');
         const titleEl = document.getElementById('confirm-title');
@@ -364,6 +367,17 @@ class DataTable {
         wrapper.appendChild(table);
         this.container.innerHTML = '';
         this.container.appendChild(wrapper);
+
+        if (this.options.resizable) {
+            table.style.tableLayout = 'fixed';
+            requestAnimationFrame(() => {
+                table.querySelectorAll('th').forEach(th => {
+                    if (!th.style.width) {
+                        th.style.width = `${th.getBoundingClientRect().width}px`;
+                    }
+                });
+            });
+        }
     }
     
     createToolbar() {
@@ -376,7 +390,7 @@ class DataTable {
         if (this.options.selectable) {
             const selectedCount = document.createElement('span');
             selectedCount.className = 'selected-count';
-            selectedCount.textContent = `${this.selectedRows.size} selected`;
+            selectedCount.textContent = `${this.selectedRows.size} ${window.I18n ? window.I18n.t('db.n_selected') : 'selected'}`;
             left.appendChild(selectedCount);
         }
         
@@ -394,7 +408,7 @@ class DataTable {
                     <line x1="10" y1="11" x2="10" y2="17"></line>
                     <line x1="14" y1="11" x2="14" y2="17"></line>
                 </svg>
-                Bulk Delete
+                ${window.I18n ? window.I18n.t('db.bulk_delete') : 'Bulk Delete'}
             `;
             deleteBtn.addEventListener('click', () => this.bulkDelete());
             right.appendChild(deleteBtn);
@@ -409,7 +423,7 @@ class DataTable {
                     <polyline points="7 10 12 15 17 10"></polyline>
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                 </svg>
-                Export Filelist
+                ${window.I18n ? window.I18n.t('db.export_filelist') : 'Export Filelist'}
             `;
             exportBtn.addEventListener('click', () => this.exportToCSV(this.options.exportFilename));
             right.appendChild(exportBtn);
@@ -710,7 +724,7 @@ class DataTable {
         // Update selected count in toolbar
         const selectedCount = this.container.querySelector('.selected-count');
         if (selectedCount) {
-            selectedCount.textContent = `${this.selectedRows.size} selected`;
+            selectedCount.textContent = `${this.selectedRows.size} ${window.I18n ? window.I18n.t('db.n_selected') : 'selected'}`;
         }
         
         // Update select all checkbox
@@ -793,15 +807,21 @@ class DataTable {
         const modal = document.createElement('div');
         modal.className = 'modal';
         modal.style.display = 'flex';
+        const _i = window.I18n;
+        const _confirmTitle = _i ? _i.t('db.confirm_bulk_delete') : 'Confirm Bulk Delete';
+        const _confirmMsg = (_i ? _i.t('db.confirm_bulk_delete_msg') : 'You are about to delete {count} file(s). This action cannot be undone.').replace('{count}', this.selectedRows.size);
+        const _confirmType = _i ? _i.t('db.confirm_type') : 'Type <strong>confirm delete</strong> to proceed:';
+        const _cancelLabel = _i ? _i.t('modal.cancel') : 'Cancel';
+        const _deleteLabel = _i ? _i.t('common.delete') : 'Delete';
         modal.innerHTML = `
             <div class="modal-content confirm-dialog">
-                <h3>Confirm Bulk Delete</h3>
-                <p>You are about to delete ${this.selectedRows.size} file(s). This action cannot be undone.</p>
-                <p>Type <strong>confirm delete</strong> to proceed:</p>
+                <h3>${_confirmTitle}</h3>
+                <p>${_confirmMsg}</p>
+                <p>${_confirmType}</p>
                 <input type="text" id="delete-confirm-input" class="form-control" placeholder="confirm delete" style="margin: 1rem 0; padding: 0.5rem; width: 100%; border: 1px solid var(--border-color); border-radius: 4px;">
                 <div class="confirm-buttons">
-                    <button class="btn btn-secondary" id="cancel-delete">Cancel</button>
-                    <button class="btn btn-danger" id="confirm-delete">Delete</button>
+                    <button class="btn btn-secondary" id="cancel-delete">${_cancelLabel}</button>
+                    <button class="btn btn-danger" id="confirm-delete">${_deleteLabel}</button>
                 </div>
             </div>
         `;

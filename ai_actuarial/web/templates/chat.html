@@ -706,8 +706,8 @@
 {% block content %}
 <div class="page-header">
     <div>
-        <h2>AI Chat Assistant</h2>
-        <p class="text-muted">Ask questions about your knowledge bases</p>
+        <h2 data-i18n="chat.title">AI Chat Assistant</h2>
+        <p class="text-muted" data-i18n="chat.subtitle">Ask questions about your knowledge bases</p>
     </div>
 </div>
 
@@ -721,7 +721,7 @@
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
-                    <span>Explain Document</span>
+                    <span data-i18n="chat.explain_doc">Explain Document</span>
                 </div>
                 <svg class="doc-explorer-toggle" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
@@ -729,42 +729,42 @@
             </div>
             <div class="doc-explorer-content">
                 <div class="doc-filter-group">
-                    <label class="doc-filter-label">Filter by Category</label>
+                    <label class="doc-filter-label" data-i18n="chat.filter_cat">Filter by Category</label>
                     <select id="doc-category-filter" class="doc-filter-input">
-                        <option value="">All Categories</option>
+                        <option value="" data-i18n="chat.all_cats">All Categories</option>
                     </select>
                 </div>
                 <div class="doc-filter-group">
-                    <label class="doc-filter-label">Search Keywords</label>
-                    <input type="text" id="doc-keyword-filter" class="doc-filter-input" placeholder="Type to search...">
+                    <label class="doc-filter-label" data-i18n="chat.search_kw">Search Keywords</label>
+                    <input type="text" id="doc-keyword-filter" class="doc-filter-input" data-i18n-placeholder="chat.type_search" placeholder="Type to search...">
                 </div>
                 <div class="doc-filter-group">
-                    <label class="doc-filter-label">Select Document</label>
+                    <label class="doc-filter-label" data-i18n="chat.select_doc">Select Document</label>
                     <div style="display: flex; gap: 4px; margin-bottom: 4px;">
                         <button id="doc-load-btn" class="btn btn-secondary btn-sm" style="flex: 1; font-size: 0.75rem; padding: 0.25rem 0.5rem;">
                             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                             </svg>
-                            Load Documents
+                            <span data-i18n="chat.load_docs">Load Documents</span>
                         </button>
                     </div>
                     <select id="doc-selector" class="doc-selector" size="5" multiple>
-                        <option value="">Click "Load Documents" to start</option>
+                        <option value="" data-i18n="chat.click_load">Click "Load Documents" to start</option>
                     </select>
-                    <div class="doc-count" id="doc-count">Click load button above</div>
+                    <div class="doc-count" id="doc-count" data-i18n="chat.click_load2">Click load button above</div>
                 </div>
                 <button id="doc-explain-btn" class="doc-explain-btn" disabled>
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
                     </svg>
-                    Explain Selected
+                    <span data-i18n="chat.explain_sel">Explain Selected</span>
                 </button>
             </div>
         </div>
         
         <div class="chat-sidebar-header">
-            <h3>Conversations</h3>
-            <button id="new-conversation-btn" class="btn btn-primary btn-sm" title="New Conversation">
+            <h3 data-i18n="chat.conversations">Conversations</h3>
+            <button id="new-conversation-btn" class="btn btn-primary btn-sm" data-i18n-title="chat.new_conv" title="New Conversation">
                 <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                 </svg>
@@ -773,7 +773,7 @@
         <div class="chat-conversations" id="conversations-list">
             <div class="chat-loading">
                 <div class="chat-loading-spinner"></div>
-                Loading conversations...
+                <span data-i18n="chat.loading_convs">Loading conversations...</span>
             </div>
         </div>
     </div>
@@ -782,8 +782,8 @@
     <div class="chat-main">
         <div class="chat-header">
             <div class="chat-header-title">
-                <h2 id="chat-title">New Conversation</h2>
-                <div class="chat-header-subtitle" id="chat-subtitle">
+                <h2 id="chat-title" data-i18n="chat.new_conv">New Conversation</h2>
+                <div class="chat-header-subtitle" id="chat-subtitle" data-i18n="chat.select_kb_hint">
                     Select a knowledge base and mode to start chatting
                 </div>
             </div>
@@ -791,34 +791,36 @@
                 <div class="chat-controls">
                     <div class="chat-control-group">
                         <div class="chat-control-label">
-                            KB Selection
+                            <span data-i18n="chat.kb_select">KB Selection</span>
                             <span
                                 class="chat-help"
                                 tabindex="0"
+                                data-i18n-tooltip="chat.kb_tooltip"
                                 data-tooltip="Pick where answers come from. Auto chooses likely KBs, All searches every KB, or select one KB for tighter results.">
                                 ?
                             </span>
                         </div>
-                        <select id="kb-selector" title="Knowledge Base">
-                            <option value="auto">Auto (Smart Selection)</option>
-                            <option value="all">All Knowledge Bases</option>
+                        <select id="kb-selector" data-i18n-title="chat.kb_select_title" title="Knowledge Base">
+                            <option value="auto" data-i18n="chat.auto_smart">Auto (Smart Selection)</option>
+                            <option value="all" data-i18n="chat.all_kbs">All Knowledge Bases</option>
                         </select>
                     </div>
                     <div class="chat-control-group">
                         <div class="chat-control-label">
-                            Model Selection
+                            <span data-i18n="chat.model_sel">Model Selection</span>
                             <span
                                 class="chat-help chat-help-right"
                                 tabindex="0"
+                                data-i18n-tooltip="chat.mode_tooltip"
                                 data-tooltip="Controls answer style (response mode, not base LLM engine). Expert is deep/technical, Summary is concise, Tutorial is step-by-step, Comparison is side-by-side analysis.">
                                 ?
                             </span>
                         </div>
-                        <select id="mode-selector" title="Chat Mode">
-                            <option value="expert">Expert Mode</option>
-                            <option value="summary">Summary Mode</option>
-                            <option value="tutorial">Tutorial Mode</option>
-                            <option value="comparison">Comparison Mode</option>
+                        <select id="mode-selector" data-i18n-title="chat.mode_sel_title" title="Chat Mode">
+                            <option value="expert" data-i18n="chat.expert_mode">Expert Mode</option>
+                            <option value="summary" data-i18n="chat.summary_mode">Summary Mode</option>
+                            <option value="tutorial" data-i18n="chat.tutorial_mode">Tutorial Mode</option>
+                            <option value="comparison" data-i18n="chat.compare_mode">Comparison Mode</option>
                         </select>
                     </div>
                 </div>
@@ -832,8 +834,8 @@
                           d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
                     </path>
                 </svg>
-                <h3>Start a Conversation</h3>
-                <p>Type a message below to begin chatting with the AI assistant</p>
+                <h3 data-i18n="chat.start_title">Start a Conversation</h3>
+                <p data-i18n="chat.start_hint">Type a message below to begin chatting with the AI assistant</p>
             </div>
         </div>
         
@@ -843,10 +845,11 @@
                     <textarea 
                         id="chat-input" 
                         class="chat-input" 
+                        data-i18n-placeholder="chat.input_ph"
                         placeholder="Type your question here..."
                         rows="1"></textarea>
                 </div>
-                <button id="send-btn" class="chat-send-btn" disabled>Send</button>
+                <button id="send-btn" class="chat-send-btn" disabled data-i18n="chat.send">Send</button>
             </div>
         </div>
     </div>
@@ -930,10 +933,12 @@
             const selectedCount = Array.from(docSelector.selectedOptions).filter(opt => opt.value).length;
             docExplainBtn.disabled = selectedCount === 0;
             // Update button text
+            const _t = k => window.I18n ? window.I18n.t(k) : k;
+            const svgChat = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> ';
             if (selectedCount > 1) {
-                docExplainBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Compare ' + selectedCount + ' Docs';
+                docExplainBtn.innerHTML = svgChat + _t('chat.compare_docs').replace('{n}', selectedCount);
             } else {
-                docExplainBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Explain Selected';
+                docExplainBtn.innerHTML = svgChat + _t('chat.explain_sel');
             }
         });
         docExplainBtn.addEventListener('click', explainSelectedDocument);
@@ -1056,8 +1061,8 @@
                               d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
                         </path>
                     </svg>
-                    <h3>Start a Conversation</h3>
-                    <p>Type a message below to begin chatting with the AI assistant</p>
+                    <h3>${window.I18n ? window.I18n.t('chat.start_title') : 'Start a Conversation'}</h3>
+                    <p>${window.I18n ? window.I18n.t('chat.start_hint') : 'Type a message below to begin chatting with the AI assistant'}</p>
                 </div>
             `;
             return;
@@ -1352,8 +1357,8 @@
     
     function startNewConversation() {
         currentConversationId = null;
-        chatTitle.textContent = 'New Conversation';
-        chatSubtitle.textContent = 'Select a knowledge base and mode to start chatting';
+        chatTitle.textContent = window.I18n ? window.I18n.t('chat.new_conv') : 'New Conversation';
+        chatSubtitle.textContent = window.I18n ? window.I18n.t('chat.select_kb_hint') : 'Select a knowledge base and mode to start chatting';
         chatMessages.innerHTML = `
             <div class="chat-empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1361,8 +1366,8 @@
                           d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
                     </path>
                 </svg>
-                <h3>Start a Conversation</h3>
-                <p>Type a message below to begin chatting with the AI assistant</p>
+                <h3>${window.I18n ? window.I18n.t('chat.start_title') : 'Start a Conversation'}</h3>
+                <p>${window.I18n ? window.I18n.t('chat.start_hint') : 'Type a message below to begin chatting with the AI assistant'}</p>
             </div>
         `;
         
@@ -1499,13 +1504,16 @@
     async function loadAvailableDocuments() {
         // Prevent multiple simultaneous loads
         if (docLoadBtn.disabled) return;
+        const _t = k => window.I18n ? window.I18n.t(k) : k;
+        const svgRefresh = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> ';
+        const svgRefreshSpin = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle; animation: spin 1s linear infinite;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> ';
         
         try {
             // Show loading state
             docLoadBtn.disabled = true;
-            docLoadBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle; animation: spin 1s linear infinite;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Loading...';
-            docSelector.innerHTML = '<option value="">Loading...</option>';
-            docCount.textContent = 'Loading...';
+            docLoadBtn.innerHTML = svgRefreshSpin + _t('common.loading');
+            docSelector.innerHTML = '<option value="">' + _t('common.loading') + '</option>';
+            docCount.textContent = _t('common.loading');
             
             const response = await fetch('/api/chat/available-documents');
             const result = await response.json();
@@ -1522,15 +1530,15 @@
                 filterDocuments();
                 
                 // Update button text
-                docLoadBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Refresh';
+                docLoadBtn.innerHTML = svgRefresh + _t('chat.refresh');
             } else {
                 throw new Error(result.error || 'Failed to load documents');
             }
         } catch (error) {
             console.error('Error loading documents:', error);
-            docSelector.innerHTML = '<option value="">Error loading - click Retry to try again</option>';
-            docCount.textContent = 'Error loading documents';
-            docLoadBtn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display: inline-block; vertical-align: middle;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Retry';
+            docSelector.innerHTML = '<option value="">' + _t('chat.error_loading_docs') + '</option>';
+            docCount.textContent = _t('chat.error_loading_docs');
+            docLoadBtn.innerHTML = svgRefresh + _t('chat.retry');
         } finally {
             docLoadBtn.disabled = false;
         }
@@ -1574,9 +1582,10 @@
         });
         
         // Update document selector
+        const _t = k => window.I18n ? window.I18n.t(k) : k;
         docSelector.innerHTML = '';
         if (filteredDocuments.length === 0) {
-            docSelector.innerHTML = '<option value="">No documents found</option>';
+            docSelector.innerHTML = '<option value="">' + _t('chat.no_docs_found') + '</option>';
             docExplainBtn.disabled = true;
         } else {
             filteredDocuments.forEach(doc => {
@@ -1595,7 +1604,8 @@
         }
         
         // Update count
-        docCount.textContent = `${filteredDocuments.length} document${filteredDocuments.length !== 1 ? 's' : ''} available`;
+        const n = filteredDocuments.length;
+        docCount.textContent = n === 1 ? _t('chat.doc_available') : _t('chat.docs_available').replace('{n}', n);
     }
     
     async function explainSelectedDocument() {
@@ -1609,7 +1619,8 @@
         try {
             // Show loading state
             docExplainBtn.disabled = true;
-            docExplainBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Loading...';
+            const _t = k => window.I18n ? window.I18n.t(k) : k;
+            docExplainBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> ' + _t('common.loading');
             
             // Load markdown content for all selected documents
             const documentContents = [];
@@ -1682,9 +1693,11 @@
             // Restore button state
             docExplainBtn.disabled = false;
             const selectedCount = selectedOptions.length;
-            docExplainBtn.innerHTML = selectedCount > 1 
-                ? `<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Compare ${selectedCount} Docs`
-                : '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> Explain Selected';
+            const _tF = k => window.I18n ? window.I18n.t(k) : k;
+            const svgChat = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg> ';
+            docExplainBtn.innerHTML = selectedCount > 1
+                ? svgChat + _tF('chat.compare_docs').replace('{n}', selectedCount)
+                : svgChat + _tF('chat.explain_sel');
         }
     }
 })();

@@ -11,11 +11,11 @@
     <div class="preview-header">
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <h2 id="file-title" style="margin: 0;">File Preview</h2>
+                <h2 id="file-title" style="margin: 0;" data-i18n="fp.title">File Preview</h2>
                 <p id="file-info" style="margin: 0.5rem 0 0 0; color: var(--text-secondary);"></p>
             </div>
             <div>
-                <a href="{{ url_for('database') }}" class="btn btn-secondary">Back to Database</a>
+                <a href="{{ url_for('database') }}" class="btn btn-secondary" data-i18n="fp.back">Back to Database</a>
             </div>
         </div>
     </div>
@@ -23,18 +23,18 @@
     <div class="preview-content">
         <!-- Left pane: Original file -->
         <div class="preview-pane" id="original-pane">
-            <h3 class="pane-title">Original File</h3>
+            <h3 class="pane-title" data-i18n="fp.original">Original File</h3>
             <div id="original-viewer-container">
-                <div class="loading-spinner">Loading original file...</div>
+                <div class="loading-spinner" data-i18n="fp.loading_orig">Loading original file...</div>
             </div>
         </div>
         
         <!-- Right pane: Chunks -->
         <div class="preview-pane" id="chunks-pane">
-            <h3 class="pane-title">Chunks</h3>
+            <h3 class="pane-title" data-i18n="fp.chunks">Chunks</h3>
             <div id="chunk-set-controls" style="margin-bottom: 1rem;"></div>
             <div id="chunks-list">
-                <div class="loading-spinner">Loading chunks...</div>
+                <div class="loading-spinner" data-i18n="fp.loading_chunks">Loading chunks...</div>
             </div>
         </div>
     </div>
@@ -70,10 +70,12 @@
     if (fileUrl) {
         window.FilePreview.init(fileUrl, kbId, chunkSetId);
     } else {
-        document.getElementById('file-title').textContent = 'Error: No file specified';
-        document.getElementById('original-viewer-container').innerHTML = '<p>No file URL provided</p>';
+        const errNoFile = window.I18n ? window.I18n.t('fp.error_no_file') : 'Error: No file specified';
+        const errNoUrl  = window.I18n ? window.I18n.t('fp.no_url')        : 'No file URL provided';
+        document.getElementById('file-title').textContent = errNoFile;
+        document.getElementById('original-viewer-container').innerHTML = `<p>${errNoUrl}</p>`;
         document.getElementById('chunk-set-controls').innerHTML = '';
-        document.getElementById('chunks-list').innerHTML = '<p>No file URL provided</p>';
+        document.getElementById('chunks-list').innerHTML = `<p>${errNoUrl}</p>`;
     }
 </script>
 {% endblock %}
