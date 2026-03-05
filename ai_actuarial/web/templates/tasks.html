@@ -2019,45 +2019,46 @@ function loadTaskHistory() {
 }
 
 function showLog(task) {
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
     const isCatalog = task.type === 'catalog';
     const mainStats = isCatalog
         ? `
-            <li><strong>Scanned:</strong> ${task.catalog_scanned ?? task.items_processed ?? 0}</li>
-            <li><strong>Categorized (OK):</strong> ${task.catalog_ok ?? task.items_downloaded ?? 0}</li>
-            <li><strong>Skipped:</strong> ${task.catalog_skipped ?? task.items_skipped ?? 0}</li>
-            <li><strong>Failed:</strong> ${task.catalog_errors ?? (task.errors ? task.errors.length : 0)}</li>
+            <li><strong>${_t('tasks.log_scanned')}</strong> ${task.catalog_scanned ?? task.items_processed ?? 0}</li>
+            <li><strong>${_t('tasks.log_ok')}</strong> ${task.catalog_ok ?? task.items_downloaded ?? 0}</li>
+            <li><strong>${_t('tasks.log_skipped')}</strong> ${task.catalog_skipped ?? task.items_skipped ?? 0}</li>
+            <li><strong>${_t('tasks.log_failed_lbl')}</strong> ${task.catalog_errors ?? (task.errors ? task.errors.length : 0)}</li>
           `
         : `
-            <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
-            <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
-            <li><strong>Skipped:</strong> ${task.items_skipped || 0}</li>
-            <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+            <li><strong>${_t('tasks.log_items_processed')}</strong> ${task.items_processed || 0}</li>
+            <li><strong>${_t('tasks.log_new_updated')}</strong> ${task.items_downloaded || 0}</li>
+            <li><strong>${_t('tasks.log_skipped')}</strong> ${task.items_skipped || 0}</li>
+            <li><strong>${_t('tasks.log_errors_lbl')}</strong> ${task.errors ? task.errors.length : 0}</li>
           `;
 
     const content = `
         <div style="padding: 10px;">
-            <h4>Task Log: ${escapeHtml(task.name)}</h4>
+            <h4>${_t('tasks.log_title').replace('{name}', escapeHtml(task.name))}</h4>
             <ul style="list-style: none; padding: 0;">
-                <li><strong>Status:</strong> ${task.status}</li>
-                <li><strong>Started:</strong> ${formatDate(task.started_at)}</li>
-                <li><strong>Completed:</strong> ${formatDate(task.completed_at || '')}</li>
+                <li><strong>${_t('tasks.log_status')}</strong> ${task.status}</li>
+                <li><strong>${_t('tasks.log_started')}</strong> ${formatDate(task.started_at)}</li>
+                <li><strong>${_t('tasks.log_completed')}</strong> ${formatDate(task.completed_at || '')}</li>
                 ${mainStats}
             </ul>
             <div class="error-details-box">
-                <h5>Error Details:</h5>
+                <h5>${_t('stg.log_error_details')}</h5>
                 ${(task.errors && task.errors.length > 0) ? 
                     task.errors.map(e => `<div class="error-item">• ${escapeHtml(e)}</div>`).join('') 
-                    : 'No detailed errors logged.'}
+                    : _t('tasks.log_no_errors')}
             </div>
             <div class="error-details-box" style="margin-top: 12px;">
-                <h5>Application Log (Task)</h5>
-                <pre id="task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
+                <h5>${_t('stg.log_app_log')}</h5>
+                <pre id="task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">${_t('common.loading')}</pre>
                 <div style="margin-top: 8px; display: flex; gap: 8px;">
-                    <button class="btn-small" onclick="reloadTaskLog('${task.id}')">Reload</button>
-                    ${CAN_VIEW_GLOBAL_LOGS ? `<button class="btn-small" onclick="openGlobalLogs()">Global Logs</button>` : ''}
+                    <button class="btn-small" onclick="reloadTaskLog('${task.id}')">${_t('common.refresh')}</button>
+                    ${CAN_VIEW_GLOBAL_LOGS ? `<button class="btn-small" onclick="openGlobalLogs()">${_t('stg.log_global_logs')}</button>` : ''}
                 </div>
             </div>
-            ${task.message ? `<p><strong>Message:</strong> ${escapeHtml(task.message)}</p>` : ''}
+            ${task.message ? `<p><strong>${_t('tasks.log_message')}</strong> ${escapeHtml(task.message)}</p>` : ''}
         </div>
     `;
     // Reuse a modal or create one. For simplicity let's use a simple alert if no generic modal, 
@@ -2081,19 +2082,20 @@ function showLog(task) {
 }
 
 async function reloadTaskLog(taskId) {
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
     const pre = document.getElementById('task-log-content');
     if (!pre) return;
-    pre.textContent = 'Loading...';
+    pre.textContent = _t('common.loading');
     try {
         const resp = await fetch(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
         const data = await resp.json();
         if (resp.ok && data.success) {
-            pre.textContent = data.log || '(no task log yet)';
+            pre.textContent = data.log || _t('tasks.log_no_log_yet');
         } else {
-            pre.textContent = 'Failed to load task log: ' + (data.error || resp.status);
+            pre.textContent = _t('tasks.log_load_error') + (data.error || resp.status);
         }
     } catch (e) {
-        pre.textContent = 'Failed to load task log: ' + e.message;
+        pre.textContent = _t('tasks.log_load_error') + e.message;
     }
 }
 

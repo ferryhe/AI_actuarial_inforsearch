@@ -852,6 +852,23 @@
             'tasks.search_defaults_summary': 'Default max_results={max_results}, country={country}, languages={languages}',
             'tasks.failed_load_defaults':    'Failed to load defaults',
 
+            // Tasks page — task-log popup JS strings
+            'tasks.log_title':           'Task Log: {name}',
+            'tasks.log_scanned':         'Scanned:',
+            'tasks.log_ok':              'Categorized (OK):',
+            'tasks.log_skipped':         'Skipped:',
+            'tasks.log_failed_lbl':      'Failed:',
+            'tasks.log_items_processed': 'Items Processed (Total Scanned):',
+            'tasks.log_new_updated':     'New/Updated:',
+            'tasks.log_errors_lbl':      'Errors:',
+            'tasks.log_status':          'Status:',
+            'tasks.log_started':         'Started:',
+            'tasks.log_completed':       'Completed:',
+            'tasks.log_no_errors':       'No detailed errors logged.',
+            'tasks.log_message':         'Message:',
+            'tasks.log_no_log_yet':      '(no task log yet)',
+            'tasks.log_load_error':      'Failed to load task log: ',
+
             // RAG page — JS-rendered strings
             'rag.files_selected':           '{n} files selected',
             'rag.no_files_selected':        'No files selected',
@@ -1710,6 +1727,23 @@
             'tasks.failed_load_stats':  '加载统计失败：',
             'tasks.search_defaults_summary': '默认 max_results={max_results}，country={country}，languages={languages}',
             'tasks.failed_load_defaults':    '加载默认设置失败',
+
+            // Tasks page — task-log popup JS strings
+            'tasks.log_title':           '任务日志：{name}',
+            'tasks.log_scanned':         '已扫描：',
+            'tasks.log_ok':              '已分类（成功）：',
+            'tasks.log_skipped':         '已跳过：',
+            'tasks.log_failed_lbl':      '失败：',
+            'tasks.log_items_processed': '已处理条目（总扫描数）：',
+            'tasks.log_new_updated':     '新增/更新：',
+            'tasks.log_errors_lbl':      '错误数：',
+            'tasks.log_status':          '状态：',
+            'tasks.log_started':         '开始时间：',
+            'tasks.log_completed':       '完成时间：',
+            'tasks.log_no_errors':       '无详细错误记录。',
+            'tasks.log_message':         '消息：',
+            'tasks.log_no_log_yet':      '（暂无任务日志）',
+            'tasks.log_load_error':      '加载任务日志失败：',
 
             // RAG page — JS-rendered strings
             'rag.files_selected':           '已选 {n} 个文件',
