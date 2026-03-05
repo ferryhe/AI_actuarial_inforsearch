@@ -782,6 +782,9 @@
             'stg.log_no_log':          '(no task log yet)',
             'stg.failed_load_history': 'Failed to load history:',
             'stg.failed_load_log':     'Failed to load task log:',
+            'stg.log_error_details':   'Error Details:',
+            'stg.log_app_log':         'Application Log (Task)',
+            'stg.log_global_logs':     'Global Logs',
 
             // Chat page — tooltip strings
             'chat.kb_tooltip':         'Pick where answers come from. Auto chooses likely KBs, All searches every KB, or select one KB for tighter results.',
@@ -846,6 +849,8 @@
             'tasks.chunk_stats':        'Markdown files: {total} | With chunks: {with_chunks} | Missing: {missing}',
             'tasks.stats_first_missing':' | First missing index: {first}',
             'tasks.failed_load_stats':  'Failed to load stats:',
+            'tasks.search_defaults_summary': 'Default max_results={max_results}, country={country}, languages={languages}',
+            'tasks.failed_load_defaults':    'Failed to load defaults',
 
             // RAG page — JS-rendered strings
             'rag.files_selected':           '{n} files selected',
@@ -1636,6 +1641,9 @@
             'stg.log_no_log':          '（暂无任务日志）',
             'stg.failed_load_history': '加载历史失败：',
             'stg.failed_load_log':     '加载任务日志失败：',
+            'stg.log_error_details':   '错误详情：',
+            'stg.log_app_log':         '应用日志（任务）',
+            'stg.log_global_logs':     '全局日志',
 
             // Chat page — tooltip strings
             'chat.kb_tooltip':         '选择答案来源。自动模式智能选择知识库，全部模式搜索所有知识库，或选择单个知识库以精确检索。',
@@ -1700,6 +1708,8 @@
             'tasks.chunk_stats':        'Markdown 文件：{total} | 已分块：{with_chunks} | 缺失：{missing}',
             'tasks.stats_first_missing':'| 首个缺失索引：{first}',
             'tasks.failed_load_stats':  '加载统计失败：',
+            'tasks.search_defaults_summary': '默认 max_results={max_results}，country={country}，languages={languages}',
+            'tasks.failed_load_defaults':    '加载默认设置失败',
 
             // RAG page — JS-rendered strings
             'rag.files_selected':           '已选 {n} 个文件',
