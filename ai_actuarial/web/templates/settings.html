@@ -48,7 +48,7 @@
       <div class="module-header">
         <div>
           <h3 data-i18n="stg.ai_filter_kw">AI Filter Keywords</h3>
-          <p class="module-help" data-i18n="stg.ai_filter_kw_help">Used to decide whether a document is AI-related (e.g. in AI-only flows). This single list is also copied to <code>ai_keywords</code> to avoid drift.</p>
+          <p class="module-help"><span data-i18n="stg.ai_filter_kw_help">Used to decide whether a document is AI-related (e.g. in AI-only flows). This single list is also copied to</span> <code>ai_keywords</code> to avoid drift.</p>
         </div>
         <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_keywords')" data-i18n="common.edit">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
@@ -70,7 +70,7 @@
       <div class="module-header">
         <div>
           <h3 data-i18n="stg.model_providers">Model Providers</h3>
-          <p class="module-help" data-i18n="stg.model_providers_help">Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via <code>.env</code> are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.</p>
+          <p class="module-help"><span data-i18n="stg.model_providers_help">Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via</span> <code>.env</code> are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.</p>
         </div>
         <div>
           <button class="btn btn-primary" type="button" onclick="showAddProviderForm()" data-i18n="stg.add_provider">+ Add Provider</button>
@@ -98,7 +98,7 @@
             </select>
           </div>
           <div>
-            <label for="new-provider-baseurl" data-i18n="stg.base_url">Base URL <span style="font-weight:normal;color:var(--text-secondary)" data-i18n="stg.optional">(optional)</span></label>
+            <label for="new-provider-baseurl"><span data-i18n="stg.base_url">Base URL</span> <span style="font-weight:normal;color:var(--text-secondary)" data-i18n="stg.optional">(optional)</span></label>
             <input id="new-provider-baseurl" type="text" data-i18n-placeholder="stg.base_url_hint" placeholder="Leave blank for default">
           </div>
           <div style="grid-column:1/-1;">
