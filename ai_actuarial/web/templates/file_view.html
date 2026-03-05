@@ -646,7 +646,9 @@
             // Update button text based on whether chunks exist
             const chunkBtn = document.getElementById('chunk-modify-btn');
             if (chunkBtn) {
-                const buttonText = hasChunk ? 'Modify Chunk' : 'Add Chunk';
+                const buttonText = hasChunk
+                    ? (window.I18n ? window.I18n.t('fv.modify_chunk') : 'Modify Chunk')
+                    : (window.I18n ? window.I18n.t('fv.add_chunk') : 'Add Chunk');
                 chunkBtn.textContent = buttonText;
                 
                 console.log('renderChunkStatusMeta: button found and updated', { buttonText });
@@ -670,7 +672,9 @@
             const modalTitle = document.querySelector('#file-chunk-task-modal h3');
             if (modalTitle) {
                 const iconSvg = modalTitle.querySelector('svg');
-                const titleText = hasChunk ? 'Modify Chunk (This File)' : 'Add Chunk (This File)';
+                const titleText = hasChunk
+                    ? (window.I18n ? window.I18n.t('fv.chunk_modal_title') : 'Modify Chunk (This File)')
+                    : (window.I18n ? window.I18n.t('fv.add_chunk_title') : 'Add Chunk (This File)');
                 modalTitle.innerHTML = '';
                 if (iconSvg) modalTitle.appendChild(iconSvg.cloneNode(true));
                 modalTitle.appendChild(document.createTextNode('\n      ' + titleText + '\n    '));
@@ -679,9 +683,9 @@
             // Update modal hint text
             const modalHint = document.querySelector('#file-chunk-task-modal .hint');
             if (modalHint) {
-                const hintText = hasChunk 
-                    ? 'Submit a single-file chunk generation task. Choose a profile and overwrite policy.'
-                    : 'Submit a single-file chunk generation task. Choose a profile to create chunks for this file.';
+                const hintText = hasChunk
+                    ? (window.I18n ? window.I18n.t('fv.chunk_hint') : 'Submit a single-file chunk generation task. Choose a profile and overwrite policy.')
+                    : (window.I18n ? window.I18n.t('fv.add_chunk_hint') : 'Submit a single-file chunk generation task. Choose a profile to create chunks for this file.');
                 modalHint.textContent = hintText;
             }
         }
@@ -712,7 +716,7 @@
         
         if (!Array.isArray(fileChunkProfiles) || fileChunkProfiles.length === 0) {
             console.log('openChunkTaskModal: no profiles available');
-            Toast.error('No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
+            Toast.error(window.I18n ? window.I18n.t('fv.no_chunk_profiles') : 'No chunk profiles available. Create one in RAG -> Chunk Profiles first.');
             return;
         }
         const preferredProfile = fileChunkSets.length > 0 ? String(fileChunkSets[0].profile_id || '') : '';
@@ -1371,7 +1375,7 @@
         btn.style.display = 'inline-flex';
         if (markdownExpanded) {
             viewMode.classList.add('expanded');
-            btn.textContent = 'Collapse';
+            btn.textContent = window.I18n ? window.I18n.t('fv.collapse') : 'Collapse';
         } else {
             viewMode.classList.remove('expanded');
             btn.textContent = 'Expand';

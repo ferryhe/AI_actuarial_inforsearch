@@ -262,12 +262,12 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="tasks.start_search">Start Search Task</button>
         </form>
@@ -335,12 +335,12 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="tasks.start_quick_scan">Start Quick Scan</button>
         </form>
@@ -470,12 +470,12 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="tasks.start_url_col">Start URL Collection</button>
         </form>
@@ -500,7 +500,7 @@
                     <input type="text" id="directory-path-input" name="directory_path" required placeholder="C:\Documents\ActuarialFiles or /home/user/documents">
                     <button type="button" class="btn btn-secondary btn-browse" onclick="browseFolderForFileImport()" data-i18n="tasks.browse">Browse...</button>
                 </div>
-                <small class="form-hint">Enter the full path to your local directory</small>
+                <small class="form-hint" data-i18n="tasks.dir_path_hint">Enter the full path to your local directory</small>
             </div>
             <div class="form-group">
                 <label>
@@ -538,12 +538,12 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="tasks.start_import">Start File Import</button>
         </form>
@@ -1907,7 +1907,7 @@ function loadActiveTasks() {
                     </div>
                 `).join('');
             } else {
-                container.innerHTML = '<p class="no-data">No active tasks currently running.</p>';
+                container.innerHTML = `<p class="no-data">${window.I18n ? window.I18n.t('tasks.no_active_msg') : 'No active tasks currently running.'}</p>`;
             }
             
             // Check for completed tasks (tasks that were active but now aren't)

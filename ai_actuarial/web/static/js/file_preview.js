@@ -135,7 +135,7 @@ window.FilePreview = (function() {
         const downloadUrl = `/api/download?url=${encodeURIComponent(fileInfo.url)}`;
         container.innerHTML = `
             <div style="text-align: center; padding: 2rem;">
-                <p>Preview not available for this file type.</p>
+                <p>${window.I18n ? window.I18n.t('fp.preview_not_available') : 'Preview not available for this file type.'}</p>
                 <p style="margin-top: 1rem;">
                     <a href="${downloadUrl}" class="btn btn-primary" download>
                         Download ${escapeHtml(fileInfo.original_filename || 'File')}
@@ -226,7 +226,7 @@ window.FilePreview = (function() {
         const sets = Array.isArray(previewData.chunk_sets) ? previewData.chunk_sets : [];
 
         if (!sets.length) {
-            container.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No chunk versions available for this file.</p>';
+            container.innerHTML = `<p style="margin: 0; color: var(--text-secondary);">${window.I18n ? window.I18n.t('fp.no_chunk_versions') : 'No chunk versions available for this file.'}</p>`;
             return;
         }
 
@@ -262,7 +262,7 @@ window.FilePreview = (function() {
         const container = document.getElementById('chunks-list');
 
         if (chunks.length === 0) {
-            container.innerHTML = '<p style="color: var(--text-secondary);">No chunks available for this file.</p>';
+            container.innerHTML = `<p style="color: var(--text-secondary);">${window.I18n ? window.I18n.t('fp.no_chunks') : 'No chunks available for this file.'}</p>`;
             return;
         }
 

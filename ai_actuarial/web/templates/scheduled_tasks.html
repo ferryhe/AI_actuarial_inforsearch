@@ -249,11 +249,11 @@ let allSites = [];
 const CAN_EDIT_SITES = {{ 'true' if can_edit_sites else 'false' }};
 
 const TOOLTIPS = {
-    'max-pages': "Maximum number of pages to crawl per execution. Prevents infinite loops on large sites.",
-    'max-depth': "How deep to crawl links. 1 = Seed page only. 2 = Seed + Links on seed. 3 = Links on those links...",
-    'keywords': "Relevant topics. If set, only pages/files containing at least one of these are kept.",
-    'exclude-keywords': "Blacklist words. If a URL or Filename contains ANY of these, it is strictly skipped.",
-    'exclude-prefixes': "Blacklist prefixes. If a Filename starts with these (e.g. 'exam'), it is skipped."
+    'max-pages':        'sched.tooltip_max_pages',
+    'max-depth':        'sched.tooltip_max_depth',
+    'keywords':         'sched.tooltip_keywords',
+    'exclude-keywords': 'sched.tooltip_excl_kw',
+    'exclude-prefixes': 'sched.tooltip_excl_pfx',
 };
 
 function toggleTooltip(domId, contentKey) {
@@ -263,7 +263,8 @@ function toggleTooltip(domId, contentKey) {
         el.style.display = 'none';
     } else {
         el.style.display = 'block';
-        el.innerText = TOOLTIPS[contentKey] || "No description.";
+        const i18nKey = TOOLTIPS[contentKey];
+        el.innerText = (i18nKey && window.I18n) ? window.I18n.t(i18nKey) : "No description.";
     }
 }
 
