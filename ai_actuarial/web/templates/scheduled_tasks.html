@@ -11,6 +11,7 @@
     <!-- Tabs Navigation -->
     <div class="tabs">
         <button class="tab-link active" onclick="openTab(event, 'configured-sites')">Configured Sites</button>
+        <button class="tab-link" onclick="openTab(event, 'schedule-status')">Upcoming Runs</button>
         <button class="tab-link" onclick="openTab(event, 'manual-trigger')">Manual Trigger</button>
     </div>
 
@@ -32,6 +33,13 @@
         </div>
     </div>
 
+    </div>
+
+    <!-- Tab Content: Upcoming Runs -->
+    <div id="schedule-status" class="tab-content">
+        <div id="schedule-status-container">
+            <p class="loading">Loading schedule status...</p>
+        </div>
     </div>
 
     <!-- Tab Content: Manual Trigger -->
@@ -272,6 +280,9 @@ function openTab(evt, tabName) {
     }
     document.getElementById(tabName).style.display = "block";
     evt.currentTarget.className += " active";
+    if (tabName === 'schedule-status') {
+        loadScheduleStatus();
+    }
 }
 
 // Load Sites
@@ -280,6 +291,7 @@ function loadSites() {
         .then(response => response.json())
         .then(data => {
             allSites = data.sites;
+            globalSchedule = data.global_schedule || null;
             renderSites(allSites);
             updateSelectOptions(allSites);
         })
@@ -289,9 +301,14 @@ function loadSites() {
         });
 }
 
+let globalSchedule = null;
+
 function renderSites(sites) {
     const container = document.getElementById('sites-container');
     if (sites && sites.length > 0) {
+        const globalNote = globalSchedule
+            ? `<p style="margin-bottom:8px;">Global schedule: <strong>${escapeHtml(globalSchedule)}</strong> (applies to all sites unless overridden)</p>`
+            : '';
         const table = document.createElement('table');
         table.className = 'sites-table';
         table.innerHTML = `
@@ -299,6 +316,7 @@ function renderSites(sites) {
                 <tr>
                     <th>Site Name</th>
                     <th>URL</th>
+                    <th>Schedule</th>
                     <th>Config</th>
                     <th>Actions</th>
                 </tr>
@@ -308,6 +326,7 @@ function renderSites(sites) {
                     <tr>
                         <td><strong>${escapeHtml(site.name)}</strong></td>
                         <td><a href="${escapeHtml(site.url)}" target="_blank">${escapeHtml(site.url)}</a></td>
+                        <td><small>${site.schedule_interval ? escapeHtml(site.schedule_interval) : (globalSchedule ? '<span style="color:var(--text-secondary)">(global)</span>' : '<span style="color:var(--text-secondary)">-</span>')}</small></td>
                         <td>
                             <small>Max Pages: ${site.max_pages}</small><br>
                             <small>Depth: ${site.max_depth}</small>
@@ -323,11 +342,42 @@ function renderSites(sites) {
                 `).join('')}
             </tbody>
         `;
-        container.innerHTML = '';
+        container.innerHTML = globalNote;
         container.appendChild(table);
     } else {
         container.innerHTML = '<p>No sites configured</p>';
     }
+}
+
+function loadScheduleStatus() {
+    const container = document.getElementById('schedule-status-container');
+    container.innerHTML = '<p class="loading">Loading...</p>';
+    fetch('/api/schedule/status')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.jobs || data.jobs.length === 0) {
+                container.innerHTML = '<p style="color:var(--text-secondary)">No scheduled jobs are currently registered. Ensure <code>schedule_interval</code> is set in your site configuration (sites.yaml).</p>';
+                return;
+            }
+            const rows = data.jobs.map(j => `
+                <tr>
+                    <td>${escapeHtml(j.label)}</td>
+                    <td>${j.next_run ? new Date(j.next_run).toLocaleString() : '-'}</td>
+                    <td>${j.last_run ? new Date(j.last_run).toLocaleString() : 'Not yet run'}</td>
+                </tr>
+            `).join('');
+            container.innerHTML = `
+                <p style="margin-bottom:8px;">Server timezone is used for all times below. ${data.count} job(s) registered.</p>
+                <table class="sites-table">
+                    <thead><tr><th>Schedule</th><th>Next Run</th><th>Last Run</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <button onclick="loadScheduleStatus()" class="btn btn-secondary" style="margin-top:12px;">Refresh</button>
+            `;
+        })
+        .catch(e => {
+            container.innerHTML = '<p class="error">Error loading schedule status: ' + e + '</p>';
+        });
 }
 
 function updateSelectOptions(sites) {
