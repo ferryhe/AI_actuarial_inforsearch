@@ -1307,11 +1307,12 @@ function startCatalog(e) {
 async function loadCatalogStats() {
     const statsEl = document.getElementById('catalog-stats');
     const startEl = document.getElementById('catalog-scan-start-index');
-    if (statsEl) statsEl.textContent = 'Loading stats...';
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    if (statsEl) statsEl.textContent = _t('tasks.stats_loading');
     try {
         const form = document.getElementById('catalog-form');
-        const provider = form ? (form.querySelector('select[name=\"provider\"]')?.value || 'openai') : 'openai';
-        const inputSource = form ? (form.querySelector('select[name=\"input_source\"]')?.value || 'markdown') : 'markdown';
+        const provider = form ? (form.querySelector('select[name="provider"]')?.value || 'openai') : 'openai';
+        const inputSource = form ? (form.querySelector('select[name="input_source"]')?.value || 'markdown') : 'markdown';
         const scopeMode = form ? getScopeMode(form, 'index') : 'index';
         const category = form ? (form.querySelector('#catalog-category-select')?.value || '') : '';
         let url = `/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`;
@@ -1321,7 +1322,7 @@ async function loadCatalogStats() {
         const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
-            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + (data.error || resp.status);
             return;
         }
         const totalLocal = data.total_local_files ?? 0;
@@ -1330,14 +1331,14 @@ async function loadCatalogStats() {
         const first = data.first_candidate_index;
         if (statsEl) {
             statsEl.textContent =
-                `Local files: ${totalLocal} | Catalog OK: ${ok} | Candidates: ${candidates}` +
-                (first ? ` | First candidate index: ${first}` : '');
+                _t('tasks.catalog_stats').replace('{local}', totalLocal).replace('{ok}', ok).replace('{candidates}', candidates) +
+                (first ? _t('tasks.catalog_stats_first').replace('{first}', first) : '');
         }
         if (startEl && first) {
             startEl.value = String(first);
         }
     } catch (e) {
-        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+        if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + e.message;
     }
 }
 
@@ -1418,7 +1419,8 @@ function openMarkdownConversionModal() {
 async function loadMarkdownConversionStats() {
     const statsEl = document.getElementById('markdown-conversion-stats');
     const startEl = document.getElementById('md-scan-start-index');
-    if (statsEl) statsEl.textContent = 'Loading stats...';
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    if (statsEl) statsEl.textContent = _t('tasks.stats_loading');
     try {
         const form = document.getElementById('markdown-conversion-form');
         const scopeMode = form ? getScopeMode(form, 'index') : 'index';
@@ -1430,7 +1432,7 @@ async function loadMarkdownConversionStats() {
         const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
-            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + (data.error || resp.status);
             return;
         }
         markdownConversionStats = data;
@@ -1439,14 +1441,14 @@ async function loadMarkdownConversionStats() {
         const firstMissing = data.first_without_markdown_index;
         const missing = Math.max(0, total - withMd);
         if (statsEl) {
-            statsEl.textContent = `Convertible files: ${total} | With markdown: ${withMd} | Missing: ${missing}` +
-                (firstMissing ? ` | First missing index: ${firstMissing}` : '');
+            statsEl.textContent = _t('tasks.md_stats').replace('{total}', total).replace('{with_md}', withMd).replace('{missing}', missing) +
+                (firstMissing ? _t('tasks.stats_first_missing').replace('{first}', firstMissing) : '');
         }
         if (startEl && firstMissing) {
             startEl.value = String(firstMissing);
         }
     } catch (e) {
-        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+        if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + e.message;
     }
 }
 
@@ -1500,7 +1502,8 @@ function startMarkdownConversion(e) {
 async function loadChunkGenerationStats() {
     const statsEl = document.getElementById('chunk-generation-stats');
     const startEl = document.getElementById('chunk-scan-start-index');
-    if (statsEl) statsEl.textContent = 'Loading stats...';
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    if (statsEl) statsEl.textContent = _t('tasks.stats_loading');
     try {
         const form = document.getElementById('chunk-generation-form');
         const scopeMode = form ? getScopeMode(form, 'index') : 'index';
@@ -1512,7 +1515,7 @@ async function loadChunkGenerationStats() {
         const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
-            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + (data.error || resp.status);
             return;
         }
         chunkGenerationStats = data;
@@ -1522,14 +1525,14 @@ async function loadChunkGenerationStats() {
         const firstMissing = data.first_without_chunks_index;
         if (statsEl) {
             statsEl.textContent =
-                `Markdown files: ${totalWithMarkdown} | With chunks: ${totalWithChunks} | Missing: ${missing}` +
-                (firstMissing ? ` | First missing index: ${firstMissing}` : '');
+                _t('tasks.chunk_stats').replace('{total}', totalWithMarkdown).replace('{with_chunks}', totalWithChunks).replace('{missing}', missing) +
+                (firstMissing ? _t('tasks.stats_first_missing').replace('{first}', firstMissing) : '');
         }
         if (startEl && firstMissing) {
             startEl.value = String(firstMissing);
         }
     } catch (e) {
-        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+        if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + e.message;
     }
 }
 

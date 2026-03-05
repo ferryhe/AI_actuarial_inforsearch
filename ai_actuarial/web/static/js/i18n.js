@@ -768,9 +768,33 @@
             'stg.copy':                'Copy',
             'stg.exit_edit':           'Exit Edit',
 
+            // Settings — task history log JS strings
+            'stg.th_log':              'Log',
+            'stg.task_log_title':      'Task Log:',
+            'stg.log_status':          'Status:',
+            'stg.log_started':         'Started:',
+            'stg.log_completed':       'Completed:',
+            'stg.log_items_processed': 'Items Processed (Total Scanned):',
+            'stg.log_new_updated':     'New/Updated:',
+            'stg.log_skipped':         'Skipped:',
+            'stg.log_errors':          'Errors:',
+            'stg.log_no_errors':       'No detailed errors logged.',
+            'stg.log_no_log':          '(no task log yet)',
+            'stg.failed_load_history': 'Failed to load history:',
+            'stg.failed_load_log':     'Failed to load task log:',
+
             // Chat page — tooltip strings
             'chat.kb_tooltip':         'Pick where answers come from. Auto chooses likely KBs, All searches every KB, or select one KB for tighter results.',
             'chat.mode_tooltip':       'Controls answer style (response mode, not base LLM engine). Expert is deep/technical, Summary is concise, Tutorial is step-by-step, Comparison is side-by-side analysis.',
+
+            // Chat page — doc explorer JS strings
+            'chat.refresh':            'Refresh',
+            'chat.retry':              'Retry',
+            'chat.compare_docs':       'Compare {n} Docs',
+            'chat.no_docs_found':      'No documents found',
+            'chat.error_loading_docs': 'Error loading documents',
+            'chat.docs_available':     '{n} documents available',
+            'chat.doc_available':      '1 document available',
 
             // File Preview — PDF navigation
             'fp.prev':                 'Previous',
@@ -813,6 +837,15 @@
             'tasks.hist_err':          '{n} err',
             'tasks.hist_view_log':     'View Log',
             'tasks.hist_no_history':   'No history available.',
+
+            // Tasks page — modal stats JS strings
+            'tasks.stats_loading':      'Loading stats...',
+            'tasks.catalog_stats':      'Local files: {local} | Catalog OK: {ok} | Candidates: {candidates}',
+            'tasks.catalog_stats_first':' | First candidate index: {first}',
+            'tasks.md_stats':           'Convertible files: {total} | With markdown: {with_md} | Missing: {missing}',
+            'tasks.chunk_stats':        'Markdown files: {total} | With chunks: {with_chunks} | Missing: {missing}',
+            'tasks.stats_first_missing':' | First missing index: {first}',
+            'tasks.failed_load_stats':  'Failed to load stats:',
 
             // RAG page — JS-rendered strings
             'rag.files_selected':           '{n} files selected',
@@ -1589,9 +1622,33 @@
             'stg.copy':                '复制',
             'stg.exit_edit':           '退出编辑',
 
+            // Settings — task history log JS strings
+            'stg.th_log':              '日志',
+            'stg.task_log_title':      '任务日志：',
+            'stg.log_status':          '状态：',
+            'stg.log_started':         '开始时间：',
+            'stg.log_completed':       '完成时间：',
+            'stg.log_items_processed': '已处理条目（总扫描数）：',
+            'stg.log_new_updated':     '新增／更新：',
+            'stg.log_skipped':         '已跳过：',
+            'stg.log_errors':          '错误数：',
+            'stg.log_no_errors':       '无详细错误日志。',
+            'stg.log_no_log':          '（暂无任务日志）',
+            'stg.failed_load_history': '加载历史失败：',
+            'stg.failed_load_log':     '加载任务日志失败：',
+
             // Chat page — tooltip strings
             'chat.kb_tooltip':         '选择答案来源。自动模式智能选择知识库，全部模式搜索所有知识库，或选择单个知识库以精确检索。',
             'chat.mode_tooltip':       '控制回答风格（响应模式，非底层模型）。Expert 深度/技术，Summary 简洁，Tutorial 步骤式，Comparison 并列分析。',
+
+            // Chat page — doc explorer JS strings
+            'chat.refresh':            '刷新',
+            'chat.retry':              '重试',
+            'chat.compare_docs':       '对比 {n} 个文档',
+            'chat.no_docs_found':      '未找到文档',
+            'chat.error_loading_docs': '加载文档出错',
+            'chat.docs_available':     '{n} 个文档可用',
+            'chat.doc_available':      '1 个文档可用',
 
             // File Preview — PDF navigation
             'fp.prev':                 '上一页',
@@ -1634,6 +1691,15 @@
             'tasks.hist_err':          '{n} 错误',
             'tasks.hist_view_log':     '查看日志',
             'tasks.hist_no_history':   '暂无历史记录。',
+
+            // Tasks page — modal stats JS strings
+            'tasks.stats_loading':      '加载统计中…',
+            'tasks.catalog_stats':      '本地文件：{local} | 已分类：{ok} | 候选数：{candidates}',
+            'tasks.catalog_stats_first':'| 首个候选索引：{first}',
+            'tasks.md_stats':           '可转换文件：{total} | 已有 Markdown：{with_md} | 缺失：{missing}',
+            'tasks.chunk_stats':        'Markdown 文件：{total} | 已分块：{with_chunks} | 缺失：{missing}',
+            'tasks.stats_first_missing':'| 首个缺失索引：{first}',
+            'tasks.failed_load_stats':  '加载统计失败：',
 
             // RAG page — JS-rendered strings
             'rag.files_selected':           '已选 {n} 个文件',
