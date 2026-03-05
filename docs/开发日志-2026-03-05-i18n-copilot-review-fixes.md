@@ -142,7 +142,29 @@ _KEY_PATTERN = re.compile(r"'([a-z][a-z0-9_.]+)':\s*['\"]", re.ASCII)
 - [ ] **Add Provider Form** - "Base URL" 标签文字正确翻译，旁边的 "(optional)" 也正确翻译
 
 ### `test_i18n.py`
-- [ ] 运行 `python -m pytest tests/test_i18n.py -v` → 59 passed
+- [x] 运行 `python -m pytest tests/test_i18n.py -v` → 59 passed
+
+---
+
+## 🛠️ 其他修复 (Batch 2)
+
+以下修复针对剩余的 Unresolved Comments：
+
+### 1. `tests/test_i18n.py` 多项改进
+- **Regex 增强**: `_KEY_PATTERN` 支持单/双引号键名捕获 (Fixes comment regarding missing keys)
+- **资源清理**: `tempfile.mkdtemp()` 增加 `tearDown` 清理逻辑 (Fixes resource leak)
+- **断言修复**: `find()` 返回 -1 检查替代 `> 0` 检查 (Fixes test failure on index 0)
+
+### 2. `tasks.html` 硬编码文本
+- **Binding Mode**: 下拉选项添加 `data-i18n` (`tasks.binding_mode_follow_latest`, `tasks.binding_mode_pin`)
+- **Generate Chunks**: 提交按钮添加 `data-i18n` (`tasks.gen_chunks`)
+- **i18n.js**: 同步添加对应的新增翻译键 (EN/ZH)
+
+### 3. `file_view.html` Expand 按钮
+- **动态文本**: JS 逻辑中硬编码的 `Expand` 文本改为 `window.I18n.t('fv.expand')` 动态获取
+
+### 4. 文档修正
+- **测试统计**: 更新 `20260305_I18N_ZH_EN_IMPLEMENTATION.md` 中的测试统计数据 (修正为 59 个测试用例，8 个测试类)
 
 ---
 

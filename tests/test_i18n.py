@@ -37,7 +37,9 @@ INDEX_HTML = REPO_ROOT / "ai_actuarial" / "web" / "templates" / "index.html"
 # ---------------------------------------------------------------------------
 # Helper: parse the translation dictionaries from i18n.js source text
 # ---------------------------------------------------------------------------
-_KEY_PATTERN = re.compile(r"'([a-z][a-z0-9_.]+)':\s*['\"]", re.ASCII)
+# Improved regex to capture keys regardless of quote type (single/double)
+# and regardless of value quote type. Matches 'key': or "key":
+_KEY_PATTERN = re.compile(r"['\"]([a-z][a-z0-9_.]+)['\"]\s*:", re.ASCII | re.IGNORECASE)
 
 
 def _extract_keys_from_dict_block(block: str) -> set[str]:
@@ -127,8 +129,8 @@ class TestI18nJsStructure(unittest.TestCase):
         # Locate the split between en and zh blocks using the pattern `en: {` and `zh: {`
         en_start = self.src.find("en: {")
         zh_start = self.src.find("zh: {")
-        self.assertGreater(en_start, 0, "'en: {' marker not found")
-        self.assertGreater(zh_start, 0, "'zh: {' marker not found")
+        self.assertNotEqual(en_start, -1, "'en: {' marker not found")
+        self.assertNotEqual(zh_start, -1, "'zh: {' marker not found")
 
         en_block = self.src[en_start:zh_start]
         zh_block = self.src[zh_start:]
@@ -160,8 +162,8 @@ class TestBaseHtmlI18n(unittest.TestCase):
         # Search for the actual script src= patterns (not comments)
         pos_i18n = self.src.find("filename='js/i18n.js'")
         pos_main = self.src.find("filename='js/main.js'")
-        self.assertGreater(pos_i18n, 0, "i18n.js script tag missing in base.html")
-        self.assertGreater(pos_main, 0, "main.js script tag missing in base.html")
+        self.assertNotEqual(pos_i18n, -1, "i18n.js script tag missing in base.html")
+        self.assertNotEqual(pos_main, -1, "main.js script tag missing in base.html")
         self.assertGreater(pos_main, pos_i18n, "i18n.js must be included before main.js")
 
     def test_lang_toggle_button_present(self):
@@ -248,8 +250,13 @@ class TestI18nFlaskIntegration(unittest.TestCase):
             self.skipTest("Flask is not installed")
 
         import tempfile
+        import shutil
 
+        # Create temporary directory for test artifacts
         self.temp_dir = tempfile.mkdtemp()
+        
+        # Ensure cleanup happens even if setUp fails later (though addCleanup is better, tearDown works too)
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
 
         sites_config = {
             "defaults": {

@@ -516,6 +516,8 @@
             'tasks.bind_to_kb':        'Bind To Knowledge Base (Optional)',
             'tasks.no_bind':           'Do not bind to KB',
             'tasks.binding_mode':      'Binding Mode',
+            'tasks.binding_mode_follow_latest': 'Follow Latest (Recommended)',
+            'tasks.binding_mode_pin':          'Pin (Fixed Version)',
             'tasks.overwrite_profile': 'Overwrite same-profile chunk sets',
             // tasks modals — kb index build
             'tasks.build_idx_hint':    'Submit a KB index build task using the KB configuration and selected scope.',
@@ -1392,6 +1394,8 @@
             'tasks.bind_to_kb':        '绑定到知识库（可选）',
             'tasks.no_bind':           '不绑定到知识库',
             'tasks.binding_mode':      '绑定模式',
+            'tasks.binding_mode_follow_latest': '跟随最新（推荐）',
+            'tasks.binding_mode_pin':          '固定（特定版本）',
             'tasks.overwrite_profile': '覆盖同配置的分块集',
             // tasks modals — kb index build
             'tasks.build_idx_hint':    '使用知识库配置和所选范围提交索引构建任务。',
