@@ -3,8 +3,8 @@
 {% block content %}
 <div class="dashboard">
     <div class="hero">
-        <h2>Welcome to AI Actuarial Info Search</h2>
-        <p>Discover, download, and catalog AI-related documents from actuarial organizations worldwide</p>
+        <h2 data-i18n="index.welcome_title">Welcome to AI Actuarial Info Search</h2>
+        <p data-i18n="index.welcome_subtitle">Discover, download, and catalog AI-related documents from actuarial organizations worldwide</p>
     </div>
 
     <div class="stats-grid">
@@ -16,7 +16,7 @@
             </div>
             <div class="stat-content">
                 <h3 id="total-files">-</h3>
-                <p>Total Files</p>
+                <p data-i18n="index.total_files">Total Files</p>
             </div>
         </div>
         <div class="stat-card">
@@ -27,7 +27,7 @@
             </div>
             <div class="stat-content">
                 <h3 id="cataloged-files">-</h3>
-                <p>Cataloged Files</p>
+                <p data-i18n="index.cataloged_files">Cataloged Files</p>
             </div>
         </div>
         <div class="stat-card">
@@ -38,7 +38,7 @@
             </div>
             <div class="stat-content">
                 <h3 id="total-sources">-</h3>
-                <p>Sources</p>
+                <p data-i18n="index.sources">Sources</p>
             </div>
         </div>
         <div class="stat-card">
@@ -49,13 +49,13 @@
             </div>
             <div class="stat-content">
                 <h3 id="active-tasks">-</h3>
-                <p>Active Tasks</p>
+                <p data-i18n="index.active_tasks">Active Tasks</p>
             </div>
         </div>
     </div>
 
     <div class="quick-actions">
-        <h3>Quick Actions</h3>
+        <h3 data-i18n="index.quick_actions">Quick Actions</h3>
         <div class="action-grid">
             <div class="action-card" onclick="location.href='/database'">
                 <div class="action-icon">
@@ -63,8 +63,8 @@
                         <use xlink:href="#icon-search"></use>
                     </svg>
                 </div>
-                <h4>Browse Database</h4>
-                <p>Search and manage collected files</p>
+                <h4 data-i18n="index.browse_db">Browse Database</h4>
+                <p data-i18n="index.browse_db_desc">Search and manage collected files</p>
             </div>
             {% if auth_group in ['admin', 'operator'] %}
             <div class="action-card" onclick="location.href='/tasks'">
@@ -73,8 +73,8 @@
                         <use xlink:href="#icon-refresh"></use>
                     </svg>
                 </div>
-                <h4>Task Center</h4>
-                <p>Run collections and manage tasks</p>
+                <h4 data-i18n="index.task_center">Task Center</h4>
+                <p data-i18n="index.task_center_desc">Run collections and manage tasks</p>
             </div>
             {% endif %}
             {% if auth_group in ['admin', 'operator', 'reader'] %}
@@ -84,8 +84,8 @@
                         <use xlink:href="#icon-tag"></use>
                     </svg>
                 </div>
-                <h4>Knowledge Bases</h4>
-                <p>Manage RAG knowledge bases</p>
+                <h4 data-i18n="index.kb">Knowledge Bases</h4>
+                <p data-i18n="index.kb_desc">Manage RAG knowledge bases</p>
             </div>
             {% endif %}
             {% if auth_group in ['admin', 'operator', 'reader'] %}
@@ -95,17 +95,17 @@
                         <use xlink:href="#icon-eye"></use>
                     </svg>
                 </div>
-                <h4>Chat</h4>
-                <p>Ask questions with indexed knowledge</p>
+                <h4 data-i18n="index.chat">Chat</h4>
+                <p data-i18n="index.chat_desc">Ask questions with indexed knowledge</p>
             </div>
             {% endif %}
         </div>
     </div>
 
     <div class="recent-activity">
-        <h3>Recent Files</h3>
+        <h3 data-i18n="index.recent_files">Recent Files</h3>
         <div id="recent-files-container">
-            <p class="loading">Loading...</p>
+            <p class="loading" data-i18n="index.loading">Loading...</p>
         </div>
     </div>
 </div>
@@ -135,9 +135,9 @@
                 table.innerHTML = `
                     <thead>
                         <tr>
-                            <th>Title</th>
-                            <th>Source</th>
-                            <th>Date</th>
+                            <th>${window.I18n ? window.I18n.t('table.title') : 'Title'}</th>
+                            <th>${window.I18n ? window.I18n.t('table.source') : 'Source'}</th>
+                            <th>${window.I18n ? window.I18n.t('table.date') : 'Date'}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -153,12 +153,12 @@
                 container.innerHTML = '';
                 container.appendChild(table);
             } else {
-                container.innerHTML = '<p>No files found</p>';
+                container.innerHTML = `<p>${window.I18n ? window.I18n.t('index.no_files') : 'No files found'}</p>`;
             }
         })
         .catch(error => {
             console.error('Error loading recent files:', error);
-            document.getElementById('recent-files-container').innerHTML = '<p class="error">Error loading files</p>';
+            document.getElementById('recent-files-container').innerHTML = `<p class="error">${window.I18n ? window.I18n.t('index.load_error') : 'Error loading files'}</p>`;
         });
 </script>
 {% endblock %}

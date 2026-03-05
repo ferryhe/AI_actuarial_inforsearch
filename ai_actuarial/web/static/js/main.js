@@ -267,7 +267,10 @@ function syncModalState() {
 window.syncModalState = syncModalState;
 
 // Custom confirm dialog
-function customConfirm(message, title = 'Confirm Action') {
+function customConfirm(message, title) {
+    if (title === undefined) {
+        title = (window.I18n ? window.I18n.t('modal.confirm_title') : 'Confirm Action');
+    }
     return new Promise((resolve) => {
         const modal = document.getElementById('confirm-modal');
         const titleEl = document.getElementById('confirm-title');

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}AI Actuarial Info Search{% endblock %}</title>
-    <!-- Load theme immediately to prevent flash -->
+    <!-- Load theme and language immediately to prevent flash -->
     <script>
         (function() {
             const savedTheme = localStorage.getItem('theme') || 'light';
@@ -30,30 +30,32 @@
         }
     </style>
     {% block extra_css %}{% endblock %}
+    <!-- i18n must load before main.js to avoid text flicker -->
+    <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
 </head>
 <body>
     <nav class="navbar">
         <div class="container">
             <div class="navbar-brand">
-                <h1>AI Actuarial Info Search</h1>
+                <h1 data-i18n="nav.brand">AI Actuarial Info Search</h1>
             </div>
             <div style="display: flex; align-items: center;">
                 <ul class="navbar-menu">
-                    <li><a href="{{ url_for('index') }}" class="nav-link">Dashboard</a></li>
-                    <li><a href="{{ url_for('database') }}" class="nav-link">Database</a></li>
+                    <li><a href="{{ url_for('index') }}" class="nav-link" data-i18n="nav.dashboard">Dashboard</a></li>
+                    <li><a href="{{ url_for('database') }}" class="nav-link" data-i18n="nav.database">Database</a></li>
                     {% if auth_group in ['admin', 'operator', 'reader'] %}
-                    <li><a href="{{ url_for('chat') }}" class="nav-link">Chat</a></li>
+                    <li><a href="{{ url_for('chat') }}" class="nav-link" data-i18n="nav.chat">Chat</a></li>
                     {% endif %}
                     {% if auth_group in ['admin', 'operator'] %}
-                    <li><a href="{{ url_for('tasks') }}" class="nav-link">Tasks</a></li>
+                    <li><a href="{{ url_for('tasks') }}" class="nav-link" data-i18n="nav.tasks">Tasks</a></li>
                     {% endif %}
 
                     {% if auth_group in ['admin', 'operator', 'reader'] %}
-                    <li><a href="{{ url_for('rag_management') }}" class="nav-link">Knowledge Bases</a></li>
+                    <li><a href="{{ url_for('rag_management') }}" class="nav-link" data-i18n="nav.knowledge_bases">Knowledge Bases</a></li>
                     {% endif %}
 
                     {% if auth_group == 'admin' %}
-                    <li><a href="{{ url_for('settings') }}" class="nav-link">Settings</a></li>
+                    <li><a href="{{ url_for('settings') }}" class="nav-link" data-i18n="nav.settings">Settings</a></li>
                     {% endif %}
                 </ul>
                 {% if auth_token %}
@@ -62,18 +64,21 @@
                         {{ auth_subject or 'Unknown' }} ({{ auth_group or 'n/a' }})
                     </span>
                     <form method="POST" action="{{ url_for('logout') }}" style="margin: 0;">
-                        <button type="submit" class="btn btn-secondary btn-sm">Logout</button>
+                        <button type="submit" class="btn btn-secondary btn-sm" data-i18n="nav.logout">Logout</button>
                     </form>
                 </div>
                 {% else %}
                 <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
                     {% if request.endpoint != 'login' %}
-                    <a href="{{ url_for('login') }}" class="btn btn-secondary btn-sm">Login</a>
+                    <a href="{{ url_for('login') }}" class="btn btn-secondary btn-sm" data-i18n="nav.login">Login</a>
                     {% endif %}
                 </div>
                 {% endif %}
-                <div class="theme-toggle">
-                    <button id="theme-toggle-btn" class="btn-icon" aria-label="Toggle dark mode" title="Toggle dark mode">
+                <div class="theme-toggle" style="display:flex; align-items:center; gap:4px;">
+                    <!-- Language Toggle -->
+                    <button id="lang-toggle-btn" class="btn-icon" aria-label="Switch language" title="Switch language"
+                            onclick="window.I18n.toggleLang()" data-i18n="nav.lang_toggle">中文</button>
+                    <button id="theme-toggle-btn" class="btn-icon" data-i18n-aria-label="theme.toggle_title" data-i18n-title="theme.toggle_title" aria-label="Toggle dark mode" title="Toggle dark mode">
                         <svg class="icon-md theme-icon sun-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <circle cx="12" cy="12" r="5"></circle>
                             <line x1="12" y1="1" x2="12" y2="3"></line>
@@ -102,7 +107,7 @@
 
     <footer class="footer">
         <div class="container">
-            <p>&copy; 2024 AI Actuarial Info Search. All rights reserved.</p>
+            <p data-i18n="footer.copyright">&copy; 2024 AI Actuarial Info Search. All rights reserved.</p>
         </div>
     </footer>
 
@@ -207,11 +212,11 @@
     <!-- Custom Confirm Modal -->
     <div id="confirm-modal" class="modal" style="display: none;">
         <div class="modal-content confirm-dialog">
-            <h3 id="confirm-title">Confirm Action</h3>
+            <h3 id="confirm-title" data-i18n="modal.confirm_title">Confirm Action</h3>
             <p id="confirm-message"></p>
             <div class="confirm-buttons">
-                <button id="confirm-cancel" class="btn btn-secondary">Cancel</button>
-                <button id="confirm-ok" class="btn btn-primary">Confirm</button>
+                <button id="confirm-cancel" class="btn btn-secondary" data-i18n="modal.cancel">Cancel</button>
+                <button id="confirm-ok" class="btn btn-primary" data-i18n="modal.confirm_ok">Confirm</button>
             </div>
         </div>
     </div>
@@ -219,15 +224,17 @@
     <!-- Auth Required Modal (guest navigation) -->
     <div id="auth-required-modal" class="modal" style="display: none;">
         <div class="modal-content confirm-dialog">
-            <h3>Login Required</h3>
-            <p>You must log in to access this page.</p>
+            <h3 data-i18n="modal.auth_title">Login Required</h3>
+            <p data-i18n="modal.auth_message">You must log in to access this page.</p>
             <div class="confirm-buttons">
-                <button id="auth-required-back" class="btn btn-secondary">Back</button>
-                <button id="auth-required-login" class="btn btn-primary">Login</button>
+                <button id="auth-required-back" class="btn btn-secondary" data-i18n="modal.auth_back">Back</button>
+                <button id="auth-required-login" class="btn btn-primary" data-i18n="modal.auth_login">Login</button>
             </div>
         </div>
     </div>
 
+    <!-- i18n loaded in <head>; re-apply after full DOM is ready -->
+    <script>document.addEventListener('DOMContentLoaded', function(){ if(window.I18n) window.I18n.applyTranslations(); });</script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     {% block extra_js %}{% endblock %}
 </body>

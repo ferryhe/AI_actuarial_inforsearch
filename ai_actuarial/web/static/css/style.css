@@ -958,6 +958,34 @@ select:hover {
     opacity: 1;
 }
 
+/* Language Toggle Button */
+#lang-toggle-btn {
+    width: auto;
+    height: 32px;
+    border-radius: 6px;
+    padding: 0 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    min-width: 2.6rem;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#lang-toggle-btn:hover {
+    background: var(--gray-100);
+    color: var(--text-primary);
+    border-color: var(--primary-color);
+}
+
+[data-theme="dark"] #lang-toggle-btn:hover {
+    background: var(--gray-700);
+    border-color: var(--primary-color);
+}
+
 /* Smooth transitions for theme change */
 body {
     transition: background-color 0.3s ease, color 0.3s ease;
