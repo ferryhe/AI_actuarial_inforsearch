@@ -856,15 +856,15 @@
         const modeInput = document.querySelector('#rag-create-kb-form input[name="kb_mode"]:checked');
         if (!statsEl) return;
         if (!modeInput || modeInput.value !== 'category') {
-            statsEl.textContent = 'Select categories to view unique file and markdown counts.';
+            statsEl.textContent = window.I18n ? window.I18n.t('kb_create.cats_stats') : 'Select categories to view unique file and markdown counts.';
             return;
         }
         const categories = getSelectedCreateCategories();
         if (!categories.length) {
-            statsEl.textContent = 'Select categories to view unique file and markdown counts.';
+            statsEl.textContent = window.I18n ? window.I18n.t('kb_create.cats_stats') : 'Select categories to view unique file and markdown counts.';
             return;
         }
-        statsEl.textContent = 'Loading category statistics...';
+        statsEl.textContent = window.I18n ? window.I18n.t('kb_create.loading_stats') : 'Loading category statistics...';
         try {
             const payload = { categories };
             if (context.page === 'detail' && context.kbId) payload.kb_id = context.kbId;

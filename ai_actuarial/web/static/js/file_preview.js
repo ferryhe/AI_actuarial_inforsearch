@@ -243,7 +243,7 @@ window.FilePreview = (function() {
             .join('');
 
         container.innerHTML = `
-            <label for="chunk-set-select" style="display:block; margin-bottom: 6px; color: var(--text-secondary);">Chunk Version</label>
+            <label for="chunk-set-select" style="display:block; margin-bottom: 6px; color: var(--text-secondary);">${window.I18n ? window.I18n.t('fp.chunk_version') : 'Chunk Version'}</label>
             <select id="chunk-set-select" class="form-control" style="width:100%; max-width:100%;">
                 ${options}
             </select>

@@ -30,7 +30,7 @@
             'nav.settings':        'Settings',
             'nav.login':           'Login',
             'nav.logout':          'Logout',
-            'nav.lang_toggle':     '中文',   // label shown when current lang is EN
+            'nav.lang_toggle':     '中',     // label shown when current lang is EN
 
             // Theme button
             'theme.toggle_title':  'Toggle dark mode',
@@ -88,6 +88,7 @@
             'common.edit':    'Edit',
             'common.reset':   'Reset',
             'common.refresh': 'Refresh',
+            'common.run':     'Run',
             'common.create':  'Create',
             'common.close':   'Close',
             'common.dismiss': 'Dismiss',
@@ -170,6 +171,7 @@
             'fp.preview_not_available': 'Preview not available for this file type.',
             'fp.no_chunk_versions':     'No chunk versions available for this file.',
             'fp.no_chunks':             'No chunks available for this file.',
+            'fp.chunk_version':          'Chunk Version',
 
             // Collection (URL) page
             'col_url.title':        'URL Collection',
@@ -311,6 +313,7 @@
             'kb_create.categories':  'Categories',
             'kb_create.cats_hint':   'Hold Ctrl/Cmd to select multiple categories.',
             'kb_create.cats_stats':  'Select categories to view unique file and markdown counts.',
+            'kb_create.loading_stats': 'Loading category statistics...',
             'kb_create.sel_files':   'Selected Files',
             'kb_create.sel_btn':     'Select Files',
             'kb_create.advanced':    'Advanced Settings',
@@ -372,6 +375,11 @@
             'sched.all_sites':       'All Sites',
             'sched.max_pages':       'Max Pages',
             'sched.max_depth':       'Max Depth',
+            'sched.depth':           'Depth',
+            'sched.excl_kw_short':   'Excl KW',
+            'sched.excl_pfx_short':  'Excl Pfx',
+            'sched.items':           '{n} items',
+            'sched.global_note':     'Global schedule: {schedule} (applies to all sites unless overridden)',
             'sched.start':           'Start Collection',
             'sched.add_site':        'Add New Site',
             'sched.site_name':       'Site Name:',
@@ -626,7 +634,6 @@
 
             // Common (extended)
             'common.add':         'Add',
-            'common.delete':      'Delete',
 
             // RAG Detail — meta label aliases & new keys
             'rag_d.meta_kb_id':        'KB ID:',
@@ -684,6 +691,14 @@
             'stg.ai_kw_label':         'ai_filter_keywords (one per line)',
             'stg.model_providers':     'Model Providers',
             'stg.model_providers_help':'Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via',
+            'stg.model_providers_help2':'are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.',
+            'stg.no_providers':        'No providers configured. Click "+ Add Provider" to add one, or set API keys in your .env file.',
+            'stg.via_env':             'via .env',
+            'stg.provider_active':     'Active',
+            'stg.save_to_db':          'Save to DB',
+            'stg.update_key':          'Update Key',
+            'stg.remove':              'Remove',
+            'stg.base_url_label':      'Base URL:',
             'stg.add_update_provider': 'Add / Update Provider',
             'stg.optional':            '(optional)',
             'stg.base_url_hint':       'Leave blank for default',
@@ -823,6 +838,7 @@
             'common.edit':    '编辑',
             'common.reset':   '重置',
             'common.refresh': '刷新',
+            'common.run':     '运行',
             'common.create':  '创建',
             'common.close':   '关闭',
             'common.dismiss': '取消提示',
@@ -905,6 +921,7 @@
             'fp.preview_not_available': '该文件类型不支持预览。',
             'fp.no_chunk_versions':     '该文件暂无分块版本。',
             'fp.no_chunks':             '该文件暂无分块。',
+            'fp.chunk_version':          '分块版本',
 
             // Collection (URL) page
             'col_url.title':        'URL 收集',
@@ -1046,6 +1063,7 @@
             'kb_create.categories':  '分类',
             'kb_create.cats_hint':   '按住 Ctrl/Cmd 可多选。',
             'kb_create.cats_stats':  '选择分类后可查看唯一文件数和 Markdown 数。',
+            'kb_create.loading_stats': '加载分类统计中...',
             'kb_create.sel_files':   '已选文件',
             'kb_create.sel_btn':     '选择文件',
             'kb_create.advanced':    '高级设置',
@@ -1107,6 +1125,11 @@
             'sched.all_sites':       '所有站点',
             'sched.max_pages':       '最大页数',
             'sched.max_depth':       '最大深度',
+            'sched.depth':           '深度',
+            'sched.excl_kw_short':   '排除关键词',
+            'sched.excl_pfx_short':  '排除前缀',
+            'sched.items':           '{n} 项',
+            'sched.global_note':     '全局计划：{schedule}（适用于所有站点，除非单独覆盖）',
             'sched.start':           '开始收集',
             'sched.add_site':        '添加新站点',
             'sched.site_name':       '站点名称：',
@@ -1361,7 +1384,6 @@
 
             // Common (extended)
             'common.add':         '添加',
-            'common.delete':      '删除',
 
             // RAG Detail — meta label aliases & new keys
             'rag_d.meta_kb_id':        'KB ID：',
@@ -1419,6 +1441,14 @@
             'stg.ai_kw_label':         'ai_filter_keywords（每行一个）',
             'stg.model_providers':     '模型供应商',
             'stg.model_providers_help':'添加 LLM 供应商的 API 密钥。已配置供应商将显示在下方模型选择中。通过',
+            'stg.model_providers_help2':'自动加载。使用"保存到数据库"将其迁移到加密数据库存储。',
+            'stg.no_providers':        '暂无供应商配置。点击"+ 添加供应商"添加，或在 .env 文件中设置 API 密钥。',
+            'stg.via_env':             '通过 .env',
+            'stg.provider_active':     '已激活',
+            'stg.save_to_db':          '保存到数据库',
+            'stg.update_key':          '更新密钥',
+            'stg.remove':              '移除',
+            'stg.base_url_label':      'Base URL:',
             'stg.add_update_provider': '添加 / 更新供应商',
             'stg.optional':            '（可选）',
             'stg.base_url_hint':       '留空使用默认值',

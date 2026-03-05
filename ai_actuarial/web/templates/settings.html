@@ -70,7 +70,7 @@
       <div class="module-header">
         <div>
           <h3 data-i18n="stg.model_providers">Model Providers</h3>
-          <p class="module-help"><span data-i18n="stg.model_providers_help">Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via</span> <code>.env</code> are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.</p>
+          <p class="module-help"><span data-i18n="stg.model_providers_help">Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via</span> <code>.env</code> <span data-i18n="stg.model_providers_help2">are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.</span></p>
         </div>
         <div>
           <button class="btn btn-primary" type="button" onclick="showAddProviderForm()" data-i18n="stg.add_provider">+ Add Provider</button>
@@ -973,21 +973,23 @@ function renderLlmProviders() {
   const { providers, known } = llmProvidersData;
 
   if (!providers || providers.length === 0) {
-    list.innerHTML = '<p style="color:var(--text-secondary);padding:8px 0;">No providers configured. Click "+ Add Provider" to add one, or set <code>OPENAI_API_KEY</code> / <code>MISTRAL_API_KEY</code> / <code>SILICONFLOW_API_KEY</code> in your <code>.env</code> file.</p>';
+    const _i = window.I18n;
+    list.innerHTML = `<p style="color:var(--text-secondary);padding:8px 0;">${_i ? _i.t('stg.no_providers') : 'No providers configured. Click &quot;+ Add Provider&quot; to add one, or set API keys in your .env file.'}</p>`;
     return;
   }
 
   const cards = providers.map(p => {
+    const _i = window.I18n;
     const displayName = (known[p.provider] || {}).display_name || p.provider;
     const baseUrl = p.api_base_url || PROVIDER_DEFAULT_BASE_URLS[p.provider] || '—';
     const isEnv = p.source === 'env';
     const badge = isEnv
-      ? `<span class="provider-badge provider-badge-env">via .env</span>`
-      : `<span class="provider-badge provider-badge-active">Active</span>`;
+      ? `<span class="provider-badge provider-badge-env">${_i ? _i.t('stg.via_env') : 'via .env'}</span>`
+      : `<span class="provider-badge provider-badge-active">${_i ? _i.t('stg.provider_active') : 'Active'}</span>`;
     const actions = isEnv
-      ? `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Save to DB</button>`
-      : `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Update Key</button>
-         <button class="btn btn-danger btn-sm" type="button" onclick="deleteProvider('${escapeHtml(p.provider)}')">Remove</button>`;
+      ? `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.save_to_db') : 'Save to DB'}</button>`
+      : `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.update_key') : 'Update Key'}</button>
+         <button class="btn btn-danger btn-sm" type="button" onclick="deleteProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.remove') : 'Remove'}</button>`;
     return `
       <div class="provider-card">
         <div class="provider-card-info">
@@ -995,7 +997,7 @@ function renderLlmProviders() {
           ${badge}
         </div>
         <div class="provider-card-detail" style="color:var(--text-secondary);font-size:0.85em;margin-top:4px;">
-          Base URL: ${escapeHtml(baseUrl)}&nbsp;&nbsp;|&nbsp;&nbsp;Key: ****
+          ${_i ? _i.t('stg.base_url_label') : 'Base URL:'} ${escapeHtml(baseUrl)}&nbsp;&nbsp;|&nbsp;&nbsp;Key: ****
         </div>
         <div style="margin-top:8px;">${actions}</div>
       </div>
