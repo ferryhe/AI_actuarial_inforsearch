@@ -1312,9 +1312,45 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     'exclude_prefixes': site.get('exclude_prefixes', []),
                     'schedule_interval': site.get('schedule_interval')
                 })
-            return jsonify({"sites": sites})
+            # Attach global schedule to defaults info
+            global_schedule = site_defaults.get('schedule_interval')
+            return jsonify({"sites": sites, "global_schedule": global_schedule})
         except Exception as e:
             logger.exception("Error getting sites config")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/schedule/status")
+    @require_permissions("tasks.view")
+    def api_schedule_status():
+        """Return current scheduler job list with next/last run times."""
+        try:
+            jobs = []
+            for job in schedule.jobs:
+                next_run = job.next_run.isoformat() if job.next_run else None
+                last_run = job.last_run.isoformat() if job.last_run else None
+                # Build a human-readable label from the job's interval/unit/at_time
+                unit = getattr(job, 'unit', None) or ''
+                interval = getattr(job, 'interval', None)
+                at_time = getattr(job, 'at_time', None)
+                at_str = at_time.strftime('%H:%M') if at_time else None
+                if unit == 'days' and interval == 1 and at_str:
+                    label = f'daily at {at_str}'
+                elif unit == 'weeks' and interval == 1 and at_str:
+                    label = f'weekly on {getattr(job, "start_day", "monday")} at {at_str}'
+                elif interval and unit:
+                    label = f'every {interval} {unit}'
+                    if at_str:
+                        label += f' at {at_str}'
+                else:
+                    label = str(job)
+                jobs.append({
+                    'label': label,
+                    'next_run': next_run,
+                    'last_run': last_run,
+                })
+            return jsonify({'jobs': jobs, 'count': len(jobs)})
+        except Exception as e:
+            logger.exception("Error getting schedule status")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/add", methods=["POST"])
@@ -1640,6 +1676,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 if base_url_env_var:
                     os.environ[base_url_env_var] = base_url
 
+            # Reload settings so that running tasks/engines pick up the new key immediately
+            from config.settings import reload_settings
+            reload_settings()
+
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error adding LLM provider")
@@ -1669,6 +1709,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 os.environ.pop(key_env, None)
             if url_env:
                 os.environ.pop(url_env, None)
+            # Reload settings so the deleted key is no longer accessible
+            from config.settings import reload_settings
+            reload_settings()
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error deleting LLM provider")

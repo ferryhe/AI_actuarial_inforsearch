@@ -137,3 +137,9 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached Settings instance so imports stay cheap."""
     return Settings()
+
+
+def reload_settings() -> Settings:
+    """Clear the cache and reload settings from environment/files."""
+    get_settings.cache_clear()
+    return get_settings()

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
-from config.settings import get_settings
+from config.settings import get_settings, PROJECT_ROOT
 from doc_to_md.utils.hardware import ensure_docling_accelerator_env
 from doc_to_md.engines.base import Engine, EngineResponse
 
@@ -23,6 +24,13 @@ class DoclingEngine(Engine):
     def _ensure_converter(self) -> Any:
         if self._converter is not None:
             return self._converter
+
+        # Ensure HF models are stored in persistent data volume
+        if "HF_HOME" not in os.environ:
+            model_dir = PROJECT_ROOT / "data" / "models" / "huggingface"
+            model_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["HF_HOME"] = str(model_dir)
+
         try:
             from docling.document_converter import DocumentConverter  # type: ignore
         except ImportError as exc:  # pragma: no cover
