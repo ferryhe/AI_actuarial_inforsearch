@@ -767,6 +767,77 @@
             'stg.token_created_hint':  'This token will only be shown once. Copy it now.',
             'stg.copy':                'Copy',
             'stg.exit_edit':           'Exit Edit',
+
+            // Chat page — tooltip strings
+            'chat.kb_tooltip':         'Pick where answers come from. Auto chooses likely KBs, All searches every KB, or select one KB for tighter results.',
+            'chat.mode_tooltip':       'Controls answer style (response mode, not base LLM engine). Expert is deep/technical, Summary is concise, Tutorial is step-by-step, Comparison is side-by-side analysis.',
+
+            // File Preview — PDF navigation
+            'fp.prev':                 'Previous',
+            'fp.next':                 'Next',
+            'fp.page_of':              'Page {cur} of {total}',
+
+            // Tasks page — modal form hints
+            'tasks.fh_cat_scan':       'Select one category; task will scan this category only.',
+            'tasks.fh_jump_idx':       'Use the stats above to jump to the first uncataloged candidate.',
+            'tasks.fh_catalog_from':   'Markdown uses converted/edited markdown content from File Details (if available).',
+            'tasks.fh_skip_cataloged': 'Unchecked = Skip already cataloged',
+            'tasks.fh_cat_convert':    'Select one category; conversion runs only on this category.',
+            'tasks.fh_diff_tools':     'Different tools work better for different file types',
+            'tasks.fh_jump_md':        'Use the stats above to jump to the first file without markdown.',
+            'tasks.fh_skip_converted': 'Unchecked = Skip already converted',
+            'tasks.fh_cat_chunk':      'Select one category; chunk generation runs only on this category.',
+            'tasks.fh_profile_reuse':  'Select an existing profile to reuse, or choose custom. Chunk profile stores chunk strategy and tokenizer settings.',
+            'tasks.fh_chunk_model':    'Used for token counting behavior during chunking (not embedding model).',
+            'tasks.fh_splitter':       'How document text is segmented before chunk merge.',
+            'tasks.fh_tokenizer':      'Controls token counting granularity for chunk size/overlap.',
+            'tasks.fh_bind_kb':        'If selected, each generated chunk set will be bound to this KB.',
+            'tasks.fh_binding_mode':   'Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.',
+            'tasks.fh_skip_same':      'Unchecked = reuse existing same-profile chunk set.',
+            'tasks.fh_file_urls':      'Empty = incremental pending files, unless force rebuild is enabled.',
+
+            // Tasks page — history table columns and labels
+            'tasks.th_task':           'Task',
+            'tasks.th_type':           'Type',
+            'tasks.th_status':         'Status',
+            'tasks.th_items':          'Items',
+            'tasks.th_time':           'Time',
+            'tasks.th_completed':      'Completed',
+            'tasks.hist_scanned':      '{n} scanned',
+            'tasks.hist_categorized':  '{n} categorized',
+            'tasks.hist_skipped':      '{n} skipped',
+            'tasks.hist_failed':       '{n} failed',
+            'tasks.hist_processed':    '{n} processed',
+            'tasks.hist_new':          '{n} new',
+            'tasks.hist_skip':         '{n} skip',
+            'tasks.hist_err':          '{n} err',
+            'tasks.hist_view_log':     'View Log',
+            'tasks.hist_no_history':   'No history available.',
+
+            // RAG page — JS-rendered strings
+            'rag.files_selected':           '{n} files selected',
+            'rag.no_files_selected':        'No files selected',
+            'rag.select_category':          'Select category',
+            'rag.all_categories':           'All Categories',
+            'rag.no_chunk_profiles':        'No chunk profiles yet.',
+            'rag.no_categories':            'No categories available.',
+            'rag.no_kbs_found':             'No knowledge bases found.',
+            'rag.no_md_files':              'No selectable markdown files found.',
+            'rag.no_chunk_profiles_create': 'No chunk profiles found - create one in Chunk Profiles',
+            'rag.stats_result':             'Unique files: {files} | Unique markdown files: {md} | Already in this RAG: {in_kb}',
+            'rag.reindex_n':                'Reindex ({n})',
+            'rag.rebuild_outdated':         'Rebuild Index ({n} outdated binding{s})',
+            'rag.rebuild_index':            'Rebuild Index',
+            'rag.index_status':             'Index: {status} | Latest Built: {built} | Needs Reindex: {needs} | Follow Latest: {follow} | Pin: {pin} | Outdated: {outdated}',
+            'rag.available':                'Available',
+            'rag.missing':                  'Missing',
+            'rag.yes':                      'Yes',
+            'rag.no':                       'No',
+            'rag.unable_sync':              'Unable to determine sync status.',
+            'rag.no_files_found':           'No files found.',
+            'rag.n_files':                  '{n} files',
+            'rag.bulk_remove_n':            'Bulk Remove ({n})',
+            'rag.no_task_history':          'No task history.',
         },
 
         zh: {
@@ -1517,6 +1588,77 @@
             'stg.token_created_hint':  '该令牌只显示一次，请立即复制。',
             'stg.copy':                '复制',
             'stg.exit_edit':           '退出编辑',
+
+            // Chat page — tooltip strings
+            'chat.kb_tooltip':         '选择答案来源。自动模式智能选择知识库，全部模式搜索所有知识库，或选择单个知识库以精确检索。',
+            'chat.mode_tooltip':       '控制回答风格（响应模式，非底层模型）。Expert 深度/技术，Summary 简洁，Tutorial 步骤式，Comparison 并列分析。',
+
+            // File Preview — PDF navigation
+            'fp.prev':                 '上一页',
+            'fp.next':                 '下一页',
+            'fp.page_of':              '第 {cur} / {total} 页',
+
+            // Tasks page — modal form hints
+            'tasks.fh_cat_scan':       '选择一个分类；任务仅扫描该分类。',
+            'tasks.fh_jump_idx':       '使用上方统计跳转到第一个未分类候选项。',
+            'tasks.fh_catalog_from':   'Markdown 使用文件详情中已转换/编辑的 Markdown 内容（如有）。',
+            'tasks.fh_skip_cataloged': '未勾选 = 跳过已分类项目',
+            'tasks.fh_cat_convert':    '选择一个分类；转换仅针对该分类运行。',
+            'tasks.fh_diff_tools':     '不同工具对不同文件类型效果更好',
+            'tasks.fh_jump_md':        '使用上方统计跳转到第一个无 Markdown 的文件。',
+            'tasks.fh_skip_converted': '未勾选 = 跳过已转换文件',
+            'tasks.fh_cat_chunk':      '选择一个分类；分块生成仅针对该分类运行。',
+            'tasks.fh_profile_reuse':  '选择现有配置复用，或选择自定义。分块配置存储分块策略和分词器设置。',
+            'tasks.fh_chunk_model':    '用于分块时的 Token 计数行为（非向量嵌入模型）。',
+            'tasks.fh_splitter':       '分块合并前文档文本的分割方式。',
+            'tasks.fh_tokenizer':      '控制分块大小/重叠的 Token 计数粒度。',
+            'tasks.fh_bind_kb':        '若选择，每个生成的分块集将绑定到该知识库。',
+            'tasks.fh_binding_mode':   '跟随最新自动跟踪同配置的新分块集；固定则保留当前 chunk_set_id。',
+            'tasks.fh_skip_same':      '未勾选 = 复用现有同配置分块集。',
+            'tasks.fh_file_urls':      '留空 = 增量处理待处理文件，除非启用强制重建。',
+
+            // Tasks page — history table columns and labels
+            'tasks.th_task':           '任务',
+            'tasks.th_type':           '类型',
+            'tasks.th_status':         '状态',
+            'tasks.th_items':          '条目',
+            'tasks.th_time':           '时间',
+            'tasks.th_completed':      '已完成',
+            'tasks.hist_scanned':      '已扫描 {n}',
+            'tasks.hist_categorized':  '已分类 {n}',
+            'tasks.hist_skipped':      '已跳过 {n}',
+            'tasks.hist_failed':       '已失败 {n}',
+            'tasks.hist_processed':    '已处理 {n}',
+            'tasks.hist_new':          '{n} 新增',
+            'tasks.hist_skip':         '{n} 跳过',
+            'tasks.hist_err':          '{n} 错误',
+            'tasks.hist_view_log':     '查看日志',
+            'tasks.hist_no_history':   '暂无历史记录。',
+
+            // RAG page — JS-rendered strings
+            'rag.files_selected':           '已选 {n} 个文件',
+            'rag.no_files_selected':        '未选择文件',
+            'rag.select_category':          '选择分类',
+            'rag.all_categories':           '所有分类',
+            'rag.no_chunk_profiles':        '暂无分块配置。',
+            'rag.no_categories':            '暂无可用分类。',
+            'rag.no_kbs_found':             '未找到知识库。',
+            'rag.no_md_files':              '未找到可选 Markdown 文件。',
+            'rag.no_chunk_profiles_create': '未找到分块配置，请在"分块配置"中新建',
+            'rag.stats_result':             '唯一文件：{files} | Markdown 文件：{md} | 已在此 RAG 中：{in_kb}',
+            'rag.reindex_n':                '重新索引 ({n})',
+            'rag.rebuild_outdated':         '重建索引（{n} 个过期绑定）',
+            'rag.rebuild_index':            '重建索引',
+            'rag.index_status':             '索引：{status} | 最新构建：{built} | 需要重建：{needs} | 跟随最新：{follow} | 固定：{pin} | 过期：{outdated}',
+            'rag.available':                '可用',
+            'rag.missing':                  '缺失',
+            'rag.yes':                      '是',
+            'rag.no':                       '否',
+            'rag.unable_sync':              '无法确定同步状态。',
+            'rag.no_files_found':           '未找到文件。',
+            'rag.n_files':                  '{n} 个文件',
+            'rag.bulk_remove_n':            '批量移除 ({n})',
+            'rag.no_task_history':          '暂无任务历史。',
         },
     };
 
@@ -1579,6 +1721,12 @@
         document.querySelectorAll('[data-i18n-aria-label]').forEach(function (el) {
             const key = el.getAttribute('data-i18n-aria-label');
             el.setAttribute('aria-label', t(key));
+        });
+
+        // data-tooltip attribute (for CSS ::after tooltip content)
+        document.querySelectorAll('[data-i18n-tooltip]').forEach(function (el) {
+            const key = el.getAttribute('data-i18n-tooltip');
+            el.setAttribute('data-tooltip', t(key));
         });
 
         // Update <html lang="…">

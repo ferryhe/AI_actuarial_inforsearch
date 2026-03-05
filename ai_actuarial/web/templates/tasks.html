@@ -372,12 +372,12 @@
                 <select name="category" id="catalog-category-select" onchange="loadCatalogStats()">
                     <option value="">Loading categories...</option>
                 </select>
-                <small class="form-hint">Select one category; task will scan this category only.</small>
+                <small class="form-hint" data-i18n="tasks.fh_cat_scan">Select one category; task will scan this category only.</small>
             </div>
             <div class="form-group" id="catalog-start-index-group">
                 <label data-i18n="tasks.start_index">Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="catalog-scan-start-index" value="1" min="1">
-                <small class="form-hint">Use the stats above to jump to the first uncataloged candidate.</small>
+                <small class="form-hint" data-i18n="tasks.fh_jump_idx">Use the stats above to jump to the first uncataloged candidate.</small>
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.scan_count">Scan Count</label>
@@ -394,14 +394,14 @@
                     <option value="markdown" selected>Markdown</option>
                     <option value="source">Source file</option>
                 </select>
-                <small class="form-hint">Markdown uses converted/edited markdown content from File Details (if available).</small>
+                <small class="form-hint" data-i18n="tasks.fh_catalog_from">Markdown uses converted/edited markdown content from File Details (if available).</small>
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing">
                     <span data-i18n="tasks.overwrite_existing">Overwrite existing content (recompute)</span>
                 </label>
-                <small class="form-hint">Unchecked = Skip already cataloged</small>
+                <small class="form-hint" data-i18n="tasks.fh_skip_cataloged">Unchecked = Skip already cataloged</small>
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.ai_provider">AI Provider</label>
@@ -575,7 +575,7 @@
                 <select name="category" id="md-category-select" onchange="loadMarkdownConversionStats()">
                     <option value="">Loading categories...</option>
                 </select>
-                <small class="form-hint">Select one category; conversion runs only on this category.</small>
+                <small class="form-hint" data-i18n="tasks.fh_cat_convert">Select one category; conversion runs only on this category.</small>
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.conv_tool">Conversion Tool</label>
@@ -585,12 +585,12 @@
                     <option value="mistral">Mistral OCR (API)</option>
                     <option value="deepseekocr">DeepSeek OCR (SiliconFlow API)</option>
                 </select>
-                <small class="form-hint">Different tools work better for different file types</small>
+                <small class="form-hint" data-i18n="tasks.fh_diff_tools">Different tools work better for different file types</small>
             </div>
             <div class="form-group" id="md-start-index-group">
                 <label data-i18n="tasks.start_index">Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="md-scan-start-index" value="1" min="1">
-                <small class="form-hint">Use the stats above to jump to the first file without markdown.</small>
+                <small class="form-hint" data-i18n="tasks.fh_jump_md">Use the stats above to jump to the first file without markdown.</small>
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.scan_count">Scan Count</label>
@@ -602,7 +602,7 @@
                     <input type="checkbox" name="overwrite_existing" id="overwrite-existing">
                     <span data-i18n="tasks.overwrite_md">Overwrite existing markdown content (recompute)</span>
                 </label>
-                <small class="form-hint">Unchecked = Skip already converted</small>
+                <small class="form-hint" data-i18n="tasks.fh_skip_converted">Unchecked = Skip already converted</small>
             </div>
             <button type="submit" class="btn btn-primary" id="markdown-convert-btn" data-i18n="tasks.convert_files">Convert Files</button>
         </form>
@@ -634,14 +634,14 @@
                 <select name="category" id="chunk-category-select" onchange="loadChunkGenerationStats()">
                     <option value="">Loading categories...</option>
                 </select>
-                <small class="form-hint">Select one category; chunk generation runs only on this category.</small>
+                <small class="form-hint" data-i18n="tasks.fh_cat_chunk">Select one category; chunk generation runs only on this category.</small>
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.chunk_profile">Chunk Profile</label>
                 <select name="profile_id" id="chunk-profile-select" onchange="toggleChunkProfileCustomFields()">
                     <option value="">Loading profiles...</option>
                 </select>
-                <small class="form-hint">Select an existing profile to reuse, or choose custom. Chunk profile stores chunk strategy and tokenizer settings.</small>
+                <small class="form-hint" data-i18n="tasks.fh_profile_reuse">Select an existing profile to reuse, or choose custom. Chunk profile stores chunk strategy and tokenizer settings.</small>
             </div>
             <div id="chunk-profile-custom-fields">
                 <div class="form-group">
@@ -651,7 +651,7 @@
                         <option value="gpt-4o">gpt-4o</option>
                         <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
                     </select>
-                    <small class="form-hint">Used for token counting behavior during chunking (not embedding model).</small>
+                    <small class="form-hint" data-i18n="tasks.fh_chunk_model">Used for token counting behavior during chunking (not embedding model).</small>
                 </div>
                 <div class="form-group">
                     <label data-i18n="tasks.profile_name">Profile Name</label>
@@ -673,7 +673,7 @@
                         <select name="splitter">
                             <option value="semantic">semantic (section/paragraph-aware)</option>
                         </select>
-                        <small class="form-hint">How document text is segmented before chunk merge.</small>
+                        <small class="form-hint" data-i18n="tasks.fh_splitter">How document text is segmented before chunk merge.</small>
                     </div>
                     <div class="form-group half">
                         <label data-i18n="tasks.tokenizer">Tokenizer Encoding</label>
@@ -682,7 +682,7 @@
                             <option value="o200k_base">o200k_base (newer large-context models)</option>
                             <option value="p50k_base">p50k_base (legacy Codex/GPT-3)</option>
                         </select>
-                        <small class="form-hint">Controls token counting granularity for chunk size/overlap.</small>
+                        <small class="form-hint" data-i18n="tasks.fh_tokenizer">Controls token counting granularity for chunk size/overlap.</small>
                     </div>
                 </div>
                 <div class="form-group">
@@ -703,7 +703,7 @@
                 <select name="kb_id" id="chunk-generation-kb-id" onchange="toggleChunkGenerationBindingMode()">
                     <option value="" data-i18n="tasks.no_bind">Do not bind to KB</option>
                 </select>
-                <small class="form-hint">If selected, each generated chunk set will be bound to this KB.</small>
+                <small class="form-hint" data-i18n="tasks.fh_bind_kb">If selected, each generated chunk set will be bound to this KB.</small>
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.binding_mode">Binding Mode</label>
@@ -711,14 +711,14 @@
                     <option value="follow_latest" selected>Follow Latest (Recommended)</option>
                     <option value="pin">Pin (Fixed Version)</option>
                 </select>
-                <small class="form-hint">Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.</small>
+                <small class="form-hint" data-i18n="tasks.fh_binding_mode">Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.</small>
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_same_profile" id="chunk-overwrite-same-profile">
                     <span data-i18n="tasks.overwrite_profile">Overwrite same-profile chunk sets</span>
                 </label>
-                <small class="form-hint">Unchecked = reuse existing same-profile chunk set.</small>
+                <small class="form-hint" data-i18n="tasks.fh_skip_same">Unchecked = reuse existing same-profile chunk set.</small>
             </div>
             <button type="submit" class="btn btn-primary">Generate Chunks</button>
         </form>
@@ -746,7 +746,7 @@
             <div class="form-group">
                 <label data-i18n="tasks.file_urls_opt">File URLs (Optional, one per line)</label>
                 <textarea name="file_urls" id="kb-index-file-urls" rows="4" placeholder="Leave empty to use KB default scope"></textarea>
-                <small class="form-hint">Empty = incremental pending files, unless force rebuild is enabled.</small>
+                <small class="form-hint" data-i18n="tasks.fh_file_urls">Empty = incremental pending files, unless force rebuild is enabled.</small>
             </div>
             <div class="form-group">
                 <label>
@@ -1956,17 +1956,19 @@ function loadTaskHistory() {
         .then(data => {
             const container = document.getElementById('task-history-container');
             if (data.tasks && data.tasks.length > 0) {
-                 const tasks = data.tasks; 
+                 const tasks = data.tasks;
+                 const _t = (k, fb) => window.I18n ? window.I18n.t(k) : fb;
+                 const _tn = (k, n) => _t(k, k).replace('{n}', n);
                  container.innerHTML = `
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>Task</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Items</th>
-                            <th>Time</th>
-                            <th>Completed</th>
+                            <th>${_t('tasks.th_task', 'Task')}</th>
+                            <th>${_t('tasks.th_type', 'Type')}</th>
+                            <th>${_t('tasks.th_status', 'Status')}</th>
+                            <th>${_t('tasks.th_items', 'Items')}</th>
+                            <th>${_t('tasks.th_time', 'Time')}</th>
+                            <th>${_t('tasks.th_completed', 'Completed')}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1978,33 +1980,33 @@ function loadTaskHistory() {
                                 <td>
                                     ${task.type === 'catalog'
                                         ? `
-                                            ${task.catalog_scanned ?? task.items_processed ?? 0} scanned
+                                            ${_tn('tasks.hist_scanned', task.catalog_scanned ?? task.items_processed ?? 0)}
                                             <br><small>
-                                                ${(task.catalog_ok ?? task.items_downloaded ?? 0)} categorized /
-                                                ${(task.catalog_skipped ?? task.items_skipped ?? 0)} skipped /
-                                                ${(task.catalog_errors ?? (task.errors ? task.errors.length : 0))} failed
+                                                ${_tn('tasks.hist_categorized', task.catalog_ok ?? task.items_downloaded ?? 0)} /
+                                                ${_tn('tasks.hist_skipped', task.catalog_skipped ?? task.items_skipped ?? 0)} /
+                                                ${_tn('tasks.hist_failed', task.catalog_errors ?? (task.errors ? task.errors.length : 0))}
                                             </small>
                                           `
                                         : `
-                                            ${task.items_processed || 0} processed
+                                            ${_tn('tasks.hist_processed', task.items_processed || 0)}
                                             <br><small>
-                                                ${task.items_downloaded || 0} new / 
-                                                ${task.items_skipped || 0} skip /
-                                                ${task.errors ? task.errors.length : 0} err
+                                                ${_tn('tasks.hist_new', task.items_downloaded || 0)} /
+                                                ${_tn('tasks.hist_skip', task.items_skipped || 0)} /
+                                                ${_tn('tasks.hist_err', task.errors ? task.errors.length : 0)}
                                             </small>
                                           `
                                     }
                                 </td>
                                 <td>${formatDate(task.started_at)}</td>
                                 <td>
-                                    <button onclick='showLog(${JSON.stringify(task)})' class="btn-small">View Log</button>
+                                    <button onclick='showLog(${JSON.stringify(task)})' class="btn-small">${_t('tasks.hist_view_log', 'View Log')}</button>
                                 </td>
                             </tr>
                         `).join('')}
                     </tbody>
                 </table>`;
             } else {
-                container.innerHTML = '<p class="no-data">No history available.</p>';
+                container.innerHTML = `<p class="no-data">${window.I18n ? window.I18n.t('tasks.hist_no_history') : 'No history available.'}</p>`;
             }
         });
 }

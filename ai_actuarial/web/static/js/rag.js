@@ -327,10 +327,10 @@
         const countEl = document.getElementById('rag-create-selected-files-count');
         const listEl = document.getElementById('rag-create-selected-files');
         if (!countEl || !listEl) return;
-        countEl.textContent = `${state.selectedCreateFiles.size} files selected`;
+        countEl.textContent = window.I18n ? window.I18n.t('rag.files_selected').replace('{n}', state.selectedCreateFiles.size) : `${state.selectedCreateFiles.size} files selected`;
         const items = Array.from(state.selectedCreateFiles.values());
         if (!items.length) {
-            listEl.innerHTML = '<p class="text-muted">No files selected</p>';
+            listEl.innerHTML = `<p class="text-muted">${window.I18n ? window.I18n.t('rag.no_files_selected') : 'No files selected'}</p>`;
             return;
         }
         listEl.innerHTML = items
@@ -360,8 +360,8 @@
             .join('');
 
         if (createSelect) createSelect.innerHTML = options;
-        if (detailAddSelect) detailAddSelect.innerHTML = `<option value="">Select category</option>${options}`;
-        if (selector) selector.innerHTML = `<option value="">All Categories</option>${options}`;
+        if (detailAddSelect) detailAddSelect.innerHTML = `<option value="">${window.I18n ? window.I18n.t('rag.select_category') : 'Select category'}</option>${options}`;
+        if (selector) selector.innerHTML = `<option value="">${window.I18n ? window.I18n.t('rag.all_categories') : 'All Categories'}</option>${options}`;
     }
 
     function getKbModeBadge(mode) {
@@ -402,12 +402,12 @@
         const select = document.getElementById('rag-create-chunk-profile');
         if (!select) return;
         const oldValue = select.value;
-        let html = '<option value="" selected disabled>Select existing chunk profile</option>';
+        let html = `<option value="" selected disabled>${window.I18n ? window.I18n.t('kb_create.chunk_ph') : 'Select existing chunk profile'}</option>`;
         for (const profile of state.chunkProfiles) {
             html += `<option value="${esc(profile.profile_id)}">${esc(profile.name || profile.profile_id)} | ${esc(getChunkProfileModel(profile))} | size=${profile.chunk_size}, overlap=${profile.chunk_overlap}</option>`;
         }
         if (!state.chunkProfiles.length) {
-            html += '<option value="" disabled>No chunk profiles found - create one in Chunk Profiles</option>';
+            html += `<option value="" disabled>${window.I18n ? window.I18n.t('rag.no_chunk_profiles_create') : 'No chunk profiles found - create one in Chunk Profiles'}</option>`;
         }
         select.innerHTML = html;
         if (oldValue && state.chunkProfiles.some((p) => p.profile_id === oldValue)) {
@@ -442,7 +442,7 @@
         const body = document.getElementById('rag-chunk-profile-table-body');
         if (!body) return;
         if (!state.chunkProfiles.length) {
-            body.innerHTML = '<tr><td colspan="7">No chunk profiles yet.</td></tr>';
+            body.innerHTML = `<tr><td colspan="7">${window.I18n ? window.I18n.t('rag.no_chunk_profiles') : 'No chunk profiles yet.'}</td></tr>`;
             return;
         }
         body.innerHTML = state.chunkProfiles
@@ -495,7 +495,7 @@
         const listEl = document.getElementById('rag-category-list');
         if (!listEl) return;
         if (!state.categories.length) {
-            listEl.innerHTML = '<p class="text-muted">No categories available.</p>';
+            listEl.innerHTML = `<p class="text-muted">${window.I18n ? window.I18n.t('rag.no_categories') : 'No categories available.'}</p>`;
             return;
         }
         const unmappedSet = new Set(state.unmapped.map((x) => x.name));
@@ -553,7 +553,7 @@
         if (!body) return;
         const rows = getFilteredKbs();
         if (!rows.length) {
-            body.innerHTML = '<tr><td colspan="5">No knowledge bases found.</td></tr>';
+            body.innerHTML = `<tr><td colspan="5">${window.I18n ? window.I18n.t('rag.no_kbs_found') : 'No knowledge bases found.'}</td></tr>`;
             return;
         }
         body.innerHTML = rows
@@ -672,7 +672,7 @@
     async function loadFileSelectorPage() {
         const body = document.getElementById('rag-file-selector-body');
         if (!body) return;
-        body.innerHTML = '<tr><td colspan="6">Loading...</td></tr>';
+        body.innerHTML = `<tr><td colspan="6">${window.I18n ? window.I18n.t('common.loading') : 'Loading...'}</td></tr>`;
         const qp = new URLSearchParams({
             limit: String(state.fileSelector.pageSize),
             offset: String(state.fileSelector.offset),
@@ -698,7 +698,7 @@
         const selectedMap = getFileSelectionMap(state.fileSelector.target);
         const checkAll = document.getElementById('rag-file-selector-check-all');
         if (!state.fileSelector.rows.length) {
-            body.innerHTML = '<tr><td colspan="6">No selectable markdown files found.</td></tr>';
+            body.innerHTML = `<tr><td colspan="6">${window.I18n ? window.I18n.t('rag.no_md_files') : 'No selectable markdown files found.'}</td></tr>`;
             if (checkAll) checkAll.checked = false;
             updateFileSelectorSummary();
             return;
@@ -743,7 +743,7 @@
         const summary = document.getElementById('rag-file-selector-summary');
         if (!summary) return;
         const count = getFileSelectionMap(state.fileSelector.target).size;
-        summary.textContent = `${count} files selected`;
+        summary.textContent = window.I18n ? window.I18n.t('rag.files_selected').replace('{n}', count) : `${count} files selected`;
     }
 
     function openFileSelector(target) {
@@ -870,10 +870,12 @@
             if (context.page === 'detail' && context.kbId) payload.kb_id = context.kbId;
             const resp = await apiPost('/api/rag/categories/stats', payload, false);
             const stats = resp.data || {};
-            statsEl.textContent =
-                `Unique files: ${Number(stats.unique_files || 0)} | ` +
-                `Unique markdown files: ${Number(stats.unique_markdown_files || 0)} | ` +
-                `Already in this RAG: ${Number(stats.in_kb_markdown_files || 0)}`;
+            statsEl.textContent = window.I18n
+                ? window.I18n.t('rag.stats_result')
+                    .replace('{files}', Number(stats.unique_files || 0))
+                    .replace('{md}', Number(stats.unique_markdown_files || 0))
+                    .replace('{in_kb}', Number(stats.in_kb_markdown_files || 0))
+                : `Unique files: ${Number(stats.unique_files || 0)} | Unique markdown files: ${Number(stats.unique_markdown_files || 0)} | Already in this RAG: ${Number(stats.in_kb_markdown_files || 0)}`;
         } catch (err) {
             statsEl.textContent = `Failed to load stats: ${formatError(err)}`;
         }
@@ -1101,11 +1103,14 @@
         reindexBtn.setAttribute('data-pending-files', String(pendingFiles));
         reindexBtn.setAttribute('data-needs-reindex', needsReindex ? '1' : '0');
         if (pendingFiles > 0) {
-            reindexBtn.textContent = `Reindex (${pendingFiles})`;
+            reindexBtn.textContent = window.I18n ? window.I18n.t('rag.reindex_n').replace('{n}', pendingFiles) : `Reindex (${pendingFiles})`;
         } else if (outdatedBindingCount > 0) {
-            reindexBtn.textContent = `Rebuild Index (${outdatedBindingCount} outdated binding${outdatedBindingCount > 1 ? 's' : ''})`;
+            const s = outdatedBindingCount > 1 ? 's' : '';
+            reindexBtn.textContent = window.I18n
+                ? window.I18n.t('rag.rebuild_outdated').replace('{n}', outdatedBindingCount).replace('{s}', s)
+                : `Rebuild Index (${outdatedBindingCount} outdated binding${s})`;
         } else {
-            reindexBtn.textContent = 'Rebuild Index';
+            reindexBtn.textContent = window.I18n ? window.I18n.t('rag.rebuild_index') : 'Rebuild Index';
         }
     }
 
@@ -1124,9 +1129,16 @@
         const latestIndex = composition.latest_index || null;
         const latestIndexBuiltAt = latestIndex ? formatDate(latestIndex.built_at || latestIndex.created_at || '') : '-';
 
-        syncSummaryEl.textContent =
-            `Index: ${hasIndex ? 'Available' : 'Missing'} | Latest Built: ${latestIndexBuiltAt} | ` +
-            `Needs Reindex: ${needsReindex ? 'Yes' : 'No'} | Follow Latest: ${followLatest} | Pin: ${pin} | Outdated: ${outdated}`;
+        syncSummaryEl.textContent = window.I18n
+            ? window.I18n.t('rag.index_status')
+                .replace('{status}', hasIndex ? window.I18n.t('rag.available') : window.I18n.t('rag.missing'))
+                .replace('{built}', latestIndexBuiltAt)
+                .replace('{needs}', needsReindex ? window.I18n.t('rag.yes') : window.I18n.t('rag.no'))
+                .replace('{follow}', followLatest)
+                .replace('{pin}', pin)
+                .replace('{outdated}', outdated)
+            : `Index: ${hasIndex ? 'Available' : 'Missing'} | Latest Built: ${latestIndexBuiltAt} | ` +
+              `Needs Reindex: ${needsReindex ? 'Yes' : 'No'} | Follow Latest: ${followLatest} | Pin: ${pin} | Outdated: ${outdated}`;
 
         if (profileEl) {
             const bindings = Array.isArray(composition.bindings) ? composition.bindings : [];
@@ -1152,7 +1164,7 @@
         } catch (err) {
             state.detailComposition = null;
             const syncSummaryEl = document.getElementById('rag-sync-status-summary');
-            if (syncSummaryEl) syncSummaryEl.textContent = 'Unable to determine sync status.';
+            if (syncSummaryEl) syncSummaryEl.textContent = window.I18n ? window.I18n.t('rag.unable_sync') : 'Unable to determine sync status.';
             updateDetailReindexButton();
             return;
         }
@@ -1283,7 +1295,7 @@
 
         const body = document.getElementById('rag-detail-files-body');
         if (!paged.length) {
-            body.innerHTML = '<tr><td colspan="10">No files found.</td></tr>';
+            body.innerHTML = `<tr><td colspan="10">${window.I18n ? window.I18n.t('rag.no_files_found') : 'No files found.'}</td></tr>`;
             renderDetailFilesPagination(sorted.length, totalPages);
             renderDetailSortIndicators();
             updateDetailBulkRemoveButton();
@@ -1370,15 +1382,15 @@
         if (!wrap) return;
         const page = state.detailPage;
         if (totalItems <= state.detailPageSize) {
-            wrap.innerHTML = `<span class="text-muted">${totalItems} files</span>`;
+            wrap.innerHTML = `<span class="text-muted">${window.I18n ? window.I18n.t('rag.n_files').replace('{n}', totalItems) : `${totalItems} files`}</span>`;
             return;
         }
         wrap.innerHTML = `
-            <div class="text-muted">${totalItems} files</div>
+            <div class="text-muted">${window.I18n ? window.I18n.t('rag.n_files').replace('{n}', totalItems) : `${totalItems} files`}</div>
             <div class="rag-pagination-actions">
-                <button type="button" class="btn btn-secondary btn-sm" id="rag-detail-files-prev" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="rag-detail-files-prev" ${page <= 1 ? 'disabled' : ''}>${window.I18n ? window.I18n.t('common.prev') : 'Prev'}</button>
                 <span class="text-muted">Page ${page} / ${totalPages}</span>
-                <button type="button" class="btn btn-secondary btn-sm" id="rag-detail-files-next" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="rag-detail-files-next" ${page >= totalPages ? 'disabled' : ''}>${window.I18n ? window.I18n.t('common.next') : 'Next'}</button>
             </div>
         `;
         document.getElementById('rag-detail-files-prev')?.addEventListener('click', () => {
@@ -1395,7 +1407,7 @@
         const btn = document.getElementById('rag-detail-bulk-remove');
         if (!btn) return;
         const count = state.detailFileSelection.size;
-        btn.textContent = `Bulk Remove (${count})`;
+        btn.textContent = window.I18n ? window.I18n.t('rag.bulk_remove_n').replace('{n}', count) : `Bulk Remove (${count})`;
         btn.disabled = count <= 0;
     }
 
@@ -1423,7 +1435,7 @@
                 .join('');
 
             if (!history.length) {
-                body.innerHTML = '<tr><td colspan="5">No task history.</td></tr>';
+                body.innerHTML = `<tr><td colspan="5">${window.I18n ? window.I18n.t('rag.no_task_history') : 'No task history.'}</td></tr>`;
                 return;
             }
 

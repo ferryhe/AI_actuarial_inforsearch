@@ -151,9 +151,9 @@ window.FilePreview = (function() {
         container.innerHTML = `
             <div id="pdf-container" style="text-align: center;">
                 <div style="margin-bottom: 1rem;">
-                    <button id="pdf-prev" class="btn btn-small">Previous</button>
-                    <span id="pdf-page-info" style="margin: 0 1rem;">Page 1 of 1</span>
-                    <button id="pdf-next" class="btn btn-small">Next</button>
+                    <button id="pdf-prev" class="btn btn-small">${window.I18n ? window.I18n.t('fp.prev') : 'Previous'}</button>
+                    <span id="pdf-page-info" style="margin: 0 1rem;">${window.I18n ? window.I18n.t('fp.page_of').replace('{cur}', 1).replace('{total}', 1) : 'Page 1 of 1'}</span>
+                    <button id="pdf-next" class="btn btn-small">${window.I18n ? window.I18n.t('fp.next') : 'Next'}</button>
                 </div>
                 <canvas id="pdf-canvas" style="border: 1px solid var(--border-color); max-width: 100%;"></canvas>
             </div>
@@ -176,7 +176,9 @@ window.FilePreview = (function() {
                 pdfDoc = pdf;
                 const pageInfoEl = document.getElementById('pdf-page-info');
                 if (pageInfoEl) {
-                    pageInfoEl.textContent = `Page 1 of ${pdf.numPages}`;
+                    pageInfoEl.textContent = window.I18n
+                        ? window.I18n.t('fp.page_of').replace('{cur}', 1).replace('{total}', pdf.numPages)
+                        : `Page 1 of ${pdf.numPages}`;
                 }
                 renderPage(1);
 
@@ -214,7 +216,9 @@ window.FilePreview = (function() {
                 page.render(renderContext);
                 const pageInfoEl = document.getElementById('pdf-page-info');
                 if (pageInfoEl) {
-                    pageInfoEl.textContent = `Page ${pageNum} of ${pdfDoc.numPages}`;
+                    pageInfoEl.textContent = window.I18n
+                        ? window.I18n.t('fp.page_of').replace('{cur}', pageNum).replace('{total}', pdfDoc.numPages)
+                        : `Page ${pageNum} of ${pdfDoc.numPages}`;
                 }
             });
         }
