@@ -135,7 +135,7 @@ window.FilePreview = (function() {
         const downloadUrl = `/api/download?url=${encodeURIComponent(fileInfo.url)}`;
         container.innerHTML = `
             <div style="text-align: center; padding: 2rem;">
-                <p>Preview not available for this file type.</p>
+                <p>${window.I18n ? window.I18n.t('fp.preview_not_available') : 'Preview not available for this file type.'}</p>
                 <p style="margin-top: 1rem;">
                     <a href="${downloadUrl}" class="btn btn-primary" download>
                         Download ${escapeHtml(fileInfo.original_filename || 'File')}
@@ -151,9 +151,9 @@ window.FilePreview = (function() {
         container.innerHTML = `
             <div id="pdf-container" style="text-align: center;">
                 <div style="margin-bottom: 1rem;">
-                    <button id="pdf-prev" class="btn btn-small">Previous</button>
-                    <span id="pdf-page-info" style="margin: 0 1rem;">Page 1 of 1</span>
-                    <button id="pdf-next" class="btn btn-small">Next</button>
+                    <button id="pdf-prev" class="btn btn-small">${window.I18n ? window.I18n.t('fp.prev') : 'Previous'}</button>
+                    <span id="pdf-page-info" style="margin: 0 1rem;">${window.I18n ? window.I18n.t('fp.page_of').replace('{cur}', 1).replace('{total}', 1) : 'Page 1 of 1'}</span>
+                    <button id="pdf-next" class="btn btn-small">${window.I18n ? window.I18n.t('fp.next') : 'Next'}</button>
                 </div>
                 <canvas id="pdf-canvas" style="border: 1px solid var(--border-color); max-width: 100%;"></canvas>
             </div>
@@ -176,7 +176,9 @@ window.FilePreview = (function() {
                 pdfDoc = pdf;
                 const pageInfoEl = document.getElementById('pdf-page-info');
                 if (pageInfoEl) {
-                    pageInfoEl.textContent = `Page 1 of ${pdf.numPages}`;
+                    pageInfoEl.textContent = window.I18n
+                        ? window.I18n.t('fp.page_of').replace('{cur}', 1).replace('{total}', pdf.numPages)
+                        : `Page 1 of ${pdf.numPages}`;
                 }
                 renderPage(1);
 
@@ -214,7 +216,9 @@ window.FilePreview = (function() {
                 page.render(renderContext);
                 const pageInfoEl = document.getElementById('pdf-page-info');
                 if (pageInfoEl) {
-                    pageInfoEl.textContent = `Page ${pageNum} of ${pdfDoc.numPages}`;
+                    pageInfoEl.textContent = window.I18n
+                        ? window.I18n.t('fp.page_of').replace('{cur}', pageNum).replace('{total}', pdfDoc.numPages)
+                        : `Page ${pageNum} of ${pdfDoc.numPages}`;
                 }
             });
         }
@@ -226,7 +230,7 @@ window.FilePreview = (function() {
         const sets = Array.isArray(previewData.chunk_sets) ? previewData.chunk_sets : [];
 
         if (!sets.length) {
-            container.innerHTML = '<p style="margin: 0; color: var(--text-secondary);">No chunk versions available for this file.</p>';
+            container.innerHTML = `<p style="margin: 0; color: var(--text-secondary);">${window.I18n ? window.I18n.t('fp.no_chunk_versions') : 'No chunk versions available for this file.'}</p>`;
             return;
         }
 
@@ -243,7 +247,7 @@ window.FilePreview = (function() {
             .join('');
 
         container.innerHTML = `
-            <label for="chunk-set-select" style="display:block; margin-bottom: 6px; color: var(--text-secondary);">Chunk Version</label>
+            <label for="chunk-set-select" style="display:block; margin-bottom: 6px; color: var(--text-secondary);">${window.I18n ? window.I18n.t('fp.chunk_version') : 'Chunk Version'}</label>
             <select id="chunk-set-select" class="form-control" style="width:100%; max-width:100%;">
                 ${options}
             </select>
@@ -262,7 +266,7 @@ window.FilePreview = (function() {
         const container = document.getElementById('chunks-list');
 
         if (chunks.length === 0) {
-            container.innerHTML = '<p style="color: var(--text-secondary);">No chunks available for this file.</p>';
+            container.innerHTML = `<p style="color: var(--text-secondary);">${window.I18n ? window.I18n.t('fp.no_chunks') : 'No chunks available for this file.'}</p>`;
             return;
         }
 

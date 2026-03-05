@@ -10,23 +10,23 @@
 <div class="rag-page" data-rag-page="list">
     <div class="page-header rag-header">
         <div>
-            <h2>Knowledge Bases</h2>
-            <p class="text-muted">Manage category-based and manual RAG knowledge bases.</p>
+            <h2 data-i18n="rag.title">Knowledge Bases</h2>
+            <p class="text-muted" data-i18n="rag.subtitle">Manage category-based and manual RAG knowledge bases.</p>
         </div>
         <div class="rag-header-actions">
-            <button id="rag-refresh-list" class="btn btn-secondary">Refresh</button>
-            <button id="rag-open-profiles-modal" class="btn btn-secondary">Chunk Profiles</button>
-            <button id="rag-open-create-modal" class="btn btn-primary">Create KB</button>
+            <button id="rag-refresh-list" class="btn btn-secondary" data-i18n="rag.refresh">Refresh</button>
+            <button id="rag-open-profiles-modal" class="btn btn-secondary" data-i18n="rag.chunk_profiles">Chunk Profiles</button>
+            <button id="rag-open-create-modal" class="btn btn-primary" data-i18n="rag.create_kb">Create KB</button>
         </div>
     </div>
 
     <div id="rag-unmapped-alert" class="rag-alert" style="display:none;">
         <div>
-            <strong id="rag-unmapped-count">0</strong> categories do not have a knowledge base yet.
+            <strong id="rag-unmapped-count">0</strong> <span data-i18n="rag.categories_no_kb">categories do not have a knowledge base yet.</span>
         </div>
         <div class="rag-alert-actions">
-            <button id="rag-create-from-unmapped" class="btn btn-primary btn-small">Create KBs</button>
-            <button id="rag-dismiss-unmapped" class="btn btn-secondary btn-small">Dismiss</button>
+            <button id="rag-create-from-unmapped" class="btn btn-primary btn-small" data-i18n="rag.create_kbs">Create KBs</button>
+            <button id="rag-dismiss-unmapped" class="btn btn-secondary btn-small" data-i18n="rag.dismiss">Dismiss</button>
         </div>
     </div>
 
@@ -35,26 +35,26 @@
 
         <section class="rag-main card">
             <div class="rag-toolbar">
-                <input type="text" id="rag-kb-search" placeholder="Search by name, description, or ID">
+                <input type="text" id="rag-kb-search" data-i18n-placeholder="rag.search_ph" placeholder="Search by name, description, or ID">
                 <select id="rag-kb-mode-filter">
-                    <option value="">All Modes</option>
-                    <option value="category">Category</option>
-                    <option value="manual">Manual</option>
+                    <option value="" data-i18n="rag.all_modes">All Modes</option>
+                    <option value="category" data-i18n="rag.mode_category">Category</option>
+                    <option value="manual" data-i18n="rag.mode_manual">Manual</option>
                 </select>
             </div>
             <div class="rag-table-wrap">
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>Name</th>
-                            <th>Mode</th>
-                            <th>Files</th>
-                            <th>Chunks</th>
-                            <th>Updated</th>
+                            <th data-i18n="rag.col_name">Name</th>
+                            <th data-i18n="rag.col_mode">Mode</th>
+                            <th data-i18n="rag.col_files">Files</th>
+                            <th data-i18n="rag.col_chunks">Chunks</th>
+                            <th data-i18n="rag.col_updated">Updated</th>
                         </tr>
                     </thead>
                     <tbody id="rag-kb-table-body">
-                        <tr><td colspan="5">Loading knowledge bases...</td></tr>
+                        <tr><td colspan="5" data-i18n="rag.loading_kbs">Loading knowledge bases...</td></tr>
                     </tbody>
                 </table>
             </div>

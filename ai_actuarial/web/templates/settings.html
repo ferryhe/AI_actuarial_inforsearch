@@ -2,44 +2,44 @@
 
 {% block content %}
 <div class="settings-page">
-  <div class="page-header"><h2>Backend Settings</h2></div>
+  <div class="page-header"><h2 data-i18n="stg.title">Backend Settings</h2></div>
   <div class="tabs">
-    <button class="tab-link active" onclick="openTab(event,'tab-categories')">Categories</button>
-    <button class="tab-link" onclick="openTab(event,'tab-ai-config')">AI Configuration</button>
-    <button class="tab-link" onclick="openTab(event,'tab-backend')">Other Settings</button>
-    <button class="tab-link" onclick="openTab(event,'tab-tokens')">Tokens</button>
-    <button class="tab-link" onclick="openTab(event,'tab-history')">Task History</button>
+    <button class="tab-link active" onclick="openTab(event,'tab-categories')" data-i18n="stg.tab_categories">Categories</button>
+    <button class="tab-link" onclick="openTab(event,'tab-ai-config')" data-i18n="stg.tab_ai">AI Configuration</button>
+    <button class="tab-link" onclick="openTab(event,'tab-backend')" data-i18n="stg.tab_other">Other Settings</button>
+    <button class="tab-link" onclick="openTab(event,'tab-tokens')" data-i18n="stg.tab_tokens">Tokens</button>
+    <button class="tab-link" onclick="openTab(event,'tab-history')" data-i18n="stg.tab_history">Task History</button>
   </div>
 
   <div id="tab-categories" class="tab-content" style="display:block;">
     <section class="settings-module" data-module="categories">
       <div class="module-header">
         <div>
-          <h3>Category Rules</h3>
-          <p class="module-help">Editable category options for File Detail multi-select and classification rules.</p>
+          <h3 data-i18n="stg.category_rules">Category Rules</h3>
+          <p class="module-help" data-i18n="stg.category_rules_help">Editable category options for File Detail multi-select and classification rules.</p>
         </div>
-        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('categories')">Edit</button></div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('categories')" data-i18n="common.edit">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
-          <button class="btn btn-primary" onclick="saveModule('categories')">Save</button>
-          <button class="btn btn-secondary" onclick="cancelModule('categories')">Cancel</button>
-          <button class="btn btn-secondary" onclick="exitModuleEdit('categories')">Exit Edit</button>
+          <button class="btn btn-primary" onclick="saveModule('categories')" data-i18n="common.save">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('categories')" data-i18n="common.cancel">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('categories')" data-i18n="stg.exit_edit">Exit Edit</button>
         </div>
       </div>
       <div class="settings-grid">
         <div class="card">
-          <h4>Category List</h4>
+          <h4 data-i18n="stg.category_list">Category List</h4>
           <div class="row">
-            <input id="new-category-name" class="module-field" data-module="categories" type="text" placeholder="New category name">
-            <button class="btn btn-secondary requires-edit" data-module="categories" type="button" onclick="addCategory()">Add</button>
+            <input id="new-category-name" class="module-field" data-module="categories" type="text" data-i18n-placeholder="stg.new_category" placeholder="New category name">
+            <button class="btn btn-secondary requires-edit" data-module="categories" type="button" onclick="addCategory()" data-i18n="common.add">Add</button>
           </div>
           <select id="category-list" class="module-field" data-module="categories" size="12" onchange="onCategorySelect()"></select>
-          <button class="btn btn-danger requires-edit" data-module="categories" type="button" onclick="removeCategory()">Delete Selected</button>
+          <button class="btn btn-danger requires-edit" data-module="categories" type="button" onclick="removeCategory()" data-i18n="stg.delete_selected">Delete Selected</button>
         </div>
         <div class="card">
-          <h4>Category Keywords</h4>
+          <h4 data-i18n="stg.category_keywords">Category Keywords</h4>
           <input id="category-name" class="module-field" data-module="categories" type="text" readonly>
           <textarea id="category-keywords" class="module-field" data-module="categories" rows="10"></textarea>
-          <button class="btn btn-secondary requires-edit" data-module="categories" type="button" onclick="applyCategoryKeywords()">Apply to Selected</button>
+          <button class="btn btn-secondary requires-edit" data-module="categories" type="button" onclick="applyCategoryKeywords()" data-i18n="stg.apply_selected">Apply to Selected</button>
         </div>
       </div>
     </section>
@@ -47,18 +47,18 @@
     <section class="settings-module" data-module="ai_keywords">
       <div class="module-header">
         <div>
-          <h3>AI Filter Keywords</h3>
-          <p class="module-help">Used to decide whether a document is AI-related (e.g. in AI-only flows). This single list is also copied to <code>ai_keywords</code> to avoid drift.</p>
+          <h3 data-i18n="stg.ai_filter_kw">AI Filter Keywords</h3>
+          <p class="module-help"><span data-i18n="stg.ai_filter_kw_help">Used to decide whether a document is AI-related (e.g. in AI-only flows). This single list is also copied to</span> <code>ai_keywords</code> to avoid drift.</p>
         </div>
-        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_keywords')">Edit</button></div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_keywords')" data-i18n="common.edit">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
-          <button class="btn btn-primary" onclick="saveModule('ai_keywords')">Save</button>
-          <button class="btn btn-secondary" onclick="cancelModule('ai_keywords')">Cancel</button>
-          <button class="btn btn-secondary" onclick="exitModuleEdit('ai_keywords')">Exit Edit</button>
+          <button class="btn btn-primary" onclick="saveModule('ai_keywords')" data-i18n="common.save">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('ai_keywords')" data-i18n="common.cancel">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('ai_keywords')" data-i18n="stg.exit_edit">Exit Edit</button>
         </div>
       </div>
       <div class="card">
-        <label for="ai-shared-keywords">ai_filter_keywords (one per line)</label>
+        <label for="ai-shared-keywords" data-i18n="stg.ai_kw_label">ai_filter_keywords (one per line)</label>
         <textarea id="ai-shared-keywords" class="module-field" data-module="ai_keywords" rows="8"></textarea>
       </div>
     </section>
@@ -69,20 +69,20 @@
     <section class="settings-module" data-module="llm_providers">
       <div class="module-header">
         <div>
-          <h3>Model Providers</h3>
-          <p class="module-help">Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via <code>.env</code> are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.</p>
+          <h3 data-i18n="stg.model_providers">Model Providers</h3>
+          <p class="module-help"><span data-i18n="stg.model_providers_help">Add API keys for LLM providers. Configured providers appear in the model selection below. Providers set via</span> <code>.env</code> <span data-i18n="stg.model_providers_help2">are shown automatically. Use "Save to DB" to migrate them to encrypted database storage.</span></p>
         </div>
         <div>
-          <button class="btn btn-primary" type="button" onclick="showAddProviderForm()">+ Add Provider</button>
+          <button class="btn btn-primary" type="button" onclick="showAddProviderForm()" data-i18n="stg.add_provider">+ Add Provider</button>
         </div>
       </div>
 
       <!-- Add Provider Form (hidden by default) -->
       <div id="add-provider-form" class="card" style="display:none; margin-bottom:12px;">
-        <h4>Add / Update Provider</h4>
+        <h4 data-i18n="stg.add_update_provider">Add / Update Provider</h4>
         <div class="form-grid">
           <div>
-            <label for="new-provider-name">Provider</label>
+            <label for="new-provider-name" data-i18n="stg.provider">Provider</label>
             <select id="new-provider-name" onchange="onNewProviderChange()">
               <option value="">— select —</option>
               <option value="openai">OpenAI</option>
@@ -98,23 +98,23 @@
             </select>
           </div>
           <div>
-            <label for="new-provider-baseurl">Base URL <span style="font-weight:normal;color:var(--text-secondary)">(optional)</span></label>
-            <input id="new-provider-baseurl" type="text" placeholder="Leave blank for default">
+            <label for="new-provider-baseurl"><span data-i18n="stg.base_url">Base URL</span> <span style="font-weight:normal;color:var(--text-secondary)" data-i18n="stg.optional">(optional)</span></label>
+            <input id="new-provider-baseurl" type="text" data-i18n-placeholder="stg.base_url_hint" placeholder="Leave blank for default">
           </div>
           <div style="grid-column:1/-1;">
-            <label for="new-provider-apikey">API Key</label>
-            <input id="new-provider-apikey" type="password" placeholder="Paste your API key here" autocomplete="off">
+            <label for="new-provider-apikey" data-i18n="stg.api_key">API Key</label>
+            <input id="new-provider-apikey" type="password" data-i18n-placeholder="stg.api_key_hint" placeholder="Paste your API key here" autocomplete="off">
           </div>
         </div>
         <div style="display:flex;gap:8px;margin-top:10px;">
-          <button class="btn btn-primary" type="button" onclick="saveNewProvider()">Save</button>
-          <button class="btn btn-secondary" type="button" onclick="hideAddProviderForm()">Cancel</button>
+          <button class="btn btn-primary" type="button" onclick="saveNewProvider()" data-i18n="common.save">Save</button>
+          <button class="btn btn-secondary" type="button" onclick="hideAddProviderForm()" data-i18n="common.cancel">Cancel</button>
         </div>
       </div>
 
       <!-- Configured Providers List -->
       <div id="llm-provider-list">
-        <p class="loading" style="color:var(--text-secondary)">Loading providers...</p>
+        <p class="loading" style="color:var(--text-secondary)" data-i18n="stg.loading_providers">Loading providers...</p>
       </div>
     </section>
 
@@ -122,67 +122,67 @@
     <section class="settings-module" data-module="ai_models">
       <div class="module-header">
         <div>
-          <h3>AI Model Selection</h3>
-          <p class="module-help">Configure which AI provider and model to use for each function. Models are filtered by their capabilities.</p>
+          <h3 data-i18n="stg.ai_model_sel">AI Model Selection</h3>
+          <p class="module-help" data-i18n="stg.ai_model_sel_help">Configure which AI provider and model to use for each function. Models are filtered by their capabilities.</p>
         </div>
-        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_models')">Edit</button></div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('ai_models')" data-i18n="common.edit">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
-          <button class="btn btn-primary" onclick="saveModule('ai_models')">Save</button>
-          <button class="btn btn-secondary" onclick="cancelModule('ai_models')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveModule('ai_models')" data-i18n="common.save">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('ai_models')" data-i18n="common.cancel">Cancel</button>
         </div>
       </div>
       <div class="card form-grid">
         <div>
-          <label for="ai-catalog-provider">Catalog LLM Provider</label>
-          <p class="field-help">Used for document summarization and categorization</p>
+          <label for="ai-catalog-provider" data-i18n="stg.catalog_provider">Catalog LLM Provider</label>
+          <p class="field-help" data-i18n="stg.catalog_provider_help">Used for document summarization and categorization</p>
           <select id="ai-catalog-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('catalog')">
             <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
-          <label for="ai-catalog-model">Catalog LLM Model</label>
+          <label for="ai-catalog-model" data-i18n="stg.catalog_model">Catalog LLM Model</label>
           <select id="ai-catalog-model" class="module-field" data-module="ai_models">
             <!-- Populated dynamically -->
           </select>
         </div>
         
         <div>
-          <label for="ai-embeddings-provider">Embeddings Provider</label>
-          <p class="field-help">Used for RAG vector embeddings</p>
+          <label for="ai-embeddings-provider" data-i18n="stg.embed_provider">Embeddings Provider</label>
+          <p class="field-help" data-i18n="stg.embed_provider_help">Used for RAG vector embeddings</p>
           <select id="ai-embeddings-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('embeddings')">
             <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
-          <label for="ai-embeddings-model">Embeddings Model</label>
+          <label for="ai-embeddings-model" data-i18n="stg.embed_model">Embeddings Model</label>
           <select id="ai-embeddings-model" class="module-field" data-module="ai_models">
             <!-- Populated dynamically -->
           </select>
         </div>
         
         <div>
-          <label for="ai-chatbot-provider">Chatbot Provider</label>
-          <p class="field-help">Used for AI chatbot responses</p>
+          <label for="ai-chatbot-provider" data-i18n="stg.chatbot_provider">Chatbot Provider</label>
+          <p class="field-help" data-i18n="stg.chatbot_provider_help">Used for AI chatbot responses</p>
           <select id="ai-chatbot-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('chatbot')">
             <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
-          <label for="ai-chatbot-model">Chatbot Model</label>
+          <label for="ai-chatbot-model" data-i18n="stg.chatbot_model">Chatbot Model</label>
           <select id="ai-chatbot-model" class="module-field" data-module="ai_models">
             <!-- Populated dynamically -->
           </select>
         </div>
         
         <div>
-          <label for="ai-ocr-provider">OCR/Markdown Provider</label>
-          <p class="field-help">Used for document to markdown conversion</p>
+          <label for="ai-ocr-provider" data-i18n="stg.ocr_provider">OCR/Markdown Provider</label>
+          <p class="field-help" data-i18n="stg.ocr_provider_help">Used for document to markdown conversion</p>
           <select id="ai-ocr-provider" class="module-field" data-module="ai_models" onchange="onAiProviderChange('ocr')">
             <!-- Populated dynamically based on configured providers -->
           </select>
         </div>
         <div>
-          <label for="ai-ocr-model">OCR/Markdown Model</label>
+          <label for="ai-ocr-model" data-i18n="stg.ocr_model">OCR/Markdown Model</label>
           <select id="ai-ocr-model" class="module-field" data-module="ai_models">
             <!-- Populated dynamically -->
           </select>
@@ -195,78 +195,78 @@
     <section class="settings-module" data-module="crawler_defaults">
       <div class="module-header">
         <div>
-          <h3>Crawler Defaults</h3>
-          <p class="module-help">Used by URL/Scheduled/Quick-Check crawling. User Agent is locked.</p>
+          <h3 data-i18n="stg.crawler_defaults">Crawler Defaults</h3>
+          <p class="module-help" data-i18n="stg.crawler_defaults_help">Used by URL/Scheduled/Quick-Check crawling. User Agent is locked.</p>
         </div>
-        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('crawler_defaults')">Edit</button></div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('crawler_defaults')" data-i18n="common.edit">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
-          <button class="btn btn-primary" onclick="saveModule('crawler_defaults')">Save</button>
-          <button class="btn btn-secondary" onclick="cancelModule('crawler_defaults')">Cancel</button>
-          <button class="btn btn-secondary" onclick="exitModuleEdit('crawler_defaults')">Exit Edit</button>
+          <button class="btn btn-primary" onclick="saveModule('crawler_defaults')" data-i18n="common.save">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('crawler_defaults')" data-i18n="common.cancel">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('crawler_defaults')" data-i18n="stg.exit_edit">Exit Edit</button>
         </div>
       </div>
       <div class="card form-grid">
-        <div><label>User Agent (locked)</label><input id="defaults-user-agent" class="module-field" data-module="crawler_defaults" data-lock="true" type="text"></div>
-        <div><label>Max Pages</label><input id="defaults-max-pages" class="module-field" data-module="crawler_defaults" type="number" min="1"></div>
-        <div><label>Max Depth</label><input id="defaults-max-depth" class="module-field" data-module="crawler_defaults" type="number" min="1"></div>
-        <div><label>Delay Seconds</label><input id="defaults-delay" class="module-field" data-module="crawler_defaults" type="number" step="0.1" min="0"></div>
-        <div><label>File Extensions</label><textarea id="defaults-file-exts" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
-        <div><label>Keywords</label><textarea id="defaults-keywords" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
-        <div><label>Exclude Keywords</label><textarea id="defaults-exclude-keywords" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
-        <div><label>Exclude Prefixes</label><textarea id="defaults-exclude-prefixes" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
-        <div><label>Schedule Interval</label><input id="defaults-schedule-interval" class="module-field" data-module="crawler_defaults" type="text"></div>
+        <div><label data-i18n="stg.user_agent">User Agent (locked)</label><input id="defaults-user-agent" class="module-field" data-module="crawler_defaults" data-lock="true" type="text"></div>
+        <div><label data-i18n="stg.max_pages">Max Pages</label><input id="defaults-max-pages" class="module-field" data-module="crawler_defaults" type="number" min="1"></div>
+        <div><label data-i18n="stg.max_depth">Max Depth</label><input id="defaults-max-depth" class="module-field" data-module="crawler_defaults" type="number" min="1"></div>
+        <div><label data-i18n="stg.delay_sec">Delay Seconds</label><input id="defaults-delay" class="module-field" data-module="crawler_defaults" type="number" step="0.1" min="0"></div>
+        <div><label data-i18n="stg.file_exts">File Extensions</label><textarea id="defaults-file-exts" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label data-i18n="stg.keywords">Keywords</label><textarea id="defaults-keywords" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label data-i18n="stg.excl_kw">Exclude Keywords</label><textarea id="defaults-exclude-keywords" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label data-i18n="stg.excl_pfx">Exclude Prefixes</label><textarea id="defaults-exclude-prefixes" class="module-field" data-module="crawler_defaults" rows="4"></textarea></div>
+        <div><label data-i18n="stg.schedule_interval">Schedule Interval</label><input id="defaults-schedule-interval" class="module-field" data-module="crawler_defaults" type="text"></div>
       </div>
     </section>
     <section class="settings-module" data-module="paths">
       <div class="module-header">
         <div>
-          <h3>Paths</h3>
-          <p class="module-help">DB Path is locked to prevent runtime data split. Other paths are editable.</p>
+          <h3 data-i18n="stg.paths">Paths</h3>
+          <p class="module-help" data-i18n="stg.paths_help">DB Path is locked to prevent runtime data split. Other paths are editable.</p>
         </div>
-        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('paths')">Edit</button></div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('paths')" data-i18n="common.edit">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
-          <button class="btn btn-primary" onclick="saveModule('paths')">Save</button>
-          <button class="btn btn-secondary" onclick="cancelModule('paths')">Cancel</button>
-          <button class="btn btn-secondary" onclick="exitModuleEdit('paths')">Exit Edit</button>
+          <button class="btn btn-primary" onclick="saveModule('paths')" data-i18n="common.save">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('paths')" data-i18n="common.cancel">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('paths')" data-i18n="stg.exit_edit">Exit Edit</button>
         </div>
       </div>
       <div class="card form-grid">
-        <div><label>DB Path (locked)</label><input id="paths-db" class="module-field" data-module="paths" data-lock="true" type="text"></div>
-        <div><label>Download Directory</label><input id="paths-download-dir" class="module-field" data-module="paths" type="text"></div>
-        <div><label>Updates Directory</label><input id="paths-updates-dir" class="module-field" data-module="paths" type="text"></div>
-        <div><label>Last Run File</label><input id="paths-last-run-new" class="module-field" data-module="paths" type="text"></div>
+        <div><label data-i18n="stg.db_path">DB Path (locked)</label><input id="paths-db" class="module-field" data-module="paths" data-lock="true" type="text"></div>
+        <div><label data-i18n="stg.download_dir">Download Directory</label><input id="paths-download-dir" class="module-field" data-module="paths" type="text"></div>
+        <div><label data-i18n="stg.updates_dir">Updates Directory</label><input id="paths-updates-dir" class="module-field" data-module="paths" type="text"></div>
+        <div><label data-i18n="stg.last_run">Last Run File</label><input id="paths-last-run-new" class="module-field" data-module="paths" type="text"></div>
       </div>
     </section>
 
     <section class="settings-module" data-module="search_defaults">
       <div class="module-header">
         <div>
-          <h3>Search Settings</h3>
-          <p class="module-help">Defaults for Task Center -> Web Search. You can still override per run in the search dialog.</p>
+          <h3 data-i18n="stg.search_settings">Search Settings</h3>
+          <p class="module-help" data-i18n="stg.search_settings_help">Defaults for Task Center -> Web Search. You can still override per run in the search dialog.</p>
         </div>
-        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('search_defaults')">Edit</button></div>
+        <div class="module-actions-view"><button class="btn btn-secondary" onclick="enterEditMode('search_defaults')" data-i18n="common.edit">Edit</button></div>
         <div class="module-actions-edit" style="display:none;">
-          <button class="btn btn-primary" onclick="saveModule('search_defaults')">Save</button>
-          <button class="btn btn-secondary" onclick="cancelModule('search_defaults')">Cancel</button>
-          <button class="btn btn-secondary" onclick="exitModuleEdit('search_defaults')">Exit Edit</button>
+          <button class="btn btn-primary" onclick="saveModule('search_defaults')" data-i18n="common.save">Save</button>
+          <button class="btn btn-secondary" onclick="cancelModule('search_defaults')" data-i18n="common.cancel">Cancel</button>
+          <button class="btn btn-secondary" onclick="exitModuleEdit('search_defaults')" data-i18n="stg.exit_edit">Exit Edit</button>
         </div>
       </div>
       <div class="card form-grid">
-        <div><label>Enabled</label><input id="search-enabled" class="module-field" data-module="search_defaults" type="checkbox"></div>
-        <div><label>Max Results</label><input id="search-max-results" class="module-field" data-module="search_defaults" type="number" min="1"></div>
-        <div><label>Delay Seconds</label><input id="search-delay" class="module-field" data-module="search_defaults" type="number" step="0.1" min="0"></div>
-        <div><label>Country</label><input id="search-country" class="module-field" data-module="search_defaults" type="text"></div>
-        <div><label>Languages</label><textarea id="search-languages" class="module-field" data-module="search_defaults" rows="4"></textarea></div>
-        <div><label>Exclude Keywords</label><textarea id="search-exclude-keywords" class="module-field" data-module="search_defaults" rows="4"></textarea></div>
-        <div><label>Queries</label><textarea id="search-queries" class="module-field" data-module="search_defaults" rows="5"></textarea></div>
+        <div><label data-i18n="stg.enabled">Enabled</label><input id="search-enabled" class="module-field" data-module="search_defaults" type="checkbox"></div>
+        <div><label data-i18n="stg.max_results">Max Results</label><input id="search-max-results" class="module-field" data-module="search_defaults" type="number" min="1"></div>
+        <div><label data-i18n="stg.delay_sec">Delay Seconds</label><input id="search-delay" class="module-field" data-module="search_defaults" type="number" step="0.1" min="0"></div>
+        <div><label data-i18n="stg.country">Country</label><input id="search-country" class="module-field" data-module="search_defaults" type="text"></div>
+        <div><label data-i18n="stg.languages">Languages</label><textarea id="search-languages" class="module-field" data-module="search_defaults" rows="4"></textarea></div>
+        <div><label data-i18n="stg.excl_kw">Exclude Keywords</label><textarea id="search-exclude-keywords" class="module-field" data-module="search_defaults" rows="4"></textarea></div>
+        <div><label data-i18n="stg.queries">Queries</label><textarea id="search-queries" class="module-field" data-module="search_defaults" rows="5"></textarea></div>
       </div>
     </section>
 
     <section class="settings-module" data-module="runtime_flags">
       <div class="module-header">
         <div>
-          <h3>Runtime Flags</h3>
-          <p class="module-help">Read-only runtime and environment status.</p>
+          <h3 data-i18n="stg.runtime_flags">Runtime Flags</h3>
+          <p class="module-help" data-i18n="stg.runtime_flags_help">Read-only runtime and environment status.</p>
         </div>
       </div>
       <div class="card"><div id="runtime-flags" class="runtime-flags"></div></div>
@@ -277,20 +277,20 @@
     <section class="settings-module" data-module="auth_tokens">
       <div class="module-header">
         <div>
-          <h3>Auth Tokens</h3>
-          <p class="module-help">Admin-only token management. Plaintext tokens are shown only once at creation.</p>
+          <h3 data-i18n="stg.auth_tokens">Auth Tokens</h3>
+          <p class="module-help" data-i18n="stg.auth_tokens_help">Admin-only token management. Plaintext tokens are shown only once at creation.</p>
         </div>
       </div>
       <div class="settings-grid">
         <div class="card">
-          <h4>Create Token</h4>
+          <h4 data-i18n="stg.create_token">Create Token</h4>
           <div class="form-grid" style="grid-template-columns: 1fr;">
             <div>
-              <label>Subject</label>
-              <input id="new-token-subject" type="text" placeholder="e.g. alice@example.com / ops-team">
+              <label data-i18n="stg.token_subject">Subject</label>
+              <input id="new-token-subject" type="text" data-i18n-placeholder="stg.token_subject_hint" placeholder="e.g. alice@example.com / ops-team">
             </div>
             <div>
-              <label>Group</label>
+              <label data-i18n="stg.token_group">Group</label>
               <select id="new-token-group">
                 <option value="reader">reader</option>
                 <option value="operator">operator</option>
@@ -298,24 +298,24 @@
               </select>
             </div>
             <div>
-              <button class="btn btn-primary" type="button" onclick="createAuthToken()">Create</button>
+              <button class="btn btn-primary" type="button" onclick="createAuthToken()" data-i18n="common.create">Create</button>
             </div>
           </div>
         </div>
         <div class="card">
-          <h4>Existing Tokens</h4>
+          <h4 data-i18n="stg.existing_tokens">Existing Tokens</h4>
           <div style="overflow:auto;">
             <table class="data-table" style="width:100%; border-collapse: collapse;">
               <thead>
                 <tr>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">ID</th>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">Subject</th>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">Group</th>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">Active</th>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">Created</th>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">Last Used</th>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">Revoked</th>
-                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);">Action</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="stg.tok_col_id">ID</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="stg.tok_col_sub">Subject</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="stg.tok_col_grp">Group</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="stg.tok_col_active">Active</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="stg.tok_col_created">Created</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="stg.tok_col_last_used">Last Used</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="stg.tok_col_revoked">Revoked</th>
+                  <th style="text-align:left; padding:6px; border-bottom:1px solid var(--border-color);" data-i18n="common.actions">Action</th>
                 </tr>
               </thead>
               <tbody id="auth-token-table-body"></tbody>
@@ -330,18 +330,18 @@
     <section class="settings-module" data-module="task_history">
       <div class="module-header">
         <div>
-          <h3>Task History</h3>
-          <p class="module-help">Recent task runs and logs. (Moved here from Schedule.)</p>
+          <h3 data-i18n="stg.task_history">Task History</h3>
+          <p class="module-help" data-i18n="stg.task_history_help">Recent task runs and logs. (Moved here from Schedule.)</p>
         </div>
         <div class="module-actions-view" style="display:flex; gap: 8px;">
-          <button class="btn btn-secondary" type="button" onclick="historyReload()">Reload</button>
+          <button class="btn btn-secondary" type="button" onclick="historyReload()" data-i18n="common.refresh">Reload</button>
           {% if auth_group == 'admin' %}
-          <button class="btn" type="button" onclick="historyOpenGlobalLogs()">Global Logs</button>
+          <button class="btn" type="button" onclick="historyOpenGlobalLogs()" data-i18n="stg.global_logs">Global Logs</button>
           {% endif %}
         </div>
       </div>
       <div class="card">
-        <div id="settings-task-history-container"><p class="loading">Loading task history...</p></div>
+        <div id="settings-task-history-container"><p class="loading" data-i18n="stg.loading_history">Loading task history...</p></div>
       </div>
     </section>
   </div>
@@ -349,12 +349,12 @@
 
 <div id="typed-delete-modal" class="modal" style="display:none;">
   <div class="modal-content confirm-dialog">
-    <h3>Confirm Delete</h3>
+    <h3 data-i18n="stg.confirm_delete">Confirm Delete</h3>
     <p id="typed-delete-message"></p>
-    <input type="text" id="typed-delete-input" class="form-control" placeholder="confirm delete">
+    <input type="text" id="typed-delete-input" class="form-control" data-i18n-placeholder="stg.confirm_delete_hint" placeholder="confirm delete">
     <div class="confirm-buttons">
-      <button class="btn btn-secondary" id="typed-delete-cancel">Cancel</button>
-      <button class="btn btn-danger" id="typed-delete-confirm">Delete</button>
+      <button class="btn btn-secondary" id="typed-delete-cancel" data-i18n="common.cancel">Cancel</button>
+      <button class="btn btn-danger" id="typed-delete-confirm" data-i18n="common.delete">Delete</button>
     </div>
   </div>
 </div>
@@ -365,8 +365,8 @@
     <p>This token will only be shown once. Copy it now.</p>
     <textarea id="token-created-value" class="form-control" rows="3" readonly></textarea>
     <div class="confirm-buttons">
-      <button class="btn btn-secondary" id="token-created-copy">Copy</button>
-      <button class="btn btn-primary" id="token-created-close">Close</button>
+      <button class="btn btn-secondary" id="token-created-copy" data-i18n="stg.copy">Copy</button>
+      <button class="btn btn-primary" id="token-created-close" data-i18n="common.close">Close</button>
     </div>
   </div>
 </div>
@@ -381,7 +381,7 @@
 <div id="settings-global-log-modal" class="modal" style="display:none;">
   <div class="modal-content" style="max-width: 900px;">
     <span class="close" onclick="historyCloseGlobalLogModal()">&times;</span>
-    <h3>Global Application Logs</h3>
+    <h3 data-i18n="stg.global_logs">Global Application Logs</h3>
     <pre id="settings-global-log-content" style="white-space: pre-wrap; max-height: 520px; overflow: auto; margin: 0;"></pre>
   </div>
 </div>
@@ -414,17 +414,18 @@ function getModuleElement(name) { return document.querySelector(`.settings-modul
 // ===== Task History (Settings) =====
 function historyReload() {
   const container = document.getElementById('settings-task-history-container');
-  if (container) container.innerHTML = '<p class="loading">Loading task history...</p>';
+  const _t = k => window.I18n ? window.I18n.t(k) : k;
+  if (container) container.innerHTML = '<p class="loading">' + _t('stg.loading_history') + '</p>';
   fetch('/api/tasks/history?limit=30')
     .then(r => r.json().then(j => ({ ok: r.ok, j })))
     .then(({ ok, j }) => {
       const tasks = (j && j.tasks) || [];
       if (!ok) {
-        if (container) container.innerHTML = `<p class="error">Failed to load history: ${escapeHtml(j.error || 'unknown')}</p>`;
+        if (container) container.innerHTML = `<p class="error">${_t('stg.failed_load_history')} ${escapeHtml(j.error || 'unknown')}</p>`;
         return;
       }
       if (!tasks.length) {
-        if (container) container.innerHTML = '<p class="no-data">No history available.</p>';
+        if (container) container.innerHTML = '<p class="no-data">' + _t('tasks.hist_no_history') + '</p>';
         return;
       }
       if (container) {
@@ -432,12 +433,12 @@ function historyReload() {
           <table class="data-table">
             <thead>
               <tr>
-                <th>Task</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Items</th>
-                <th>Time</th>
-                <th>Log</th>
+                <th>${_t('tasks.th_task')}</th>
+                <th>${_t('tasks.th_type')}</th>
+                <th>${_t('tasks.th_status')}</th>
+                <th>${_t('tasks.th_items')}</th>
+                <th>${_t('tasks.th_time')}</th>
+                <th>${_t('stg.th_log')}</th>
               </tr>
             </thead>
             <tbody>
@@ -448,7 +449,7 @@ function historyReload() {
                   <td><span class="status-badge status-${escapeHtml(t.status || 'unknown')}">${escapeHtml(t.status || 'unknown')}</span></td>
                   <td>${t.items_processed || 0}</td>
                   <td>${formatDate(t.started_at)}</td>
-                  <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, "&#39;")})'>View Log</button></td>
+                  <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, "&#39;")})'>${_t('tasks.hist_view_log')}</button></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -457,39 +458,40 @@ function historyReload() {
       }
     })
     .catch(e => {
-      if (container) container.innerHTML = `<p class="error">Failed to load history: ${escapeHtml(e.message)}</p>`;
+      if (container) container.innerHTML = `<p class="error">${_t('stg.failed_load_history')} ${escapeHtml(e.message)}</p>`;
     });
 }
 
 function historyShowLog(task) {
   const body = document.getElementById('settings-history-log-body');
   if (!body) return;
+  const _t = k => window.I18n ? window.I18n.t(k) : k;
   const mainStats = `
-    <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
-    <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
-    <li><strong>Skipped:</strong> ${task.items_skipped || 0}</li>
-    <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+    <li><strong>${_t('stg.log_items_processed')}</strong> ${task.items_processed || 0}</li>
+    <li><strong>${_t('stg.log_new_updated')}</strong> ${task.items_downloaded || 0}</li>
+    <li><strong>${_t('stg.log_skipped')}</strong> ${task.items_skipped || 0}</li>
+    <li><strong>${_t('stg.log_errors')}</strong> ${task.errors ? task.errors.length : 0}</li>
   `;
   body.innerHTML = `
     <div style="padding: 10px;">
-      <h4>Task Log: ${escapeHtml(task.name || '')}</h4>
+      <h4>${_t('stg.task_log_title')} ${escapeHtml(task.name || '')}</h4>
       <ul style="list-style: none; padding: 0;">
-        <li><strong>Status:</strong> ${escapeHtml(task.status || '')}</li>
-        <li><strong>Started:</strong> ${formatDate(task.started_at)}</li>
-        <li><strong>Completed:</strong> ${formatDate(task.completed_at || '')}</li>
+        <li><strong>${_t('stg.log_status')}</strong> ${escapeHtml(task.status || '')}</li>
+        <li><strong>${_t('stg.log_started')}</strong> ${formatDate(task.started_at)}</li>
+        <li><strong>${_t('stg.log_completed')}</strong> ${formatDate(task.completed_at || '')}</li>
         ${mainStats}
       </ul>
       <div class="error-details-box">
-        <h5>Error Details:</h5>
-        ${(task.errors && task.errors.length > 0) ? task.errors.map(e => `<div class=\"error-item\">• ${escapeHtml(e)}</div>`).join('') : 'No detailed errors logged.'}
+        <h5>${_t('stg.log_error_details')}</h5>
+        ${(task.errors && task.errors.length > 0) ? task.errors.map(e => `<div class=\"error-item\">\u2022 ${escapeHtml(e)}</div>`).join('') : _t('stg.log_no_errors')}
       </div>
       <div class="error-details-box" style="margin-top: 12px;">
-        <h5>Application Log (Task)</h5>
-        <pre id="settings-task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
+        <h5>${_t('stg.log_app_log')}</h5>
+        <pre id="settings-task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">${_t('common.loading')}</pre>
         <div style="margin-top: 8px; display: flex; gap: 8px;">
-          <button class="btn-small" onclick="historyReloadTaskLog('${String(task.id || '')}')">Reload</button>
+          <button class="btn-small" onclick="historyReloadTaskLog('${String(task.id || '')}')">${_t('common.refresh')}</button>
           {% if auth_group == 'admin' and enable_global_logs_api %}
-          <button class="btn-small" onclick="historyOpenGlobalLogs()">Global Logs</button>
+          <button class="btn-small" onclick="historyOpenGlobalLogs()">${_t('stg.log_global_logs')}</button>
           {% endif %}
         </div>
       </div>
@@ -512,17 +514,18 @@ function historyCloseLogModal() {
 async function historyReloadTaskLog(taskId) {
   const pre = document.getElementById('settings-task-log-content');
   if (!pre) return;
-  pre.textContent = 'Loading...';
+  const _t = k => window.I18n ? window.I18n.t(k) : k;
+  pre.textContent = _t('common.loading');
   try {
     const resp = await fetch(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
     const data = await resp.json();
     if (resp.ok && data.success) {
-      pre.textContent = data.log || '(no task log yet)';
+      pre.textContent = data.log || _t('stg.log_no_log');
     } else {
-      pre.textContent = 'Failed to load task log: ' + (data.error || resp.status);
+      pre.textContent = _t('stg.failed_load_log') + ' ' + (data.error || resp.status);
     }
   } catch (e) {
-    pre.textContent = 'Failed to load task log: ' + e.message;
+    pre.textContent = _t('stg.failed_load_log') + ' ' + e.message;
   }
 }
 
@@ -973,21 +976,23 @@ function renderLlmProviders() {
   const { providers, known } = llmProvidersData;
 
   if (!providers || providers.length === 0) {
-    list.innerHTML = '<p style="color:var(--text-secondary);padding:8px 0;">No providers configured. Click "+ Add Provider" to add one, or set <code>OPENAI_API_KEY</code> / <code>MISTRAL_API_KEY</code> / <code>SILICONFLOW_API_KEY</code> in your <code>.env</code> file.</p>';
+    const _i = window.I18n;
+    list.innerHTML = `<p style="color:var(--text-secondary);padding:8px 0;">${_i ? _i.t('stg.no_providers') : 'No providers configured. Click &quot;+ Add Provider&quot; to add one, or set API keys in your .env file.'}</p>`;
     return;
   }
 
   const cards = providers.map(p => {
+    const _i = window.I18n;
     const displayName = (known[p.provider] || {}).display_name || p.provider;
     const baseUrl = p.api_base_url || PROVIDER_DEFAULT_BASE_URLS[p.provider] || '—';
     const isEnv = p.source === 'env';
     const badge = isEnv
-      ? `<span class="provider-badge provider-badge-env">via .env</span>`
-      : `<span class="provider-badge provider-badge-active">Active</span>`;
+      ? `<span class="provider-badge provider-badge-env">${_i ? _i.t('stg.via_env') : 'via .env'}</span>`
+      : `<span class="provider-badge provider-badge-active">${_i ? _i.t('stg.provider_active') : 'Active'}</span>`;
     const actions = isEnv
-      ? `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Save to DB</button>`
-      : `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">Update Key</button>
-         <button class="btn btn-danger btn-sm" type="button" onclick="deleteProvider('${escapeHtml(p.provider)}')">Remove</button>`;
+      ? `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.save_to_db') : 'Save to DB'}</button>`
+      : `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.update_key') : 'Update Key'}</button>
+         <button class="btn btn-danger btn-sm" type="button" onclick="deleteProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.remove') : 'Remove'}</button>`;
     return `
       <div class="provider-card">
         <div class="provider-card-info">
@@ -995,7 +1000,7 @@ function renderLlmProviders() {
           ${badge}
         </div>
         <div class="provider-card-detail" style="color:var(--text-secondary);font-size:0.85em;margin-top:4px;">
-          Base URL: ${escapeHtml(baseUrl)}&nbsp;&nbsp;|&nbsp;&nbsp;Key: ****
+          ${_i ? _i.t('stg.base_url_label') : 'Base URL:'} ${escapeHtml(baseUrl)}&nbsp;&nbsp;|&nbsp;&nbsp;Key: ****
         </div>
         <div style="margin-top:8px;">${actions}</div>
       </div>

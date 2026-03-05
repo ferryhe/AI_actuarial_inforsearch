@@ -4,23 +4,23 @@
 {% set can_edit_sites = auth_group in ['admin', 'operator'] %}
 <div class="scheduled-tasks-page">
     <div class="page-header">
-        <p><a href="{{ url_for('tasks') }}">&larr; Back to Tasks</a></p>
-        <h2>Scheduled Task Management</h2>
+        <p><a href="{{ url_for('tasks') }}" data-i18n="sched.back">&larr; Back to Tasks</a></p>
+        <h2 data-i18n="sched.title">Scheduled Task Management</h2>
     </div>
 
     <!-- Tabs Navigation -->
     <div class="tabs">
-        <button class="tab-link active" onclick="openTab(event, 'configured-sites')">Configured Sites</button>
-        <button class="tab-link" onclick="openTab(event, 'schedule-status')">Upcoming Runs</button>
-        <button class="tab-link" onclick="openTab(event, 'manual-trigger')">Manual Trigger</button>
+        <button class="tab-link active" onclick="openTab(event, 'configured-sites')" data-i18n="sched.tab_sites">Configured Sites</button>
+        <button class="tab-link" onclick="openTab(event, 'schedule-status')" data-i18n="sched.tab_upcoming">Upcoming Runs</button>
+        <button class="tab-link" onclick="openTab(event, 'manual-trigger')" data-i18n="sched.tab_manual">Manual Trigger</button>
     </div>
 
     <!-- Tab Content: Configured Sites -->
     <div id="configured-sites" class="tab-content" style="display: block;">
         <div class="toolbar">
-            <input type="text" id="site-search" placeholder="Search sites..." onkeyup="filterSites()" />
+            <input type="text" id="site-search" data-i18n-placeholder="sched.search_sites" placeholder="Search sites..." onkeyup="filterSites()" />
             {% if can_edit_sites %}
-            <button onclick="openAddSiteModal()" class="btn btn-primary">+ Add Site</button>
+            <button onclick="openAddSiteModal()" class="btn btn-primary" data-i18n="sched.add_site">+ Add Site</button>
             {% else %}
             <div style="margin-left:auto; color: var(--text-secondary); display:flex; align-items:center;">
                 Read-only (operator/admin required to edit sites)
@@ -29,7 +29,7 @@
         </div>
         
         <div id="sites-container">
-            <p class="loading">Loading configured sites...</p>
+            <p class="loading" data-i18n="sched.loading_sites">Loading configured sites...</p>
         </div>
     </div>
 
@@ -38,31 +38,31 @@
     <!-- Tab Content: Upcoming Runs -->
     <div id="schedule-status" class="tab-content">
         <div id="schedule-status-container">
-            <p class="loading">Loading schedule status...</p>
+            <p class="loading" data-i18n="sched.loading_status">Loading schedule status...</p>
         </div>
     </div>
 
     <!-- Tab Content: Manual Trigger -->
     <div id="manual-trigger" class="tab-content">
         <div class="trigger-form">
-            <h3>Run Collection Immediately</h3>
+            <h3 data-i18n="sched.run_now">Run Collection Immediately</h3>
             <div class="form-group">
-                <label for="site-select">Select Site:</label>
+                <label for="site-select" data-i18n="sched.select_site">Select Site:</label>
                 <select id="site-select">
-                    <option value="">All Sites</option>
+                    <option value="" data-i18n="sched.all_sites">All Sites</option>
                 </select>
             </div>
             <div class="form-group">
-                <label for="max-pages">Max Pages <i class="tooltip-icon" onclick="toggleTooltip('tt-manual-pages', 'max-pages')">(i)</i>:</label>
+                <label for="max-pages"><span data-i18n="sched.max_pages">Max Pages</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-manual-pages', 'max-pages')">(i)</i>:</label>
                 <input type="number" id="max-pages" value="200" min="1" />
                 <div id="tt-manual-pages" class="tooltip-text"></div>
             </div>
             <div class="form-group">
-                <label for="max-depth">Max Depth <i class="tooltip-icon" onclick="toggleTooltip('tt-manual-depth', 'max-depth')">(i)</i>:</label>
+                <label for="max-depth"><span data-i18n="sched.max_depth">Max Depth</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-manual-depth', 'max-depth')">(i)</i>:</label>
                 <input type="number" id="max-depth" value="2" min="1" />
                 <div id="tt-manual-depth" class="tooltip-text"></div>
             </div>
-            <button onclick="startScheduledCollection()" class="btn btn-primary">Start Collection</button>
+            <button onclick="startScheduledCollection()" class="btn btn-primary" data-i18n="sched.start_collection">Start Collection</button>
         </div>
     </div>
 
@@ -73,42 +73,42 @@
 <div id="site-modal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal()">&times;</span>
-        <h3 id="modal-title">Add New Site</h3>
+        <h3 id="modal-title" data-i18n="sched.add_site_title">Add New Site</h3>
         <input type="hidden" id="original-site-name" />
         <div class="form-group">
-            <label>Site Name:</label>
+            <label data-i18n="sched.site_name">Site Name:</label>
             <input type="text" id="modal-name" required />
         </div>
         <div class="form-group">
-            <label>URL:</label>
+            <label data-i18n="sched.site_url">URL:</label>
             <input type="text" id="modal-url" required />
         </div>
         <div class="form-group">
-            <label>Max Pages (optional) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-pages', 'max-pages')">(i)</i>:</label>
+            <label for="modal-pages"><span data-i18n="sched.modal_max_pages">Max Pages (optional)</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-pages', 'max-pages')">(i)</i>:</label>
             <input type="number" id="modal-pages" />
             <div id="tt-modal-pages" class="tooltip-text"></div>
         </div>
         <div class="form-group">
-            <label>Max Depth (optional) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-depth', 'max-depth')">(i)</i>:</label>
+            <label for="modal-depth"><span data-i18n="sched.modal_max_depth">Max Depth (optional)</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-depth', 'max-depth')">(i)</i>:</label>
             <input type="number" id="modal-depth" />
              <div id="tt-modal-depth" class="tooltip-text"></div>
         </div>
         <div class="form-group">
-            <label>Keywords (comma separated) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-keywords', 'keywords')">(i)</i>:</label>
+            <label for="modal-keywords"><span data-i18n="sched.modal_keywords">Keywords (comma separated)</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-keywords', 'keywords')">(i)</i>:</label>
             <input type="text" id="modal-keywords" />
              <div id="tt-modal-keywords" class="tooltip-text"></div>
         </div>
         <div class="form-group">
-            <label>Exclude Keywords (comma separated) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-excl-kw', 'exclude-keywords')">(i)</i>:</label>
+            <label><span data-i18n="sched.modal_excl_kw">Exclude Keywords (comma separated)</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-excl-kw', 'exclude-keywords')">(i)</i>:</label>
             <input type="text" id="modal-exclude-keywords" />
              <div id="tt-modal-excl-kw" class="tooltip-text"></div>
         </div>
         <div class="form-group">
-            <label>Exclude Prefixes (comma separated) <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-excl-pfx', 'exclude-prefixes')">(i)</i>:</label>
+            <label><span data-i18n="sched.modal_excl_pfx">Exclude Prefixes (comma separated)</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-excl-pfx', 'exclude-prefixes')">(i)</i>:</label>
             <input type="text" id="modal-exclude-prefixes" />
              <div id="tt-modal-excl-pfx" class="tooltip-text"></div>
         </div>
-        <button onclick="saveSite()" class="btn btn-primary">Save Site</button>
+        <button onclick="saveSite()" class="btn btn-primary" data-i18n="sched.save_site">Save Site</button>
     </div>
 </div>
 {% endif %}
@@ -249,11 +249,11 @@ let allSites = [];
 const CAN_EDIT_SITES = {{ 'true' if can_edit_sites else 'false' }};
 
 const TOOLTIPS = {
-    'max-pages': "Maximum number of pages to crawl per execution. Prevents infinite loops on large sites.",
-    'max-depth': "How deep to crawl links. 1 = Seed page only. 2 = Seed + Links on seed. 3 = Links on those links...",
-    'keywords': "Relevant topics. If set, only pages/files containing at least one of these are kept.",
-    'exclude-keywords': "Blacklist words. If a URL or Filename contains ANY of these, it is strictly skipped.",
-    'exclude-prefixes': "Blacklist prefixes. If a Filename starts with these (e.g. 'exam'), it is skipped."
+    'max-pages':        'sched.tooltip_max_pages',
+    'max-depth':        'sched.tooltip_max_depth',
+    'keywords':         'sched.tooltip_keywords',
+    'exclude-keywords': 'sched.tooltip_excl_kw',
+    'exclude-prefixes': 'sched.tooltip_excl_pfx',
 };
 
 function toggleTooltip(domId, contentKey) {
@@ -263,7 +263,8 @@ function toggleTooltip(domId, contentKey) {
         el.style.display = 'none';
     } else {
         el.style.display = 'block';
-        el.innerText = TOOLTIPS[contentKey] || "No description.";
+        const i18nKey = TOOLTIPS[contentKey];
+        el.innerText = (i18nKey && window.I18n) ? window.I18n.t(i18nKey) : "No description.";
     }
 }
 
@@ -297,7 +298,7 @@ function loadSites() {
         })
         .catch(error => {
             console.error('Error loading sites:', error);
-            document.getElementById('sites-container').innerHTML = '<p class="error">Error loading sites</p>';
+            document.getElementById('sites-container').innerHTML = '<p class="error">' + (window.I18n ? window.I18n.t('sched.error_loading') : 'Error loading sites') + '</p>';
         });
 }
 
@@ -307,18 +308,18 @@ function renderSites(sites) {
     const container = document.getElementById('sites-container');
     if (sites && sites.length > 0) {
         const globalNote = globalSchedule
-            ? `<p style="margin-bottom:8px;">Global schedule: <strong>${escapeHtml(globalSchedule)}</strong> (applies to all sites unless overridden)</p>`
+            ? `<p style="margin-bottom:8px;">${(window.I18n ? window.I18n.t('sched.global_note').replace('{schedule}', `<strong>${escapeHtml(globalSchedule)}</strong>`) : `Global schedule: <strong>${escapeHtml(globalSchedule)}</strong> (applies to all sites unless overridden)`)}</p>`
             : '';
         const table = document.createElement('table');
         table.className = 'sites-table';
         table.innerHTML = `
             <thead>
                 <tr>
-                    <th>Site Name</th>
-                    <th>URL</th>
-                    <th>Schedule</th>
-                    <th>Config</th>
-                    <th>Actions</th>
+                    <th>${window.I18n ? window.I18n.t('sched.col_name') : 'Site Name'}</th>
+                    <th>${window.I18n ? window.I18n.t('sched.col_url') : 'URL'}</th>
+                    <th>${window.I18n ? window.I18n.t('sched.col_schedule') : 'Schedule'}</th>
+                    <th>${window.I18n ? window.I18n.t('sched.col_config') : 'Config'}</th>
+                    <th>${window.I18n ? window.I18n.t('common.actions') : 'Actions'}</th>
                 </tr>
             </thead>
             <tbody>
@@ -328,15 +329,15 @@ function renderSites(sites) {
                         <td><a href="${escapeHtml(site.url)}" target="_blank">${escapeHtml(site.url)}</a></td>
                         <td><small>${site.schedule_interval ? escapeHtml(site.schedule_interval) : (globalSchedule ? '<span style="color:var(--text-secondary)">(global)</span>' : '<span style="color:var(--text-secondary)">-</span>')}</small></td>
                         <td>
-                            <small>Max Pages: ${site.max_pages}</small><br>
-                            <small>Depth: ${site.max_depth}</small>
-                            ${site.exclude_keywords && site.exclude_keywords.length ? `<br><small style="color:#d9534f" title="${site.exclude_keywords.join(', ')}">Excl KW: ${site.exclude_keywords.length} items</small>` : ''}
-                            ${site.exclude_prefixes && site.exclude_prefixes.length ? `<br><small style="color:#d9534f" title="${site.exclude_prefixes.join(', ')}">Excl Pfx: ${site.exclude_prefixes.length} items</small>` : ''}
+                            <small>${window.I18n ? window.I18n.t('sched.max_pages') : 'Max Pages'}: ${site.max_pages}</small><br>
+                            <small>${window.I18n ? window.I18n.t('sched.depth') : 'Depth'}: ${site.max_depth}</small>
+                            ${site.exclude_keywords && site.exclude_keywords.length ? `<br><small style="color:#d9534f" title="${site.exclude_keywords.join(', ')}">${window.I18n ? window.I18n.t('sched.excl_kw_short') : 'Excl KW'}: ${window.I18n ? window.I18n.t('sched.items').replace('{n}', site.exclude_keywords.length) : site.exclude_keywords.length + ' items'}</small>` : ''}
+                            ${site.exclude_prefixes && site.exclude_prefixes.length ? `<br><small style="color:#d9534f" title="${site.exclude_prefixes.join(', ')}">${window.I18n ? window.I18n.t('sched.excl_pfx_short') : 'Excl Pfx'}: ${window.I18n ? window.I18n.t('sched.items').replace('{n}', site.exclude_prefixes.length) : site.exclude_prefixes.length + ' items'}</small>` : ''}
                         </td>
                         <td>
-                            ${CAN_EDIT_SITES ? `<button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">Edit</button>` : ''}
-                            ${CAN_EDIT_SITES ? `<button onclick="deleteSite('${escapeHtml(site.name)}')" class="btn-small btn-danger">Delete</button>` : ''}
-                            <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">Run</button>
+                            ${CAN_EDIT_SITES ? `<button onclick="editSite('${escapeHtml(site.name)}')" class="btn-small">${window.I18n ? window.I18n.t('common.edit') : 'Edit'}</button>` : ''}
+                            ${CAN_EDIT_SITES ? `<button onclick="deleteSite('${escapeHtml(site.name)}')" class="btn-small btn-danger">${window.I18n ? window.I18n.t('common.delete') : 'Delete'}</button>` : ''}
+                            <button onclick="runSingleSite('${escapeHtml(site.name)}')" class="btn-small">${window.I18n ? window.I18n.t('common.run') : 'Run'}</button>
                         </td>
                     </tr>
                 `).join('')}
@@ -345,7 +346,7 @@ function renderSites(sites) {
         container.innerHTML = globalNote;
         container.appendChild(table);
     } else {
-        container.innerHTML = '<p>No sites configured</p>';
+        container.innerHTML = '<p>' + (window.I18n ? window.I18n.t('sched.no_sites') : 'No sites configured') + '</p>';
     }
 }
 
@@ -356,23 +357,23 @@ function loadScheduleStatus() {
         .then(r => r.json())
         .then(data => {
             if (!data.jobs || data.jobs.length === 0) {
-                container.innerHTML = '<p style="color:var(--text-secondary)">No scheduled jobs are currently registered. Ensure <code>schedule_interval</code> is set in your site configuration (sites.yaml).</p>';
+                container.innerHTML = '<p style="color:var(--text-secondary)">' + (window.I18n ? window.I18n.t('sched.no_jobs') : 'No scheduled jobs are currently registered. Ensure <code>schedule_interval</code> is set in your site configuration (sites.yaml).') + '</p>';
                 return;
             }
             const rows = data.jobs.map(j => `
                 <tr>
                     <td>${escapeHtml(j.label)}</td>
                     <td>${j.next_run ? new Date(j.next_run).toLocaleString() : '-'}</td>
-                    <td>${j.last_run ? new Date(j.last_run).toLocaleString() : 'Not yet run'}</td>
+                    <td>${j.last_run ? new Date(j.last_run).toLocaleString() : (window.I18n ? window.I18n.t('sched.not_run') : 'Not yet run')}</td>
                 </tr>
             `).join('');
             container.innerHTML = `
-                <p style="margin-bottom:8px;">Server timezone is used for all times below. ${data.count} job(s) registered.</p>
+                <p style="margin-bottom:8px;">${window.I18n ? window.I18n.t('sched.job_count').replace('{n}', data.count) : 'Server timezone is used for all times below. ' + data.count + ' job(s) registered.'}</p>
                 <table class="sites-table">
-                    <thead><tr><th>Schedule</th><th>Next Run</th><th>Last Run</th></tr></thead>
+                    <thead><tr><th>${window.I18n ? window.I18n.t('sched.col_schedule') : 'Schedule'}</th><th>${window.I18n ? window.I18n.t('sched.col_next_run') : 'Next Run'}</th><th>${window.I18n ? window.I18n.t('sched.col_last_run') : 'Last Run'}</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
-                <button onclick="loadScheduleStatus()" class="btn btn-secondary" style="margin-top:12px;">Refresh</button>
+                <button onclick="loadScheduleStatus()" class="btn btn-secondary" style="margin-top:12px;" data-i18n="common.refresh">${window.I18n ? window.I18n.t('common.refresh') : 'Refresh'}</button>
             `;
         })
         .catch(e => {
@@ -382,7 +383,7 @@ function loadScheduleStatus() {
 
 function updateSelectOptions(sites) {
     const select = document.getElementById('site-select');
-    select.innerHTML = '<option value="">All Sites</option>';
+    select.innerHTML = `<option value="">${window.I18n ? window.I18n.t('sched.all_sites') : 'All Sites'}</option>`;
     sites.forEach(site => {
         const option = document.createElement('option');
         option.value = site.name;
@@ -406,7 +407,7 @@ function openAddSiteModal() {
         showNotification('Operator/admin required to edit scheduled sites.', 'error');
         return;
     }
-    document.getElementById('modal-title').innerText = 'Add New Site';
+    document.getElementById('modal-title').innerText = window.I18n ? window.I18n.t('sched.add_site_title') : 'Add New Site';
     document.getElementById('original-site-name').value = '';
     document.getElementById('modal-name').value = '';
     document.getElementById('modal-url').value = '';
@@ -427,7 +428,7 @@ function editSite(name) {
     const site = allSites.find(s => s.name === name);
     if (!site) return;
 
-    document.getElementById('modal-title').innerText = 'Edit Site';
+    document.getElementById('modal-title').innerText = window.I18n ? window.I18n.t('sched.edit_site_title') : 'Edit Site';
     document.getElementById('original-site-name').value = site.name;
     document.getElementById('modal-name').value = site.name;
     document.getElementById('modal-url').value = site.url;
@@ -587,6 +588,12 @@ function formatDate(dateStr) {
     if(!dateStr) return '-';
     return new Date(dateStr).toLocaleString();
 }
+
+// Re-render dynamic content when language changes
+document.addEventListener('langchange', () => {
+    renderSites(allSites);
+    updateSelectOptions(allSites);
+});
 
 // Init
 loadSites();

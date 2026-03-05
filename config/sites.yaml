@@ -122,7 +122,7 @@ sites:
 - name: SOA AI Bulletin (Focused)
   url: https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/
   max_pages: 80
-  max_depth: 3
+  max_depth: 1
   keywords:
   - artificial intelligence
   - machine learning

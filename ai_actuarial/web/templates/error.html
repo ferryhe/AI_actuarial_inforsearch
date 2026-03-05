@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="page-header">
-    <h2>Error</h2>
+    <h2 data-i18n="error.heading">Error</h2>
 </div>
 
 <div class="card" style="padding: 2rem; text-align: center;">
@@ -18,6 +18,6 @@
     <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">{{ detail }}</p>
     {% endif %}
     
-    <a href="{{ url_for('index') }}" class="btn btn-primary">Return to Dashboard</a>
+    <a href="{{ url_for('index') }}" class="btn btn-primary" data-i18n="error.return_dashboard">Return to Dashboard</a>
 </div>
 {% endblock %}

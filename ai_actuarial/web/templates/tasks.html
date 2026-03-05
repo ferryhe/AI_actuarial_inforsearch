@@ -3,7 +3,7 @@
 {% block content %}
 <div class="tasks-page">
     <div class="page-header">
-        <h2>Task Center</h2>
+        <h2 data-i18n="tasks.title">Task Center</h2>
     </div>
 
     <!-- Task Launch Grid -->
@@ -16,8 +16,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>URL Collection</h4>
-                <p>Crawl specific URLs</p>
+                <h4 data-i18n="tasks.url_col">URL Collection</h4>
+                <p data-i18n="tasks.url_col_desc">Crawl specific URLs</p>
             </div>
         </div>
 
@@ -29,8 +29,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>File Import</h4>
-                <p>Import local files</p>
+                <h4 data-i18n="tasks.file_import">File Import</h4>
+                <p data-i18n="tasks.file_import_desc">Import local files</p>
             </div>
         </div>
 
@@ -42,8 +42,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Web Search</h4>
-                <p>Search & Collect</p>
+                <h4 data-i18n="tasks.web_search">Web Search</h4>
+                <p data-i18n="tasks.web_search_desc">Search &amp; Collect</p>
             </div>
         </div>
 
@@ -55,8 +55,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Quick Site Check</h4>
-                <p>Ad-hoc Site Scan</p>
+                <h4 data-i18n="tasks.quick_check">Quick Site Check</h4>
+                <p data-i18n="tasks.quick_check_desc">Ad-hoc Site Scan</p>
             </div>
         </div>
 
@@ -68,8 +68,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Scheduled</h4>
-                <p>Manage Schedules</p>
+                <h4 data-i18n="tasks.scheduled">Scheduled</h4>
+                <p data-i18n="tasks.scheduled_desc">Manage Schedules</p>
             </div>
         </div>
         
@@ -81,8 +81,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Cataloging</h4>
-                <p>AI Categorization</p>
+                <h4 data-i18n="tasks.cataloging">Cataloging</h4>
+                <p data-i18n="tasks.cataloging_desc">AI Categorization</p>
             </div>
         </div>
         
@@ -94,8 +94,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Convert to Markdown</h4>
-                <p>Convert files to MD</p>
+                <h4 data-i18n="tasks.md_convert">Convert to Markdown</h4>
+                <p data-i18n="tasks.md_convert_desc">Convert files to MD</p>
             </div>
         </div>
 
@@ -107,8 +107,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Generate Chunks</h4>
-                <p>Build/reuse chunk sets</p>
+                <h4 data-i18n="tasks.gen_chunks">Generate Chunks</h4>
+                <p data-i18n="tasks.gen_chunks_desc">Build/reuse chunk sets</p>
             </div>
         </div>
 
@@ -120,8 +120,8 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Create KB</h4>
-                <p>Create Knowledge Base</p>
+                <h4 data-i18n="tasks.create_kb">Create KB</h4>
+                <p data-i18n="tasks.create_kb_desc">Create Knowledge Base</p>
             </div>
         </div>
 
@@ -133,25 +133,25 @@
                 </svg>
             </div>
             <div class="launch-content">
-                <h4>Build KB Index</h4>
-                <p>Run KB index task</p>
+                <h4 data-i18n="tasks.build_idx">Build KB Index</h4>
+                <p data-i18n="tasks.build_idx_desc">Run KB index task</p>
             </div>
         </div>
     </div>
 
     <!-- Active Tasks Monitoring -->
     <div class="active-tasks-section">
-        <h3>Active Tasks</h3>
+        <h3 data-i18n="tasks.active">Active Tasks</h3>
         <div id="active-tasks-container">
-            <p class="loading">Loading active tasks...</p>
+            <p class="loading" data-i18n="tasks.loading_active">Loading active tasks...</p>
         </div>
     </div>
 
     <!-- Task History -->
     <div class="task-history-section">
-        <h3>Task History</h3>
+        <h3 data-i18n="tasks.history">Task History</h3>
         <div id="task-history-container">
-            <p class="loading">Loading task history...</p>
+            <p class="loading" data-i18n="tasks.loading_history">Loading task history...</p>
         </div>
     </div>
 </div>
@@ -164,37 +164,37 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-globe"></use>
             </svg>
-            Web Search & Collect
+            <span data-i18n="tasks.web_search_modal_title">Web Search &amp; Collect</span>
         </h3>
         <form id="web-search-form" onsubmit="startWebSearch(event)">
             <div class="form-group">
-                <label>Search Query</label>
-                <input type="text" name="query" required placeholder="e.g. 'IFRS 17 actuarial papers'">
+                <label data-i18n="tasks.search_query">Search Query</label>
+                <input type="text" name="query" required data-i18n-placeholder="tasks.search_query_ph" placeholder="e.g. 'IFRS 17 actuarial papers'">
             </div>
             <div class="form-group">
-                <label>Search Engine</label>
+                <label data-i18n="tasks.search_engine">Search Engine</label>
                 <select name="engine">
                     <option value="brave">Brave Search</option>
                     <option value="google">Google</option>
                 </select>
             </div>
             <div class="form-group">
-                <label>Max Results</label>
+                <label data-i18n="tasks.max_results">Max Results</label>
                 <input type="number" name="count" value="10" min="1" max="50">
             </div>
             <div class="form-group">
-                <label>Site Filter (Optional)</label>
-                <input type="text" name="site" placeholder="e.g. actuaries.org">
+                <label data-i18n="tasks.site_filter">Site Filter (Optional)</label>
+                <input type="text" name="site" data-i18n-placeholder="tasks.site_filter_ph" placeholder="e.g. actuaries.org">
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="use_search_defaults" id="use-search-defaults" checked onchange="toggleSearchDefaults(this.checked)">
-                    Use defaults from Settings -> Search Settings
+                    <span data-i18n="tasks.use_defaults">Use defaults from Settings -&gt; Search Settings</span>
                 </label>
                 <small id="search-defaults-summary" class="format-hint" style="color: var(--text-secondary);">Loading search defaults...</small>
             </div>
             <div class="form-group search-override-field">
-                <label>Language (Optional, single select)</label>
+                <label data-i18n="tasks.language_opt">Language (Optional, single select)</label>
                 <select name="search_lang">
                     <option value="">Use default</option>
                     <option value="en">English (en)</option>
@@ -209,7 +209,7 @@
                 </select>
             </div>
             <div class="form-group search-override-field">
-                <label>Country (Optional, single select)</label>
+                <label data-i18n="tasks.country_opt">Country (Optional, single select)</label>
                 <select name="search_country">
                     <option value="">Use default</option>
                     <option value="us">United States (us)</option>
@@ -228,11 +228,11 @@
                 </select>
             </div>
             <div class="form-group search-override-field">
-                <label>Exclude Keywords (Optional, comma separated)</label>
-                <input type="text" name="search_exclude_keywords" placeholder="newsletter, brochure">
+                <label data-i18n="tasks.excl_kw_opt">Exclude Keywords (Optional, comma separated)</label>
+                <input type="text" name="search_exclude_keywords" data-i18n-placeholder="tasks.excl_kw_ph" placeholder="newsletter, brochure">
             </div>
             <div class="form-group">
-                <label>File Formats:</label>
+                <label data-i18n="tasks.file_formats">File Formats:</label>
                 <div class="format-checkboxes">
                     <label class="format-option">
                         <input type="checkbox" name="formats" value="pdf" checked>
@@ -262,14 +262,14 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
-            <button type="submit" class="btn btn-primary">Start Search Task</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.start_search">Start Search Task</button>
         </form>
     </div>
 </div>
@@ -282,30 +282,30 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-eye"></use>
             </svg>
-            Quick Site Check
+            <span data-i18n="tasks.quick_check">Quick Site Check</span>
         </h3>
-        <p class="hint">Scan a site temporarily without saving configuration.</p>
+        <p class="hint" data-i18n="tasks.quick_check_hint">Scan a site temporarily without saving configuration.</p>
         <form id="quick-check-form" onsubmit="startQuickCheck(event)">
             <div class="form-group">
-                <label>Site URL</label>
-                <input type="text" name="url" required placeholder="https://example.com">
+                <label data-i18n="tasks.site_url">Site URL</label>
+                <input type="text" name="url" required data-i18n-placeholder="tasks.site_url_ph" placeholder="https://example.com">
             </div>
             <div class="form-group">
-                <label>Keywords (Optional, comma separated)</label>
-                <input type="text" name="keywords" placeholder="insurance, risk">
+                <label data-i18n="tasks.keywords_opt">Keywords (Optional, comma separated)</label>
+                <input type="text" name="keywords" data-i18n-placeholder="tasks.keywords_ph" placeholder="insurance, risk">
             </div>
             <div class="form-row">
                 <div class="form-group half">
-                    <label>Max Pages</label>
+                    <label data-i18n="tasks.max_pages">Max Pages</label>
                     <input type="number" name="max_pages" value="10" max="50">
                 </div>
                 <div class="form-group half">
-                    <label>Depth</label>
+                    <label data-i18n="tasks.depth">Depth</label>
                     <input type="number" name="max_depth" value="1" max="3">
                 </div>
             </div>
             <div class="form-group">
-                <label>File Formats:</label>
+                <label data-i18n="tasks.file_formats">File Formats:</label>
                 <div class="format-checkboxes">
                     <label class="format-option">
                         <input type="checkbox" name="formats" value="pdf" checked>
@@ -335,14 +335,14 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
-            <button type="submit" class="btn btn-primary">Start Quick Scan</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.start_quick_scan">Start Quick Scan</button>
         </form>
     </div>
 </div>
@@ -355,56 +355,56 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-tag"></use>
             </svg>
-            Run Incremental Cataloging
+            <span data-i18n="tasks.catalog_title">Run Incremental Cataloging</span>
         </h3>
-        <p class="hint">Batch catalog locally-available files (newest first).</p>
+        <p class="hint" data-i18n="tasks.catalog_hint">Batch catalog locally-available files (newest first).</p>
         <div id="catalog-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="catalog-form" onsubmit="startCatalog(event)">
             <div class="form-group">
-                <label>Task Scope</label>
+                <label data-i18n="tasks.task_scope">Task Scope</label>
                 <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleCatalogScopeMode()"> By Index Range</label>
-                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleCatalogScopeMode()"> By Category</label>
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleCatalogScopeMode()"> <span data-i18n="tasks.by_index">By Index Range</span></label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleCatalogScopeMode()"> <span data-i18n="tasks.by_category">By Category</span></label>
                 </div>
             </div>
             <div class="form-group" id="catalog-category-group" style="display:none;">
-                <label>Category</label>
+                <label data-i18n="tasks.category">Category</label>
                 <select name="category" id="catalog-category-select" onchange="loadCatalogStats()">
                     <option value="">Loading categories...</option>
                 </select>
-                <small class="form-hint">Select one category; task will scan this category only.</small>
+                <small class="form-hint" data-i18n="tasks.fh_cat_scan">Select one category; task will scan this category only.</small>
             </div>
             <div class="form-group" id="catalog-start-index-group">
-                <label>Start From Index (1-based, newest first)</label>
+                <label data-i18n="tasks.start_index">Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="catalog-scan-start-index" value="1" min="1">
-                <small class="form-hint">Use the stats above to jump to the first uncataloged candidate.</small>
+                <small class="form-hint" data-i18n="tasks.fh_jump_idx">Use the stats above to jump to the first uncataloged candidate.</small>
             </div>
             <div class="form-group">
-                <label>Scan Count</label>
+                <label data-i18n="tasks.scan_count">Scan Count</label>
                 <input type="number" name="scan_count" id="catalog-scan-count" value="50" min="1" max="2000">
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="retry_errors"> Retry Failed Items
+                    <input type="checkbox" name="retry_errors"> <span data-i18n="tasks.retry_errors">Retry Failed Items</span>
                 </label>
             </div>
             <div class="form-group">
-                <label>Catalog From</label>
+                <label data-i18n="tasks.catalog_from">Catalog From</label>
                 <select name="input_source" id="catalog-input-source">
                     <option value="markdown" selected>Markdown</option>
                     <option value="source">Source file</option>
                 </select>
-                <small class="form-hint">Markdown uses converted/edited markdown content from File Details (if available).</small>
+                <small class="form-hint" data-i18n="tasks.fh_catalog_from">Markdown uses converted/edited markdown content from File Details (if available).</small>
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing">
-                    Overwrite existing content (recompute)
+                    <span data-i18n="tasks.overwrite_existing">Overwrite existing content (recompute)</span>
                 </label>
-                <small class="form-hint">Unchecked = Skip already cataloged</small>
+                <small class="form-hint" data-i18n="tasks.fh_skip_cataloged">Unchecked = Skip already cataloged</small>
             </div>
             <div class="form-group">
-                <label>AI Provider</label>
+                <label data-i18n="tasks.ai_provider">AI Provider</label>
                 <select name="provider">
                     <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
                         OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
@@ -413,7 +413,7 @@
                     <option value="anthropic" disabled>Anthropic (Coming Soon)</option>
                 </select>
             </div>
-            <button type="submit" class="btn btn-primary">Start Cataloging</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.start_cataloging">Start Cataloging</button>
         </form>
     </div>
 </div>
@@ -426,21 +426,21 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-link"></use>
             </svg>
-            URL Collection
+            <span data-i18n="tasks.url_col">URL Collection</span>
         </h3>
-        <p class="hint">Crawl and download files from specific URLs.</p>
+        <p class="hint" data-i18n="tasks.url_col_hint">Crawl and download files from specific URLs.</p>
         <form id="url-collection-form" onsubmit="startUrlCollection(event)">
             <div class="form-group">
-                <label>URLs (one per line)</label>
+                <label data-i18n="tasks.urls_label">URLs (one per line)</label>
                 <textarea name="urls" rows="5" required placeholder="https://example.com/file1.pdf&#10;https://example.com/page.html"></textarea>
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="check_database" checked> Check Database (skip existing files)
+                    <input type="checkbox" name="check_database" checked> <span data-i18n="tasks.check_db">Check Database (skip existing files)</span>
                 </label>
             </div>
             <div class="form-group">
-                <label>File Formats:</label>
+                <label data-i18n="tasks.file_formats">File Formats:</label>
                 <div class="format-checkboxes">
                     <label class="format-option">
                         <input type="checkbox" name="formats" value="pdf" checked>
@@ -470,14 +470,14 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
-            <button type="submit" class="btn btn-primary">Start URL Collection</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.start_url_col">Start URL Collection</button>
         </form>
     </div>
 </div>
@@ -490,25 +490,25 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-upload"></use>
             </svg>
-            File Import
+            <span data-i18n="tasks.file_import">File Import</span>
         </h3>
-        <p class="hint">Import files from local directory into the system.</p>
+        <p class="hint" data-i18n="tasks.file_import_hint">Import files from local directory into the system.</p>
         <form id="file-import-form" onsubmit="startFileImport(event)">
             <div class="form-group">
-                <label>Directory Path</label>
+                <label data-i18n="tasks.dir_path">Directory Path</label>
                 <div class="input-row">
                     <input type="text" id="directory-path-input" name="directory_path" required placeholder="C:\Documents\ActuarialFiles or /home/user/documents">
-                    <button type="button" class="btn btn-secondary btn-browse" onclick="browseFolderForFileImport()">Browse...</button>
+                    <button type="button" class="btn btn-secondary btn-browse" onclick="browseFolderForFileImport()" data-i18n="tasks.browse">Browse...</button>
                 </div>
-                <small class="form-hint">Enter the full path to your local directory</small>
+                <small class="form-hint" data-i18n="tasks.dir_path_hint">Enter the full path to your local directory</small>
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="recursive" checked> Recursive (include subdirectories)
+                    <input type="checkbox" name="recursive" checked> <span data-i18n="tasks.recursive">Recursive (include subdirectories)</span>
                 </label>
             </div>
             <div class="form-group">
-                <label>File Formats:</label>
+                <label data-i18n="tasks.file_formats">File Formats:</label>
                 <div class="format-checkboxes">
                     <label class="format-option">
                         <input type="checkbox" name="formats" value="pdf" checked>
@@ -538,14 +538,14 @@
                         <input type="checkbox" name="formats" value="xlsx">
                         <span class="format-label">XLSX</span>
                     </label>
-                    <label class="format-option" title="HTML - Will download large amounts of webpage source code">
+                    <label class="format-option" data-i18n-title="tasks.html_format_warning" title="HTML - Will download large amounts of webpage source code">
                         <input type="checkbox" name="formats" value="html">
                         <span class="format-label">HTML ⚠️</span>
                     </label>
                 </div>
-                <small class="format-hint">HTML - Will download large amounts of webpage source code</small>
+                <small class="format-hint" data-i18n="tasks.html_format_warning">HTML - Will download large amounts of webpage source code</small>
             </div>
-            <button type="submit" class="btn btn-primary">Start File Import</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.start_import">Start File Import</button>
         </form>
     </div>
 </div>
@@ -558,53 +558,53 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-document"></use>
             </svg>
-            Convert to Markdown
+            <span data-i18n="tasks.md_convert">Convert to Markdown</span>
         </h3>
-        <p class="hint">Batch convert locally-available files to markdown format using the selected engine.</p>
+        <p class="hint" data-i18n="tasks.md_convert_hint">Batch convert locally-available files to markdown format using the selected engine.</p>
         <div id="markdown-conversion-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="markdown-conversion-form" onsubmit="startMarkdownConversion(event)">
             <div class="form-group">
-                <label>Task Scope</label>
+                <label data-i18n="tasks.task_scope">Task Scope</label>
                 <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleMarkdownScopeMode()"> By Index Range</label>
-                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleMarkdownScopeMode()"> By Category</label>
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleMarkdownScopeMode()"> <span data-i18n="tasks.by_index">By Index Range</span></label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleMarkdownScopeMode()"> <span data-i18n="tasks.by_category">By Category</span></label>
                 </div>
             </div>
             <div class="form-group" id="md-category-group" style="display:none;">
-                <label>Category</label>
+                <label data-i18n="tasks.category">Category</label>
                 <select name="category" id="md-category-select" onchange="loadMarkdownConversionStats()">
                     <option value="">Loading categories...</option>
                 </select>
-                <small class="form-hint">Select one category; conversion runs only on this category.</small>
+                <small class="form-hint" data-i18n="tasks.fh_cat_convert">Select one category; conversion runs only on this category.</small>
             </div>
             <div class="form-group">
-                <label>Conversion Tool</label>
+                <label data-i18n="tasks.conv_tool">Conversion Tool</label>
                 <select name="conversion_tool" id="conversion-tool-select">
                     <option value="docling" selected>Docling (Multi-format)</option>
                     <option value="marker">Marker (PDF optimized)</option>
                     <option value="mistral">Mistral OCR (API)</option>
                     <option value="deepseekocr">DeepSeek OCR (SiliconFlow API)</option>
                 </select>
-                <small class="form-hint">Different tools work better for different file types</small>
+                <small class="form-hint" data-i18n="tasks.fh_diff_tools">Different tools work better for different file types</small>
             </div>
             <div class="form-group" id="md-start-index-group">
-                <label>Start From Index (1-based, newest first)</label>
+                <label data-i18n="tasks.start_index">Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="md-scan-start-index" value="1" min="1">
-                <small class="form-hint">Use the stats above to jump to the first file without markdown.</small>
+                <small class="form-hint" data-i18n="tasks.fh_jump_md">Use the stats above to jump to the first file without markdown.</small>
             </div>
             <div class="form-group">
-                <label>Scan Count</label>
+                <label data-i18n="tasks.scan_count">Scan Count</label>
                 <input type="number" name="scan_count" id="md-scan-count" value="50" min="1" max="2000">
-                <small class="form-hint">The server will scan this window and convert matching files from local_path.</small>
+                <small class="form-hint" data-i18n="tasks.scan_count_hint">The server will scan this window and convert matching files from local_path.</small>
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_existing" id="overwrite-existing">
-                    Overwrite existing markdown content (recompute)
+                    <span data-i18n="tasks.overwrite_md">Overwrite existing markdown content (recompute)</span>
                 </label>
-                <small class="form-hint">Unchecked = Skip already converted</small>
+                <small class="form-hint" data-i18n="tasks.fh_skip_converted">Unchecked = Skip already converted</small>
             </div>
-            <button type="submit" class="btn btn-primary" id="markdown-convert-btn">Convert Files</button>
+            <button type="submit" class="btn btn-primary" id="markdown-convert-btn" data-i18n="tasks.convert_files">Convert Files</button>
         </form>
     </div>
 </div>
@@ -617,110 +617,110 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-tag"></use>
             </svg>
-            Generate Chunks
+            <span data-i18n="tasks.gen_chunks">Generate Chunks</span>
         </h3>
-        <p class="hint">Batch generate chunk sets from markdown files. Existing same-profile chunk sets can be reused or overwritten.</p>
+        <p class="hint" data-i18n="tasks.gen_chunks_hint">Batch generate chunk sets from markdown files. Existing same-profile chunk sets can be reused or overwritten.</p>
         <div id="chunk-generation-stats" class="format-hint" style="margin-bottom: 10px; color: var(--text-secondary);">Loading stats...</div>
         <form id="chunk-generation-form" onsubmit="startChunkGeneration(event)">
             <div class="form-group">
-                <label>Task Scope</label>
+                <label data-i18n="tasks.task_scope">Task Scope</label>
                 <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleChunkScopeMode()"> By Index Range</label>
-                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleChunkScopeMode()"> By Category</label>
+                    <label><input type="radio" name="scope_mode" value="index" checked onchange="toggleChunkScopeMode()"> <span data-i18n="tasks.by_index">By Index Range</span></label>
+                    <label><input type="radio" name="scope_mode" value="category" onchange="toggleChunkScopeMode()"> <span data-i18n="tasks.by_category">By Category</span></label>
                 </div>
             </div>
             <div class="form-group" id="chunk-category-group" style="display:none;">
-                <label>Category</label>
+                <label data-i18n="tasks.category">Category</label>
                 <select name="category" id="chunk-category-select" onchange="loadChunkGenerationStats()">
                     <option value="">Loading categories...</option>
                 </select>
-                <small class="form-hint">Select one category; chunk generation runs only on this category.</small>
+                <small class="form-hint" data-i18n="tasks.fh_cat_chunk">Select one category; chunk generation runs only on this category.</small>
             </div>
             <div class="form-group">
-                <label>Chunk Profile</label>
+                <label data-i18n="tasks.chunk_profile">Chunk Profile</label>
                 <select name="profile_id" id="chunk-profile-select" onchange="toggleChunkProfileCustomFields()">
                     <option value="">Loading profiles...</option>
                 </select>
-                <small class="form-hint">Select an existing profile to reuse, or choose custom. Chunk profile stores chunk strategy and tokenizer settings.</small>
+                <small class="form-hint" data-i18n="tasks.fh_profile_reuse">Select an existing profile to reuse, or choose custom. Chunk profile stores chunk strategy and tokenizer settings.</small>
             </div>
             <div id="chunk-profile-custom-fields">
                 <div class="form-group">
-                    <label>Chunking Model</label>
+                    <label data-i18n="tasks.chunk_model">Chunking Model</label>
                     <select name="chunk_model">
                         <option value="gpt-4">gpt-4 (recommended tokenizer profile)</option>
                         <option value="gpt-4o">gpt-4o</option>
                         <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
                     </select>
-                    <small class="form-hint">Used for token counting behavior during chunking (not embedding model).</small>
+                    <small class="form-hint" data-i18n="tasks.fh_chunk_model">Used for token counting behavior during chunking (not embedding model).</small>
                 </div>
                 <div class="form-group">
-                    <label>Profile Name</label>
+                    <label data-i18n="tasks.profile_name">Profile Name</label>
                     <input type="text" name="profile_name" value="task-profile" maxlength="80">
                 </div>
                 <div class="form-row">
                     <div class="form-group half">
-                        <label>Chunk Size</label>
+                        <label data-i18n="tasks.chunk_size">Chunk Size</label>
                         <input type="number" name="chunk_size" value="800" min="64" max="8192">
                     </div>
                     <div class="form-group half">
-                        <label>Chunk Overlap</label>
+                        <label data-i18n="tasks.chunk_overlap">Chunk Overlap</label>
                         <input type="number" name="chunk_overlap" value="100" min="0" max="2048">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group half">
-                        <label>Splitter</label>
+                        <label data-i18n="tasks.splitter">Splitter</label>
                         <select name="splitter">
                             <option value="semantic">semantic (section/paragraph-aware)</option>
                         </select>
-                        <small class="form-hint">How document text is segmented before chunk merge.</small>
+                        <small class="form-hint" data-i18n="tasks.fh_splitter">How document text is segmented before chunk merge.</small>
                     </div>
                     <div class="form-group half">
-                        <label>Tokenizer Encoding</label>
+                        <label data-i18n="tasks.tokenizer">Tokenizer Encoding</label>
                         <select name="tokenizer">
                             <option value="cl100k_base">cl100k_base (OpenAI GPT-4/3.5 family)</option>
                             <option value="o200k_base">o200k_base (newer large-context models)</option>
                             <option value="p50k_base">p50k_base (legacy Codex/GPT-3)</option>
                         </select>
-                        <small class="form-hint">Controls token counting granularity for chunk size/overlap.</small>
+                        <small class="form-hint" data-i18n="tasks.fh_tokenizer">Controls token counting granularity for chunk size/overlap.</small>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Profile Version</label>
+                    <label data-i18n="tasks.profile_version">Profile Version</label>
                     <input type="text" name="version" value="v1" maxlength="32">
                 </div>
             </div>
             <div class="form-group" id="chunk-start-index-group">
-                <label>Start From Index (1-based, newest first)</label>
+                <label data-i18n="tasks.start_index">Start From Index (1-based, newest first)</label>
                 <input type="number" name="scan_start_index" id="chunk-scan-start-index" value="1" min="1">
             </div>
             <div class="form-group">
-                <label>Scan Count</label>
+                <label data-i18n="tasks.scan_count">Scan Count</label>
                 <input type="number" name="scan_count" id="chunk-scan-count" value="50" min="1" max="2000">
             </div>
             <div class="form-group">
-                <label>Bind To Knowledge Base (Optional)</label>
+                <label data-i18n="tasks.bind_to_kb">Bind To Knowledge Base (Optional)</label>
                 <select name="kb_id" id="chunk-generation-kb-id" onchange="toggleChunkGenerationBindingMode()">
-                    <option value="">Do not bind to KB</option>
+                    <option value="" data-i18n="tasks.no_bind">Do not bind to KB</option>
                 </select>
-                <small class="form-hint">If selected, each generated chunk set will be bound to this KB.</small>
+                <small class="form-hint" data-i18n="tasks.fh_bind_kb">If selected, each generated chunk set will be bound to this KB.</small>
             </div>
             <div class="form-group">
-                <label>Binding Mode</label>
+                <label data-i18n="tasks.binding_mode">Binding Mode</label>
                 <select name="binding_mode" id="chunk-generation-binding-mode">
-                    <option value="follow_latest" selected>Follow Latest (Recommended)</option>
-                    <option value="pin">Pin (Fixed Version)</option>
+                    <option value="follow_latest" selected data-i18n="tasks.binding_mode_follow_latest">Follow Latest (Recommended)</option>
+                    <option value="pin" data-i18n="tasks.binding_mode_pin">Pin (Fixed Version)</option>
                 </select>
-                <small class="form-hint">Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.</small>
+                <small class="form-hint" data-i18n="tasks.fh_binding_mode">Follow Latest auto-tracks new same-profile chunk sets; Pin keeps current chunk_set_id.</small>
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_same_profile" id="chunk-overwrite-same-profile">
-                    Overwrite same-profile chunk sets
+                    <span data-i18n="tasks.overwrite_profile">Overwrite same-profile chunk sets</span>
                 </label>
-                <small class="form-hint">Unchecked = reuse existing same-profile chunk set.</small>
+                <small class="form-hint" data-i18n="tasks.fh_skip_same">Unchecked = reuse existing same-profile chunk set.</small>
             </div>
-            <button type="submit" class="btn btn-primary">Generate Chunks</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.gen_chunks">Generate Chunks</button>
         </form>
     </div>
 </div>
@@ -733,34 +733,34 @@
             <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <use xlink:href="#icon-folder"></use>
             </svg>
-            Build KB Index
+            <span data-i18n="tasks.build_idx">Build KB Index</span>
         </h3>
-        <p class="hint">Submit a KB index build task using the KB configuration and selected scope.</p>
+        <p class="hint" data-i18n="tasks.build_idx_hint">Submit a KB index build task using the KB configuration and selected scope.</p>
         <form id="kb-index-build-form" onsubmit="startKbIndexBuild(event)">
             <div class="form-group">
-                <label>Knowledge Base</label>
+                <label data-i18n="tasks.kb_label">Knowledge Base</label>
                 <select name="kb_id" id="kb-index-kb-id" required>
                     <option value="">Loading KBs...</option>
                 </select>
             </div>
             <div class="form-group">
-                <label>File URLs (Optional, one per line)</label>
+                <label data-i18n="tasks.file_urls_opt">File URLs (Optional, one per line)</label>
                 <textarea name="file_urls" id="kb-index-file-urls" rows="4" placeholder="Leave empty to use KB default scope"></textarea>
-                <small class="form-hint">Empty = incremental pending files, unless force rebuild is enabled.</small>
+                <small class="form-hint" data-i18n="tasks.fh_file_urls">Empty = incremental pending files, unless force rebuild is enabled.</small>
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="incremental" id="kb-index-incremental" checked>
-                    Incremental mode (index only pending files)
+                    <span data-i18n="tasks.incremental">Incremental mode (index only pending files)</span>
                 </label>
             </div>
             <div class="form-group">
                 <label>
                     <input type="checkbox" name="force_reindex" id="kb-index-force-reindex">
-                    Force reindex all selected files
+                    <span data-i18n="tasks.force_reindex">Force reindex all selected files</span>
                 </label>
             </div>
-            <button type="submit" class="btn btn-primary">Submit KB Index Task</button>
+            <button type="submit" class="btn btn-primary" data-i18n="tasks.submit_kb_idx">Submit KB Index Task</button>
         </form>
     </div>
 </div>
@@ -1113,6 +1113,7 @@ function toggleSearchDefaults(checked) {
 }
 
 async function loadSearchDefaults() {
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
     try {
         const resp = await fetch('/api/config/search-defaults');
         const data = await resp.json();
@@ -1120,11 +1121,14 @@ async function loadSearchDefaults() {
         searchDefaultsConfig = data;
         const summary = document.getElementById('search-defaults-summary');
         if (summary) {
-            summary.textContent = `Default max_results=${data.max_results}, country=${data.country || '-'}, languages=${(data.languages || []).join(', ') || '-'}`;
+            summary.textContent = _t('tasks.search_defaults_summary')
+                .replace('{max_results}', data.max_results)
+                .replace('{country}', data.country || '-')
+                .replace('{languages}', (data.languages || []).join(', ') || '-');
         }
     } catch (err) {
         const summary = document.getElementById('search-defaults-summary');
-        if (summary) summary.textContent = 'Failed to load defaults';
+        if (summary) summary.textContent = _t('tasks.failed_load_defaults');
         console.error(err);
     }
 }
@@ -1307,11 +1311,12 @@ function startCatalog(e) {
 async function loadCatalogStats() {
     const statsEl = document.getElementById('catalog-stats');
     const startEl = document.getElementById('catalog-scan-start-index');
-    if (statsEl) statsEl.textContent = 'Loading stats...';
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    if (statsEl) statsEl.textContent = _t('tasks.stats_loading');
     try {
         const form = document.getElementById('catalog-form');
-        const provider = form ? (form.querySelector('select[name=\"provider\"]')?.value || 'openai') : 'openai';
-        const inputSource = form ? (form.querySelector('select[name=\"input_source\"]')?.value || 'markdown') : 'markdown';
+        const provider = form ? (form.querySelector('select[name="provider"]')?.value || 'openai') : 'openai';
+        const inputSource = form ? (form.querySelector('select[name="input_source"]')?.value || 'markdown') : 'markdown';
         const scopeMode = form ? getScopeMode(form, 'index') : 'index';
         const category = form ? (form.querySelector('#catalog-category-select')?.value || '') : '';
         let url = `/api/catalog/stats?provider=${encodeURIComponent(provider)}&input_source=${encodeURIComponent(inputSource)}`;
@@ -1321,7 +1326,7 @@ async function loadCatalogStats() {
         const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
-            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + (data.error || resp.status);
             return;
         }
         const totalLocal = data.total_local_files ?? 0;
@@ -1330,14 +1335,14 @@ async function loadCatalogStats() {
         const first = data.first_candidate_index;
         if (statsEl) {
             statsEl.textContent =
-                `Local files: ${totalLocal} | Catalog OK: ${ok} | Candidates: ${candidates}` +
-                (first ? ` | First candidate index: ${first}` : '');
+                _t('tasks.catalog_stats').replace('{local}', totalLocal).replace('{ok}', ok).replace('{candidates}', candidates) +
+                (first ? _t('tasks.catalog_stats_first').replace('{first}', first) : '');
         }
         if (startEl && first) {
             startEl.value = String(first);
         }
     } catch (e) {
-        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+        if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + e.message;
     }
 }
 
@@ -1418,7 +1423,8 @@ function openMarkdownConversionModal() {
 async function loadMarkdownConversionStats() {
     const statsEl = document.getElementById('markdown-conversion-stats');
     const startEl = document.getElementById('md-scan-start-index');
-    if (statsEl) statsEl.textContent = 'Loading stats...';
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    if (statsEl) statsEl.textContent = _t('tasks.stats_loading');
     try {
         const form = document.getElementById('markdown-conversion-form');
         const scopeMode = form ? getScopeMode(form, 'index') : 'index';
@@ -1430,7 +1436,7 @@ async function loadMarkdownConversionStats() {
         const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
-            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + (data.error || resp.status);
             return;
         }
         markdownConversionStats = data;
@@ -1439,14 +1445,14 @@ async function loadMarkdownConversionStats() {
         const firstMissing = data.first_without_markdown_index;
         const missing = Math.max(0, total - withMd);
         if (statsEl) {
-            statsEl.textContent = `Convertible files: ${total} | With markdown: ${withMd} | Missing: ${missing}` +
-                (firstMissing ? ` | First missing index: ${firstMissing}` : '');
+            statsEl.textContent = _t('tasks.md_stats').replace('{total}', total).replace('{with_md}', withMd).replace('{missing}', missing) +
+                (firstMissing ? _t('tasks.stats_first_missing').replace('{first}', firstMissing) : '');
         }
         if (startEl && firstMissing) {
             startEl.value = String(firstMissing);
         }
     } catch (e) {
-        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+        if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + e.message;
     }
 }
 
@@ -1500,7 +1506,8 @@ function startMarkdownConversion(e) {
 async function loadChunkGenerationStats() {
     const statsEl = document.getElementById('chunk-generation-stats');
     const startEl = document.getElementById('chunk-scan-start-index');
-    if (statsEl) statsEl.textContent = 'Loading stats...';
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    if (statsEl) statsEl.textContent = _t('tasks.stats_loading');
     try {
         const form = document.getElementById('chunk-generation-form');
         const scopeMode = form ? getScopeMode(form, 'index') : 'index';
@@ -1512,7 +1519,7 @@ async function loadChunkGenerationStats() {
         const resp = await fetch(url);
         const data = await resp.json();
         if (!resp.ok || !data.success) {
-            if (statsEl) statsEl.textContent = 'Failed to load stats: ' + (data.error || resp.status);
+            if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + (data.error || resp.status);
             return;
         }
         chunkGenerationStats = data;
@@ -1522,14 +1529,14 @@ async function loadChunkGenerationStats() {
         const firstMissing = data.first_without_chunks_index;
         if (statsEl) {
             statsEl.textContent =
-                `Markdown files: ${totalWithMarkdown} | With chunks: ${totalWithChunks} | Missing: ${missing}` +
-                (firstMissing ? ` | First missing index: ${firstMissing}` : '');
+                _t('tasks.chunk_stats').replace('{total}', totalWithMarkdown).replace('{with_chunks}', totalWithChunks).replace('{missing}', missing) +
+                (firstMissing ? _t('tasks.stats_first_missing').replace('{first}', firstMissing) : '');
         }
         if (startEl && firstMissing) {
             startEl.value = String(firstMissing);
         }
     } catch (e) {
-        if (statsEl) statsEl.textContent = 'Failed to load stats: ' + e.message;
+        if (statsEl) statsEl.textContent = _t('tasks.failed_load_stats') + ' ' + e.message;
     }
 }
 
@@ -1907,7 +1914,7 @@ function loadActiveTasks() {
                     </div>
                 `).join('');
             } else {
-                container.innerHTML = '<p class="no-data">No active tasks currently running.</p>';
+                container.innerHTML = `<p class="no-data">${window.I18n ? window.I18n.t('tasks.no_active_msg') : 'No active tasks currently running.'}</p>`;
             }
             
             // Check for completed tasks (tasks that were active but now aren't)
@@ -1956,17 +1963,19 @@ function loadTaskHistory() {
         .then(data => {
             const container = document.getElementById('task-history-container');
             if (data.tasks && data.tasks.length > 0) {
-                 const tasks = data.tasks; 
+                 const tasks = data.tasks;
+                 const _t = (k, fb) => window.I18n ? window.I18n.t(k) : fb;
+                 const _tn = (k, n) => _t(k, k).replace('{n}', n);
                  container.innerHTML = `
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>Task</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Items</th>
-                            <th>Time</th>
-                            <th>Completed</th>
+                            <th>${_t('tasks.th_task', 'Task')}</th>
+                            <th>${_t('tasks.th_type', 'Type')}</th>
+                            <th>${_t('tasks.th_status', 'Status')}</th>
+                            <th>${_t('tasks.th_items', 'Items')}</th>
+                            <th>${_t('tasks.th_time', 'Time')}</th>
+                            <th>${_t('tasks.th_completed', 'Completed')}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1978,77 +1987,78 @@ function loadTaskHistory() {
                                 <td>
                                     ${task.type === 'catalog'
                                         ? `
-                                            ${task.catalog_scanned ?? task.items_processed ?? 0} scanned
+                                            ${_tn('tasks.hist_scanned', task.catalog_scanned ?? task.items_processed ?? 0)}
                                             <br><small>
-                                                ${(task.catalog_ok ?? task.items_downloaded ?? 0)} categorized /
-                                                ${(task.catalog_skipped ?? task.items_skipped ?? 0)} skipped /
-                                                ${(task.catalog_errors ?? (task.errors ? task.errors.length : 0))} failed
+                                                ${_tn('tasks.hist_categorized', task.catalog_ok ?? task.items_downloaded ?? 0)} /
+                                                ${_tn('tasks.hist_skipped', task.catalog_skipped ?? task.items_skipped ?? 0)} /
+                                                ${_tn('tasks.hist_failed', task.catalog_errors ?? (task.errors ? task.errors.length : 0))}
                                             </small>
                                           `
                                         : `
-                                            ${task.items_processed || 0} processed
+                                            ${_tn('tasks.hist_processed', task.items_processed || 0)}
                                             <br><small>
-                                                ${task.items_downloaded || 0} new / 
-                                                ${task.items_skipped || 0} skip /
-                                                ${task.errors ? task.errors.length : 0} err
+                                                ${_tn('tasks.hist_new', task.items_downloaded || 0)} /
+                                                ${_tn('tasks.hist_skip', task.items_skipped || 0)} /
+                                                ${_tn('tasks.hist_err', task.errors ? task.errors.length : 0)}
                                             </small>
                                           `
                                     }
                                 </td>
                                 <td>${formatDate(task.started_at)}</td>
                                 <td>
-                                    <button onclick='showLog(${JSON.stringify(task)})' class="btn-small">View Log</button>
+                                    <button onclick='showLog(${JSON.stringify(task)})' class="btn-small">${_t('tasks.hist_view_log', 'View Log')}</button>
                                 </td>
                             </tr>
                         `).join('')}
                     </tbody>
                 </table>`;
             } else {
-                container.innerHTML = '<p class="no-data">No history available.</p>';
+                container.innerHTML = `<p class="no-data">${window.I18n ? window.I18n.t('tasks.hist_no_history') : 'No history available.'}</p>`;
             }
         });
 }
 
 function showLog(task) {
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
     const isCatalog = task.type === 'catalog';
     const mainStats = isCatalog
         ? `
-            <li><strong>Scanned:</strong> ${task.catalog_scanned ?? task.items_processed ?? 0}</li>
-            <li><strong>Categorized (OK):</strong> ${task.catalog_ok ?? task.items_downloaded ?? 0}</li>
-            <li><strong>Skipped:</strong> ${task.catalog_skipped ?? task.items_skipped ?? 0}</li>
-            <li><strong>Failed:</strong> ${task.catalog_errors ?? (task.errors ? task.errors.length : 0)}</li>
+            <li><strong>${_t('tasks.log_scanned')}</strong> ${task.catalog_scanned ?? task.items_processed ?? 0}</li>
+            <li><strong>${_t('tasks.log_ok')}</strong> ${task.catalog_ok ?? task.items_downloaded ?? 0}</li>
+            <li><strong>${_t('tasks.log_skipped')}</strong> ${task.catalog_skipped ?? task.items_skipped ?? 0}</li>
+            <li><strong>${_t('tasks.log_failed_lbl')}</strong> ${task.catalog_errors ?? (task.errors ? task.errors.length : 0)}</li>
           `
         : `
-            <li><strong>Items Processed (Total Scanned):</strong> ${task.items_processed || 0}</li>
-            <li><strong>New/Updated:</strong> ${task.items_downloaded || 0}</li>
-            <li><strong>Skipped:</strong> ${task.items_skipped || 0}</li>
-            <li><strong>Errors:</strong> ${task.errors ? task.errors.length : 0}</li>
+            <li><strong>${_t('tasks.log_items_processed')}</strong> ${task.items_processed || 0}</li>
+            <li><strong>${_t('tasks.log_new_updated')}</strong> ${task.items_downloaded || 0}</li>
+            <li><strong>${_t('tasks.log_skipped')}</strong> ${task.items_skipped || 0}</li>
+            <li><strong>${_t('tasks.log_errors_lbl')}</strong> ${task.errors ? task.errors.length : 0}</li>
           `;
 
     const content = `
         <div style="padding: 10px;">
-            <h4>Task Log: ${escapeHtml(task.name)}</h4>
+            <h4>${_t('tasks.log_title').replace('{name}', escapeHtml(task.name))}</h4>
             <ul style="list-style: none; padding: 0;">
-                <li><strong>Status:</strong> ${task.status}</li>
-                <li><strong>Started:</strong> ${formatDate(task.started_at)}</li>
-                <li><strong>Completed:</strong> ${formatDate(task.completed_at || '')}</li>
+                <li><strong>${_t('tasks.log_status')}</strong> ${task.status}</li>
+                <li><strong>${_t('tasks.log_started')}</strong> ${formatDate(task.started_at)}</li>
+                <li><strong>${_t('tasks.log_completed')}</strong> ${formatDate(task.completed_at || '')}</li>
                 ${mainStats}
             </ul>
             <div class="error-details-box">
-                <h5>Error Details:</h5>
+                <h5>${_t('stg.log_error_details')}</h5>
                 ${(task.errors && task.errors.length > 0) ? 
                     task.errors.map(e => `<div class="error-item">• ${escapeHtml(e)}</div>`).join('') 
-                    : 'No detailed errors logged.'}
+                    : _t('tasks.log_no_errors')}
             </div>
             <div class="error-details-box" style="margin-top: 12px;">
-                <h5>Application Log (Task)</h5>
-                <pre id="task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">Loading...</pre>
+                <h5>${_t('stg.log_app_log')}</h5>
+                <pre id="task-log-content" style="white-space: pre-wrap; max-height: 320px; overflow: auto; margin: 0;">${_t('common.loading')}</pre>
                 <div style="margin-top: 8px; display: flex; gap: 8px;">
-                    <button class="btn-small" onclick="reloadTaskLog('${task.id}')">Reload</button>
-                    ${CAN_VIEW_GLOBAL_LOGS ? `<button class="btn-small" onclick="openGlobalLogs()">Global Logs</button>` : ''}
+                    <button class="btn-small" onclick="reloadTaskLog('${task.id}')">${_t('common.refresh')}</button>
+                    ${CAN_VIEW_GLOBAL_LOGS ? `<button class="btn-small" onclick="openGlobalLogs()">${_t('stg.log_global_logs')}</button>` : ''}
                 </div>
             </div>
-            ${task.message ? `<p><strong>Message:</strong> ${escapeHtml(task.message)}</p>` : ''}
+            ${task.message ? `<p><strong>${_t('tasks.log_message')}</strong> ${escapeHtml(task.message)}</p>` : ''}
         </div>
     `;
     // Reuse a modal or create one. For simplicity let's use a simple alert if no generic modal, 
@@ -2072,19 +2082,20 @@ function showLog(task) {
 }
 
 async function reloadTaskLog(taskId) {
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
     const pre = document.getElementById('task-log-content');
     if (!pre) return;
-    pre.textContent = 'Loading...';
+    pre.textContent = _t('common.loading');
     try {
         const resp = await fetch(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
         const data = await resp.json();
         if (resp.ok && data.success) {
-            pre.textContent = data.log || '(no task log yet)';
+            pre.textContent = data.log || _t('tasks.log_no_log_yet');
         } else {
-            pre.textContent = 'Failed to load task log: ' + (data.error || resp.status);
+            pre.textContent = _t('tasks.log_load_error') + (data.error || resp.status);
         }
     } catch (e) {
-        pre.textContent = 'Failed to load task log: ' + e.message;
+        pre.textContent = _t('tasks.log_load_error') + e.message;
     }
 }
 
