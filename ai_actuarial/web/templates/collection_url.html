@@ -3,33 +3,33 @@
 {% block content %}
 <div class="collection-page">
     <div class="page-header">
-        <h2>🔗 URL Collection</h2>
-        <p>Download files from specific URLs</p>
+        <h2 data-i18n="col_url.title">🔗 URL Collection</h2>
+        <p data-i18n="col_url.subtitle">Download files from specific URLs</p>
     </div>
 
     <div class="collection-form">
         <div class="form-group">
-            <label for="urls">URLs (one per line):</label>
+            <label for="urls" data-i18n="col_url.urls_label">URLs (one per line):</label>
             <textarea id="urls" rows="10" placeholder="https://example.com/document.pdf&#10;https://example.com/report.docx"></textarea>
         </div>
         <div class="form-group">
-            <label for="collection-name">Collection Name:</label>
+            <label for="collection-name" data-i18n="col_url.name_label">Collection Name:</label>
             <input type="text" id="collection-name" value="URL Collection" />
         </div>
         <div class="form-group checkbox">
             <label>
                 <input type="checkbox" id="check-database" checked />
-                Check for duplicates in database
+                <span data-i18n="col_url.check_dup">Check for duplicates in database</span>
             </label>
         </div>
         <div class="form-actions">
-            <button onclick="startCollection()" class="btn btn-primary">Start Collection</button>
-            <button onclick="history.back()" class="btn btn-secondary">Cancel</button>
+            <button onclick="startCollection()" class="btn btn-primary" data-i18n="col_url.start">Start Collection</button>
+            <button onclick="history.back()" class="btn btn-secondary" data-i18n="col_url.cancel">Cancel</button>
         </div>
     </div>
 
     <div id="progress-container" style="display: none;">
-        <h3>Collection Progress</h3>
+        <h3 data-i18n="col_url.progress">Collection Progress</h3>
         <div class="progress-panel">
             <div class="progress-bar">
                 <div class="progress-fill" id="progress-fill"></div>
@@ -45,7 +45,7 @@ function startCollection() {
     const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u);
     
     if (urls.length === 0) {
-        alert('Please enter at least one URL');
+        alert(window.I18n ? window.I18n.t('col_url.alert_no_url') : 'Please enter at least one URL');
         return;
     }
 
@@ -68,7 +68,10 @@ function startCollection() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            alert('Collection completed!\nFound: ' + data.items_found + '\nDownloaded: ' + data.items_downloaded);
+            const found = window.I18n ? window.I18n.t('col_url.alert_found') : 'Found:';
+            const dl    = window.I18n ? window.I18n.t('col_url.alert_dl')    : 'Downloaded:';
+            const done  = window.I18n ? window.I18n.t('col_url.completed')   : 'Collection completed!';
+            alert(`${done}\n${found} ${data.items_found}\n${dl} ${data.items_downloaded}`);
             window.location = '/database';
         } else {
             alert('Error: ' + (data.error || 'Unknown error'));
