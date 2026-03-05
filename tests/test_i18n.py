@@ -37,7 +37,7 @@ INDEX_HTML = REPO_ROOT / "ai_actuarial" / "web" / "templates" / "index.html"
 # ---------------------------------------------------------------------------
 # Helper: parse the translation dictionaries from i18n.js source text
 # ---------------------------------------------------------------------------
-_KEY_PATTERN = re.compile(r"'([a-z][a-z0-9_.]+)':\s*'", re.ASCII)
+_KEY_PATTERN = re.compile(r"'([a-z][a-z0-9_.]+)':\s*['\"]", re.ASCII)
 
 
 def _extract_keys_from_dict_block(block: str) -> set[str]:
