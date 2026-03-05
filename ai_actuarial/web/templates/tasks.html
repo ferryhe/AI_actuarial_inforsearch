@@ -1113,6 +1113,7 @@ function toggleSearchDefaults(checked) {
 }
 
 async function loadSearchDefaults() {
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
     try {
         const resp = await fetch('/api/config/search-defaults');
         const data = await resp.json();
@@ -1120,11 +1121,14 @@ async function loadSearchDefaults() {
         searchDefaultsConfig = data;
         const summary = document.getElementById('search-defaults-summary');
         if (summary) {
-            summary.textContent = `Default max_results=${data.max_results}, country=${data.country || '-'}, languages=${(data.languages || []).join(', ') || '-'}`;
+            summary.textContent = _t('tasks.search_defaults_summary')
+                .replace('{max_results}', data.max_results)
+                .replace('{country}', data.country || '-')
+                .replace('{languages}', (data.languages || []).join(', ') || '-');
         }
     } catch (err) {
         const summary = document.getElementById('search-defaults-summary');
-        if (summary) summary.textContent = 'Failed to load defaults';
+        if (summary) summary.textContent = _t('tasks.failed_load_defaults');
         console.error(err);
     }
 }
