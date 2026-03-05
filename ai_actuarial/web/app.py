@@ -1673,6 +1673,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 os.environ.pop(key_env, None)
             if url_env:
                 os.environ.pop(url_env, None)
+            # Reload settings so the deleted key is no longer accessible
+            from config.settings import reload_settings
+            reload_settings()
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error deleting LLM provider")
