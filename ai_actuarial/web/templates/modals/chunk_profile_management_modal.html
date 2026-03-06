@@ -48,13 +48,7 @@
 
                 <div class="form-row">
                     <div class="form-group half">
-                        <label data-i18n="cp.model">Chunk Model</label>
-                        <select name="chunk_model">
-                            <option value="gpt-4">gpt-4</option>
-                            <option value="gpt-4o">gpt-4o</option>
-                            <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-                        </select>
-                        <small class="form-hint" data-i18n="cp.model_hint">Used for token counting behavior during chunking (not embedding model).</small>
+                        <p class="form-hint" style="color:var(--text-secondary)" data-i18n="cp.model_auto_inherit">Token model auto-inherited from AI Config (used for token counting only)</p>
                     </div>
                     <div class="form-group half">
                         <label data-i18n="cp.splitter">Splitter</label>

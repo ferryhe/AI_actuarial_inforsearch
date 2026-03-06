@@ -40,6 +40,7 @@ class SiteConfig:
     exclude_prefixes: list[str] | None = None
     collect_page_content: bool = False  # Also save text extracted from HTML pages
     content_selector: str | None = None  # CSS selector to narrow link extraction to content area
+    allow_url_patterns: list[str] | None = None  # Regex allow-list for sub-page URLs (Scrapy-style); if set, only matching sub-pages are queued
 
 
 class Crawler:
@@ -237,6 +238,8 @@ class Crawler:
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
         exclude_prefixes = [p.lower() for p in (cfg.exclude_prefixes or [])]
+        # Compile allow_url_patterns to regex tuples; if set, only matching sub-page URLs are queued
+        allow_patterns = [re.compile(p) for p in (cfg.allow_url_patterns or [])]
         new_items: list[dict] = []
 
         sitemap_urls = self._load_sitemap(cfg.url)
@@ -335,7 +338,11 @@ class Crawler:
                 if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
                     continue
                 if self._is_file_url(link, exts):
-                    if keywords and not (is_relevant or self._link_matches_keywords(link, link_text, keywords)):
+                    # If allow_url_patterns is configured we trust the URL scope to ensure
+                    # relevance, so skip keyword gating entirely.  Otherwise fall back to
+                    # link-level keyword matching (no longer requires page-level is_relevant,
+                    # which was causing focused pages using abbreviations like "AI" to miss files).
+                    if not allow_patterns and keywords and not self._link_matches_keywords(link, link_text, keywords):
                         continue
                     if self.storage.file_exists(link):
                         continue
@@ -376,8 +383,14 @@ class Crawler:
                     if item:
                         new_items.append(item)
                 else:
-                    if depth + 1 <= cfg.max_depth and is_relevant:
-                        page_queue.append((link, depth + 1))
+                    if depth + 1 <= cfg.max_depth:
+                        if allow_patterns:
+                            # Only queue sub-pages that match at least one allow pattern
+                            if any(p.search(link) for p in allow_patterns):
+                                page_queue.append((link, depth + 1))
+                        else:
+                            # No allow patterns: always queue, rely on exclude filters
+                            page_queue.append((link, depth + 1))
 
             sleep_with_jitter(cfg.delay_seconds)
 
