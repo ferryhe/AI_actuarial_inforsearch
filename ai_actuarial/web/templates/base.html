@@ -65,6 +65,7 @@
                         {{ auth_subject or 'Unknown' }} ({{ auth_group or 'n/a' }})
                     </a>
                     <form method="POST" action="{{ url_for('logout') }}" style="margin: 0;">
+                        <input type="hidden" name="_csrf_token" value="{{ g._csrf_token | default('') }}">
                         <button type="submit" class="btn btn-secondary btn-sm" data-i18n="nav.logout">Logout</button>
                     </form>
                 </div>

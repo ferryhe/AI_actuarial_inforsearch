@@ -77,7 +77,8 @@ def _append_task_log(task_id: str, level: str, message: str) -> None:
         _TASK_LOG_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().isoformat(timespec="seconds")
         line = f"{stamp} [{level.upper()}] {message}\n"
-        _task_log_path(task_id).open("a", encoding="utf-8", errors="replace").write(line)
+        with _task_log_path(task_id).open("a", encoding="utf-8", errors="replace") as _fh:
+            _fh.write(line)
     except Exception:
         # Never let logging break task execution.
         return
@@ -303,6 +304,12 @@ def _check_password(password: str, password_hash: str) -> bool:
         return secrets.compare_digest(dk.hex(), stored)
     except Exception:
         return False
+
+
+# Pre-computed dummy hash used in email_login to prevent timing-based email
+# enumeration. Computed once at import time so _check_password always exercises
+# the full PBKDF2 code path regardless of whether the email is registered.
+_DUMMY_PASSWORD_HASH: str = _hash_password("__timing_sentinel__")
 
 
 def _get_today_date() -> str:
@@ -543,7 +550,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         app.secret_key = secret
     elif app.config.get("TESTING") or app.debug:
         # Keep tests/dev working without requiring env setup.
-        app.secret_key = "dev-secret-key"
+        # Use a random key even in dev/test — a fixed string offers no security
+        # benefit and could be left in place if debug mode is accidentally enabled
+        # in a shared environment.
+        app.secret_key = secrets.token_urlsafe(32)
     elif require_auth:
         raise RuntimeError("FLASK_SECRET_KEY must be set when REQUIRE_AUTH=true")
     else:
@@ -1015,10 +1025,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         return redirect(url_for("index"))
 
     if csrf is not None:
-        # Token login/logout are special: login happens before a client can reliably
-        # attach CSRF headers; logout is low-risk and should remain usable.
+        # Token-based login happens before a session exists, so CSRF validation
+        # is not applicable there. All other state-changing routes (including
+        # logout) are protected by CSRF when ENABLE_CSRF=true.
         csrf.exempt(login)
-        csrf.exempt(logout)
 
     # =========================================================================
     # Email-based Registration and Login
@@ -1042,7 +1052,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         email = (data.get("email") or "").strip().lower()
         password = (data.get("password") or "").strip()
         display_name = (data.get("display_name") or "").strip()
-        if not email or "@" not in email:
+        if not email or not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
             if _is_api_request():
                 return _api_error("Valid email required", status_code=400)
             return render_template("register.html", error="Valid email address required.")
@@ -1050,6 +1060,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if _is_api_request():
                 return _api_error("Password must be at least 8 characters", status_code=400)
             return render_template("register.html", error="Password must be at least 8 characters.", email=email, display_name=display_name)
+        if len(password) > 1024:
+            if _is_api_request():
+                return _api_error("Password too long (max 1024 characters)", status_code=400)
+            return render_template("register.html", error="Password is too long (max 1024 characters).", email=email, display_name=display_name)
+        if len(display_name) > 100:
+            if _is_api_request():
+                return _api_error("Display name too long (max 100 characters)", status_code=400)
+            return render_template("register.html", error="Display name is too long (max 100 characters).", email=email, display_name=display_name)
         storage = None
         try:
             storage = Storage(db_path)
@@ -1060,6 +1078,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 display_name=display_name or None,
             )
             storage.log_user_activity("register", user_id=user_id, ip_address=_get_client_ip(), detail=f"email={email}")
+            session.clear()  # prevent session fixation
             session["email_user_id"] = user_id
             if _is_api_request():
                 return jsonify({"success": True, "user_id": user_id, "email": email}), 201
@@ -1098,7 +1117,14 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             user = storage.get_user_by_email(email)
-            if not user or not _check_password(password, user["password_hash"]):
+            # Always run _check_password regardless of whether the email exists.
+            # Skipping the hash for unknown emails would create a ~300 ms timing
+            # difference that reveals whether an address is registered (H6).
+            password_ok = _check_password(
+                password,
+                user["password_hash"] if user else _DUMMY_PASSWORD_HASH,
+            )
+            if not user or not password_ok:
                 if _is_api_request():
                     return _api_error("Invalid email or password", status_code=401)
                 return render_template("email_login.html", error="Invalid email or password.")
@@ -1106,6 +1132,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 if _is_api_request():
                     return _api_error("Account disabled", status_code=403)
                 return render_template("email_login.html", error="Account has been disabled.")
+            session.clear()  # prevent session fixation
             session["email_user_id"] = user["id"]
             storage.update_user_last_login(user["id"])
             storage.log_user_activity("login", user_id=user["id"], ip_address=_get_client_ip())
@@ -1171,7 +1198,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """Membership upgrade page."""
         token = getattr(g, "_auth_token", None)
         email_user = (token or {}).get("_email_user") if token else None
-        return render_template("upgrade.html", email_user=email_user, token=token)
+        contact_email = os.getenv("CONTACT_EMAIL", "")
+        return render_template("upgrade.html", email_user=email_user, token=token,
+                               contact_email=contact_email)
 
     # =========================================================================
     # Admin User Management
@@ -1289,7 +1318,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_admin_reset_user_quota(target_user_id: int):
         """Reset a user's AI chat quota (admin)."""
         data = request.get_json(silent=True) or {}
-        quota_date = data.get("quota_date") or _get_today_date()
+        _raw_date = data.get("quota_date")
+        if _raw_date and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(_raw_date)):
+            return _api_error("quota_date must be YYYY-MM-DD format", status_code=400)
+        quota_date = _raw_date or _get_today_date()
         storage = None
         try:
             storage = Storage(db_path)
