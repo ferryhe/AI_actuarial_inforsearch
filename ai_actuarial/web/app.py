@@ -2861,6 +2861,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         exclude_keywords=merge_lists('exclude_keywords'),
                         exclude_prefixes=merge_lists('exclude_prefixes'),
                         content_selector=s.get('content_selector'),
+                        allow_url_patterns=s.get('allow_url_patterns'),
                     )
                     sites_to_process.append(sc)
                 

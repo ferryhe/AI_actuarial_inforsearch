@@ -259,10 +259,10 @@
         <small class="form-hint" data-i18n="fv.overwrite_hint">Unchecked = Skip already cataloged</small>
       </div>
       <div class="form-group">
-        <label for="file-catalog-provider" data-i18n="fv.ai_provider">AI Provider</label>
-        <select name="provider" id="file-catalog-provider">
-          <option value="">Loading providers...</option>
-        </select>
+        <p id="file-catalog-ai-label" class="form-label" data-i18n="fv.ai_provider">AI Provider</p>
+        <input type="hidden" name="provider" id="file-catalog-provider">
+        <p id="file-catalog-ai-info" class="form-hint" style="color:var(--text-secondary)" aria-labelledby="file-catalog-ai-label">Loading catalog model...</p>
+        <small class="form-hint" data-i18n="fv.catalog_ai_config_info">AI model set in Settings → AI Config</small>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
         <button type="button" class="btn btn-secondary" onclick="closeFileCatalogModal()" data-i18n="fv.cancel">Cancel</button>
@@ -361,61 +361,35 @@
         loadFileCatalogProviders();
     }
 
+    const _FV_PROVIDER_NAMES = {
+        openai: 'OpenAI', mistral: 'Mistral AI', anthropic: 'Anthropic',
+        google: 'Google Gemini', deepseek: 'DeepSeek', zhipuai: '智谱AI',
+        moonshot: 'Moonshot (Kimi)', kimi: 'Kimi', minimax: 'MiniMax',
+        qwen: '阿里通义 (Qwen)', siliconflow: 'SiliconFlow', cohere: 'Cohere',
+        local: 'Local (KeyBERT)',
+    };
+
     async function loadFileCatalogProviders() {
-        const sel = document.getElementById('file-catalog-provider');
-        if (!sel) return;
-        const _PROVIDER_NAMES = {
-            openai: 'OpenAI', mistral: 'Mistral AI', anthropic: 'Anthropic',
-            google: 'Google Gemini', deepseek: 'DeepSeek', zhipuai: '智谱AI',
-            moonshot: 'Moonshot (Kimi)', kimi: 'Kimi', minimax: 'MiniMax',
-            qwen: '阿里通义 (Qwen)', siliconflow: 'SiliconFlow', cohere: 'Cohere',
-            local: 'Local (KeyBERT)',
-        };
+        const hidden = document.getElementById('file-catalog-provider');
+        const infoEl = document.getElementById('file-catalog-ai-info');
+        if (!hidden) return;
         try {
-            const [modelsResp, providersResp] = await Promise.all([
-                fetch('/api/config/ai-models'),
-                fetch('/api/config/llm-providers')
-            ]);
-            if (!modelsResp.ok) {
-                throw new Error(`Failed to load AI models config: HTTP ${modelsResp.status} ${modelsResp.statusText}`);
-            }
-            if (!providersResp.ok) {
-                throw new Error(`Failed to load LLM providers config: HTTP ${providersResp.status} ${providersResp.statusText}`);
-            }
-            const modelsData = await modelsResp.json();
-            const providersData = await providersResp.json();
-
-            const configured = new Set(['local']);
-            (providersData.providers || []).forEach(p => configured.add(p.provider));
-
-            const available = modelsData.available || {};
-            const catalogProviders = Object.keys(available).filter(provider => {
-                if (!configured.has(provider)) return false;
-                return (available[provider] || []).some(m => (m.types || []).includes('catalog'));
-            });
-
-            if (catalogProviders.length === 0) catalogProviders.push('local');
-
+            const resp = await fetch('/api/config/ai-models');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const modelsData = await resp.json();
             const currentProvider = modelsData.current?.catalog?.provider || 'openai';
-
-            sel.innerHTML = '';
-            // Only prepend currentProvider if it is actually configured and not already listed
-            const orderedProviders = currentProvider
-                && configured.has(currentProvider)
-                && !catalogProviders.includes(currentProvider)
-                ? [currentProvider, ...catalogProviders]
-                : catalogProviders;
-
-            orderedProviders.forEach(provider => {
-                const opt = document.createElement('option');
-                opt.value = provider;
-                opt.textContent = _PROVIDER_NAMES[provider] || provider;
-                if (provider === currentProvider) opt.selected = true;
-                sel.appendChild(opt);
-            });
+            const currentModel = modelsData.current?.catalog?.model || '';
+            hidden.value = currentProvider;
+            if (infoEl) {
+                const providerLabel = _FV_PROVIDER_NAMES[currentProvider] || currentProvider;
+                infoEl.textContent = currentModel
+                    ? `${providerLabel} — ${currentModel}`
+                    : providerLabel;
+            }
         } catch (err) {
-            console.error('Failed to load catalog providers:', err);
-            sel.innerHTML = '<option value="local">Local (KeyBERT)</option><option value="openai">OpenAI</option>';
+            console.error('Failed to load catalog model from AI Config:', err);
+            if (hidden) hidden.value = 'openai';
+            if (infoEl) infoEl.textContent = 'Failed to load — defaulting to openai';
         }
     }
 
@@ -582,20 +556,20 @@
         }
     }
 
-    function _getChunkModel(profile) {
+    function _getChunkModel(profile, defaultModel = 'gpt-4') {
         const cfg = _parseProfileConfig(profile);
         const metadata = cfg && typeof cfg.metadata === 'object' ? cfg.metadata : {};
-        return metadata && metadata.chunk_model ? String(metadata.chunk_model) : 'gpt-4';
+        return metadata && metadata.chunk_model ? String(metadata.chunk_model) : defaultModel;
     }
 
-    function fillChunkProfileSelect(options, preferredProfileId = '') {
+    function fillChunkProfileSelect(options, preferredProfileId = '', defaultModel = 'gpt-4') {
         const select = document.getElementById('file-chunk-profile-select');
         if (!select) return;
         select.innerHTML = '';
         options.forEach((item) => {
             const opt = document.createElement('option');
             opt.value = item.profile_id;
-            const model = _getChunkModel(item);
+            const model = _getChunkModel(item, defaultModel);
             opt.textContent = `${item.name || item.profile_id} | model=${model} | size=${item.chunk_size}, overlap=${item.chunk_overlap}`;
             select.appendChild(opt);
         });
@@ -606,19 +580,31 @@
 
     async function loadFileChunkProfiles() {
         try {
-            const resp = await fetch('/api/chunk/profiles');
-            const payload = await resp.json();
-            if (!resp.ok || !payload.success) {
+            const [profilesResp, modelsResp] = await Promise.all([
+                fetch('/api/chunk/profiles'),
+                fetch('/api/config/ai-models')
+            ]);
+            
+            const payload = await profilesResp.json();
+            if (!profilesResp.ok || !payload.success) {
                 throw new Error(payload.error || 'Failed loading chunk profiles');
             }
             const data = _extractApiData(payload) || {};
             fileChunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
 
+            // Get default model from config
+            let defaultModel = 'gpt-4';
+            if (modelsResp.ok) {
+                const modelsData = await modelsResp.json();
+                // Use catalog model (usually the default LLM) as fallback for chunking if not specified
+                defaultModel = modelsData.current?.catalog?.model || 'gpt-4';
+            }
+
             let preferred = '';
             if (fileChunkSets.length > 0) {
                 preferred = String(fileChunkSets[0].profile_id || '');
             }
-            fillChunkProfileSelect(fileChunkProfiles, preferred);
+            fillChunkProfileSelect(fileChunkProfiles, preferred, defaultModel);
         } catch (err) {
             console.error('Failed loading chunk profile options:', err);
             fileChunkProfiles = [];

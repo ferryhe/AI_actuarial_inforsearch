@@ -1004,6 +1004,12 @@
         document.getElementById('rag-open-profiles-modal')?.addEventListener('click', async () => {
             openModal('rag-chunk-profile-modal');
             await loadChunkProfiles();
+            // chunk_model in profile metadata is used for tiktoken.encoding_for_model().
+            // It must be an OpenAI model name recognised by tiktoken (e.g. gpt-4 → cl100k_base).
+            // Inheriting the catalog model would pass non-OpenAI names (claude-*, gemini-*, etc.)
+            // which tiktoken cannot resolve, causing silent fallback to cl100k_base anyway.
+            // We therefore keep the field at gpt-4 (the default cl100k_base encoding).
+            // Users wanting a different encoding can select it via the Tokenizer dropdown instead.
         });
 
         document.getElementById('rag-create-chunk-profile-form')?.addEventListener('submit', async (e) => {
