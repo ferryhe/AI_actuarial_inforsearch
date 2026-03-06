@@ -285,7 +285,7 @@ _VALID_USER_ROLES: tuple[str, ...] = (
 
 
 def _hash_password(password: str) -> str:
-    """Return a bcrypt-style password hash using PBKDF2."""
+    """Return a PBKDF2-SHA256 password hash with a random salt."""
     import hmac as _hmac
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000)
