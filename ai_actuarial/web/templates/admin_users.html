@@ -303,20 +303,49 @@
       const r = await fetch(`/api/admin/users/${userId}/activity?limit=50`);
       const d = await r.json();
       const list = document.getElementById('activity-list-content');
+      list.innerHTML = '';
       if (!d.success || !d.logs.length) {
-        list.innerHTML = '<li>No activity recorded.</li>';
+        const li = document.createElement('li');
+        li.textContent = 'No activity recorded.';
+        list.appendChild(li);
         return;
       }
-      list.innerHTML = d.logs.map(l => `
-        <li>
-          <span style="color:var(--text-secondary); white-space:nowrap;">${(l.created_at||'').slice(0,19).replace('T',' ')}</span>
-          <strong>${l.action}</strong>
-          ${l.resource ? `<span style="color:var(--text-secondary);">${l.resource}</span>` : ''}
-          ${l.detail ? `<span style="font-size:.8rem; color:var(--text-secondary);">${l.detail}</span>` : ''}
-        </li>
-      `).join('');
+      d.logs.forEach(l => {
+        const li = document.createElement('li');
+
+        const dateSpan = document.createElement('span');
+        dateSpan.style.color = 'var(--text-secondary)';
+        dateSpan.style.whiteSpace = 'nowrap';
+        dateSpan.textContent = (l.created_at || '').slice(0, 19).replace('T', ' ');
+        li.appendChild(dateSpan);
+
+        const actionStrong = document.createElement('strong');
+        actionStrong.textContent = ' ' + (l.action || '');
+        li.appendChild(actionStrong);
+
+        if (l.resource) {
+          const resourceSpan = document.createElement('span');
+          resourceSpan.style.color = 'var(--text-secondary)';
+          resourceSpan.textContent = ' ' + l.resource;
+          li.appendChild(resourceSpan);
+        }
+
+        if (l.detail) {
+          const detailSpan = document.createElement('span');
+          detailSpan.style.fontSize = '.8rem';
+          detailSpan.style.color = 'var(--text-secondary)';
+          detailSpan.textContent = ' ' + l.detail;
+          li.appendChild(detailSpan);
+        }
+
+        list.appendChild(li);
+      });
     } catch (e) {
-      document.getElementById('activity-list-content').innerHTML = '<li>Failed to load activity.</li>';
+      const list = document.getElementById('activity-list-content');
+      list.innerHTML = '';
+      const li = document.createElement('li');
+      li.textContent = 'Failed to load activity.';
+      list.appendChild(li);
     }
   }
 

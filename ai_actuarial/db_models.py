@@ -231,7 +231,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(Text, unique=True, nullable=False)
     password_hash = Column(Text, nullable=False)
-    # role: anonymous | registered | premium | operator | operator_ai | admin
+    # role: registered | premium | operator | operator_ai | admin
     role = Column(Text, nullable=False, default="registered")
     is_active = Column(Integer, nullable=False, default=1)
     email_verified = Column(Integer, nullable=False, default=0)
@@ -242,7 +242,8 @@ class User(Base):
     email_verified_at = Column(Text)
 
     __table_args__ = (
-        Index("idx_users_email", "email"),
+        # email has unique=True above which already creates an index;
+        # only add the explicit role index here.
         Index("idx_users_role", "role"),
     )
 

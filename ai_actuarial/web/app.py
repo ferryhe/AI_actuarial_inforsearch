@@ -185,11 +185,12 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "chat.conversations",
         }
     ),
-    # Premium members: same as registered but higher AI quota (enforced by quota layer)
+    # Premium members: higher AI quota + file download
     "premium": frozenset(
         {
             "stats.read",
             "files.read",
+            "files.download",
             "catalog.read",
             "markdown.read",
             "chat.view",
@@ -286,7 +287,6 @@ _VALID_USER_ROLES: tuple[str, ...] = (
 
 def _hash_password(password: str) -> str:
     """Return a PBKDF2-SHA256 password hash with a random salt."""
-    import hmac as _hmac
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000)
     return f"pbkdf2:sha256:260000:{salt}:{dk.hex()}"
@@ -771,6 +771,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             try:
                 user = storage.get_user_by_id(int(email_user_id))
                 if user and user.get("is_active"):
+                    # Strip password_hash before embedding in request context
+                    user.pop("password_hash", None)
                     # Synthesise a token-like dict for the rest of the middleware
                     token = {
                         "id": None,
@@ -1025,8 +1027,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/register", methods=["GET", "POST"])
     def register():
         """Email-based user registration."""
-        token = getattr(g, "_auth_token", None)
-        if token:
+        if session.get("email_user_id") or session.get("auth_token_id"):
             return redirect(url_for("index"))
         if request.method == "GET":
             return render_template("register.html")
@@ -1077,8 +1078,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/email-login", methods=["GET", "POST"])
     def email_login():
         """Email+password login page."""
-        token = getattr(g, "_auth_token", None)
-        if token:
+        if session.get("email_user_id") or session.get("auth_token_id"):
             return redirect(url_for("index"))
         if request.method == "GET":
             return render_template("email_login.html", next=request.args.get("next", ""))
@@ -1369,6 +1369,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 pass
 
 
+    @app.route("/api/auth/me")
     def api_auth_me():
         """Return current token identity and permissions."""
         storage = None

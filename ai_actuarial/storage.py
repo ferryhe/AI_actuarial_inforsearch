@@ -284,6 +284,23 @@ class Storage:
             )
             """
         )
+        # Partial unique indexes allow INSERT OR IGNORE / ON CONFLICT semantics
+        # while tolerating NULLs in the non-keyed column.
+        self._conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_user_quotas_user
+            ON user_quotas(user_id, quota_date)
+            WHERE user_id IS NOT NULL
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_user_quotas_ip
+            ON user_quotas(ip_address, quota_date)
+            WHERE ip_address IS NOT NULL
+            """
+        )
+        # Plain composite indexes (kept for query planner on NULL-keyed lookups)
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_quotas_user_date ON user_quotas(user_id, quota_date)"
         )
@@ -2661,23 +2678,24 @@ class Storage:
         provide specific error messages for disabled accounts rather than a
         generic "user not found" response.
         """
-        row = self._conn.execute(
+        cur = self._conn.execute(
             "SELECT * FROM users WHERE email = ?",
             (email.lower().strip(),),
-        ).fetchone()
+        )
+        row = cur.fetchone()
         if row is None:
             return None
-        cols = [d[0] for d in self._conn.execute("SELECT * FROM users LIMIT 0").description]
+        cols = [d[0] for d in cur.description]
         return dict(zip(cols, row))
 
     def get_user_by_id(self, user_id: int) -> dict | None:
         """Return user record by id, or None."""
-        row = self._conn.execute(
+        cur = self._conn.execute(
             "SELECT * FROM users WHERE id = ?", (user_id,)
-        ).fetchone()
+        )
+        row = cur.fetchone()
         if row is None:
             return None
-        cur = self._conn.execute("SELECT * FROM users LIMIT 0")
         cols = [d[0] for d in cur.description]
         return dict(zip(cols, row))
 
@@ -2760,6 +2778,143 @@ class Storage:
                 (ip_address, quota_date),
             ).fetchone()
         return int(row[0]) if row else 0
+
+    def check_and_increment_ai_chat_quota(
+        self,
+        quota_date: str,
+        limit: int,
+        *,
+        user_id: int | None = None,
+        ip_address: str | None = None,
+    ) -> tuple[bool, int]:
+        """Atomically check quota and increment if under the limit.
+
+        Returns ``(allowed, new_count)`` where ``allowed`` is True when the
+        query should proceed (count was below *limit* before incrementing).
+        Uses a single atomic UPDATE/INSERT so concurrent requests from the same
+        user/IP cannot race past the limit.
+        """
+        now = self.now()
+        if user_id is not None:
+            # Try to increment an existing row only when still under the limit.
+            cur = self._conn.execute(
+                """
+                UPDATE user_quotas
+                   SET ai_chat_count = ai_chat_count + 1,
+                       updated_at    = ?
+                 WHERE user_id    = ?
+                   AND quota_date = ?
+                   AND ai_chat_count < ?
+                """,
+                (now, user_id, quota_date, limit),
+            )
+            if cur.rowcount > 0:
+                # Read back the new value (the UPDATE already succeeded).
+                row = self._conn.execute(
+                    "SELECT ai_chat_count FROM user_quotas WHERE user_id = ? AND quota_date = ?",
+                    (user_id, quota_date),
+                ).fetchone()
+                self._maybe_commit()
+                return True, int(row[0]) if row else 1
+            # Row didn't exist yet — try to insert (first query of the day).
+            # Use INSERT OR IGNORE so a concurrent insert loses gracefully.
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO user_quotas
+                    (user_id, quota_date, ai_chat_count, created_at, updated_at)
+                VALUES (?, ?, 1, ?, ?)
+                """,
+                (user_id, quota_date, now, now),
+            )
+            if self._conn.execute(
+                "SELECT changes()"
+            ).fetchone()[0] > 0:
+                # Insert succeeded — we are at count=1.
+                self._maybe_commit()
+                return True, 1
+            # Another thread already inserted: re-check with atomic update.
+            cur2 = self._conn.execute(
+                """
+                UPDATE user_quotas
+                   SET ai_chat_count = ai_chat_count + 1,
+                       updated_at    = ?
+                 WHERE user_id    = ?
+                   AND quota_date = ?
+                   AND ai_chat_count < ?
+                """,
+                (now, user_id, quota_date, limit),
+            )
+            if cur2.rowcount > 0:
+                row2 = self._conn.execute(
+                    "SELECT ai_chat_count FROM user_quotas WHERE user_id = ? AND quota_date = ?",
+                    (user_id, quota_date),
+                ).fetchone()
+                self._maybe_commit()
+                return True, int(row2[0]) if row2 else 1
+            # Already at or over limit.
+            current = self._conn.execute(
+                "SELECT ai_chat_count FROM user_quotas WHERE user_id = ? AND quota_date = ?",
+                (user_id, quota_date),
+            ).fetchone()
+            self._maybe_commit()
+            return False, int(current[0]) if current else limit
+        else:
+            # IP-address path — same logic.
+            cur = self._conn.execute(
+                """
+                UPDATE user_quotas
+                   SET ai_chat_count = ai_chat_count + 1,
+                       updated_at    = ?
+                 WHERE ip_address = ?
+                   AND quota_date = ?
+                   AND ai_chat_count < ?
+                """,
+                (now, ip_address, quota_date, limit),
+            )
+            if cur.rowcount > 0:
+                row = self._conn.execute(
+                    "SELECT ai_chat_count FROM user_quotas WHERE ip_address = ? AND quota_date = ?",
+                    (ip_address, quota_date),
+                ).fetchone()
+                self._maybe_commit()
+                return True, int(row[0]) if row else 1
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO user_quotas
+                    (ip_address, quota_date, ai_chat_count, created_at, updated_at)
+                VALUES (?, ?, 1, ?, ?)
+                """,
+                (ip_address, quota_date, now, now),
+            )
+            if self._conn.execute(
+                "SELECT changes()"
+            ).fetchone()[0] > 0:
+                self._maybe_commit()
+                return True, 1
+            cur2 = self._conn.execute(
+                """
+                UPDATE user_quotas
+                   SET ai_chat_count = ai_chat_count + 1,
+                       updated_at    = ?
+                 WHERE ip_address = ?
+                   AND quota_date = ?
+                   AND ai_chat_count < ?
+                """,
+                (now, ip_address, quota_date, limit),
+            )
+            if cur2.rowcount > 0:
+                row2 = self._conn.execute(
+                    "SELECT ai_chat_count FROM user_quotas WHERE ip_address = ? AND quota_date = ?",
+                    (ip_address, quota_date),
+                ).fetchone()
+                self._maybe_commit()
+                return True, int(row2[0]) if row2 else 1
+            current = self._conn.execute(
+                "SELECT ai_chat_count FROM user_quotas WHERE ip_address = ? AND quota_date = ?",
+                (ip_address, quota_date),
+            ).fetchone()
+            self._maybe_commit()
+            return False, int(current[0]) if current else limit
 
     def increment_ai_chat_quota(
         self,
