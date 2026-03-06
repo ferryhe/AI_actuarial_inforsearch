@@ -309,6 +309,12 @@ def _write_yaml(path: str, data: dict[str, Any]) -> None:
         yaml.dump(data, f, sort_keys=False, allow_unicode=True)
 
 
+def _get_default_catalog_provider() -> str:
+    """Return the configured catalog provider from sites.yaml, defaulting to 'openai'."""
+    ai_cfg = _load_yaml(_get_sites_config_path(), default={}).get("ai_config") or {}
+    return ai_cfg.get("catalog", {}).get("provider", "openai")
+
+
 def _normalize_list(value: Any, *, field_name: str) -> list[str]:
     if value is None:
         return []
@@ -2414,7 +2420,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
 
                 retry_errors = bool(data.get("retry_errors", False))
-                provider = str(data.get("provider") or "openai").strip().lower()
+                provider = str(data.get("provider") or _get_default_catalog_provider()).strip().lower()
                 input_source = str(data.get("input_source") or "markdown").strip().lower()
                 overwrite_existing = bool(data.get("overwrite_existing", False))
                 skip_existing = bool(data.get("skip_existing", True))
@@ -3753,7 +3759,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
             from ..catalog import CATALOG_VERSION as BASE_CATALOG_VERSION
 
-            provider = str(request.args.get("provider") or "local").strip().lower()
+            provider = str(request.args.get("provider") or _get_default_catalog_provider()).strip().lower()
             input_source = str(request.args.get("input_source") or "source").strip().lower()
             category_filter = str(request.args.get("category") or "").strip()
             catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"

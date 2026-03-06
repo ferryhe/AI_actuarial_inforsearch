@@ -406,12 +406,8 @@
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.ai_provider">AI Provider</label>
-                <select name="provider">
-                    <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
-                        OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
-                    </option>
-                    <option value="local" {% if not openai_configured %}selected{% endif %}>Local (KeyBERT)</option>
-                    <option value="anthropic" disabled>Anthropic (Coming Soon)</option>
+                <select name="provider" id="catalog-provider-select">
+                    <option value="">Loading providers...</option>
                 </select>
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="tasks.start_cataloging">Start Cataloging</button>
@@ -1179,12 +1175,67 @@ async function openWebSearchModal() {
     if (cb) toggleSearchDefaults(cb.checked);
 }
 function openQuickCheckModal() { openModal('quick-check-modal'); }
+const _CATALOG_PROVIDER_NAMES = {
+    openai: 'OpenAI', mistral: 'Mistral AI', anthropic: 'Anthropic',
+    google: 'Google Gemini', deepseek: 'DeepSeek', zhipuai: '智谱AI',
+    moonshot: 'Moonshot (Kimi)', kimi: 'Kimi', minimax: 'MiniMax',
+    qwen: '阿里通义 (Qwen)', siliconflow: 'SiliconFlow', cohere: 'Cohere',
+    local: 'Local (KeyBERT)',
+};
+
+async function loadCatalogProviders() {
+    const sel = document.getElementById('catalog-provider-select');
+    if (!sel) return;
+    try {
+        const [modelsResp, providersResp] = await Promise.all([
+            fetch('/api/config/ai-models'),
+            fetch('/api/config/llm-providers')
+        ]);
+        const modelsData = await modelsResp.json();
+        const providersData = await providersResp.json();
+
+        // Build set of configured provider keys (plus 'local')
+        const configured = new Set(['local']);
+        (providersData.providers || []).forEach(p => configured.add(p.provider));
+
+        // Find providers that have catalog-capable models and are configured
+        const available = modelsData.available || {};
+        const catalogProviders = Object.keys(available).filter(provider => {
+            if (!configured.has(provider)) return false;
+            return (available[provider] || []).some(m => (m.types || []).includes('catalog'));
+        });
+
+        if (catalogProviders.length === 0) catalogProviders.push('local');
+
+        const currentProvider = modelsData.current?.catalog?.provider || 'openai';
+
+        sel.innerHTML = '';
+        // Ensure the configured provider is always listed first (even if not in available)
+        const orderedProviders = currentProvider && !catalogProviders.includes(currentProvider)
+            ? [currentProvider, ...catalogProviders]
+            : catalogProviders;
+
+        orderedProviders.forEach(provider => {
+            const opt = document.createElement('option');
+            opt.value = provider;
+            opt.textContent = _CATALOG_PROVIDER_NAMES[provider] || provider;
+            if (provider === currentProvider) opt.selected = true;
+            sel.appendChild(opt);
+        });
+
+        loadCatalogStats();
+    } catch (err) {
+        console.error('Failed to load catalog providers:', err);
+        sel.innerHTML = '<option value="local">Local (KeyBERT)</option><option value="openai">OpenAI</option>';
+    }
+}
+
 let _catalogModalBound = false;
 
 function _bindCatalogModal() {
     if (_catalogModalBound) return;
     _catalogModalBound = true;
-    const providerEl = document.querySelector('#catalog-form select[name="provider"]');
+    const providerEl = document.getElementById('catalog-provider-select');
     const sourceEl = document.querySelector('#catalog-form select[name="input_source"]');
 
     if (providerEl) providerEl.addEventListener('change', () => loadCatalogStats());
@@ -1195,6 +1246,7 @@ function openCatalogModal() {
     openModal('catalog-modal');
     _bindCatalogModal();
     toggleCatalogScopeMode();
+    loadCatalogProviders();
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
