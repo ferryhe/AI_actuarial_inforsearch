@@ -43,34 +43,36 @@
                 <ul class="navbar-menu">
                     <li><a href="{{ url_for('index') }}" class="nav-link" data-i18n="nav.dashboard">Dashboard</a></li>
                     <li><a href="{{ url_for('database') }}" class="nav-link" data-i18n="nav.database">Database</a></li>
-                    {% if auth_group in ['admin', 'operator', 'reader'] %}
+                    {% if auth_group in ['admin', 'operator_ai', 'reader', 'registered', 'premium'] %}
                     <li><a href="{{ url_for('chat') }}" class="nav-link" data-i18n="nav.chat">Chat</a></li>
                     {% endif %}
-                    {% if auth_group in ['admin', 'operator'] %}
+                    {% if auth_group in ['admin', 'operator', 'operator_ai'] %}
                     <li><a href="{{ url_for('tasks') }}" class="nav-link" data-i18n="nav.tasks">Tasks</a></li>
                     {% endif %}
 
-                    {% if auth_group in ['admin', 'operator', 'reader'] %}
+                    {% if auth_group in ['admin', 'operator', 'operator_ai', 'reader', 'registered', 'premium'] %}
                     <li><a href="{{ url_for('rag_management') }}" class="nav-link" data-i18n="nav.knowledge_bases">Knowledge Bases</a></li>
                     {% endif %}
 
                     {% if auth_group == 'admin' %}
                     <li><a href="{{ url_for('settings') }}" class="nav-link" data-i18n="nav.settings">Settings</a></li>
+                    <li><a href="{{ url_for('admin_users') }}" class="nav-link">Users</a></li>
                     {% endif %}
                 </ul>
                 {% if auth_token %}
                 <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
-                    <span style="font-size: 0.9rem; opacity: 0.85;">
+                    <a href="{{ url_for('user_profile') }}" style="font-size: 0.9rem; opacity: 0.85; text-decoration:none; color:inherit;">
                         {{ auth_subject or 'Unknown' }} ({{ auth_group or 'n/a' }})
-                    </span>
+                    </a>
                     <form method="POST" action="{{ url_for('logout') }}" style="margin: 0;">
                         <button type="submit" class="btn btn-secondary btn-sm" data-i18n="nav.logout">Logout</button>
                     </form>
                 </div>
                 {% else %}
                 <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
-                    {% if request.endpoint != 'login' %}
-                    <a href="{{ url_for('login') }}" class="btn btn-secondary btn-sm" data-i18n="nav.login">Login</a>
+                    {% if request.endpoint not in ('email_login', 'login') %}
+                    <a href="{{ url_for('register') }}" class="btn btn-primary btn-sm">Register</a>
+                    <a href="{{ url_for('email_login') }}" class="btn btn-secondary btn-sm" data-i18n="nav.login">Sign In</a>
                     {% endif %}
                 </div>
                 {% endif %}

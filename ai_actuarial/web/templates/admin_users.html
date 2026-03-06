@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+
+{% block title %}User Management - AI Actuarial Info Search{% endblock %}
+
+{% block extra_css %}
+<style>
+  .um-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 1.5rem 0 1rem;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .um-filters {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .um-filters input, .um-filters select {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    font-size: .9rem;
+  }
+  .user-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .9rem;
+  }
+  .user-table th {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--border-color);
+    color: var(--text-secondary);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .user-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+  }
+  .user-table tr:hover td { background: rgba(59,130,246,.04); }
+  .badge-role {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: .75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .badge-registered  { background: rgba(59,130,246,.15);  color: #3b82f6; }
+  .badge-premium     { background: rgba(245,158,11,.15);  color: #f59e0b; }
+  .badge-admin       { background: rgba(239,68,68,.15);   color: #ef4444; }
+  .badge-operator, .badge-operator_ai { background: rgba(16,185,129,.15); color: #10b981; }
+  .badge-disabled    { background: rgba(107,114,128,.15); color: #6b7280; }
+  .um-actions { display: flex; gap: 6px; }
+  .btn-xs { padding: 3px 8px; font-size: .78rem; border-radius: 6px; }
+  .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 1.5rem; flex-wrap: wrap; }
+  .pagination a, .pagination span {
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    text-decoration: none;
+    font-size: .9rem;
+    color: var(--text-primary);
+  }
+  .pagination a:hover { background: var(--primary-color); color: #fff; border-color: var(--primary-color); }
+  .pagination .current { background: var(--primary-color); color: #fff; border-color: var(--primary-color); font-weight: 600; }
+  .activity-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.5);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+  }
+  .activity-modal.open { display: flex; }
+  .activity-inner {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+    width: min(640px, 96vw);
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .activity-list { list-style: none; padding: 0; margin: 0; font-size: .85rem; }
+  .activity-list li {
+    display: flex; gap: 10px; padding: 7px 0;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .activity-list li:last-child { border-bottom: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="um-header">
+    <h2 style="margin:0;">User Management</h2>
+    <div class="um-filters">
+      <form method="GET" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <input name="q" type="text" value="{{ search }}" placeholder="Search email / name…" style="width:200px;">
+        <select name="role">
+          <option value="">All Roles</option>
+          {% for r in valid_roles %}
+          <option value="{{ r }}" {% if role_filter == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+        <a href="{{ url_for('admin_users') }}" class="btn btn-secondary btn-sm">Reset</a>
+      </form>
+    </div>
+  </div>
+
+  <div style="color:var(--text-secondary); font-size:.85rem; margin-bottom:8px;">
+    {{ total }} user{{ 's' if total != 1 }} found
+  </div>
+
+  <div style="overflow-x:auto;">
+    <table class="user-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Email</th>
+          <th>Name</th>
+          <th>Role</th>
+          <th>Status</th>
+          <th>Joined</th>
+          <th>Last Login</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr id="user-row-{{ u.id }}">
+          <td>{{ u.id }}</td>
+          <td><code style="font-size:.85rem;">{{ u.email }}</code></td>
+          <td>{{ u.display_name or '—' }}</td>
+          <td>
+            <span class="badge-role badge-{{ u.role }}">{{ u.role }}</span>
+          </td>
+          <td>
+            {% if u.is_active %}
+            <span style="color:#10b981;">● Active</span>
+            {% else %}
+            <span class="badge-role badge-disabled">Disabled</span>
+            {% endif %}
+          </td>
+          <td>{{ (u.created_at or '')[:10] }}</td>
+          <td>{{ (u.last_login_at or '')[:10] or '—' }}</td>
+          <td>
+            <div class="um-actions">
+              <button class="btn btn-secondary btn-xs"
+                      onclick="openRoleDialog({{ u.id }}, '{{ u.email }}', '{{ u.role }}')">
+                Role
+              </button>
+              <button class="btn btn-secondary btn-xs"
+                      onclick="resetQuota({{ u.id }})">
+                Reset Quota
+              </button>
+              <button class="btn btn-secondary btn-xs"
+                      onclick="toggleActive({{ u.id }}, {{ 'true' if u.is_active else 'false' }})">
+                {{ 'Disable' if u.is_active else 'Enable' }}
+              </button>
+              <button class="btn btn-secondary btn-xs"
+                      onclick="viewActivity({{ u.id }}, '{{ u.email }}')">
+                Log
+              </button>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" style="text-align:center; color:var(--text-secondary);">No users found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  {% set total_pages = ((total - 1) // per_page + 1) if total > 0 else 1 %}
+  {% if total_pages > 1 %}
+  <div class="pagination">
+    {% if page > 1 %}
+    <a href="{{ url_for('admin_users', page=page-1, role=role_filter, q=search) }}">‹ Prev</a>
+    {% endif %}
+    {% for p in range([1, page-2]|max, [total_pages+1, page+3]|min) %}
+    {% if p == page %}
+    <span class="current">{{ p }}</span>
+    {% else %}
+    <a href="{{ url_for('admin_users', page=p, role=role_filter, q=search) }}">{{ p }}</a>
+    {% endif %}
+    {% endfor %}
+    {% if page < total_pages %}
+    <a href="{{ url_for('admin_users', page=page+1, role=role_filter, q=search) }}">Next ›</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- Role Change Dialog -->
+<div id="role-modal" class="activity-modal">
+  <div class="activity-inner" style="max-height: none; width: min(400px, 96vw);">
+    <h3 style="margin:0 0 12px 0;">Change Role</h3>
+    <div id="role-modal-email" style="color:var(--text-secondary); margin-bottom:12px; font-size:.9rem;"></div>
+    <select id="role-modal-select" class="form-control" style="margin-bottom:14px;">
+      {% for r in valid_roles %}
+      <option value="{{ r }}">{{ r }}</option>
+      {% endfor %}
+    </select>
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-primary" onclick="submitRoleChange()">Save</button>
+      <button class="btn btn-secondary" onclick="closeRoleModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Activity Log Modal -->
+<div id="activity-modal" class="activity-modal">
+  <div class="activity-inner">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0;" id="activity-modal-title">Activity Log</h3>
+      <button class="btn btn-secondary btn-xs" onclick="closeActivityModal()">✕ Close</button>
+    </div>
+    <ul class="activity-list" id="activity-list-content">
+      <li>Loading…</li>
+    </ul>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  let _roleUserId = null;
+
+  function openRoleDialog(userId, email, currentRole) {
+    _roleUserId = userId;
+    document.getElementById('role-modal-email').textContent = email;
+    const sel = document.getElementById('role-modal-select');
+    sel.value = currentRole;
+    document.getElementById('role-modal').classList.add('open');
+  }
+  function closeRoleModal() {
+    document.getElementById('role-modal').classList.remove('open');
+    _roleUserId = null;
+  }
+  async function submitRoleChange() {
+    if (!_roleUserId) return;
+    const role = document.getElementById('role-modal-select').value;
+    try {
+      const r = await fetch(`/api/admin/users/${_roleUserId}/role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      });
+      const d = await r.json();
+      if (!d.success) { alert('Error: ' + (d.error || 'Unknown')); return; }
+      location.reload();
+    } catch (e) { alert('Request failed: ' + e); }
+  }
+
+  async function resetQuota(userId) {
+    if (!confirm('Reset AI chat quota for this user for today?')) return;
+    try {
+      const r = await fetch(`/api/admin/users/${userId}/reset-quota`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const d = await r.json();
+      if (d.success) { alert('Quota reset successfully.'); }
+      else { alert('Error: ' + (d.error || 'Unknown')); }
+    } catch (e) { alert('Request failed: ' + e); }
+  }
+
+  async function toggleActive(userId, currentlyActive) {
+    const action = currentlyActive ? 'disable' : 'enable';
+    if (!confirm(`Are you sure you want to ${action} this user?`)) return;
+    try {
+      const r = await fetch(`/api/admin/users/${userId}/active`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: !currentlyActive }),
+      });
+      const d = await r.json();
+      if (d.success) { location.reload(); }
+      else { alert('Error: ' + (d.error || 'Unknown')); }
+    } catch (e) { alert('Request failed: ' + e); }
+  }
+
+  async function viewActivity(userId, email) {
+    document.getElementById('activity-modal-title').textContent = `Activity: ${email}`;
+    document.getElementById('activity-list-content').innerHTML = '<li>Loading…</li>';
+    document.getElementById('activity-modal').classList.add('open');
+    try {
+      const r = await fetch(`/api/admin/users/${userId}/activity?limit=50`);
+      const d = await r.json();
+      const list = document.getElementById('activity-list-content');
+      if (!d.success || !d.logs.length) {
+        list.innerHTML = '<li>No activity recorded.</li>';
+        return;
+      }
+      list.innerHTML = d.logs.map(l => `
+        <li>
+          <span style="color:var(--text-secondary); white-space:nowrap;">${(l.created_at||'').slice(0,19).replace('T',' ')}</span>
+          <strong>${l.action}</strong>
+          ${l.resource ? `<span style="color:var(--text-secondary);">${l.resource}</span>` : ''}
+          ${l.detail ? `<span style="font-size:.8rem; color:var(--text-secondary);">${l.detail}</span>` : ''}
+        </li>
+      `).join('');
+    } catch (e) {
+      document.getElementById('activity-list-content').innerHTML = '<li>Failed to load activity.</li>';
+    }
+  }
+
+  function closeActivityModal() {
+    document.getElementById('activity-modal').classList.remove('open');
+  }
+
+  // Close modals on backdrop click
+  document.querySelectorAll('.activity-modal').forEach(m => {
+    m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
+  });
+</script>
+{% endblock %}

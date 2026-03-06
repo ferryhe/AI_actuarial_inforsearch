@@ -155,6 +155,7 @@ _PERMISSIONS: frozenset[str] = frozenset(
         "chat.view",
         "chat.query",
         "chat.conversations",
+        "users.manage",
     }
 )
 
@@ -172,6 +173,31 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
 )
 
 _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
+    # Registered users (email-based): KB view, limited AI chat
+    "registered": frozenset(
+        {
+            "stats.read",
+            "files.read",
+            "catalog.read",
+            "markdown.read",
+            "chat.view",
+            "chat.query",
+            "chat.conversations",
+        }
+    ),
+    # Premium members: same as registered but higher AI quota (enforced by quota layer)
+    "premium": frozenset(
+        {
+            "stats.read",
+            "files.read",
+            "catalog.read",
+            "markdown.read",
+            "chat.view",
+            "chat.query",
+            "chat.conversations",
+        }
+    ),
+    # Reader (legacy token-based): read + download + chat
     "reader": frozenset(
         {
             "stats.read",
@@ -184,7 +210,28 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "chat.conversations",
         }
     ),
+    # Operator without AI: task management, no chat
     "operator": frozenset(
+        {
+            "stats.read",
+            "files.read",
+            "files.download",
+            "files.delete",
+            "catalog.read",
+            "catalog.write",
+            "markdown.read",
+            "markdown.write",
+            "config.read",
+            "config.write",
+            "schedule.write",
+            "tasks.view",
+            "tasks.run",
+            "tasks.stop",
+            "logs.task.read",
+        }
+    ),
+    # Operator with AI: full operator + AI chat
+    "operator_ai": frozenset(
         {
             "stats.read",
             "files.read",
@@ -213,6 +260,65 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
 def _hash_token(token: str) -> str:
     # Baseline: sha256(token) hex. (Never store plaintext tokens in DB.)
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# AI Chat quota limits per role (queries per day)
+# ---------------------------------------------------------------------------
+_AI_CHAT_QUOTA: dict[str, int] = {
+    "anonymous": 1,       # Not logged in: 1 query/day per IP
+    "registered": 5,      # Registered email users: 5/day
+    "premium": 100,       # Premium members: 100/day
+    "reader": 50,         # Legacy token reader: generous limit
+    "operator": 0,        # Operator (no AI): no chat
+    "operator_ai": 100,   # Operator with AI: 100/day
+    "admin": 10000,       # Admin: effectively unlimited
+}
+
+_VALID_USER_ROLES: tuple[str, ...] = (
+    "registered",
+    "premium",
+    "operator",
+    "operator_ai",
+    "admin",
+)
+
+
+def _hash_password(password: str) -> str:
+    """Return a bcrypt-style password hash using PBKDF2."""
+    import hmac as _hmac
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000)
+    return f"pbkdf2:sha256:260000:{salt}:{dk.hex()}"
+
+
+def _check_password(password: str, password_hash: str) -> bool:
+    """Verify a password against a stored hash."""
+    try:
+        parts = password_hash.split(":")
+        if len(parts) != 5 or parts[0] != "pbkdf2":
+            return False
+        _, algo, iterations, salt, stored = parts
+        dk = hashlib.pbkdf2_hmac(algo, password.encode(), salt.encode(), int(iterations))
+        return secrets.compare_digest(dk.hex(), stored)
+    except Exception:
+        return False
+
+
+def _get_today_date() -> str:
+    """Return today's date as YYYY-MM-DD (UTC)."""
+    from datetime import timezone as _tz
+    return datetime.now(_tz.utc).strftime("%Y-%m-%d")
+
+
+def _get_client_ip() -> str:
+    """Return the client IP address from the request."""
+    # Trust X-Forwarded-For only when explicitly configured (TRUST_PROXY=true).
+    if _env_flag("TRUST_PROXY", False):
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.remote_addr or "unknown"
 
 
 def _extract_bearer_token() -> str | None:
@@ -659,15 +765,34 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
         token: dict | None = None
 
-        # 1) Session-based auth (web UI)
-        token_id = session.get("auth_token_id")
-        if token_id is not None:
+        # 1) Email-user session (web UI registration/login)
+        email_user_id = session.get("email_user_id")
+        if email_user_id is not None:
             try:
-                token = storage.get_auth_token_by_id(int(token_id))
+                user = storage.get_user_by_id(int(email_user_id))
+                if user and user.get("is_active"):
+                    # Synthesise a token-like dict for the rest of the middleware
+                    token = {
+                        "id": None,
+                        "subject": user["email"],
+                        "group_name": user["role"],
+                        "is_active": 1,
+                        "_email_user_id": user["id"],
+                        "_email_user": user,
+                    }
             except Exception:
                 token = None
 
-        # 2) Header token (automation, or API clients)
+        # 2) Session-based auth (legacy token, web UI)
+        if not token:
+            token_id = session.get("auth_token_id")
+            if token_id is not None:
+                try:
+                    token = storage.get_auth_token_by_id(int(token_id))
+                except Exception:
+                    token = None
+
+        # 3) Header token (automation, or API clients)
         if not token:
             presented = _extract_bearer_token()
             if presented:
@@ -711,7 +836,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         # Public endpoints
         if request.path.startswith("/static/"):
             return None
-        if request.path in {"/login", "/logout"}:
+        if request.path in {"/login", "/logout", "/register", "/email-login", "/upgrade"}:
             return None
         # Allow health endpoint (if present)
         if request.path == "/health":
@@ -721,8 +846,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         # avoid opening the DB and treat the request as "guest".
         if not require_auth:
             token_id = session.get("auth_token_id")
+            email_user_id = session.get("email_user_id")
             presented = _extract_bearer_token()
-            if token_id is None and not presented:
+            if token_id is None and email_user_id is None and not presented:
                 g._auth_token = None
                 g._auth_perms = frozenset()
                 return None
@@ -736,7 +862,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             # Optional: touch last_used_at (off by default to avoid write amplification)
             if _env_flag("TOUCH_TOKEN_LAST_USED", False):
                 try:
-                    if token:
+                    if token and token.get("id") is not None:
                         storage.touch_auth_token_last_used(int(token["id"]))
                 except Exception as exc:
                     # Best-effort: do not break the request if updating last_used_at fails.
@@ -753,6 +879,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.context_processor
     def _inject_auth_context():
         token = getattr(g, "_auth_token", None)
+        email_user = (token or {}).get("_email_user") if token else None
         openai_configured = False
         try:
             from config.settings import get_settings
@@ -764,6 +891,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             "auth_token": token,
             "auth_group": (token or {}).get("group_name"),
             "auth_subject": (token or {}).get("subject"),
+            "auth_email_user": email_user,
             "require_auth": require_auth,
             "openai_configured": openai_configured,
             "enable_global_logs_api": _env_flag("ENABLE_GLOBAL_LOGS_API", False),
@@ -881,6 +1009,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         """Logout (clear cookie session)."""
         session.pop("auth_token_id", None)
         session.pop("auth_group_name", None)
+        session.pop("email_user_id", None)
         return redirect(url_for("index"))
 
     if csrf is not None:
@@ -889,7 +1018,357 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         csrf.exempt(login)
         csrf.exempt(logout)
 
-    @app.route("/api/auth/me")
+    # =========================================================================
+    # Email-based Registration and Login
+    # =========================================================================
+
+    @app.route("/register", methods=["GET", "POST"])
+    def register():
+        """Email-based user registration."""
+        token = getattr(g, "_auth_token", None)
+        if token:
+            return redirect(url_for("index"))
+        if request.method == "GET":
+            return render_template("register.html")
+        # POST
+        data = request.get_json(silent=True) if _is_api_request() else None
+        if data is None:
+            data = {
+                "email": request.form.get("email", ""),
+                "password": request.form.get("password", ""),
+                "display_name": request.form.get("display_name", ""),
+            }
+        email = (data.get("email") or "").strip().lower()
+        password = (data.get("password") or "").strip()
+        display_name = (data.get("display_name") or "").strip()
+        if not email or "@" not in email:
+            if _is_api_request():
+                return _api_error("Valid email required", status_code=400)
+            return render_template("register.html", error="Valid email address required.")
+        if len(password) < 8:
+            if _is_api_request():
+                return _api_error("Password must be at least 8 characters", status_code=400)
+            return render_template("register.html", error="Password must be at least 8 characters.", email=email, display_name=display_name)
+        storage = None
+        try:
+            storage = Storage(db_path)
+            user_id = storage.create_user(
+                email=email,
+                password_hash=_hash_password(password),
+                role="registered",
+                display_name=display_name or None,
+            )
+            storage.log_user_activity("register", user_id=user_id, ip_address=_get_client_ip(), detail=f"email={email}")
+            session["email_user_id"] = user_id
+            if _is_api_request():
+                return jsonify({"success": True, "user_id": user_id, "email": email}), 201
+            return redirect(url_for("index"))
+        except ValueError as exc:
+            if _is_api_request():
+                return _api_error(str(exc), status_code=409)
+            return render_template("register.html", error=str(exc), email=email, display_name=display_name)
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/email-login", methods=["GET", "POST"])
+    def email_login():
+        """Email+password login page."""
+        token = getattr(g, "_auth_token", None)
+        if token:
+            return redirect(url_for("index"))
+        if request.method == "GET":
+            return render_template("email_login.html", next=request.args.get("next", ""))
+        data = request.get_json(silent=True) if _is_api_request() else None
+        if data is None:
+            data = {
+                "email": request.form.get("email", ""),
+                "password": request.form.get("password", ""),
+            }
+        email = (data.get("email") or "").strip().lower()
+        password = (data.get("password") or "").strip()
+        if not email or not password:
+            if _is_api_request():
+                return _api_error("Email and password required", status_code=400)
+            return render_template("email_login.html", error="Email and password required.")
+        storage = None
+        try:
+            storage = Storage(db_path)
+            user = storage.get_user_by_email(email)
+            if not user or not _check_password(password, user["password_hash"]):
+                if _is_api_request():
+                    return _api_error("Invalid email or password", status_code=401)
+                return render_template("email_login.html", error="Invalid email or password.")
+            if not user.get("is_active"):
+                if _is_api_request():
+                    return _api_error("Account disabled", status_code=403)
+                return render_template("email_login.html", error="Account has been disabled.")
+            session["email_user_id"] = user["id"]
+            storage.update_user_last_login(user["id"])
+            storage.log_user_activity("login", user_id=user["id"], ip_address=_get_client_ip())
+            if _is_api_request():
+                return jsonify({"success": True, "role": user["role"]})
+            next_url = request.args.get("next") or request.form.get("next") or "/"
+            if not next_url.startswith("/"):
+                next_url = "/"
+            return redirect(next_url)
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    if csrf is not None:
+        csrf.exempt(register)
+        csrf.exempt(email_login)
+
+    # =========================================================================
+    # User Profile / Quota Page
+    # =========================================================================
+
+    @app.route("/profile")
+    def user_profile():
+        """User profile and quota dashboard."""
+        token = getattr(g, "_auth_token", None)
+        if not token:
+            return redirect(url_for("email_login", next="/profile"))
+        email_user = token.get("_email_user")
+        if not email_user:
+            # Token-based user: show basic profile
+            return render_template("profile.html", email_user=None, token=token)
+        storage = None
+        try:
+            storage = Storage(db_path)
+            today = _get_today_date()
+            used = storage.get_ai_chat_quota_used(
+                today, user_id=email_user["id"]
+            )
+            role = email_user.get("role", "registered")
+            limit = _AI_CHAT_QUOTA.get(role, 5)
+            recent_activity = storage.list_user_activity(user_id=email_user["id"], limit=20)
+            return render_template(
+                "profile.html",
+                email_user=email_user,
+                token=token,
+                quota_used=used,
+                quota_limit=limit,
+                quota_date=today,
+                recent_activity=recent_activity,
+            )
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/upgrade")
+    def upgrade_page():
+        """Membership upgrade page."""
+        token = getattr(g, "_auth_token", None)
+        email_user = (token or {}).get("_email_user") if token else None
+        return render_template("upgrade.html", email_user=email_user, token=token)
+
+    # =========================================================================
+    # Admin User Management
+    # =========================================================================
+
+    @app.route("/admin/users")
+    @require_permissions("users.manage")
+    def admin_users():
+        """Admin user management page."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            page = _parse_int_clamped(request.args.get("page", 1), default=1, min_value=1)
+            per_page = 20
+            role_filter = request.args.get("role") or None
+            search = (request.args.get("q") or "").strip() or None
+            users, total = storage.list_users(page=page, per_page=per_page, role=role_filter, search=search)
+            return render_template(
+                "admin_users.html",
+                users=users,
+                total=total,
+                page=page,
+                per_page=per_page,
+                role_filter=role_filter or "",
+                search=search or "",
+                valid_roles=list(_VALID_USER_ROLES),
+            )
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/admin/users")
+    @require_permissions("users.manage")
+    def api_admin_list_users():
+        """List users (admin API)."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            page = _parse_int_clamped(request.args.get("page", 1), default=1, min_value=1)
+            per_page = _parse_int_clamped(request.args.get("per_page", 50), default=50, min_value=1, max_value=100)
+            role_filter = request.args.get("role") or None
+            search = (request.args.get("q") or "").strip() or None
+            users, total = storage.list_users(page=page, per_page=per_page, role=role_filter, search=search)
+            # Strip password hashes from response
+            safe_users = [{k: v for k, v in u.items() if k != "password_hash"} for u in users]
+            return jsonify({"success": True, "users": safe_users, "total": total, "page": page, "per_page": per_page})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/admin/users/<int:target_user_id>/role", methods=["POST"])
+    @require_permissions("users.manage")
+    def api_admin_set_user_role(target_user_id: int):
+        """Change a user's role (admin)."""
+        data = request.get_json(silent=True) or {}
+        new_role = (data.get("role") or "").strip().lower()
+        if new_role not in _VALID_USER_ROLES:
+            return _api_error(f"Invalid role. Valid roles: {', '.join(_VALID_USER_ROLES)}", status_code=400)
+        storage = None
+        try:
+            storage = Storage(db_path)
+            ok = storage.update_user_role(target_user_id, new_role)
+            if not ok:
+                return _api_error("User not found", status_code=404)
+            actor = getattr(g, "_auth_token", {}) or {}
+            storage.log_user_activity(
+                "admin_set_role",
+                user_id=target_user_id,
+                ip_address=_get_client_ip(),
+                detail=f"new_role={new_role} by {actor.get('subject', 'unknown')}",
+            )
+            return jsonify({"success": True, "user_id": target_user_id, "role": new_role})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/admin/users/<int:target_user_id>/active", methods=["POST"])
+    @require_permissions("users.manage")
+    def api_admin_set_user_active(target_user_id: int):
+        """Enable or disable a user account (admin)."""
+        data = request.get_json(silent=True) or {}
+        is_active = bool(data.get("is_active", True))
+        storage = None
+        try:
+            storage = Storage(db_path)
+            ok = storage.update_user_active(target_user_id, is_active)
+            if not ok:
+                return _api_error("User not found", status_code=404)
+            actor = getattr(g, "_auth_token", {}) or {}
+            storage.log_user_activity(
+                "admin_set_active",
+                user_id=target_user_id,
+                ip_address=_get_client_ip(),
+                detail=f"is_active={is_active} by {actor.get('subject', 'unknown')}",
+            )
+            return jsonify({"success": True, "user_id": target_user_id, "is_active": is_active})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/admin/users/<int:target_user_id>/reset-quota", methods=["POST"])
+    @require_permissions("users.manage")
+    def api_admin_reset_user_quota(target_user_id: int):
+        """Reset a user's AI chat quota (admin)."""
+        data = request.get_json(silent=True) or {}
+        quota_date = data.get("quota_date") or _get_today_date()
+        storage = None
+        try:
+            storage = Storage(db_path)
+            storage.reset_user_quota(target_user_id, quota_date)
+            actor = getattr(g, "_auth_token", {}) or {}
+            storage.log_user_activity(
+                "admin_reset_quota",
+                user_id=target_user_id,
+                ip_address=_get_client_ip(),
+                detail=f"date={quota_date} by {actor.get('subject', 'unknown')}",
+            )
+            return jsonify({"success": True, "user_id": target_user_id, "quota_date": quota_date})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/admin/users/<int:target_user_id>/activity")
+    @require_permissions("users.manage")
+    def api_admin_user_activity(target_user_id: int):
+        """Get activity log for a user (admin)."""
+        limit = _parse_int_clamped(request.args.get("limit", 50), default=50, min_value=1, max_value=200)
+        offset = _parse_int_clamped(request.args.get("offset", 0), default=0, min_value=0)
+        storage = None
+        try:
+            storage = Storage(db_path)
+            logs = storage.list_user_activity(user_id=target_user_id, limit=limit, offset=offset)
+            return jsonify({"success": True, "logs": logs})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    # =========================================================================
+    # AI Chat Quota Check API
+    # =========================================================================
+
+    @app.route("/api/user/quota")
+    def api_user_quota():
+        """Return the current user's AI chat quota status."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            _load_auth_from_request(storage)
+            token = getattr(g, "_auth_token", None)
+            today = _get_today_date()
+            if token:
+                email_user = token.get("_email_user")
+                role = (token.get("group_name") or "registered").lower()
+                if email_user:
+                    used = storage.get_ai_chat_quota_used(today, user_id=email_user["id"])
+                else:
+                    ip = _get_client_ip()
+                    used = storage.get_ai_chat_quota_used(today, ip_address=ip)
+            else:
+                role = "anonymous"
+                ip = _get_client_ip()
+                used = storage.get_ai_chat_quota_used(today, ip_address=ip)
+            limit = _AI_CHAT_QUOTA.get(role, 1)
+            return jsonify({
+                "success": True,
+                "role": role,
+                "used": used,
+                "limit": limit,
+                "remaining": max(0, limit - used),
+                "date": today,
+            })
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+
     def api_auth_me():
         """Return current token identity and permissions."""
         storage = None
