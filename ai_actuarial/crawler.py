@@ -260,9 +260,19 @@ class Crawler:
                     u for u in sitemap_urls
                     if any(p.search(u) for p in allow_patterns)
                 ]
-            page_queue: deque[tuple[str, int]] = deque(
-                [(u, 0) for u in sitemap_urls[: cfg.max_pages]]
-            )
+            if sitemap_urls:
+                page_queue: deque[tuple[str, int]] = deque(
+                    [(u, 0) for u in sitemap_urls[: cfg.max_pages]]
+                )
+            else:
+                # All sitemap URLs were filtered out by allow_patterns;
+                # fall back to the site root so the crawl is not silently a no-op.
+                logger.debug(
+                    "Sitemap URLs all filtered by allow_url_patterns for %r; "
+                    "falling back to seed URL %s",
+                    cfg.name, cfg.url,
+                )
+                page_queue = deque([(cfg.url, 0)])
         else:
             page_queue = deque([(cfg.url, 0)])
 
