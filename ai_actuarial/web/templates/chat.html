@@ -1701,5 +1701,47 @@
         }
     }
 })();
+
+// Check AI Configuration on load
+(async function checkAIConfig() {
+    try {
+        // Wait a bit for UI to settle
+        await new Promise(r => setTimeout(r, 1000));
+        
+        const [modelsResp, providersResp] = await Promise.all([
+            fetch('/api/config/ai-models'),
+            fetch('/api/config/llm-providers')
+        ]);
+        
+        if (modelsResp.ok && providersResp.ok) {
+            const modelsData = await modelsResp.json();
+            const providersData = await providersResp.json();
+            
+            const currentProvider = modelsData.current?.chatbot?.provider;
+            const configuredProviders = new Set((providersData.providers || []).map(p => p.provider));
+            configuredProviders.add('local'); 
+            
+            // If current provider is not in the configured list, it's missing API key/setup
+            if (currentProvider && !configuredProviders.has(currentProvider)) {
+                const _tF = k => window.I18n ? window.I18n.t(k) : k;
+                const msg = _tF('chat.provider_not_configured') || `The current AI Chat provider (${currentProvider}) is missing configuration.`;
+                
+                // Show toast
+                if (window.Toast) Toast.warning(msg);
+                
+                // Add visual alert above chat
+                const container = document.querySelector('.chat-container');
+                if (container) {
+                    const alert = document.createElement('div');
+                    alert.style.cssText = 'background: #fff3cd; color: #856404; padding: 12px; margin: 1rem 1rem 0; border-radius: 6px; border: 1px solid #ffeeba; display: flex; justify-content: space-between; align-items: center;';
+                    alert.innerHTML = `<span>${msg}</span> <a href="/settings" class="btn btn-sm btn-primary">Configure</a>`;
+                    container.parentNode.insertBefore(alert, container);
+                }
+            }
+        }
+    } catch(e) {
+        console.warn("AI config check skipped:", e);
+    }
+})();
 </script>
 {% endblock %}
