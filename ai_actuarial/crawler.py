@@ -39,6 +39,7 @@ class SiteConfig:
     exclude_keywords: list[str] | None = None
     exclude_prefixes: list[str] | None = None
     collect_page_content: bool = False  # Also save text extracted from HTML pages
+    content_selector: str | None = None  # CSS selector to narrow link extraction to content area
 
 
 class Crawler:
@@ -145,7 +146,10 @@ class Crawler:
             return True
         return False
 
-    def _extract_links(self, base_url: str, html: str) -> list[tuple[str, str]]:
+    def _extract_links(self, base_url: str, html: str, content_selector: str | None = None) -> list[tuple[str, str]]:
+        # If a content_selector is given, narrow HTML to matching section(s)
+        if content_selector:
+            html = self._extract_content_html(html, content_selector) or html
         out: list[tuple[str, str]] = []
         for match in re.finditer(
             r'<a[^>]+href=["\\\'](.*?)["\\\'][^>]*>(.*?)</a>',
@@ -173,6 +177,24 @@ class Crawler:
         base = os.path.basename(url)
         hay = f"{url} {base} {text}".lower()
         return any(k in hay for k in keywords)
+
+    @staticmethod
+    def _extract_content_html(html: str, selector: str) -> str | None:
+        """Extract HTML from elements matching a CSS selector.
+
+        Falls back to ``None`` if *beautifulsoup4* is not available or no
+        elements match.
+        """
+        try:
+            from bs4 import BeautifulSoup  # type: ignore
+        except ImportError:
+            logger.warning("beautifulsoup4 not installed; content_selector ignored")
+            return None
+        soup = BeautifulSoup(html, "html.parser")
+        parts = soup.select(selector)
+        if not parts:
+            return None
+        return "\n".join(str(p) for p in parts)
 
     def _load_sitemap(self, site_url: str) -> list[str]:
         sitemap_url = site_url.rstrip("/") + "/sitemap.xml"
@@ -302,7 +324,7 @@ class Crawler:
                 if page_item:
                     new_items.append(page_item)
 
-            links = self._extract_links(final_url, html)
+            links = self._extract_links(final_url, html, content_selector=cfg.content_selector)
             for link, link_text in links:
                 if exclude and self._is_excluded(link, exclude):
                     continue

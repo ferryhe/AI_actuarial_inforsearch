@@ -93,6 +93,77 @@ def serpapi_search(
     return results
 
 
+def serper_search(
+    query: str,
+    max_results: int,
+    api_key: str,
+    user_agent: str,
+    lang: str | None = None,
+    country: str | None = None,
+) -> list[SearchResult]:
+    """Search via Serper.dev Google Search API."""
+    url = "https://google.serper.dev/search"
+    payload = json.dumps(
+        _filter_params(
+            {
+                "q": query,
+                "num": max_results,
+                "hl": lang or None,
+                "gl": country or None,
+            }
+        )
+    ).encode("utf-8")
+    headers = {
+        "User-Agent": user_agent,
+        "Content-Type": "application/json",
+        "X-API-KEY": api_key,
+    }
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+    results = []
+    for item in data.get("organic", []):
+        link = item.get("link")
+        if link:
+            results.append(SearchResult(url=link, source="Web Search (Serper)"))
+    return results
+
+
+def tavily_search(
+    query: str,
+    max_results: int,
+    api_key: str,
+    user_agent: str,
+    lang: str | None = None,
+    country: str | None = None,
+) -> list[SearchResult]:
+    """Search via Tavily Search API."""
+    url = "https://api.tavily.com/search"
+    payload = json.dumps(
+        _filter_params(
+            {
+                "api_key": api_key,
+                "query": query,
+                "max_results": max_results,
+                "search_depth": "advanced",
+            }
+        )
+    ).encode("utf-8")
+    headers = {
+        "User-Agent": user_agent,
+        "Content-Type": "application/json",
+    }
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+    results = []
+    for item in data.get("results", []):
+        link = item.get("url")
+        if link:
+            results.append(SearchResult(url=link, source="Web Search (Tavily)"))
+    return results
+
+
 def search_all(
     queries: Iterable[str],
     max_results: int,
@@ -101,6 +172,8 @@ def search_all(
     user_agent: str,
     languages: Iterable[str] | None = None,
     country: str | None = None,
+    serper_key: str | None = None,
+    tavily_key: str | None = None,
 ) -> list[SearchResult]:
     all_results: list[SearchResult] = []
     lang_list = list(languages or ["en"])
@@ -121,6 +194,20 @@ def search_all(
                 try:
                     results = serpapi_search(
                         q, max_results, serpapi_key, user_agent, lang=lang, country=country
+                    )
+                except Exception:
+                    results = []
+            if not results and serper_key:
+                try:
+                    results = serper_search(
+                        q, max_results, serper_key, user_agent, lang=lang, country=country
+                    )
+                except Exception:
+                    results = []
+            if not results and tavily_key:
+                try:
+                    results = tavily_search(
+                        q, max_results, tavily_key, user_agent, lang=lang, country=country
                     )
                 except Exception:
                     results = []
