@@ -253,6 +253,13 @@ class Crawler:
 
         sitemap_urls = self._load_sitemap(cfg.url)
         if sitemap_urls:
+            # When allow_url_patterns is configured, only seed URLs that match at
+            # least one pattern — otherwise the allow-list is bypassed for sitemaps.
+            if allow_patterns:
+                sitemap_urls = [
+                    u for u in sitemap_urls
+                    if any(p.search(u) for p in allow_patterns)
+                ]
             page_queue: deque[tuple[str, int]] = deque(
                 [(u, 0) for u in sitemap_urls[: cfg.max_pages]]
             )
@@ -351,11 +358,13 @@ class Crawler:
                     # (e.g. /globalassets/ pattern gates PDF downloads, not just subpage queuing).
                     if allow_patterns and not any(p.search(link) for p in allow_patterns):
                         continue
-                    # Without allow_patterns, fall back to link-level keyword matching
-                    # (page-level is_relevant is no longer required, as it caused misses
-                    # when pages used abbreviations like "AI" instead of full keywords).
-                    if not allow_patterns and keywords and not self._link_matches_keywords(link, link_text, keywords):
-                        continue
+                    # Without allow_patterns, include the file if the page it lives on
+                    # is topically relevant OR the link URL/text matches keywords.
+                    # Both conditions were originally OR'd; dropping is_relevant caused
+                    # generic filenames (e.g. bulletin.pdf) on relevant pages to be missed.
+                    if not allow_patterns and keywords:
+                        if not (is_relevant or self._link_matches_keywords(link, link_text, keywords)):
+                            continue
                     if self.storage.file_exists(link):
                         continue
                     try:

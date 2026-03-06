@@ -259,9 +259,9 @@
         <small class="form-hint" data-i18n="fv.overwrite_hint">Unchecked = Skip already cataloged</small>
       </div>
       <div class="form-group">
-        <label data-i18n="fv.ai_provider">AI Provider</label>
+        <p id="file-catalog-ai-label" class="form-label" data-i18n="fv.ai_provider">AI Provider</p>
         <input type="hidden" name="provider" id="file-catalog-provider">
-        <p id="file-catalog-ai-info" class="form-hint" style="color:var(--text-secondary)">Loading catalog model...</p>
+        <p id="file-catalog-ai-info" class="form-hint" style="color:var(--text-secondary)" aria-labelledby="file-catalog-ai-label">Loading catalog model...</p>
         <small class="form-hint" data-i18n="fv.catalog_ai_config_info">AI model set in Settings → AI Config</small>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
