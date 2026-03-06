@@ -118,7 +118,7 @@
         <li class="no">Task management</li>
         <li class="no">System configuration</li>
       </ul>
-      <a href="mailto:admin@example.com?subject=Premium Upgrade Request" class="btn btn-primary" style="width:100%; text-align:center;">
+      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Premium Upgrade Request" class="btn btn-primary" style="width:100%; text-align:center;">
         Upgrade to Premium
       </a>
     </div>
@@ -136,7 +136,7 @@
         <li>Custom quota limits</li>
         <li>Audit logs access</li>
       </ul>
-      <a href="mailto:admin@example.com?subject=Enterprise Inquiry" class="btn btn-secondary" style="width:100%; text-align:center;">
+      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Enterprise Inquiry" class="btn btn-secondary" style="width:100%; text-align:center;">
         Contact Us
       </a>
     </div>
@@ -144,7 +144,7 @@
   </div>
 
   <div class="contact-note">
-    To upgrade, contact <a href="mailto:admin@example.com">admin@example.com</a> or ask your system administrator.<br>
+    To upgrade, contact <a href="mailto:{{ contact_email or 'admin@example.com' }}">{{ contact_email or 'admin@example.com' }}</a> or ask your system administrator.<br>
     Admins can change your role directly in the <a href="{{ url_for('admin_users') if auth_group == 'admin' else '#' }}">User Management</a> panel.
   </div>
 </div>

@@ -236,7 +236,10 @@ def register_chat_routes(
                     status_code=429,
                 )
         except Exception as _qe:
-            logger.warning("Quota check failed (non-fatal): %s", _qe)
+            logger.error(
+                "Quota check failed; blocking request to prevent metered resource bypass: %s", _qe
+            )
+            return _api_error("Service temporarily unavailable; please try again.", status_code=503)
         # --- End quota enforcement ---
 
         try:

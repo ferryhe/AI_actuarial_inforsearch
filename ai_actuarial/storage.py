@@ -2923,7 +2923,13 @@ class Storage:
         user_id: int | None = None,
         ip_address: str | None = None,
     ) -> int:
-        """Increment AI chat quota counter. Returns new count."""
+        """Increment AI chat quota counter. Returns new count.
+
+        .. deprecated::
+            Use :meth:`check_and_increment_ai_chat_quota` instead.
+            This method is a non-atomic read-modify-write and is unsafe under
+            concurrent access. The atomic version is the only correct API.
+        """
         now = self.now()
         if user_id is not None:
             existing = self._conn.execute(

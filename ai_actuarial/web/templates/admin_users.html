@@ -158,7 +158,7 @@
           <td>
             <div class="um-actions">
               <button class="btn btn-secondary btn-xs"
-                      onclick="openRoleDialog({{ u.id }}, '{{ u.email }}', '{{ u.role }}')">
+                      onclick="openRoleDialog({{ u.id }}, {{ u.email | tojson }}, {{ u.role | tojson }})">
                 Role
               </button>
               <button class="btn btn-secondary btn-xs"
@@ -170,7 +170,7 @@
                 {{ 'Disable' if u.is_active else 'Enable' }}
               </button>
               <button class="btn btn-secondary btn-xs"
-                      onclick="viewActivity({{ u.id }}, '{{ u.email }}')">
+                      onclick="viewActivity({{ u.id }}, {{ u.email | tojson }})">
                 Log
               </button>
             </div>
