@@ -234,6 +234,112 @@ class TestWebSettingsApi(unittest.TestCase):
         self.assertEqual(data["max_results"], 5)
         self.assertEqual(data["country"], "us")
 
+    def test_search_engines_endpoint(self):
+        """GET /api/config/search-engines requires auth and returns engine list."""
+        # Unauthenticated → 401
+        guest = self.client.get("/api/config/search-engines")
+        self.assertEqual(guest.status_code, 401)
+
+        # Authenticated → 200 with engines list
+        resp = self.client.get(
+            "/api/config/search-engines",
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIn("engines", data)
+        engines = data["engines"]
+        self.assertIsInstance(engines, list)
+        self.assertGreater(len(engines), 0)
+        # Each engine has required fields
+        for engine in engines:
+            self.assertIn("id", engine)
+            self.assertIn("name", engine)
+            self.assertIn("configured", engine)
+            self.assertIsInstance(engine["configured"], bool)
+        # Known engines present
+        ids = {e["id"] for e in engines}
+        self.assertIn("brave", ids)
+        self.assertIn("serper", ids)
+        self.assertIn("tavily", ids)
+        # No env vars set → all unconfigured in test environment
+        for engine in engines:
+            self.assertFalse(engine["configured"])
+
+    def test_schedule_config_endpoint(self):
+        """POST /api/config/schedule updates defaults in sites.yaml."""
+        # Unauthenticated → 401
+        guest = self.client.post(
+            "/api/config/schedule",
+            json={"schedule_interval": "daily"},
+        )
+        self.assertEqual(guest.status_code, 401)
+
+        # Set schedule interval
+        resp = self.client.post(
+            "/api/config/schedule",
+            json={"schedule_interval": "weekly"},
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.get_json().get("success"))
+
+        # Verify persisted to YAML
+        with open(self.sites_config_path, "r", encoding="utf-8") as f:
+            saved = yaml.safe_load(f)
+        self.assertEqual(saved["defaults"]["schedule_interval"], "weekly")
+
+        # Clear schedule interval (empty string)
+        clear_resp = self.client.post(
+            "/api/config/schedule",
+            json={"schedule_interval": ""},
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
+        self.assertEqual(clear_resp.status_code, 200)
+        with open(self.sites_config_path, "r", encoding="utf-8") as f:
+            saved2 = yaml.safe_load(f)
+        self.assertNotIn("schedule_interval", saved2.get("defaults", {}))
+
+    def test_schedule_reinit_endpoint(self):
+        """POST /api/schedule/reinit requires schedule.write and returns job_count."""
+        import schedule as sched_mod
+
+        # Provide minimal schedule stubs so init_scheduler can run without real schedule lib
+        class _Builder:
+            def __getattr__(self, name):
+                return self
+
+            def at(self, t):
+                return self
+
+            def do(self, f):
+                return self
+
+            def __call__(self, *args):
+                return self
+
+        sched_mod.clear = lambda: None
+        sched_mod.jobs = []
+        sched_mod.every = _Builder()
+        sched_mod.run_pending = lambda: None
+
+        # Unauthenticated → 401
+        guest = self.client.post("/api/schedule/reinit")
+        self.assertEqual(guest.status_code, 401)
+
+        # Admin (has schedule.write) → success
+        resp = self.client.post(
+            "/api/schedule/reinit",
+            headers={"Authorization": "Bearer test-bootstrap-admin-token"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertIn("job_count", data)
+        self.assertIsInstance(data["job_count"], int)
+        # Test config has no schedule intervals → 0 jobs
+        self.assertEqual(data["job_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
