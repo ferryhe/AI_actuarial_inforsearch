@@ -259,10 +259,10 @@
         <small class="form-hint" data-i18n="fv.overwrite_hint">Unchecked = Skip already cataloged</small>
       </div>
       <div class="form-group">
-        <label for="file-catalog-provider" data-i18n="fv.ai_provider">AI Provider</label>
-        <select name="provider" id="file-catalog-provider">
-          <option value="">Loading providers...</option>
-        </select>
+        <label data-i18n="fv.ai_provider">AI Provider</label>
+        <input type="hidden" name="provider" id="file-catalog-provider">
+        <p id="file-catalog-ai-info" class="form-hint" style="color:var(--text-secondary)">Loading catalog model...</p>
+        <small class="form-hint" data-i18n="fv.catalog_ai_config_info">AI model set in Settings → AI Config</small>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
         <button type="button" class="btn btn-secondary" onclick="closeFileCatalogModal()" data-i18n="fv.cancel">Cancel</button>
@@ -361,66 +361,35 @@
         loadFileCatalogProviders();
     }
 
+    const _FV_PROVIDER_NAMES = {
+        openai: 'OpenAI', mistral: 'Mistral AI', anthropic: 'Anthropic',
+        google: 'Google Gemini', deepseek: 'DeepSeek', zhipuai: '智谱AI',
+        moonshot: 'Moonshot (Kimi)', kimi: 'Kimi', minimax: 'MiniMax',
+        qwen: '阿里通义 (Qwen)', siliconflow: 'SiliconFlow', cohere: 'Cohere',
+        local: 'Local (KeyBERT)',
+    };
+
     async function loadFileCatalogProviders() {
-        const sel = document.getElementById('file-catalog-provider');
-        if (!sel) return;
-        const _PROVIDER_NAMES = {
-            openai: 'OpenAI', mistral: 'Mistral AI', anthropic: 'Anthropic',
-            google: 'Google Gemini', deepseek: 'DeepSeek', zhipuai: '智谱AI',
-            moonshot: 'Moonshot (Kimi)', kimi: 'Kimi', minimax: 'MiniMax',
-            qwen: '阿里通义 (Qwen)', siliconflow: 'SiliconFlow', cohere: 'Cohere',
-            local: 'Local (KeyBERT)',
-        };
+        const hidden = document.getElementById('file-catalog-provider');
+        const infoEl = document.getElementById('file-catalog-ai-info');
+        if (!hidden) return;
         try {
-            const [modelsResp, providersResp] = await Promise.all([
-                fetch('/api/config/ai-models'),
-                fetch('/api/config/llm-providers')
-            ]);
-            if (!modelsResp.ok) {
-                throw new Error(`Failed to load AI models config: HTTP ${modelsResp.status} ${modelsResp.statusText}`);
-            }
-            if (!providersResp.ok) {
-                throw new Error(`Failed to load LLM providers config: HTTP ${providersResp.status} ${providersResp.statusText}`);
-            }
-            const modelsData = await modelsResp.json();
-            const providersData = await providersResp.json();
-
-            const configured = new Set(['local']);
-            (providersData.providers || []).forEach(p => configured.add(p.provider));
-
-            const available = modelsData.available || {};
-            const catalogProviders = Object.keys(available).filter(provider => {
-                if (!configured.has(provider)) return false;
-                return (available[provider] || []).some(m => (m.types || []).includes('catalog'));
-            });
-
-            if (catalogProviders.length === 0) catalogProviders.push('local');
-
+            const resp = await fetch('/api/config/ai-models');
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const modelsData = await resp.json();
             const currentProvider = modelsData.current?.catalog?.provider || 'openai';
-
-            sel.innerHTML = '';
-            // Only prepend currentProvider if it is actually configured and not already listed
-            const orderedProviders = currentProvider
-                && configured.has(currentProvider)
-                && !catalogProviders.includes(currentProvider)
-                ? [currentProvider, ...catalogProviders]
-                : catalogProviders;
-
-            orderedProviders.forEach(provider => {
-                const opt = document.createElement('option');
-                opt.value = provider;
-                let label = _PROVIDER_NAMES[provider] || provider;
-                if (provider === currentProvider) {
-                    const currentModel = modelsData.current?.catalog?.model;
-                    if (currentModel) label += ` (${currentModel})`;
-                    opt.selected = true;
-                }
-                opt.textContent = label;
-                sel.appendChild(opt);
-            });
+            const currentModel = modelsData.current?.catalog?.model || '';
+            hidden.value = currentProvider;
+            if (infoEl) {
+                const providerLabel = _FV_PROVIDER_NAMES[currentProvider] || currentProvider;
+                infoEl.textContent = currentModel
+                    ? `${providerLabel} — ${currentModel}`
+                    : providerLabel;
+            }
         } catch (err) {
-            console.error('Failed to load catalog providers:', err);
-            sel.innerHTML = '<option value="local">Local (KeyBERT)</option><option value="openai">OpenAI</option>';
+            console.error('Failed to load catalog model from AI Config:', err);
+            if (hidden) hidden.value = 'openai';
+            if (infoEl) infoEl.textContent = 'Failed to load — defaulting to openai';
         }
     }
 
