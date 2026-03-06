@@ -2655,9 +2655,14 @@ class Storage:
             raise
 
     def get_user_by_email(self, email: str) -> dict | None:
-        """Return user record by email, or None."""
+        """Return user record by email, or None.
+
+        Returns the record regardless of ``is_active`` status so callers can
+        provide specific error messages for disabled accounts rather than a
+        generic "user not found" response.
+        """
         row = self._conn.execute(
-            "SELECT * FROM users WHERE email = ? AND is_active = 1",
+            "SELECT * FROM users WHERE email = ?",
             (email.lower().strip(),),
         ).fetchone()
         if row is None:
