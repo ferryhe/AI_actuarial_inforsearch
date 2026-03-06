@@ -1226,8 +1226,13 @@ async function loadCatalogProviders() {
         orderedProviders.forEach(provider => {
             const opt = document.createElement('option');
             opt.value = provider;
-            opt.textContent = _CATALOG_PROVIDER_NAMES[provider] || provider;
-            if (provider === currentProvider) opt.selected = true;
+            let label = _CATALOG_PROVIDER_NAMES[provider] || provider;
+            if (provider === currentProvider) {
+                const currentModel = modelsData.current?.catalog?.model;
+                if (currentModel) label += ` (${currentModel})`;
+                opt.selected = true;
+            }
+            opt.textContent = label;
             sel.appendChild(opt);
         });
 

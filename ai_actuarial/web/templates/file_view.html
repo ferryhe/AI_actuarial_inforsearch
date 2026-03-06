@@ -409,8 +409,13 @@
             orderedProviders.forEach(provider => {
                 const opt = document.createElement('option');
                 opt.value = provider;
-                opt.textContent = _PROVIDER_NAMES[provider] || provider;
-                if (provider === currentProvider) opt.selected = true;
+                let label = _PROVIDER_NAMES[provider] || provider;
+                if (provider === currentProvider) {
+                    const currentModel = modelsData.current?.catalog?.model;
+                    if (currentModel) label += ` (${currentModel})`;
+                    opt.selected = true;
+                }
+                opt.textContent = label;
                 sel.appendChild(opt);
             });
         } catch (err) {
@@ -582,20 +587,20 @@
         }
     }
 
-    function _getChunkModel(profile) {
+    function _getChunkModel(profile, defaultModel = 'gpt-4') {
         const cfg = _parseProfileConfig(profile);
         const metadata = cfg && typeof cfg.metadata === 'object' ? cfg.metadata : {};
-        return metadata && metadata.chunk_model ? String(metadata.chunk_model) : 'gpt-4';
+        return metadata && metadata.chunk_model ? String(metadata.chunk_model) : defaultModel;
     }
 
-    function fillChunkProfileSelect(options, preferredProfileId = '') {
+    function fillChunkProfileSelect(options, preferredProfileId = '', defaultModel = 'gpt-4') {
         const select = document.getElementById('file-chunk-profile-select');
         if (!select) return;
         select.innerHTML = '';
         options.forEach((item) => {
             const opt = document.createElement('option');
             opt.value = item.profile_id;
-            const model = _getChunkModel(item);
+            const model = _getChunkModel(item, defaultModel);
             opt.textContent = `${item.name || item.profile_id} | model=${model} | size=${item.chunk_size}, overlap=${item.chunk_overlap}`;
             select.appendChild(opt);
         });
@@ -606,19 +611,31 @@
 
     async function loadFileChunkProfiles() {
         try {
-            const resp = await fetch('/api/chunk/profiles');
-            const payload = await resp.json();
-            if (!resp.ok || !payload.success) {
+            const [profilesResp, modelsResp] = await Promise.all([
+                fetch('/api/chunk/profiles'),
+                fetch('/api/config/ai-models')
+            ]);
+            
+            const payload = await profilesResp.json();
+            if (!profilesResp.ok || !payload.success) {
                 throw new Error(payload.error || 'Failed loading chunk profiles');
             }
             const data = _extractApiData(payload) || {};
             fileChunkProfiles = Array.isArray(data.profiles) ? data.profiles : [];
 
+            // Get default model from config
+            let defaultModel = 'gpt-4';
+            if (modelsResp.ok) {
+                const modelsData = await modelsResp.json();
+                // Use catalog model (usually the default LLM) as fallback for chunking if not specified
+                defaultModel = modelsData.current?.catalog?.model || 'gpt-4';
+            }
+
             let preferred = '';
             if (fileChunkSets.length > 0) {
                 preferred = String(fileChunkSets[0].profile_id || '');
             }
-            fillChunkProfileSelect(fileChunkProfiles, preferred);
+            fillChunkProfileSelect(fileChunkProfiles, preferred, defaultModel);
         } catch (err) {
             console.error('Failed loading chunk profile options:', err);
             fileChunkProfiles = [];
