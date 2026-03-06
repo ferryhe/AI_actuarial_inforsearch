@@ -1004,6 +1004,18 @@
         document.getElementById('rag-open-profiles-modal')?.addEventListener('click', async () => {
             openModal('rag-chunk-profile-modal');
             await loadChunkProfiles();
+            // Populate chunk_model hidden field from AI Config
+            try {
+                const resp = await fetch('/api/config/ai-models');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const model = data.current?.catalog?.model || 'gpt-4';
+                    const hiddenInput = document.getElementById('cp-chunk-model-hidden');
+                    if (hiddenInput) hiddenInput.value = model;
+                }
+            } catch (e) {
+                // keep default value; non-critical
+            }
         });
 
         document.getElementById('rag-create-chunk-profile-form')?.addEventListener('submit', async (e) => {

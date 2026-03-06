@@ -238,8 +238,17 @@ class Crawler:
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
         exclude_prefixes = [p.lower() for p in (cfg.exclude_prefixes or [])]
-        # Compile allow_url_patterns to regex tuples; if set, only matching sub-page URLs are queued
-        allow_patterns = [re.compile(p) for p in (cfg.allow_url_patterns or [])]
+        # Compile allow_url_patterns to regex; if set, only matching URLs are queued / downloaded.
+        # Invalid patterns are skipped with a warning rather than aborting the crawl.
+        allow_patterns = []
+        for raw_pat in (cfg.allow_url_patterns or []):
+            try:
+                allow_patterns.append(re.compile(raw_pat))
+            except re.error as exc:
+                logger.warning(
+                    "Skipping invalid allow_url_pattern %r for site %r: %s",
+                    raw_pat, cfg.name, exc
+                )
         new_items: list[dict] = []
 
         sitemap_urls = self._load_sitemap(cfg.url)
@@ -338,10 +347,13 @@ class Crawler:
                 if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
                     continue
                 if self._is_file_url(link, exts):
-                    # If allow_url_patterns is configured we trust the URL scope to ensure
-                    # relevance, so skip keyword gating entirely.  Otherwise fall back to
-                    # link-level keyword matching (no longer requires page-level is_relevant,
-                    # which was causing focused pages using abbreviations like "AI" to miss files).
+                    # When allow_url_patterns is configured, enforce it on file links too
+                    # (e.g. /globalassets/ pattern gates PDF downloads, not just subpage queuing).
+                    if allow_patterns and not any(p.search(link) for p in allow_patterns):
+                        continue
+                    # Without allow_patterns, fall back to link-level keyword matching
+                    # (page-level is_relevant is no longer required, as it caused misses
+                    # when pages used abbreviations like "AI" instead of full keywords).
                     if not allow_patterns and keywords and not self._link_matches_keywords(link, link_text, keywords):
                         continue
                     if self.storage.file_exists(link):
