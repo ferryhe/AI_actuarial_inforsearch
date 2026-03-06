@@ -480,15 +480,28 @@
 
     function mapCatalogProviderLabel(provider) {
         const p = String(provider || '').trim().toLowerCase();
-        if (p === 'openai') return 'OpenAI (ChatGPT)';
-        if (p === 'local') return 'local (KeyBERT)';
-        return provider || 'local (KeyBERT)';
+        const labels = {
+            openai: 'OpenAI (ChatGPT)',
+            local: 'Local (KeyBERT)',
+            mistral: 'Mistral AI',
+            anthropic: 'Anthropic',
+            google: 'Google Gemini',
+            deepseek: 'DeepSeek',
+            zhipuai: '智谱AI',
+            moonshot: 'Moonshot (Kimi)',
+            kimi: 'Kimi',
+            minimax: 'MiniMax',
+            qwen: '阿里通义 (Qwen)',
+            siliconflow: 'SiliconFlow',
+            cohere: 'Cohere',
+        };
+        return labels[p] || provider || '';
     }
 
     function parseCatalogVersion(version) {
         const raw = String(version || '').trim();
         if (!raw) {
-            return { source: 'markdown', provider: 'openai' };
+            return { source: '', provider: '' };
         }
         const parts = raw.split(':').map(v => v.trim()).filter(Boolean);
         if (parts.length >= 3) {
@@ -497,7 +510,7 @@
         const lower = raw.toLowerCase();
         if (lower.includes('openai')) return { source: 'source', provider: 'openai' };
         if (lower.includes('markdown')) return { source: 'markdown', provider: 'local' };
-        return { source: 'markdown', provider: 'openai' };
+        return { source: '', provider: '' };
     }
 
     function formatLocalTimestamp(value) {
@@ -534,7 +547,11 @@
             el.textContent = '';
             return;
         }
-        el.textContent = `${mapCatalogSourceLabel(parsed.source)} | ${mapCatalogProviderLabel(parsed.provider)} | Updated: ${formatLocalTimestamp(timestamp)}`;
+        const parts = [];
+        if (parsed.source) parts.push(mapCatalogSourceLabel(parsed.source));
+        if (parsed.provider) parts.push(mapCatalogProviderLabel(parsed.provider));
+        parts.push(`Updated: ${formatLocalTimestamp(timestamp)}`);
+        el.textContent = parts.join(' | ');
         el.style.display = 'block';
     }
 

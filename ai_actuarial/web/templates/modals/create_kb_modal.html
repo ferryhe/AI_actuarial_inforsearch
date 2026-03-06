@@ -59,9 +59,8 @@
                 <div class="form-row">
                     <div class="form-group half">
                         <label data-i18n="kb_create.embed_model">Embedding Model</label>
-                        <select name="embedding_model">
-                            <option value="text-embedding-3-large">text-embedding-3-large</option>
-                            <option value="text-embedding-3-small">text-embedding-3-small</option>
+                        <select name="embedding_model" id="rag-create-embedding-model">
+                            <option value="">Loading models...</option>
                         </select>
                         <small class="form-hint" data-i18n="kb_create.embed_hint">Index model (for vector embedding), independent of chunk profile model.</small>
                     </div>
