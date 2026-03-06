@@ -533,6 +533,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         "qwen":       ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"),
         "siliconflow":("SILICONFLOW_API_KEY","SILICONFLOW_BASE_URL"),
         "cohere":     ("COHERE_API_KEY",    "COHERE_BASE_URL"),
+        "kimi":       ("KIMI_API_KEY",      "KIMI_BASE_URL"),
+        "minimax":    ("MINIMAX_API_KEY",   "MINIMAX_BASE_URL"),
+        # Search providers
+        "brave_search":  ("BRAVE_API_KEY",   None),
+        "serpapi":       ("SERPAPI_API_KEY",  None),
+        "serper":        ("SERPER_API_KEY",   None),
+        "tavily":        ("TAVILY_API_KEY",   None),
     }
     _startup_storage = None
     try:
@@ -1184,6 +1191,33 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error getting search defaults")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    # Search engine env-var mapping: engine_id -> env_var_name
+    _SEARCH_ENGINE_ENV_VARS = {
+        "brave": "BRAVE_API_KEY",
+        "google": "SERPAPI_API_KEY",
+        "serper": "SERPER_API_KEY",
+        "tavily": "TAVILY_API_KEY",
+    }
+    _SEARCH_ENGINE_DISPLAY = {
+        "brave": "Brave Search",
+        "google": "Google (SerpAPI)",
+        "serper": "Google (Serper.dev)",
+        "tavily": "Tavily",
+    }
+
+    @app.route("/api/config/search-engines")
+    @require_permissions("tasks.view")
+    def api_config_search_engines():
+        """Return list of search engines and whether they have API keys configured."""
+        engines = []
+        for engine_id, env_var in _SEARCH_ENGINE_ENV_VARS.items():
+            engines.append({
+                "id": engine_id,
+                "name": _SEARCH_ENGINE_DISPLAY.get(engine_id, engine_id),
+                "configured": bool(os.getenv(env_var)),
+            })
+        return jsonify({"engines": engines})
+
     @app.route("/api/config/backend-settings", methods=["POST"])
     @require_permissions("config.write")
     def api_config_backend_settings_update():
@@ -1310,7 +1344,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     'keywords': site.get('keywords', site_defaults.get('keywords', [])),
                     'exclude_keywords': site.get('exclude_keywords', []),
                     'exclude_prefixes': site.get('exclude_prefixes', []),
-                    'schedule_interval': site.get('schedule_interval')
+                    'schedule_interval': site.get('schedule_interval'),
+                    'content_selector': site.get('content_selector', ''),
                 })
             # Attach global schedule to defaults info
             global_schedule = site_defaults.get('schedule_interval')
@@ -1387,6 +1422,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if data.get('exclude_keywords'): new_site['exclude_keywords'] = [k.strip() for k in data['exclude_keywords'].split(',')]
             if data.get('exclude_prefixes'): new_site['exclude_prefixes'] = [k.strip() for k in data['exclude_prefixes'].split(',')]
             if data.get('schedule_interval'): new_site['schedule_interval'] = data['schedule_interval'].strip()
+            if data.get('content_selector'): new_site['content_selector'] = data['content_selector'].strip()
             
             config_data['sites'].append(new_site)
             
@@ -1444,6 +1480,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         s['schedule_interval'] = data.get('schedule_interval').strip()
                     elif 'schedule_interval' in s: del s['schedule_interval']
 
+                    if data.get('content_selector'):
+                        s['content_selector'] = data.get('content_selector').strip()
+                    elif 'content_selector' in s: del s['content_selector']
+
                     found = True
                     break
             
@@ -1496,6 +1536,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     AI_SUPPORTED_PROVIDERS = {
         "openai", "mistral", "siliconflow", "anthropic",
         "google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere",
+        "kimi", "minimax",
         "local",
     }
 
@@ -1551,6 +1592,41 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             "default_base_url": "https://api.cohere.com/v1",
             "api_key_hint": "...",
         },
+        "kimi": {
+            "display_name": "Kimi (Moonshot v2)",
+            "default_base_url": "https://api.moonshot.cn/v1",
+            "api_key_hint": "sk-...",
+        },
+        "minimax": {
+            "display_name": "MiniMax",
+            "default_base_url": "https://api.minimax.chat/v1",
+            "api_key_hint": "...",
+        },
+        # Search providers
+        "brave_search": {
+            "display_name": "Brave Search",
+            "default_base_url": "",
+            "api_key_hint": "BSA...",
+            "is_search_provider": True,
+        },
+        "serpapi": {
+            "display_name": "Google (SerpAPI)",
+            "default_base_url": "",
+            "api_key_hint": "...",
+            "is_search_provider": True,
+        },
+        "serper": {
+            "display_name": "Google (Serper.dev)",
+            "default_base_url": "",
+            "api_key_hint": "...",
+            "is_search_provider": True,
+        },
+        "tavily": {
+            "display_name": "Tavily",
+            "default_base_url": "",
+            "api_key_hint": "tvly-...",
+            "is_search_provider": True,
+        },
     }
 
     # Mapping from provider name to the environment variable that holds its API key
@@ -1565,6 +1641,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         "qwen": "DASHSCOPE_API_KEY",
         "siliconflow": "SILICONFLOW_API_KEY",
         "cohere": "COHERE_API_KEY",
+        "kimi": "KIMI_API_KEY",
+        "minimax": "MINIMAX_API_KEY",
+        "brave_search": "BRAVE_API_KEY",
+        "serpapi": "SERPAPI_API_KEY",
+        "serper": "SERPER_API_KEY",
+        "tavily": "TAVILY_API_KEY",
     }
 
     @app.route("/api/config/llm-providers")
@@ -2020,7 +2102,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 result = collector.collect(config_obj, progress_callback=progress_callback)
 
             elif collection_type == "search":
-                from ..search import brave_search, serpapi_search
+                from ..search import brave_search, serpapi_search, serper_search, tavily_search
                 
                 query = data.get("query")
                 site = data.get("site")
@@ -2105,6 +2187,38 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     )
                     urls = [r.url for r in results]
 
+                elif engine == "serper":
+                    if not api_key:
+                        api_key = os.getenv("SERPER_API_KEY")
+                    if not api_key:
+                        raise ValueError("Serper API Key is missing (SERPER_API_KEY not found)")
+                    
+                    results = serper_search(
+                        query,
+                        count,
+                        api_key,
+                        site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        lang=search_lang or None,
+                        country=search_country or None,
+                    )
+                    urls = [r.url for r in results]
+
+                elif engine == "tavily":
+                    if not api_key:
+                        api_key = os.getenv("TAVILY_API_KEY")
+                    if not api_key:
+                        raise ValueError("Tavily API Key is missing (TAVILY_API_KEY not found)")
+                    
+                    results = tavily_search(
+                        query,
+                        count,
+                        api_key,
+                        site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        lang=search_lang or None,
+                        country=search_country or None,
+                    )
+                    urls = [r.url for r in results]
+
                 if search_exclude_keywords:
                     urls = [
                         u for u in urls
@@ -2178,7 +2292,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         keywords=s.get('keywords') or site_config['defaults'].get('keywords'),
                         file_exts=site_config['defaults'].get('file_exts'),
                         exclude_keywords=merge_lists('exclude_keywords'),
-                        exclude_prefixes=merge_lists('exclude_prefixes')
+                        exclude_prefixes=merge_lists('exclude_prefixes'),
+                        content_selector=s.get('content_selector'),
                     )
                     sites_to_process.append(sc)
                 

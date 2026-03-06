@@ -108,6 +108,23 @@
             <input type="text" id="modal-exclude-prefixes" />
              <div id="tt-modal-excl-pfx" class="tooltip-text"></div>
         </div>
+        <div class="form-group">
+            <label for="modal-schedule-interval"><span data-i18n="sched.modal_schedule">Schedule Interval</span>:</label>
+            <select id="modal-schedule-interval">
+                <option value="">None (use global)</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="daily at 02:00">Daily at 02:00</option>
+                <option value="daily at 06:00">Daily at 06:00</option>
+                <option value="every 6 hours">Every 6 hours</option>
+                <option value="every 12 hours">Every 12 hours</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="modal-content-selector"><span data-i18n="sched.modal_content_sel">Content Selector (CSS)</span> <i class="tooltip-icon" onclick="toggleTooltip('tt-modal-content-sel', 'content-selector')">(i)</i>:</label>
+            <input type="text" id="modal-content-selector" placeholder="e.g. main, article, .content-area" />
+            <div id="tt-modal-content-sel" class="tooltip-text"></div>
+        </div>
         <button onclick="saveSite()" class="btn btn-primary" data-i18n="sched.save_site">Save Site</button>
     </div>
 </div>
@@ -254,6 +271,7 @@ const TOOLTIPS = {
     'keywords':         'sched.tooltip_keywords',
     'exclude-keywords': 'sched.tooltip_excl_kw',
     'exclude-prefixes': 'sched.tooltip_excl_pfx',
+    'content-selector': 'sched.tooltip_content_sel',
 };
 
 function toggleTooltip(domId, contentKey) {
@@ -416,6 +434,8 @@ function openAddSiteModal() {
     document.getElementById('modal-keywords').value = '';
     document.getElementById('modal-exclude-keywords').value = '';
     document.getElementById('modal-exclude-prefixes').value = '';
+    document.getElementById('modal-schedule-interval').value = '';
+    document.getElementById('modal-content-selector').value = '';
     document.getElementById('site-modal').style.display = "block";
     if (window.syncModalState) window.syncModalState();
 }
@@ -437,6 +457,8 @@ function editSite(name) {
     document.getElementById('modal-keywords').value = (site.keywords || []).join(', ');
     document.getElementById('modal-exclude-keywords').value = (site.exclude_keywords || []).join(', ');
     document.getElementById('modal-exclude-prefixes').value = (site.exclude_prefixes || []).join(', ');
+    document.getElementById('modal-schedule-interval').value = site.schedule_interval || '';
+    document.getElementById('modal-content-selector').value = site.content_selector || '';
     document.getElementById('site-modal').style.display = "block";
     if (window.syncModalState) window.syncModalState();
 }
@@ -461,7 +483,9 @@ function saveSite() {
         max_depth: document.getElementById('modal-depth').value,
         keywords: document.getElementById('modal-keywords').value,
         exclude_keywords: document.getElementById('modal-exclude-keywords').value,
-        exclude_prefixes: document.getElementById('modal-exclude-prefixes').value
+        exclude_prefixes: document.getElementById('modal-exclude-prefixes').value,
+        schedule_interval: document.getElementById('modal-schedule-interval').value,
+        content_selector: document.getElementById('modal-content-selector').value,
     };
     
     if (isEdit) {

@@ -85,6 +85,7 @@
             <label for="new-provider-name" data-i18n="stg.provider">Provider</label>
             <select id="new-provider-name" onchange="onNewProviderChange()">
               <option value="">— select —</option>
+              <optgroup label="LLM Providers">
               <option value="openai">OpenAI</option>
               <option value="mistral">Mistral AI</option>
               <option value="anthropic">Anthropic</option>
@@ -92,9 +93,18 @@
               <option value="deepseek">DeepSeek</option>
               <option value="zhipuai">智谱AI (ZhipuAI)</option>
               <option value="moonshot">Moonshot (Kimi)</option>
+              <option value="kimi">Kimi (Moonshot v2)</option>
+              <option value="minimax">MiniMax</option>
               <option value="qwen">阿里通义 (Qwen)</option>
               <option value="siliconflow">SiliconFlow</option>
               <option value="cohere">Cohere</option>
+              </optgroup>
+              <optgroup label="Search Providers">
+              <option value="brave_search">Brave Search</option>
+              <option value="serpapi">Google (SerpAPI)</option>
+              <option value="serper">Google (Serper.dev)</option>
+              <option value="tavily">Tavily</option>
+              </optgroup>
             </select>
           </div>
           <div>
@@ -1085,9 +1095,9 @@ let aiModelsData = { current: {}, available: {} };
 
 // Which providers support each AI function type
 const FUNCTION_PROVIDER_MAP = {
-  catalog:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'qwen', 'siliconflow', 'cohere'],
+  catalog:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'kimi', 'minimax', 'qwen', 'siliconflow', 'cohere'],
   embeddings: ['openai', 'google', 'zhipuai', 'qwen', 'siliconflow', 'cohere', 'local'],
-  chatbot:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'qwen', 'siliconflow', 'cohere'],
+  chatbot:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'kimi', 'minimax', 'qwen', 'siliconflow', 'cohere'],
   ocr:        ['local', 'mistral', 'siliconflow'],
 };
 
@@ -1100,10 +1110,17 @@ const PROVIDER_DISPLAY_NAMES = {
   deepseek:   'DeepSeek',
   zhipuai:    '智谱AI (ZhipuAI)',
   moonshot:   'Moonshot (Kimi)',
+  kimi:       'Kimi (Moonshot v2)',
+  minimax:    'MiniMax',
   qwen:       '阿里通义 (Qwen)',
   siliconflow:'SiliconFlow',
   cohere:     'Cohere',
   local:      'Local',
+  // Search providers (display only, not used for AI model selection)
+  brave_search: 'Brave Search',
+  serpapi:      'Google (SerpAPI)',
+  serper:       'Google (Serper.dev)',
+  tavily:       'Tavily',
 };
 
 async function loadAiModelsConfig() {

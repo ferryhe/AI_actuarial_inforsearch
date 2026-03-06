@@ -72,6 +72,18 @@ DEFAULT_MODELS = {
         {"name": "moonshot-v1-32k", "display_name": "Moonshot v1 32K", "types": ["chatbot", "catalog"]},
         {"name": "moonshot-v1-8k", "display_name": "Moonshot v1 8K", "types": ["chatbot", "catalog"]},
     ],
+    "kimi": [
+        {"name": "kimi-latest", "display_name": "Kimi Latest", "types": ["chatbot", "catalog"]},
+        {"name": "moonshot-v1-128k", "display_name": "Moonshot v1 128K", "types": ["chatbot", "catalog"]},
+        {"name": "moonshot-v1-32k", "display_name": "Moonshot v1 32K", "types": ["chatbot", "catalog"]},
+        {"name": "moonshot-v1-8k", "display_name": "Moonshot v1 8K", "types": ["chatbot", "catalog"]},
+    ],
+    "minimax": [
+        {"name": "MiniMax-Text-01", "display_name": "MiniMax Text 01", "types": ["chatbot", "catalog"]},
+        {"name": "abab6.5s-chat", "display_name": "ABAB 6.5s Chat", "types": ["chatbot", "catalog"]},
+        {"name": "abab6.5-chat", "display_name": "ABAB 6.5 Chat", "types": ["chatbot", "catalog"]},
+        {"name": "embo-01", "display_name": "Embo 01", "types": ["embeddings"]},
+    ],
     "qwen": [
         {"name": "qwen-max", "display_name": "Qwen Max", "types": ["chatbot", "catalog"]},
         {"name": "qwen-plus", "display_name": "Qwen Plus", "types": ["chatbot", "catalog"]},
@@ -157,7 +169,7 @@ class ModelCache:
         new_models["anthropic"] = DEFAULT_MODELS["anthropic"]  # Static known models
         new_models["local"] = DEFAULT_MODELS["local"]  # Local models are static
         # Additional providers with static model lists (no live discovery API yet)
-        for _provider in ("google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere"):
+        for _provider in ("google", "deepseek", "zhipuai", "moonshot", "kimi", "minimax", "qwen", "cohere"):
             new_models[_provider] = DEFAULT_MODELS[_provider]
         
         # Atomically swap in the new cache (with lock)
