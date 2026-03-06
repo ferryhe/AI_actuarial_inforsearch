@@ -405,9 +405,9 @@
                 <small class="form-hint" data-i18n="tasks.fh_skip_cataloged">Unchecked = Skip already cataloged</small>
             </div>
             <div class="form-group">
-                <label data-i18n="tasks.ai_provider">AI Provider</label>
+                <div id="catalog-ai-provider-label" class="form-label" data-i18n="tasks.ai_provider">AI Provider</div>
                 <input type="hidden" name="provider" id="catalog-provider-hidden">
-                <p id="catalog-ai-config-info" class="form-hint" style="color:var(--text-secondary)">Loading catalog model...</p>
+                <p id="catalog-ai-config-info" class="form-hint" style="color:var(--text-secondary)" aria-labelledby="catalog-ai-provider-label">Loading catalog model...</p>
                 <small class="form-hint" data-i18n="tasks.catalog_ai_config_info">AI model set in Settings → AI Config</small>
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="tasks.start_cataloging">Start Cataloging</button>

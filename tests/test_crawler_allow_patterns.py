@@ -166,8 +166,9 @@ class TestAllowUrlPatternsFileDownload(unittest.TestCase):
 
         def fake_download_file(url: str, target_dir: Path):
             downloaded.append(url)
-            tmp = Path(tempfile.mktemp(suffix=".pdf"))
-            tmp.write_bytes(b"%PDF fake")
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, dir=target_dir) as f:
+                f.write(b"%PDF fake")
+                tmp = Path(f.name)
             sha = hashlib.sha256(b"%PDF fake").hexdigest()
             return tmp, {}, url, sha, 9
 
