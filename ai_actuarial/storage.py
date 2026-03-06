@@ -29,6 +29,9 @@ class Storage:
             "kb_chunk_bindings",
             "kb_index_versions",
             "kb_index_items",
+            "users",
+            "user_quotas",
+            "user_activity_logs",
         }
     )
 
@@ -241,6 +244,72 @@ class Storage:
             },
         )
         self._init_global_chunk_schema()
+        self._init_user_management_schema()
+
+    def _init_user_management_schema(self) -> None:
+        """Initialize schema for email-based user management with quotas."""
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'registered',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                email_verified INTEGER NOT NULL DEFAULT 0,
+                display_name TEXT,
+                notes TEXT,
+                created_at TEXT,
+                last_login_at TEXT,
+                email_verified_at TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)"
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_quotas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                ip_address TEXT,
+                quota_date TEXT NOT NULL,
+                ai_chat_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_quotas_user_date ON user_quotas(user_id, quota_date)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_quotas_ip_date ON user_quotas(ip_address, quota_date)"
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                ip_address TEXT,
+                action TEXT NOT NULL,
+                resource TEXT,
+                detail TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_activity_user ON user_activity_logs(user_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_activity_created ON user_activity_logs(created_at)"
+        )
+        self._conn.commit()
 
     def _init_global_chunk_schema(self) -> None:
         """Initialize schema for global chunk generation and KB composition."""
@@ -2551,3 +2620,242 @@ class Storage:
             (url,)
         )
         self._maybe_commit()
+
+    # =========================================================================
+    # User Management Methods
+    # =========================================================================
+
+    def create_user(
+        self,
+        email: str,
+        password_hash: str,
+        role: str = "registered",
+        display_name: str | None = None,
+    ) -> int:
+        """Create a new email-based user.
+
+        Returns the new user id.
+        Raises ValueError if the email already exists.
+        """
+        now = self.now()
+        try:
+            cur = self._conn.execute(
+                """
+                INSERT INTO users (email, password_hash, role, is_active, email_verified,
+                                   display_name, created_at)
+                VALUES (?, ?, ?, 1, 0, ?, ?)
+                """,
+                (email.lower().strip(), password_hash, role, display_name, now),
+            )
+            self._maybe_commit()
+            return cur.lastrowid  # type: ignore[return-value]
+        except Exception as exc:
+            if "UNIQUE" in str(exc).upper():
+                raise ValueError(f"Email already registered: {email}") from exc
+            raise
+
+    def get_user_by_email(self, email: str) -> dict | None:
+        """Return user record by email, or None."""
+        row = self._conn.execute(
+            "SELECT * FROM users WHERE email = ? AND is_active = 1",
+            (email.lower().strip(),),
+        ).fetchone()
+        if row is None:
+            return None
+        cols = [d[0] for d in self._conn.execute("SELECT * FROM users LIMIT 0").description]
+        return dict(zip(cols, row))
+
+    def get_user_by_id(self, user_id: int) -> dict | None:
+        """Return user record by id, or None."""
+        row = self._conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        cur = self._conn.execute("SELECT * FROM users LIMIT 0")
+        cols = [d[0] for d in cur.description]
+        return dict(zip(cols, row))
+
+    def update_user_last_login(self, user_id: int) -> None:
+        """Update the last_login_at timestamp."""
+        self._conn.execute(
+            "UPDATE users SET last_login_at = ? WHERE id = ?",
+            (self.now(), user_id),
+        )
+        self._maybe_commit()
+
+    def update_user_role(self, user_id: int, role: str) -> bool:
+        """Change a user's role. Returns True if user was found."""
+        cur = self._conn.execute(
+            "UPDATE users SET role = ? WHERE id = ?",
+            (role, user_id),
+        )
+        self._maybe_commit()
+        return cur.rowcount > 0
+
+    def update_user_active(self, user_id: int, is_active: bool) -> bool:
+        """Enable/disable a user account."""
+        cur = self._conn.execute(
+            "UPDATE users SET is_active = ? WHERE id = ?",
+            (1 if is_active else 0, user_id),
+        )
+        self._maybe_commit()
+        return cur.rowcount > 0
+
+    def list_users(
+        self,
+        page: int = 1,
+        per_page: int = 50,
+        role: str | None = None,
+        search: str | None = None,
+    ) -> tuple[list[dict], int]:
+        """Return a page of users and total count."""
+        filters: list[str] = []
+        params: list[Any] = []
+        if role:
+            filters.append("role = ?")
+            params.append(role)
+        if search:
+            filters.append("(email LIKE ? OR display_name LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%"])
+        where = ("WHERE " + " AND ".join(filters)) if filters else ""
+        total = self._conn.execute(
+            f"SELECT COUNT(*) FROM users {where}", params
+        ).fetchone()[0]
+        offset = (page - 1) * per_page
+        rows = self._conn.execute(
+            f"SELECT * FROM users {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params + [per_page, offset],
+        ).fetchall()
+        cur = self._conn.execute("SELECT * FROM users LIMIT 0")
+        cols = [d[0] for d in cur.description]
+        users = [dict(zip(cols, r)) for r in rows]
+        return users, total
+
+    # -------------------------------------------------------------------------
+    # Quota helpers
+    # -------------------------------------------------------------------------
+
+    def get_ai_chat_quota_used(
+        self,
+        quota_date: str,
+        *,
+        user_id: int | None = None,
+        ip_address: str | None = None,
+    ) -> int:
+        """Return the number of AI chat queries used today for user or IP."""
+        if user_id is not None:
+            row = self._conn.execute(
+                "SELECT ai_chat_count FROM user_quotas WHERE user_id = ? AND quota_date = ?",
+                (user_id, quota_date),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT ai_chat_count FROM user_quotas WHERE ip_address = ? AND quota_date = ?",
+                (ip_address, quota_date),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def increment_ai_chat_quota(
+        self,
+        quota_date: str,
+        *,
+        user_id: int | None = None,
+        ip_address: str | None = None,
+    ) -> int:
+        """Increment AI chat quota counter. Returns new count."""
+        now = self.now()
+        if user_id is not None:
+            existing = self._conn.execute(
+                "SELECT id, ai_chat_count FROM user_quotas WHERE user_id = ? AND quota_date = ?",
+                (user_id, quota_date),
+            ).fetchone()
+            if existing:
+                new_count = existing[1] + 1
+                self._conn.execute(
+                    "UPDATE user_quotas SET ai_chat_count = ?, updated_at = ? WHERE id = ?",
+                    (new_count, now, existing[0]),
+                )
+            else:
+                new_count = 1
+                self._conn.execute(
+                    "INSERT INTO user_quotas (user_id, quota_date, ai_chat_count, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+                    (user_id, quota_date, now, now),
+                )
+        else:
+            existing = self._conn.execute(
+                "SELECT id, ai_chat_count FROM user_quotas WHERE ip_address = ? AND quota_date = ?",
+                (ip_address, quota_date),
+            ).fetchone()
+            if existing:
+                new_count = existing[1] + 1
+                self._conn.execute(
+                    "UPDATE user_quotas SET ai_chat_count = ?, updated_at = ? WHERE id = ?",
+                    (new_count, now, existing[0]),
+                )
+            else:
+                new_count = 1
+                self._conn.execute(
+                    "INSERT INTO user_quotas (ip_address, quota_date, ai_chat_count, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
+                    (ip_address, quota_date, now, now),
+                )
+        self._maybe_commit()
+        return new_count
+
+    def reset_user_quota(self, user_id: int, quota_date: str | None = None) -> None:
+        """Reset quota for a user, optionally only for a specific date."""
+        if quota_date:
+            self._conn.execute(
+                "UPDATE user_quotas SET ai_chat_count = 0 WHERE user_id = ? AND quota_date = ?",
+                (user_id, quota_date),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE user_quotas SET ai_chat_count = 0 WHERE user_id = ?",
+                (user_id,),
+            )
+        self._maybe_commit()
+
+    # -------------------------------------------------------------------------
+    # Activity log helpers
+    # -------------------------------------------------------------------------
+
+    def log_user_activity(
+        self,
+        action: str,
+        *,
+        user_id: int | None = None,
+        ip_address: str | None = None,
+        resource: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Insert a user activity log entry."""
+        self._conn.execute(
+            """
+            INSERT INTO user_activity_logs (user_id, ip_address, action, resource, detail, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, ip_address, action, resource, detail, self.now()),
+        )
+        self._maybe_commit()
+
+    def list_user_activity(
+        self,
+        user_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Return activity log entries, optionally filtered by user."""
+        if user_id is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM user_activity_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM user_activity_logs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+        cur = self._conn.execute("SELECT * FROM user_activity_logs LIMIT 0")
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in rows]
