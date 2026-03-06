@@ -123,6 +123,7 @@ sites:
   url: https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/
   max_pages: 80
   max_depth: 1
+  content_selector: 'main, article, .content-area, .page-content, [role="main"]'
   keywords:
   - artificial intelligence
   - machine learning

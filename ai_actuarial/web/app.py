@@ -194,6 +194,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "catalog.write",
             "markdown.read",
             "markdown.write",
+            "config.read",
             "config.write",
             "schedule.write",
             "tasks.view",
@@ -533,6 +534,13 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         "qwen":       ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"),
         "siliconflow":("SILICONFLOW_API_KEY","SILICONFLOW_BASE_URL"),
         "cohere":     ("COHERE_API_KEY",    "COHERE_BASE_URL"),
+        "kimi":       ("KIMI_API_KEY",      "KIMI_BASE_URL"),
+        "minimax":    ("MINIMAX_API_KEY",   "MINIMAX_BASE_URL"),
+        # Search providers
+        "brave_search":  ("BRAVE_API_KEY",   None),
+        "serpapi":       ("SERPAPI_API_KEY",  None),
+        "serper":        ("SERPER_API_KEY",   None),
+        "tavily":        ("TAVILY_API_KEY",   None),
     }
     _startup_storage = None
     try:
@@ -546,7 +554,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 try:
                     os.environ[_key_env] = _enc.decrypt(_p["api_key_encrypted"])
                 except Exception:
-                    logger.warning("Could not decrypt stored key for provider: %s", _pname)
+                    logger.warning(
+                        "Could not decrypt stored key for provider '%s'. "
+                        "The encryption key may have changed. "
+                        "Please re-enter the API key in Settings → AI Configuration.",
+                        _pname,
+                    )
             if _url_env and _p.get("api_base_url") and not os.getenv(_url_env):
                 os.environ[_url_env] = _p["api_base_url"]
         logger.info("LLM provider keys loaded from database into environment")
@@ -1184,6 +1197,33 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error getting search defaults")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    # Search engine env-var mapping: engine_id -> env_var_name
+    _SEARCH_ENGINE_ENV_VARS = {
+        "brave": "BRAVE_API_KEY",
+        "google": "SERPAPI_API_KEY",
+        "serper": "SERPER_API_KEY",
+        "tavily": "TAVILY_API_KEY",
+    }
+    _SEARCH_ENGINE_DISPLAY = {
+        "brave": "Brave Search",
+        "google": "Google (SerpAPI)",
+        "serper": "Google (Serper.dev)",
+        "tavily": "Tavily",
+    }
+
+    @app.route("/api/config/search-engines")
+    @require_permissions("tasks.view")
+    def api_config_search_engines():
+        """Return list of search engines and whether they have API keys configured."""
+        engines = []
+        for engine_id, env_var in _SEARCH_ENGINE_ENV_VARS.items():
+            engines.append({
+                "id": engine_id,
+                "name": _SEARCH_ENGINE_DISPLAY.get(engine_id, engine_id),
+                "configured": bool(os.getenv(env_var)),
+            })
+        return jsonify({"engines": engines})
+
     @app.route("/api/config/backend-settings", methods=["POST"])
     @require_permissions("config.write")
     def api_config_backend_settings_update():
@@ -1310,7 +1350,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     'keywords': site.get('keywords', site_defaults.get('keywords', [])),
                     'exclude_keywords': site.get('exclude_keywords', []),
                     'exclude_prefixes': site.get('exclude_prefixes', []),
-                    'schedule_interval': site.get('schedule_interval')
+                    'schedule_interval': site.get('schedule_interval'),
+                    'content_selector': site.get('content_selector', ''),
                 })
             # Attach global schedule to defaults info
             global_schedule = site_defaults.get('schedule_interval')
@@ -1353,6 +1394,47 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error getting schedule status")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    @app.route("/api/config/schedule", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_schedule():
+        """Update global schedule_interval in sites.yaml defaults."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            interval = (data.get("schedule_interval") or "").strip()
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if "defaults" not in config_data:
+                config_data["defaults"] = {}
+
+            if interval:
+                config_data["defaults"]["schedule_interval"] = interval
+            else:
+                config_data["defaults"].pop("schedule_interval", None)
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error updating global schedule")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/schedule/reinit", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_schedule_reinit():
+        """Reinitialize the scheduler with current config."""
+        try:
+            init_scheduler()
+            return jsonify({"success": True, "job_count": len(schedule.jobs)})
+        except Exception as e:
+            logger.exception("Error reinitializing scheduler")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
     @app.route("/api/config/sites/add", methods=["POST"])
     @require_permissions("schedule.write")
     def api_config_sites_add():
@@ -1387,6 +1469,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             if data.get('exclude_keywords'): new_site['exclude_keywords'] = [k.strip() for k in data['exclude_keywords'].split(',')]
             if data.get('exclude_prefixes'): new_site['exclude_prefixes'] = [k.strip() for k in data['exclude_prefixes'].split(',')]
             if data.get('schedule_interval'): new_site['schedule_interval'] = data['schedule_interval'].strip()
+            if data.get('content_selector'): new_site['content_selector'] = data['content_selector'].strip()
             
             config_data['sites'].append(new_site)
             
@@ -1444,6 +1527,10 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         s['schedule_interval'] = data.get('schedule_interval').strip()
                     elif 'schedule_interval' in s: del s['schedule_interval']
 
+                    if data.get('content_selector'):
+                        s['content_selector'] = data.get('content_selector').strip()
+                    elif 'content_selector' in s: del s['content_selector']
+
                     found = True
                     break
             
@@ -1496,6 +1583,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     AI_SUPPORTED_PROVIDERS = {
         "openai", "mistral", "siliconflow", "anthropic",
         "google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere",
+        "kimi", "minimax",
         "local",
     }
 
@@ -1551,6 +1639,41 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             "default_base_url": "https://api.cohere.com/v1",
             "api_key_hint": "...",
         },
+        "kimi": {
+            "display_name": "Kimi (Moonshot v2)",
+            "default_base_url": "https://api.moonshot.cn/v1",
+            "api_key_hint": "sk-...",
+        },
+        "minimax": {
+            "display_name": "MiniMax",
+            "default_base_url": "https://api.minimax.chat/v1",
+            "api_key_hint": "...",
+        },
+        # Search providers
+        "brave_search": {
+            "display_name": "Brave Search",
+            "default_base_url": "",
+            "api_key_hint": "BSA...",
+            "is_search_provider": True,
+        },
+        "serpapi": {
+            "display_name": "Google (SerpAPI)",
+            "default_base_url": "",
+            "api_key_hint": "...",
+            "is_search_provider": True,
+        },
+        "serper": {
+            "display_name": "Google (Serper.dev)",
+            "default_base_url": "",
+            "api_key_hint": "...",
+            "is_search_provider": True,
+        },
+        "tavily": {
+            "display_name": "Tavily",
+            "default_base_url": "",
+            "api_key_hint": "tvly-...",
+            "is_search_provider": True,
+        },
     }
 
     # Mapping from provider name to the environment variable that holds its API key
@@ -1565,6 +1688,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         "qwen": "DASHSCOPE_API_KEY",
         "siliconflow": "SILICONFLOW_API_KEY",
         "cohere": "COHERE_API_KEY",
+        "kimi": "KIMI_API_KEY",
+        "minimax": "MINIMAX_API_KEY",
+        "brave_search": "BRAVE_API_KEY",
+        "serpapi": "SERPAPI_API_KEY",
+        "serper": "SERPER_API_KEY",
+        "tavily": "TAVILY_API_KEY",
     }
 
     @app.route("/api/config/llm-providers")
@@ -1585,8 +1714,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             # Build result from DB records first (these take priority)
             db_provider_keys = {p["provider"] for p in db_providers}
             result = []
+            from ..services.token_encryption import TokenEncryption as _ListTE
+            _list_enc = _ListTE()
             for p in db_providers:
                 pinfo = KNOWN_LLM_PROVIDERS.get(p["provider"], {})
+                # Verify the stored key is actually decryptable with the current key
+                try:
+                    _list_enc.decrypt(p["api_key_encrypted"])
+                    decrypt_ok = True
+                except Exception:
+                    decrypt_ok = False
                 result.append({
                     "provider": p["provider"],
                     "display_name": pinfo.get("display_name", p["provider"]),
@@ -1594,6 +1731,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     "api_key_masked": "****",
                     "status": p["status"],
                     "source": "db",
+                    "decrypt_ok": decrypt_ok,
                     "created_at": p["created_at"],
                     "updated_at": p["updated_at"],
                 })
@@ -2020,7 +2158,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 result = collector.collect(config_obj, progress_callback=progress_callback)
 
             elif collection_type == "search":
-                from ..search import brave_search, serpapi_search
+                from ..search import brave_search, serpapi_search, serper_search, tavily_search
                 
                 query = data.get("query")
                 site = data.get("site")
@@ -2105,6 +2243,38 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     )
                     urls = [r.url for r in results]
 
+                elif engine == "serper":
+                    if not api_key:
+                        api_key = os.getenv("SERPER_API_KEY")
+                    if not api_key:
+                        raise ValueError("Serper API Key is missing (SERPER_API_KEY not found)")
+                    
+                    results = serper_search(
+                        query,
+                        count,
+                        api_key,
+                        site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        lang=search_lang or None,
+                        country=search_country or None,
+                    )
+                    urls = [r.url for r in results]
+
+                elif engine == "tavily":
+                    if not api_key:
+                        api_key = os.getenv("TAVILY_API_KEY")
+                    if not api_key:
+                        raise ValueError("Tavily API Key is missing (TAVILY_API_KEY not found)")
+                    
+                    results = tavily_search(
+                        query,
+                        count,
+                        api_key,
+                        site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                        lang=search_lang or None,
+                        country=search_country or None,
+                    )
+                    urls = [r.url for r in results]
+
                 if search_exclude_keywords:
                     urls = [
                         u for u in urls
@@ -2178,7 +2348,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                         keywords=s.get('keywords') or site_config['defaults'].get('keywords'),
                         file_exts=site_config['defaults'].get('file_exts'),
                         exclude_keywords=merge_lists('exclude_keywords'),
-                        exclude_prefixes=merge_lists('exclude_prefixes')
+                        exclude_prefixes=merge_lists('exclude_prefixes'),
+                        content_selector=s.get('content_selector'),
                     )
                     sites_to_process.append(sc)
                 
@@ -4180,27 +4351,74 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         logger.error(f"Failed to register chat routes: {e}")
 
     # Scheduler Initialization
+    _scheduler_loop_started = False
+    _scheduler_lock = threading.Lock()
+
     def init_scheduler():
+        nonlocal _scheduler_loop_started
         try:
             logger.info("Initializing scheduler...")
-            schedule.clear()
-            
-            # Check for global schedule in defaults or root
-            global_schedule = site_config.get('defaults', {}).get('schedule_interval') 
-            # Or dedicated key if user adds it
-            
-            # Helper to add job
-            def add_job(interval_str, job_func, job_id_suffix):
+
+            # Read config outside the lock (read-only)
+            global_schedule = site_config.get('defaults', {}).get('schedule_interval')
+            sites = site_config.get('sites', [])
+
+            # Build job callbacks before acquiring lock
+            def global_run():
+                logger.info("Triggering GLOBAL scheduled job")
+                task_id = f"sched_global_{int(datetime.now().timestamp())}"
+                with _task_lock:
+                    _active_tasks[task_id] = {
+                        "id": task_id,
+                        "name": f"Scheduled: All Sites",
+                        "type": "scheduled",
+                        "status": "pending",
+                        "progress": 0,
+                        "started_at": datetime.now().isoformat()
+                    }
+                data = {
+                    "site": None,
+                    "name": "Scheduled Run (All)",
+                    "max_pages": site_config['defaults'].get('max_pages'),
+                    "max_depth": site_config['defaults'].get('max_depth')
+                }
+                threading.Thread(target=execute_collection_task,
+                                 args=(task_id, "scheduled", data)).start()
+
+            def make_site_job(s):
+                def job_wrapper():
+                    logger.info(f"Triggering scheduled job for {s['name']}")
+                    task_id = f"sched_{s['name']}_{int(datetime.now().timestamp())}"
+                    with _task_lock:
+                        _active_tasks[task_id] = {
+                            "id": task_id,
+                            "name": f"Scheduled: {s['name']}",
+                            "type": "scheduled",
+                            "status": "pending",
+                            "progress": 0,
+                            "started_at": datetime.now().isoformat()
+                        }
+                    data = {
+                        "site": s['name'],
+                        "name": f"Scheduled: {s['name']}",
+                        "max_pages": s.get('max_pages'),
+                        "max_depth": s.get('max_depth')
+                    }
+                    threading.Thread(target=execute_collection_task,
+                                     args=(task_id, "scheduled", data)).start()
+                return job_wrapper
+
+            def _add_job(interval_str, job_func, job_id_suffix):
+                """Register a single job; must be called while holding _scheduler_lock."""
                 try:
                     logger.info(f"Adding schedule: {interval_str}")
                     if interval_str == "daily":
-                        # Default to 00:30 server time (approx "night")
                         schedule.every().day.at("00:30").do(job_func)
                     elif interval_str == "weekly":
                         schedule.every().monday.at("00:30").do(job_func)
                     elif interval_str.startswith("daily at "):
-                         t = interval_str.replace("daily at ", "").strip()
-                         schedule.every().day.at(t).do(job_func)
+                        t = interval_str.replace("daily at ", "").strip()
+                        schedule.every().day.at(t).do(job_func)
                     elif interval_str.startswith("every "):
                         parts = interval_str.split()
                         if len(parts) >= 3:
@@ -4213,73 +4431,33 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 except Exception as ex:
                     logger.error(f"Failed to parse schedule '{interval_str}': {ex}")
 
-            # 1. Global Schedule (All Sites)
-            if global_schedule:
-                def global_run():
-                    logger.info("Triggering GLOBAL scheduled job")
-                    task_id = f"sched_global_{int(datetime.now().timestamp())}"
-                    with _task_lock:
-                        _active_tasks[task_id] = {
-                            "id": task_id,
-                            "name": f"Scheduled: All Sites",
-                            "type": "scheduled",
-                            "status": "pending",
-                            "progress": 0,
-                            "started_at": datetime.now().isoformat()
-                        }
-                    data = {
-                        "site": None, # Indicates ALL sites
-                        "name": "Scheduled Run (All)",
-                        "max_pages": site_config['defaults'].get('max_pages'),
-                        "max_depth": site_config['defaults'].get('max_depth')
-                    }
-                    threading.Thread(target=execute_collection_task, 
-                                     args=(task_id, "scheduled", data)).start()
+            # Clear and register all jobs atomically to avoid races with scheduler_loop
+            with _scheduler_lock:
+                schedule.clear()
+
+                # 1. Global Schedule (All Sites)
+                if global_schedule:
+                    _add_job(global_schedule, global_run, "global")
+
+                # 2. Per-site overrides
+                for site in sites:
+                    interval = site.get('schedule_interval')
+                    if not interval:
+                        continue
+                    _add_job(interval, make_site_job(site), site['name'])
+
+            # Only start the loop thread once
+            if not _scheduler_loop_started:
+                def scheduler_loop():
+                    logger.info("Scheduler loop started")
+                    while True:
+                        with _scheduler_lock:
+                            schedule.run_pending()
+                        time.sleep(60)
                 
-                add_job(global_schedule, global_run, "global")
-
-            # 2. Per-site overrides (keep for backward compat or specific needs)
-            sites = site_config.get('sites', [])
-            for site in sites:
-                interval = site.get('schedule_interval')
-                if not interval:
-                    continue
-                # If global schedule exists, maybe warn or ignore? 
-                # Let's allow specific sites to run EXTRA times if they define their own.
-                
-                def job_wrapper(s=site):
-                    logger.info(f"Triggering scheduled job for {s['name']}")
-                    task_id = f"sched_{s['name']}_{int(datetime.now().timestamp())}"
-                    
-                    with _task_lock:
-                        _active_tasks[task_id] = {
-                            "id": task_id,
-                            "name": f"Scheduled: {s['name']}",
-                            "type": "scheduled",
-                            "status": "pending",
-                            "progress": 0,
-                            "started_at": datetime.now().isoformat()
-                        }
-                    
-                    data = {
-                        "site": s['name'],
-                        "name": f"Scheduled: {s['name']}",
-                        "max_pages": s.get('max_pages'),
-                        "max_depth": s.get('max_depth')
-                    }
-                    threading.Thread(target=execute_collection_task, 
-                                     args=(task_id, "scheduled", data)).start()
-
-                add_job(interval, job_wrapper, site['name'])
-
-            def scheduler_loop():
-                logger.info("Scheduler loop started")
-                while True:
-                    schedule.run_pending()
-                    time.sleep(60)
-            
-            st = threading.Thread(target=scheduler_loop, daemon=True)
-            st.start()
+                st = threading.Thread(target=scheduler_loop, daemon=True)
+                st.start()
+                _scheduler_loop_started = True
 
         except Exception as e:
             logger.error(f"Scheduler init failed: {e}")

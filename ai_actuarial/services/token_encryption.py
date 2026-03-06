@@ -53,38 +53,65 @@ class TokenEncryption:
     
     def _get_or_create_encryption_key(self) -> bytes:
         """
-        Get encryption key from environment or create new one.
-        
-        In production, TOKEN_ENCRYPTION_KEY should always be set in the environment.
-        If not found, a new key is generated (development mode only).
-        
+        Get encryption key from environment, persistent key file, or create one.
+
+        Priority:
+          1. TOKEN_ENCRYPTION_KEY env var (highest — set this in production)
+          2. Persistent key file (TOKEN_ENCRYPTION_KEY_FILE env var, or
+             data/token_encryption.key relative to CWD)
+          3. Generate a new key and save it to the key file so it survives restarts
+
         Returns:
             Encryption key as bytes
         """
+        # 1. Explicit env var
         key_str = os.getenv('TOKEN_ENCRYPTION_KEY')
-        
         if key_str:
-            # Use existing key from environment
             return key_str.encode()
-        
-        # Generate new key (development mode only)
+
+        # 2. Persistent key file
+        key_file = self._get_key_file_path()
+        if key_file and os.path.exists(key_file):
+            try:
+                with open(key_file, 'rb') as f:
+                    key = f.read().strip()
+                if key:
+                    logger.info("Token encryption key loaded from key file: %s", key_file)
+                    return key
+            except Exception as exc:
+                logger.warning("Failed to read encryption key file %s: %s", key_file, exc)
+
+        # 3. Generate new key and persist it so the next restart can reuse it
         logger.warning(
-            "TOKEN_ENCRYPTION_KEY not found in environment. "
-            "Generating new key. This should only happen in development!"
+            "TOKEN_ENCRYPTION_KEY is not set. Generating a new key. "
+            "For production, set TOKEN_ENCRYPTION_KEY in your .env file."
         )
         key = Fernet.generate_key()
-        
-        # Log instruction for production setup (without exposing the key)
-        logger.warning(
-            "TOKEN_ENCRYPTION_KEY was not set and a key was auto-generated for this "
-            "process (development only). For production, generate a persistent key "
-            "using a command like:\n"
-            "  python -c \"from cryptography.fernet import Fernet; "
-            "print(Fernet.generate_key().decode())\"\n"
-            "and set it as TOKEN_ENCRYPTION_KEY in your environment or .env file."
-        )
-        
+        if key_file:
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(key_file)), exist_ok=True)
+                with open(key_file, 'wb') as f:
+                    f.write(key)
+                logger.warning(
+                    "Encryption key saved to %s so it persists across restarts. "
+                    "For production, copy this value and set TOKEN_ENCRYPTION_KEY "
+                    "in your .env file instead.", key_file
+                )
+            except Exception as exc:
+                logger.error(
+                    "Could not persist encryption key to %s: %s. "
+                    "All stored API keys will become unreadable on the next restart! "
+                    "Set TOKEN_ENCRYPTION_KEY in your .env file to fix this.", key_file, exc
+                )
         return key
+
+    def _get_key_file_path(self) -> Optional[str]:
+        """Return the path to use for the persistent key file."""
+        explicit = os.getenv('TOKEN_ENCRYPTION_KEY_FILE')
+        if explicit:
+            return explicit
+        # Default: data/token_encryption.key (data/ is already gitignored)
+        return os.path.join(os.getcwd(), 'data', 'token_encryption.key')
     
     def encrypt(self, plaintext: str) -> str:
         """
