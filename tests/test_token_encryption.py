@@ -144,25 +144,35 @@ class TestTokenEncryption:
         
         assert masked == "****"
     
-    def test_initialization_with_missing_key_generates_new(self, caplog):
-        """Test that missing TOKEN_ENCRYPTION_KEY generates a new key."""
-        # Remove the test key
+    def test_initialization_with_missing_key_generates_new(self, caplog, tmp_path):
+        """Test that missing TOKEN_ENCRYPTION_KEY still works (uses/creates key file)."""
+        import importlib
+        import ai_actuarial.services.token_encryption as te_mod
+
+        # Remove the env var
         if 'TOKEN_ENCRYPTION_KEY' in os.environ:
             del os.environ['TOKEN_ENCRYPTION_KEY']
-        
+
+        # Point key file to a temp location so we don't interfere with real data
+        os.environ['TOKEN_ENCRYPTION_KEY_FILE'] = str(tmp_path / 'test.key')
+
         TokenEncryption._instance = None
-        
-        encryption = TokenEncryption()
-        
-        # Should still work with generated key
-        plaintext = "test-api-key"
-        encrypted = encryption.encrypt(plaintext)
-        decrypted = encryption.decrypt(encrypted)
-        
-        assert decrypted == plaintext
-        
-        # Should log warnings about missing key
-        assert any("TOKEN_ENCRYPTION_KEY not found" in record.message for record in caplog.records)
+
+        try:
+            encryption = TokenEncryption()
+
+            # Should still work with a generated key
+            plaintext = "test-api-key"
+            encrypted = encryption.encrypt(plaintext)
+            decrypted = encryption.decrypt(encrypted)
+
+            assert decrypted == plaintext
+
+            # Key file should have been created
+            assert (tmp_path / 'test.key').exists()
+        finally:
+            os.environ.pop('TOKEN_ENCRYPTION_KEY_FILE', None)
+            TokenEncryption._instance = None
     
     def test_encrypt_decrypt_special_characters(self):
         """Test encryption/decryption with special characters."""

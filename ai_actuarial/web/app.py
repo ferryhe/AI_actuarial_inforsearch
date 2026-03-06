@@ -554,7 +554,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 try:
                     os.environ[_key_env] = _enc.decrypt(_p["api_key_encrypted"])
                 except Exception:
-                    logger.warning("Could not decrypt stored key for provider: %s", _pname)
+                    logger.warning(
+                        "Could not decrypt stored key for provider '%s'. "
+                        "The encryption key may have changed. "
+                        "Please re-enter the API key in Settings → AI Configuration.",
+                        _pname,
+                    )
             if _url_env and _p.get("api_base_url") and not os.getenv(_url_env):
                 os.environ[_url_env] = _p["api_base_url"]
         logger.info("LLM provider keys loaded from database into environment")
@@ -1424,7 +1429,6 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_schedule_reinit():
         """Reinitialize the scheduler with current config."""
         try:
-            schedule.clear()
             init_scheduler()
             return jsonify({"success": True, "job_count": len(schedule.jobs)})
         except Exception as e:
@@ -1710,8 +1714,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             # Build result from DB records first (these take priority)
             db_provider_keys = {p["provider"] for p in db_providers}
             result = []
+            from ..services.token_encryption import TokenEncryption as _ListTE
+            _list_enc = _ListTE()
             for p in db_providers:
                 pinfo = KNOWN_LLM_PROVIDERS.get(p["provider"], {})
+                # Verify the stored key is actually decryptable with the current key
+                try:
+                    _list_enc.decrypt(p["api_key_encrypted"])
+                    decrypt_ok = True
+                except Exception:
+                    decrypt_ok = False
                 result.append({
                     "provider": p["provider"],
                     "display_name": pinfo.get("display_name", p["provider"]),
@@ -1719,6 +1731,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     "api_key_masked": "****",
                     "status": p["status"],
                     "source": "db",
+                    "decrypt_ok": decrypt_ok,
                     "created_at": p["created_at"],
                     "updated_at": p["updated_at"],
                 })
@@ -4339,18 +4352,64 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
     # Scheduler Initialization
     _scheduler_loop_started = False
+    _scheduler_lock = threading.Lock()
 
     def init_scheduler():
         nonlocal _scheduler_loop_started
         try:
             logger.info("Initializing scheduler...")
-            schedule.clear()
-            
-            # Check for global schedule in defaults or root
-            global_schedule = site_config.get('defaults', {}).get('schedule_interval') 
-            
-            # Helper to add job
-            def add_job(interval_str, job_func, job_id_suffix):
+
+            # Read config outside the lock (read-only)
+            global_schedule = site_config.get('defaults', {}).get('schedule_interval')
+            sites = site_config.get('sites', [])
+
+            # Build job callbacks before acquiring lock
+            def global_run():
+                logger.info("Triggering GLOBAL scheduled job")
+                task_id = f"sched_global_{int(datetime.now().timestamp())}"
+                with _task_lock:
+                    _active_tasks[task_id] = {
+                        "id": task_id,
+                        "name": f"Scheduled: All Sites",
+                        "type": "scheduled",
+                        "status": "pending",
+                        "progress": 0,
+                        "started_at": datetime.now().isoformat()
+                    }
+                data = {
+                    "site": None,
+                    "name": "Scheduled Run (All)",
+                    "max_pages": site_config['defaults'].get('max_pages'),
+                    "max_depth": site_config['defaults'].get('max_depth')
+                }
+                threading.Thread(target=execute_collection_task,
+                                 args=(task_id, "scheduled", data)).start()
+
+            def make_site_job(s):
+                def job_wrapper():
+                    logger.info(f"Triggering scheduled job for {s['name']}")
+                    task_id = f"sched_{s['name']}_{int(datetime.now().timestamp())}"
+                    with _task_lock:
+                        _active_tasks[task_id] = {
+                            "id": task_id,
+                            "name": f"Scheduled: {s['name']}",
+                            "type": "scheduled",
+                            "status": "pending",
+                            "progress": 0,
+                            "started_at": datetime.now().isoformat()
+                        }
+                    data = {
+                        "site": s['name'],
+                        "name": f"Scheduled: {s['name']}",
+                        "max_pages": s.get('max_pages'),
+                        "max_depth": s.get('max_depth')
+                    }
+                    threading.Thread(target=execute_collection_task,
+                                     args=(task_id, "scheduled", data)).start()
+                return job_wrapper
+
+            def _add_job(interval_str, job_func, job_id_suffix):
+                """Register a single job; must be called while holding _scheduler_lock."""
                 try:
                     logger.info(f"Adding schedule: {interval_str}")
                     if interval_str == "daily":
@@ -4358,8 +4417,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     elif interval_str == "weekly":
                         schedule.every().monday.at("00:30").do(job_func)
                     elif interval_str.startswith("daily at "):
-                         t = interval_str.replace("daily at ", "").strip()
-                         schedule.every().day.at(t).do(job_func)
+                        t = interval_str.replace("daily at ", "").strip()
+                        schedule.every().day.at(t).do(job_func)
                     elif interval_str.startswith("every "):
                         parts = interval_str.split()
                         if len(parts) >= 3:
@@ -4372,69 +4431,28 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 except Exception as ex:
                     logger.error(f"Failed to parse schedule '{interval_str}': {ex}")
 
-            # 1. Global Schedule (All Sites)
-            if global_schedule:
-                def global_run():
-                    logger.info("Triggering GLOBAL scheduled job")
-                    task_id = f"sched_global_{int(datetime.now().timestamp())}"
-                    with _task_lock:
-                        _active_tasks[task_id] = {
-                            "id": task_id,
-                            "name": f"Scheduled: All Sites",
-                            "type": "scheduled",
-                            "status": "pending",
-                            "progress": 0,
-                            "started_at": datetime.now().isoformat()
-                        }
-                    data = {
-                        "site": None,
-                        "name": "Scheduled Run (All)",
-                        "max_pages": site_config['defaults'].get('max_pages'),
-                        "max_depth": site_config['defaults'].get('max_depth')
-                    }
-                    threading.Thread(target=execute_collection_task, 
-                                     args=(task_id, "scheduled", data)).start()
-                
-                add_job(global_schedule, global_run, "global")
+            # Clear and register all jobs atomically to avoid races with scheduler_loop
+            with _scheduler_lock:
+                schedule.clear()
 
-            # 2. Per-site overrides
-            sites = site_config.get('sites', [])
-            for site in sites:
-                interval = site.get('schedule_interval')
-                if not interval:
-                    continue
-                
-                def job_wrapper(s=site):
-                    logger.info(f"Triggering scheduled job for {s['name']}")
-                    task_id = f"sched_{s['name']}_{int(datetime.now().timestamp())}"
-                    
-                    with _task_lock:
-                        _active_tasks[task_id] = {
-                            "id": task_id,
-                            "name": f"Scheduled: {s['name']}",
-                            "type": "scheduled",
-                            "status": "pending",
-                            "progress": 0,
-                            "started_at": datetime.now().isoformat()
-                        }
-                    
-                    data = {
-                        "site": s['name'],
-                        "name": f"Scheduled: {s['name']}",
-                        "max_pages": s.get('max_pages'),
-                        "max_depth": s.get('max_depth')
-                    }
-                    threading.Thread(target=execute_collection_task, 
-                                     args=(task_id, "scheduled", data)).start()
+                # 1. Global Schedule (All Sites)
+                if global_schedule:
+                    _add_job(global_schedule, global_run, "global")
 
-                add_job(interval, job_wrapper, site['name'])
+                # 2. Per-site overrides
+                for site in sites:
+                    interval = site.get('schedule_interval')
+                    if not interval:
+                        continue
+                    _add_job(interval, make_site_job(site), site['name'])
 
             # Only start the loop thread once
             if not _scheduler_loop_started:
                 def scheduler_loop():
                     logger.info("Scheduler loop started")
                     while True:
-                        schedule.run_pending()
+                        with _scheduler_lock:
+                            schedule.run_pending()
                         time.sleep(60)
                 
                 st = threading.Thread(target=scheduler_loop, daemon=True)

@@ -395,8 +395,8 @@ function loadGlobalSchedule() {
         .then(r => r.json())
         .then(data => {
             const sel = document.getElementById('global-schedule-select');
-            if (sel && data.global_schedule) {
-                sel.value = data.global_schedule;
+            if (sel) {
+                sel.value = data.global_schedule || '';
             }
         })
         .catch(e => console.error('Error loading global schedule:', e));

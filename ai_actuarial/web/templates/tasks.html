@@ -173,9 +173,9 @@
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.search_engine">Search Engine</label>
-                <select name="engine" id="search-engine-select">
+                <select name="engine" id="search-engine-select" required>
                     <!-- Populated dynamically from /api/config/search-engines -->
-                    <option value="">Loading...</option>
+                    <option value="" disabled selected>Loading...</option>
                 </select>
                 <small id="search-engine-hint" class="format-hint" style="color: var(--text-secondary);"></small>
             </div>

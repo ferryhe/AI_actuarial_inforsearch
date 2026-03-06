@@ -191,7 +191,11 @@ class Crawler:
             logger.warning("beautifulsoup4 not installed; content_selector ignored")
             return None
         soup = BeautifulSoup(html, "html.parser")
-        parts = soup.select(selector)
+        try:
+            parts = soup.select(selector)
+        except Exception as exc:
+            logger.warning("Invalid content_selector '%s'; ignoring selector: %s", selector, exc)
+            return None
         if not parts:
             return None
         return "\n".join(str(p) for p in parts)
