@@ -75,6 +75,8 @@ def _site_configs(cfg: dict) -> list[SiteConfig]:
                 file_exts=s.get("file_exts", defaults.get("file_exts", [])),
                 exclude_keywords=excl_kw,
                 exclude_prefixes=excl_pfx,
+                content_selector=s.get("content_selector"),
+                allow_url_patterns=s.get("allow_url_patterns"),
             )
         )
     return sites

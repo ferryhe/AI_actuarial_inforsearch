@@ -405,10 +405,10 @@
                 <small class="form-hint" data-i18n="tasks.fh_skip_cataloged">Unchecked = Skip already cataloged</small>
             </div>
             <div class="form-group">
-                <label data-i18n="tasks.ai_provider">AI Provider</label>
-                <select name="provider" id="catalog-provider-select">
-                    <option value="">Loading providers...</option>
-                </select>
+                <div id="catalog-ai-provider-label" class="form-label" data-i18n="tasks.ai_provider">AI Provider</div>
+                <input type="hidden" name="provider" id="catalog-provider-hidden">
+                <p id="catalog-ai-config-info" class="form-hint" style="color:var(--text-secondary)" aria-labelledby="catalog-ai-provider-label">Loading catalog model...</p>
+                <small class="form-hint" data-i18n="tasks.catalog_ai_config_info">AI model set in Settings → AI Config</small>
             </div>
             <button type="submit" class="btn btn-primary" data-i18n="tasks.start_cataloging">Start Cataloging</button>
         </form>
@@ -1184,62 +1184,27 @@ const _CATALOG_PROVIDER_NAMES = {
 };
 
 async function loadCatalogProviders() {
-    const sel = document.getElementById('catalog-provider-select');
-    if (!sel) return;
+    const hidden = document.getElementById('catalog-provider-hidden');
+    const infoEl = document.getElementById('catalog-ai-config-info');
+    if (!hidden) return;
     try {
-        const [modelsResp, providersResp] = await Promise.all([
-            fetch('/api/config/ai-models'),
-            fetch('/api/config/llm-providers')
-        ]);
-        if (!modelsResp.ok) {
-            throw new Error(`Failed to load AI models config: HTTP ${modelsResp.status} ${modelsResp.statusText}`);
-        }
-        if (!providersResp.ok) {
-            throw new Error(`Failed to load LLM providers config: HTTP ${providersResp.status} ${providersResp.statusText}`);
-        }
-        const modelsData = await modelsResp.json();
-        const providersData = await providersResp.json();
-
-        // Build set of configured provider keys (plus 'local')
-        const configured = new Set(['local']);
-        (providersData.providers || []).forEach(p => configured.add(p.provider));
-
-        // Find providers that have catalog-capable models and are configured
-        const available = modelsData.available || {};
-        const catalogProviders = Object.keys(available).filter(provider => {
-            if (!configured.has(provider)) return false;
-            return (available[provider] || []).some(m => (m.types || []).includes('catalog'));
-        });
-
-        if (catalogProviders.length === 0) catalogProviders.push('local');
-
+        const resp = await fetch('/api/config/ai-models');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const modelsData = await resp.json();
         const currentProvider = modelsData.current?.catalog?.provider || 'openai';
-
-        sel.innerHTML = '';
-        // Only prepend currentProvider if it is actually configured and not already listed
-        const orderedProviders = currentProvider
-            && configured.has(currentProvider)
-            && !catalogProviders.includes(currentProvider)
-            ? [currentProvider, ...catalogProviders]
-            : catalogProviders;
-
-        orderedProviders.forEach(provider => {
-            const opt = document.createElement('option');
-            opt.value = provider;
-            let label = _CATALOG_PROVIDER_NAMES[provider] || provider;
-            if (provider === currentProvider) {
-                const currentModel = modelsData.current?.catalog?.model;
-                if (currentModel) label += ` (${currentModel})`;
-                opt.selected = true;
-            }
-            opt.textContent = label;
-            sel.appendChild(opt);
-        });
-
+        const currentModel = modelsData.current?.catalog?.model || '';
+        hidden.value = currentProvider;
+        if (infoEl) {
+            const providerLabel = _CATALOG_PROVIDER_NAMES[currentProvider] || currentProvider;
+            infoEl.textContent = currentModel
+                ? `${providerLabel} — ${currentModel}`
+                : providerLabel;
+        }
         loadCatalogStats();
     } catch (err) {
-        console.error('Failed to load catalog providers:', err);
-        sel.innerHTML = '<option value="local">Local (KeyBERT)</option><option value="openai">OpenAI</option>';
+        console.error('Failed to load catalog model from AI Config:', err);
+        if (hidden) hidden.value = 'openai';
+        if (infoEl) infoEl.textContent = 'Failed to load — defaulting to openai';
     }
 }
 
@@ -1248,10 +1213,7 @@ let _catalogModalBound = false;
 function _bindCatalogModal() {
     if (_catalogModalBound) return;
     _catalogModalBound = true;
-    const providerEl = document.getElementById('catalog-provider-select');
     const sourceEl = document.querySelector('#catalog-form select[name="input_source"]');
-
-    if (providerEl) providerEl.addEventListener('change', () => loadCatalogStats());
     if (sourceEl) sourceEl.addEventListener('change', () => loadCatalogStats());
 }
 
@@ -1420,7 +1382,7 @@ async function loadCatalogStats() {
     if (statsEl) statsEl.textContent = _t('tasks.stats_loading');
     try {
         const form = document.getElementById('catalog-form');
-        const provider = form ? (form.querySelector('select[name="provider"]')?.value || 'openai') : 'openai';
+        const provider = form ? (form.querySelector('[name="provider"]')?.value || 'openai') : 'openai';
         const inputSource = form ? (form.querySelector('select[name="input_source"]')?.value || 'markdown') : 'markdown';
         const scopeMode = form ? getScopeMode(form, 'index') : 'index';
         const category = form ? (form.querySelector('#catalog-category-select')?.value || '') : '';
