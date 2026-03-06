@@ -309,10 +309,34 @@ def _write_yaml(path: str, data: dict[str, Any]) -> None:
         yaml.dump(data, f, sort_keys=False, allow_unicode=True)
 
 
+_DEFAULT_CATALOG_PROVIDER: str | None = None
+
+
 def _get_default_catalog_provider() -> str:
-    """Return the configured catalog provider from sites.yaml, defaulting to 'openai'."""
+    """Return the configured catalog provider from sites.yaml, defaulting to 'openai'.
+
+    Result is cached after the first read so subsequent calls skip file I/O.
+    Call ``_invalidate_default_catalog_provider()`` after writing a new value to
+    sites.yaml so the cache is refreshed on the next request.
+    """
+    global _DEFAULT_CATALOG_PROVIDER
+    if _DEFAULT_CATALOG_PROVIDER is not None:
+        return _DEFAULT_CATALOG_PROVIDER
     ai_cfg = _load_yaml(_get_sites_config_path(), default={}).get("ai_config") or {}
-    return ai_cfg.get("catalog", {}).get("provider", "openai")
+    catalog_cfg = ai_cfg.get("catalog") or {}
+    provider = catalog_cfg.get("provider")
+    if not isinstance(provider, str) or not provider.strip():
+        provider = "openai"
+    else:
+        provider = provider.strip()
+    _DEFAULT_CATALOG_PROVIDER = provider
+    return _DEFAULT_CATALOG_PROVIDER
+
+
+def _invalidate_default_catalog_provider() -> None:
+    """Clear the cached catalog provider so it is re-read on the next call."""
+    global _DEFAULT_CATALOG_PROVIDER
+    _DEFAULT_CATALOG_PROVIDER = None
 
 
 def _normalize_list(value: Any, *, field_name: str) -> list[str]:
@@ -1970,6 +1994,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
+            _invalidate_default_catalog_provider()
             
             # Invalidate configuration cache so backend picks up changes immediately
             try:

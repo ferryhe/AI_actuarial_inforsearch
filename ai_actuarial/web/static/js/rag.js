@@ -926,10 +926,15 @@
 
                 const available = modelsPayload.available || {};
                 const currentEmbedModel = modelsPayload.current?.embeddings?.model || '';
+                // Restrict to the active embeddings provider so the model list
+                // matches what the indexing pipeline will actually use.
+                const activeEmbedProvider = modelsPayload.current?.embeddings?.provider || '';
 
                 const embeddingModels = [];
                 Object.keys(available).forEach(provider => {
                     if (!configured.has(provider)) return;
+                    // When an active embeddings provider is known, only show its models.
+                    if (activeEmbedProvider && provider !== activeEmbedProvider) return;
                     (available[provider] || []).forEach(m => {
                         if ((m.types || []).includes('embeddings')) {
                             embeddingModels.push({ value: m.name, label: m.display_name || m.name });
@@ -951,9 +956,8 @@
                 });
             } catch (err) {
                 console.error('Failed to load embedding models:', err);
-                if (!sel.options.length) {
-                    sel.innerHTML = '<option value="text-embedding-3-large">text-embedding-3-large</option><option value="text-embedding-3-small">text-embedding-3-small</option>';
-                }
+                // Always replace the placeholder so the UI is not stuck.
+                sel.innerHTML = '<option value="text-embedding-3-large">text-embedding-3-large</option><option value="text-embedding-3-small">text-embedding-3-small</option>';
             }
         };
 

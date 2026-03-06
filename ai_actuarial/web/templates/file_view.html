@@ -376,6 +376,12 @@
                 fetch('/api/config/ai-models'),
                 fetch('/api/config/llm-providers')
             ]);
+            if (!modelsResp.ok) {
+                throw new Error(`Failed to load AI models config: HTTP ${modelsResp.status} ${modelsResp.statusText}`);
+            }
+            if (!providersResp.ok) {
+                throw new Error(`Failed to load LLM providers config: HTTP ${providersResp.status} ${providersResp.statusText}`);
+            }
             const modelsData = await modelsResp.json();
             const providersData = await providersResp.json();
 
@@ -393,7 +399,10 @@
             const currentProvider = modelsData.current?.catalog?.provider || 'openai';
 
             sel.innerHTML = '';
-            const orderedProviders = currentProvider && !catalogProviders.includes(currentProvider)
+            // Only prepend currentProvider if it is actually configured and not already listed
+            const orderedProviders = currentProvider
+                && configured.has(currentProvider)
+                && !catalogProviders.includes(currentProvider)
                 ? [currentProvider, ...catalogProviders]
                 : catalogProviders;
 

@@ -1191,6 +1191,12 @@ async function loadCatalogProviders() {
             fetch('/api/config/ai-models'),
             fetch('/api/config/llm-providers')
         ]);
+        if (!modelsResp.ok) {
+            throw new Error(`Failed to load AI models config: HTTP ${modelsResp.status} ${modelsResp.statusText}`);
+        }
+        if (!providersResp.ok) {
+            throw new Error(`Failed to load LLM providers config: HTTP ${providersResp.status} ${providersResp.statusText}`);
+        }
         const modelsData = await modelsResp.json();
         const providersData = await providersResp.json();
 
@@ -1210,8 +1216,10 @@ async function loadCatalogProviders() {
         const currentProvider = modelsData.current?.catalog?.provider || 'openai';
 
         sel.innerHTML = '';
-        // Ensure the configured provider is always listed first (even if not in available)
-        const orderedProviders = currentProvider && !catalogProviders.includes(currentProvider)
+        // Only prepend currentProvider if it is actually configured and not already listed
+        const orderedProviders = currentProvider
+            && configured.has(currentProvider)
+            && !catalogProviders.includes(currentProvider)
             ? [currentProvider, ...catalogProviders]
             : catalogProviders;
 
@@ -1245,8 +1253,9 @@ function _bindCatalogModal() {
 function openCatalogModal() {
     openModal('catalog-modal');
     _bindCatalogModal();
-    toggleCatalogScopeMode();
-    loadCatalogProviders();
+    // Load providers first so the provider <select> is populated before
+    // toggleCatalogScopeMode() triggers loadCatalogStats() (which reads that value).
+    loadCatalogProviders().then(() => toggleCatalogScopeMode());
 }
 function openUrlCollectionModal() { openModal('url-collection-modal'); }
 function openFileImportModal() { openModal('file-import-modal'); }
