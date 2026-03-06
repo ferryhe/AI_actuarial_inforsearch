@@ -194,6 +194,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "catalog.write",
             "markdown.read",
             "markdown.write",
+            "config.read",
             "config.write",
             "schedule.write",
             "tasks.view",
@@ -1386,6 +1387,48 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             return jsonify({'jobs': jobs, 'count': len(jobs)})
         except Exception as e:
             logger.exception("Error getting schedule status")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/schedule", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_schedule():
+        """Update global schedule_interval in sites.yaml defaults."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            interval = (data.get("schedule_interval") or "").strip()
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if "defaults" not in config_data:
+                config_data["defaults"] = {}
+
+            if interval:
+                config_data["defaults"]["schedule_interval"] = interval
+            else:
+                config_data["defaults"].pop("schedule_interval", None)
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error updating global schedule")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/schedule/reinit", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_schedule_reinit():
+        """Reinitialize the scheduler with current config."""
+        try:
+            schedule.clear()
+            init_scheduler()
+            return jsonify({"success": True, "job_count": len(schedule.jobs)})
+        except Exception as e:
+            logger.exception("Error reinitializing scheduler")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/api/config/sites/add", methods=["POST"])
@@ -4295,21 +4338,22 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         logger.error(f"Failed to register chat routes: {e}")
 
     # Scheduler Initialization
+    _scheduler_loop_started = False
+
     def init_scheduler():
+        nonlocal _scheduler_loop_started
         try:
             logger.info("Initializing scheduler...")
             schedule.clear()
             
             # Check for global schedule in defaults or root
             global_schedule = site_config.get('defaults', {}).get('schedule_interval') 
-            # Or dedicated key if user adds it
             
             # Helper to add job
             def add_job(interval_str, job_func, job_id_suffix):
                 try:
                     logger.info(f"Adding schedule: {interval_str}")
                     if interval_str == "daily":
-                        # Default to 00:30 server time (approx "night")
                         schedule.every().day.at("00:30").do(job_func)
                     elif interval_str == "weekly":
                         schedule.every().monday.at("00:30").do(job_func)
@@ -4343,7 +4387,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                             "started_at": datetime.now().isoformat()
                         }
                     data = {
-                        "site": None, # Indicates ALL sites
+                        "site": None,
                         "name": "Scheduled Run (All)",
                         "max_pages": site_config['defaults'].get('max_pages'),
                         "max_depth": site_config['defaults'].get('max_depth')
@@ -4353,14 +4397,12 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 
                 add_job(global_schedule, global_run, "global")
 
-            # 2. Per-site overrides (keep for backward compat or specific needs)
+            # 2. Per-site overrides
             sites = site_config.get('sites', [])
             for site in sites:
                 interval = site.get('schedule_interval')
                 if not interval:
                     continue
-                # If global schedule exists, maybe warn or ignore? 
-                # Let's allow specific sites to run EXTRA times if they define their own.
                 
                 def job_wrapper(s=site):
                     logger.info(f"Triggering scheduled job for {s['name']}")
@@ -4387,14 +4429,17 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
 
                 add_job(interval, job_wrapper, site['name'])
 
-            def scheduler_loop():
-                logger.info("Scheduler loop started")
-                while True:
-                    schedule.run_pending()
-                    time.sleep(60)
-            
-            st = threading.Thread(target=scheduler_loop, daemon=True)
-            st.start()
+            # Only start the loop thread once
+            if not _scheduler_loop_started:
+                def scheduler_loop():
+                    logger.info("Scheduler loop started")
+                    while True:
+                        schedule.run_pending()
+                        time.sleep(60)
+                
+                st = threading.Thread(target=scheduler_loop, daemon=True)
+                st.start()
+                _scheduler_loop_started = True
 
         except Exception as e:
             logger.error(f"Scheduler init failed: {e}")

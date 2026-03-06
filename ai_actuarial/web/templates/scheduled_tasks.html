@@ -37,6 +37,28 @@
 
     <!-- Tab Content: Upcoming Runs -->
     <div id="schedule-status" class="tab-content">
+        {% if can_edit_sites %}
+        <div class="schedule-config-section" style="margin-bottom:20px; padding:16px; border:1px solid var(--border-color); border-radius:8px; background:var(--card-bg);">
+            <h4 style="margin-top:0;" data-i18n="sched.global_schedule_title">Global Schedule Configuration</h4>
+            <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+                <div class="form-group" style="margin-bottom:0;">
+                    <label for="global-schedule-select" data-i18n="sched.global_interval">Global Interval:</label>
+                    <select id="global-schedule-select">
+                        <option value="">None (disabled)</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="daily at 02:00">Daily at 02:00</option>
+                        <option value="daily at 06:00">Daily at 06:00</option>
+                        <option value="every 6 hours">Every 6 hours</option>
+                        <option value="every 12 hours">Every 12 hours</option>
+                    </select>
+                </div>
+                <button onclick="saveGlobalSchedule()" class="btn btn-primary" data-i18n="common.save">Save</button>
+                <button onclick="reinitScheduler()" class="btn btn-secondary" data-i18n="sched.reinit_scheduler">Reinitialize Scheduler</button>
+            </div>
+            <p style="margin-top:8px; font-size:0.9em; color:var(--text-secondary);" data-i18n="sched.global_schedule_help">Global schedule applies to all sites without a per-site override. Changes take effect after reinitializing the scheduler.</p>
+        </div>
+        {% endif %}
         <div id="schedule-status-container">
             <p class="loading" data-i18n="sched.loading_status">Loading schedule status...</p>
         </div>
@@ -368,9 +390,55 @@ function renderSites(sites) {
     }
 }
 
+function loadGlobalSchedule() {
+    fetch('/api/config/sites')
+        .then(r => r.json())
+        .then(data => {
+            const sel = document.getElementById('global-schedule-select');
+            if (sel && data.global_schedule) {
+                sel.value = data.global_schedule;
+            }
+        })
+        .catch(e => console.error('Error loading global schedule:', e));
+}
+
+function saveGlobalSchedule() {
+    const val = document.getElementById('global-schedule-select').value;
+    fetch('/api/config/schedule', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ schedule_interval: val })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(window.I18n ? window.I18n.t('sched.schedule_saved') : 'Global schedule saved.', 'success');
+            loadSites();
+        } else {
+            showNotification('Error: ' + data.error, 'error');
+        }
+    })
+    .catch(e => showNotification('Error: ' + e, 'error'));
+}
+
+function reinitScheduler() {
+    fetch('/api/schedule/reinit', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showNotification(window.I18n ? window.I18n.t('sched.scheduler_reinit') : 'Scheduler reinitialized. ' + (data.job_count || 0) + ' job(s) registered.', 'success');
+            loadScheduleStatus();
+        } else {
+            showNotification('Error: ' + data.error, 'error');
+        }
+    })
+    .catch(e => showNotification('Error: ' + e, 'error'));
+}
+
 function loadScheduleStatus() {
     const container = document.getElementById('schedule-status-container');
     container.innerHTML = '<p class="loading">Loading...</p>';
+    if (document.getElementById('global-schedule-select')) loadGlobalSchedule();
     fetch('/api/schedule/status')
         .then(r => r.json())
         .then(data => {

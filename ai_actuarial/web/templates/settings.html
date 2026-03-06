@@ -7,8 +7,10 @@
     <button class="tab-link active" onclick="openTab(event,'tab-categories')" data-i18n="stg.tab_categories">Categories</button>
     <button class="tab-link" onclick="openTab(event,'tab-ai-config')" data-i18n="stg.tab_ai">AI Configuration</button>
     <button class="tab-link" onclick="openTab(event,'tab-backend')" data-i18n="stg.tab_other">Other Settings</button>
+    {% if auth_group == 'admin' %}
     <button class="tab-link" onclick="openTab(event,'tab-tokens')" data-i18n="stg.tab_tokens">Tokens</button>
     <button class="tab-link" onclick="openTab(event,'tab-history')" data-i18n="stg.tab_history">Task History</button>
+    {% endif %}
   </div>
 
   <div id="tab-categories" class="tab-content" style="display:block;">
@@ -283,6 +285,7 @@
     </section>
   </div>
 
+  {% if auth_group == 'admin' %}
   <div id="tab-tokens" class="tab-content">
     <section class="settings-module" data-module="auth_tokens">
       <div class="module-header">
@@ -335,7 +338,9 @@
       </div>
     </section>
   </div>
+  {% endif %}
 
+  {% if auth_group == 'admin' %}
   <div id="tab-history" class="tab-content">
     <section class="settings-module" data-module="task_history">
       <div class="module-header">
@@ -355,6 +360,7 @@
       </div>
     </section>
   </div>
+  {% endif %}
 </div>
 
 <div id="typed-delete-modal" class="modal" style="display:none;">
