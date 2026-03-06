@@ -261,10 +261,7 @@
       <div class="form-group">
         <label for="file-catalog-provider" data-i18n="fv.ai_provider">AI Provider</label>
         <select name="provider" id="file-catalog-provider">
-          <option value="openai" {% if openai_configured %}selected{% endif %} {% if not openai_configured %}disabled{% endif %}>
-            OpenAI (ChatGPT){% if not openai_configured %} - configure OPENAI_API_KEY{% endif %}
-          </option>
-          <option value="local" {% if not openai_configured %}selected{% endif %}>Local (KeyBERT)</option>
+          <option value="">Loading providers...</option>
         </select>
       </div>
       <div style="display:flex; gap:10px; justify-content:flex-end;">
@@ -361,6 +358,65 @@
         _bindFileCatalogModal();
         modal.style.display = 'flex';
         if (window.syncModalState) window.syncModalState();
+        loadFileCatalogProviders();
+    }
+
+    async function loadFileCatalogProviders() {
+        const sel = document.getElementById('file-catalog-provider');
+        if (!sel) return;
+        const _PROVIDER_NAMES = {
+            openai: 'OpenAI', mistral: 'Mistral AI', anthropic: 'Anthropic',
+            google: 'Google Gemini', deepseek: 'DeepSeek', zhipuai: '智谱AI',
+            moonshot: 'Moonshot (Kimi)', kimi: 'Kimi', minimax: 'MiniMax',
+            qwen: '阿里通义 (Qwen)', siliconflow: 'SiliconFlow', cohere: 'Cohere',
+            local: 'Local (KeyBERT)',
+        };
+        try {
+            const [modelsResp, providersResp] = await Promise.all([
+                fetch('/api/config/ai-models'),
+                fetch('/api/config/llm-providers')
+            ]);
+            if (!modelsResp.ok) {
+                throw new Error(`Failed to load AI models config: HTTP ${modelsResp.status} ${modelsResp.statusText}`);
+            }
+            if (!providersResp.ok) {
+                throw new Error(`Failed to load LLM providers config: HTTP ${providersResp.status} ${providersResp.statusText}`);
+            }
+            const modelsData = await modelsResp.json();
+            const providersData = await providersResp.json();
+
+            const configured = new Set(['local']);
+            (providersData.providers || []).forEach(p => configured.add(p.provider));
+
+            const available = modelsData.available || {};
+            const catalogProviders = Object.keys(available).filter(provider => {
+                if (!configured.has(provider)) return false;
+                return (available[provider] || []).some(m => (m.types || []).includes('catalog'));
+            });
+
+            if (catalogProviders.length === 0) catalogProviders.push('local');
+
+            const currentProvider = modelsData.current?.catalog?.provider || 'openai';
+
+            sel.innerHTML = '';
+            // Only prepend currentProvider if it is actually configured and not already listed
+            const orderedProviders = currentProvider
+                && configured.has(currentProvider)
+                && !catalogProviders.includes(currentProvider)
+                ? [currentProvider, ...catalogProviders]
+                : catalogProviders;
+
+            orderedProviders.forEach(provider => {
+                const opt = document.createElement('option');
+                opt.value = provider;
+                opt.textContent = _PROVIDER_NAMES[provider] || provider;
+                if (provider === currentProvider) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        } catch (err) {
+            console.error('Failed to load catalog providers:', err);
+            sel.innerHTML = '<option value="local">Local (KeyBERT)</option><option value="openai">OpenAI</option>';
+        }
     }
 
     function closeFileCatalogModal() {
@@ -433,15 +489,28 @@
 
     function mapCatalogProviderLabel(provider) {
         const p = String(provider || '').trim().toLowerCase();
-        if (p === 'openai') return 'OpenAI (ChatGPT)';
-        if (p === 'local') return 'local (KeyBERT)';
-        return provider || 'local (KeyBERT)';
+        const labels = {
+            openai: 'OpenAI (ChatGPT)',
+            local: 'Local (KeyBERT)',
+            mistral: 'Mistral AI',
+            anthropic: 'Anthropic',
+            google: 'Google Gemini',
+            deepseek: 'DeepSeek',
+            zhipuai: '智谱AI',
+            moonshot: 'Moonshot (Kimi)',
+            kimi: 'Kimi',
+            minimax: 'MiniMax',
+            qwen: '阿里通义 (Qwen)',
+            siliconflow: 'SiliconFlow',
+            cohere: 'Cohere',
+        };
+        return labels[p] || provider || '';
     }
 
     function parseCatalogVersion(version) {
         const raw = String(version || '').trim();
         if (!raw) {
-            return { source: 'markdown', provider: 'openai' };
+            return { source: '', provider: '' };
         }
         const parts = raw.split(':').map(v => v.trim()).filter(Boolean);
         if (parts.length >= 3) {
@@ -450,7 +519,7 @@
         const lower = raw.toLowerCase();
         if (lower.includes('openai')) return { source: 'source', provider: 'openai' };
         if (lower.includes('markdown')) return { source: 'markdown', provider: 'local' };
-        return { source: 'markdown', provider: 'openai' };
+        return { source: '', provider: '' };
     }
 
     function formatLocalTimestamp(value) {
@@ -487,7 +556,11 @@
             el.textContent = '';
             return;
         }
-        el.textContent = `${mapCatalogSourceLabel(parsed.source)} | ${mapCatalogProviderLabel(parsed.provider)} | Updated: ${formatLocalTimestamp(timestamp)}`;
+        const parts = [];
+        if (parsed.source) parts.push(mapCatalogSourceLabel(parsed.source));
+        if (parsed.provider) parts.push(mapCatalogProviderLabel(parsed.provider));
+        parts.push(`Updated: ${formatLocalTimestamp(timestamp)}`);
+        el.textContent = parts.join(' | ');
         el.style.display = 'block';
     }
 
