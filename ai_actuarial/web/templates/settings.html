@@ -7,8 +7,10 @@
     <button class="tab-link active" onclick="openTab(event,'tab-categories')" data-i18n="stg.tab_categories">Categories</button>
     <button class="tab-link" onclick="openTab(event,'tab-ai-config')" data-i18n="stg.tab_ai">AI Configuration</button>
     <button class="tab-link" onclick="openTab(event,'tab-backend')" data-i18n="stg.tab_other">Other Settings</button>
+    {% if auth_group == 'admin' %}
     <button class="tab-link" onclick="openTab(event,'tab-tokens')" data-i18n="stg.tab_tokens">Tokens</button>
     <button class="tab-link" onclick="openTab(event,'tab-history')" data-i18n="stg.tab_history">Task History</button>
+    {% endif %}
   </div>
 
   <div id="tab-categories" class="tab-content" style="display:block;">
@@ -85,6 +87,7 @@
             <label for="new-provider-name" data-i18n="stg.provider">Provider</label>
             <select id="new-provider-name" onchange="onNewProviderChange()">
               <option value="">— select —</option>
+              <optgroup label="LLM Providers">
               <option value="openai">OpenAI</option>
               <option value="mistral">Mistral AI</option>
               <option value="anthropic">Anthropic</option>
@@ -92,9 +95,18 @@
               <option value="deepseek">DeepSeek</option>
               <option value="zhipuai">智谱AI (ZhipuAI)</option>
               <option value="moonshot">Moonshot (Kimi)</option>
+              <option value="kimi">Kimi (Moonshot v2)</option>
+              <option value="minimax">MiniMax</option>
               <option value="qwen">阿里通义 (Qwen)</option>
               <option value="siliconflow">SiliconFlow</option>
               <option value="cohere">Cohere</option>
+              </optgroup>
+              <optgroup label="Search Providers">
+              <option value="brave_search">Brave Search</option>
+              <option value="serpapi">Google (SerpAPI)</option>
+              <option value="serper">Google (Serper.dev)</option>
+              <option value="tavily">Tavily</option>
+              </optgroup>
             </select>
           </div>
           <div>
@@ -273,6 +285,7 @@
     </section>
   </div>
 
+  {% if auth_group == 'admin' %}
   <div id="tab-tokens" class="tab-content">
     <section class="settings-module" data-module="auth_tokens">
       <div class="module-header">
@@ -325,7 +338,9 @@
       </div>
     </section>
   </div>
+  {% endif %}
 
+  {% if auth_group == 'admin' %}
   <div id="tab-history" class="tab-content">
     <section class="settings-module" data-module="task_history">
       <div class="module-header">
@@ -345,6 +360,7 @@
       </div>
     </section>
   </div>
+  {% endif %}
 </div>
 
 <div id="typed-delete-modal" class="modal" style="display:none;">
@@ -986,9 +1002,18 @@ function renderLlmProviders() {
     const displayName = (known[p.provider] || {}).display_name || p.provider;
     const baseUrl = p.api_base_url || PROVIDER_DEFAULT_BASE_URLS[p.provider] || '—';
     const isEnv = p.source === 'env';
-    const badge = isEnv
-      ? `<span class="provider-badge provider-badge-env">${_i ? _i.t('stg.via_env') : 'via .env'}</span>`
-      : `<span class="provider-badge provider-badge-active">${_i ? _i.t('stg.provider_active') : 'Active'}</span>`;
+    const decryptFailed = p.source === 'db' && p.decrypt_ok === false;
+    let badge;
+    if (decryptFailed) {
+      badge = `<span class="provider-badge" style="background:var(--danger-color,#c0392b);color:#fff;" title="Encryption key changed — please re-enter the API key">⚠ Key unreadable</span>`;
+    } else if (isEnv) {
+      badge = `<span class="provider-badge provider-badge-env">${_i ? _i.t('stg.via_env') : 'via .env'}</span>`;
+    } else {
+      badge = `<span class="provider-badge provider-badge-active">${_i ? _i.t('stg.provider_active') : 'Active'}</span>`;
+    }
+    const decryptWarning = decryptFailed
+      ? `<div style="color:var(--danger-color,#c0392b);font-size:0.83em;margin-top:4px;">⚠ Stored API key cannot be decrypted (encryption key changed). Please update the key.</div>`
+      : '';
     const actions = isEnv
       ? `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.save_to_db') : 'Save to DB'}</button>`
       : `<button class="btn btn-secondary btn-sm" type="button" onclick="editProvider('${escapeHtml(p.provider)}')">${_i ? _i.t('stg.update_key') : 'Update Key'}</button>
@@ -1002,6 +1027,7 @@ function renderLlmProviders() {
         <div class="provider-card-detail" style="color:var(--text-secondary);font-size:0.85em;margin-top:4px;">
           ${_i ? _i.t('stg.base_url_label') : 'Base URL:'} ${escapeHtml(baseUrl)}&nbsp;&nbsp;|&nbsp;&nbsp;Key: ****
         </div>
+        ${decryptWarning}
         <div style="margin-top:8px;">${actions}</div>
       </div>
     `;
@@ -1085,9 +1111,9 @@ let aiModelsData = { current: {}, available: {} };
 
 // Which providers support each AI function type
 const FUNCTION_PROVIDER_MAP = {
-  catalog:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'qwen', 'siliconflow', 'cohere'],
+  catalog:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'kimi', 'minimax', 'qwen', 'siliconflow', 'cohere'],
   embeddings: ['openai', 'google', 'zhipuai', 'qwen', 'siliconflow', 'cohere', 'local'],
-  chatbot:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'qwen', 'siliconflow', 'cohere'],
+  chatbot:    ['openai', 'mistral', 'anthropic', 'google', 'deepseek', 'zhipuai', 'moonshot', 'kimi', 'minimax', 'qwen', 'siliconflow', 'cohere'],
   ocr:        ['local', 'mistral', 'siliconflow'],
 };
 
@@ -1100,10 +1126,17 @@ const PROVIDER_DISPLAY_NAMES = {
   deepseek:   'DeepSeek',
   zhipuai:    '智谱AI (ZhipuAI)',
   moonshot:   'Moonshot (Kimi)',
+  kimi:       'Kimi (Moonshot v2)',
+  minimax:    'MiniMax',
   qwen:       '阿里通义 (Qwen)',
   siliconflow:'SiliconFlow',
   cohere:     'Cohere',
   local:      'Local',
+  // Search providers (display only, not used for AI model selection)
+  brave_search: 'Brave Search',
+  serpapi:      'Google (SerpAPI)',
+  serper:       'Google (Serper.dev)',
+  tavily:       'Tavily',
 };
 
 async function loadAiModelsConfig() {

@@ -99,12 +99,12 @@ class TestTokenAuth(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403)
 
-    def test_operator_forbidden_on_admin_config(self):
+    def test_operator_can_read_config(self):
         resp = self.client.get(
             "/api/config/categories",
             headers={"Authorization": f"Bearer {self.operator_token}"},
         )
-        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.status_code, 200)
 
     def test_operator_can_edit_scheduled_sites(self):
         # Add site

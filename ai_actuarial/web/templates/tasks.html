@@ -173,10 +173,11 @@
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.search_engine">Search Engine</label>
-                <select name="engine">
-                    <option value="brave">Brave Search</option>
-                    <option value="google">Google</option>
+                <select name="engine" id="search-engine-select" required>
+                    <!-- Populated dynamically from /api/config/search-engines -->
+                    <option value="" disabled selected>Loading...</option>
                 </select>
+                <small id="search-engine-hint" class="format-hint" style="color: var(--text-secondary);"></small>
             </div>
             <div class="form-group">
                 <label data-i18n="tasks.max_results">Max Results</label>
@@ -1133,9 +1134,47 @@ async function loadSearchDefaults() {
     }
 }
 
+async function loadSearchEngines() {
+    const sel = document.getElementById('search-engine-select');
+    const hint = document.getElementById('search-engine-hint');
+    if (!sel) return;
+    try {
+        const resp = await fetch('/api/config/search-engines');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Failed');
+        sel.innerHTML = '';
+        const engines = data.engines || [];
+        const configured = engines.filter(e => e.configured);
+        const unconfigured = engines.filter(e => !e.configured);
+        if (configured.length === 0) {
+            sel.innerHTML = '<option value="" disabled>No search engines configured</option>';
+            if (hint) hint.textContent = 'Configure search API keys in Settings → AI Configuration → Add Provider';
+        } else {
+            configured.forEach(e => {
+                const opt = document.createElement('option');
+                opt.value = e.id;
+                opt.textContent = e.name;
+                sel.appendChild(opt);
+            });
+            // Show unconfigured as disabled options
+            unconfigured.forEach(e => {
+                const opt = document.createElement('option');
+                opt.value = e.id;
+                opt.textContent = e.name + ' (not configured)';
+                opt.disabled = true;
+                sel.appendChild(opt);
+            });
+            if (hint) hint.textContent = '';
+        }
+    } catch (err) {
+        sel.innerHTML = '<option value="brave">Brave Search</option><option value="google">Google (SerpAPI)</option><option value="serper">Google (Serper.dev)</option><option value="tavily">Tavily</option>';
+        console.error('Failed to load search engines:', err);
+    }
+}
+
 async function openWebSearchModal() {
     openModal('web-search-modal');
-    await loadSearchDefaults();
+    await Promise.all([loadSearchDefaults(), loadSearchEngines()]);
     const cb = document.getElementById('use-search-defaults');
     if (cb) toggleSearchDefaults(cb.checked);
 }
