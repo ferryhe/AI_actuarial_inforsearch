@@ -196,43 +196,45 @@ def register_chat_routes(
 
         # --- AI Chat quota enforcement ---
         try:
-            from ai_actuarial.storage import Storage as _Storage
             from ai_actuarial.web.app import (
                 _AI_CHAT_QUOTA,
                 _get_client_ip,
                 _get_today_date,
             )
+            from ai_actuarial.storage import Storage as _Storage
+            _token = getattr(g, "_auth_token", None)
+            _today = _get_today_date()
+            _ip = _get_client_ip()
+            _email_user = (_token or {}).get("_email_user") if _token else None
+            _role = ((_token or {}).get("group_name") or "anonymous").lower()
+            _limit = _AI_CHAT_QUOTA.get(_role, _AI_CHAT_QUOTA.get("anonymous", 1))
+
             _quota_storage = _Storage(db_path)
             try:
-                _token = getattr(g, "_auth_token", None)
-                _today = _get_today_date()
-                _ip = _get_client_ip()
-                _email_user = (_token or {}).get("_email_user") if _token else None
-                _role = ((_token or {}).get("group_name") or "anonymous").lower()
-                _limit = _AI_CHAT_QUOTA.get(_role, _AI_CHAT_QUOTA.get("anonymous", 1))
                 if _email_user:
-                    _used = _quota_storage.get_ai_chat_quota_used(_today, user_id=_email_user["id"])
-                else:
-                    _used = _quota_storage.get_ai_chat_quota_used(_today, ip_address=_ip)
-                if _limit > 0 and _used >= _limit:
-                    _upgrade_hint = (
-                        "Please register to get more queries." if _role == "anonymous"
-                        else "Please upgrade to Premium for higher limits." if _role == "registered"
-                        else "Daily quota exceeded."
+                    _allowed, _count = _quota_storage.check_and_increment_ai_chat_quota(
+                        _today, _limit, user_id=_email_user["id"]
                     )
-                    return _api_error(
-                        f"Daily AI chat limit reached ({_limit}/day). {_upgrade_hint}",
-                        status_code=429,
-                    )
-                if _email_user:
-                    _quota_storage.increment_ai_chat_quota(_today, user_id=_email_user["id"])
                 else:
-                    _quota_storage.increment_ai_chat_quota(_today, ip_address=_ip)
+                    _allowed, _count = _quota_storage.check_and_increment_ai_chat_quota(
+                        _today, _limit, ip_address=_ip
+                    )
             finally:
                 try:
                     _quota_storage.close()
                 except Exception:
                     pass
+
+            if not _allowed:
+                _upgrade_hint = (
+                    "Please register to get more queries." if _role == "anonymous"
+                    else "Please upgrade to Premium for higher limits." if _role == "registered"
+                    else "Daily quota exceeded."
+                )
+                return _api_error(
+                    f"Daily AI chat limit reached ({_limit}/day). {_upgrade_hint}",
+                    status_code=429,
+                )
         except Exception as _qe:
             logger.warning("Quota check failed (non-fatal): %s", _qe)
         # --- End quota enforcement ---
