@@ -1009,7 +1009,7 @@ function AdhocUrlForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, u
 function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
   const [dirPath, setDirPath] = useState("");
-  const [extensions, setExtensions] = useState(".pdf,.docx,.pptx");
+  const [extensions, setExtensions] = useState<string[]>([".pdf", ".docx", ".pptx"]);
   const [recursive, setRecursive] = useState(true);
 
   return (
@@ -1018,14 +1018,14 @@ function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<string,
       <FormField label={t("tasks.form.directory_path")}>
         <InputField value={dirPath} onChange={setDirPath} placeholder="/path/to/files" testId="input-dir-path" />
       </FormField>
-      <FormField label={t("tasks.form.file_extensions")} hint={t("tasks.form.file_exts_hint")}>
-        <InputField value={extensions} onChange={setExtensions} placeholder=".pdf,.docx,.pptx" testId="input-extensions" />
+      <FormField label={t("tasks.form.file_extensions")}>
+        <TagSelect value={extensions} onChange={setExtensions} presets={PRESET_FILE_EXTENSIONS} placeholder="Add extension..." testId="input-extensions" />
       </FormField>
       <CheckboxField checked={recursive} onChange={setRecursive} label={t("tasks.form.recursive")} testId="checkbox-recursive" />
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !dirPath.trim()}
         onClick={() => { if (!dirPath.trim()) return;
           onSubmit({ type: "file", name: `File Import: ${dirPath}`, directory_path: dirPath,
-            extensions: extensions.split(",").map((e) => e.trim()).filter(Boolean), recursive });
+            extensions: extensions.length > 0 ? extensions : undefined, recursive });
         }} />
     </div>
   );
