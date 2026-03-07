@@ -2943,25 +2943,50 @@ sites:
     @app.route("/api/utils/browse-folder")
     @require_permissions("tasks.run")
     def api_browse_folder():
-        """Open system dialog to select a folder (Local usage only)."""
+        """List directories at a given path, restricted to the data root."""
         try:
-            import tkinter as tk
-            from tkinter import filedialog
-            
-            # Create a hidden root window
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)  # Make it appear on top
-            
-            folder_path = filedialog.askdirectory(title="Select Folder to Import")
-            root.destroy()
-            
-            if folder_path:
-                return jsonify({"path": folder_path.replace('/', os.sep)})
-            return jsonify({"path": ""})
+            data_root = site_config.get("paths", {}).get("download_dir", "data/files")
+            if not os.path.isabs(data_root):
+                data_root = os.path.abspath(data_root)
+            allowed_root = os.path.abspath(os.path.dirname(data_root) or os.getcwd())
+
+            target = request.args.get("path", "").strip()
+            if not target:
+                target = allowed_root
+
+            target = os.path.abspath(target)
+            if not target.startswith(allowed_root):
+                return jsonify({"error": "Access denied: path outside allowed directory", "path": target}), 403
+
+            if not os.path.isdir(target):
+                return jsonify({"error": "Not a valid directory", "path": target}), 400
+
+            entries = []
+            try:
+                for entry in sorted(os.scandir(target), key=lambda e: e.name.lower()):
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        entries.append({"name": entry.name, "type": "dir"})
+                    elif entry.is_file(follow_symlinks=False):
+                        try:
+                            size = entry.stat().st_size
+                        except OSError:
+                            size = 0
+                        entries.append({"name": entry.name, "type": "file", "size": size})
+            except PermissionError:
+                return jsonify({"error": "Permission denied", "path": target}), 403
+
+            parent = os.path.dirname(target)
+            has_parent = parent != target and parent.startswith(allowed_root)
+            return jsonify({
+                "path": target,
+                "parent": parent if has_parent else None,
+                "entries": entries,
+            })
         except Exception as e:
-            logger.error(f"Error opening file dialog: {e}")
-            return jsonify({"error": "Failed to open dialog. Please enter path manually."}), 500
+            logger.exception("Error browsing folder")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/file/<path:file_url>")
     def file_view(file_url):
