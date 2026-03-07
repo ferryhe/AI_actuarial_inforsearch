@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
 import {
@@ -21,6 +21,8 @@ import {
   Sparkles,
   RefreshCw,
   Check,
+  Clock,
+  CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -87,6 +89,8 @@ interface CategoriesConfig {
   categories: Record<string, unknown>;
 }
 
+type TaskStatus = "idle" | "submitted" | "polling" | "completed" | "timeout";
+
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
@@ -124,6 +128,73 @@ function contentTypeBadgeColor(ct: string): string {
   return "bg-gray-500/10 text-gray-600 dark:text-gray-400";
 }
 
+function useTaskPoller(onComplete: () => void, intervalMs = 2000, maxMs = 30000) {
+  const [status, setStatus] = useState<TaskStatus>("idle");
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jobIdRef = useRef<string | null>(null);
+
+  const cleanup = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    jobIdRef.current = null;
+  }, []);
+
+  const start = useCallback((jobId?: string) => {
+    cleanup();
+    jobIdRef.current = jobId || null;
+    setStatus("polling");
+    timerRef.current = setInterval(async () => {
+      try {
+        const res = await apiGet<{ tasks?: Array<{ id?: string; status?: string }> }>("/api/tasks/active");
+        const tasks = res.tasks || [];
+        const myTask = jobIdRef.current
+          ? tasks.find((t) => t.id === jobIdRef.current)
+          : null;
+        if (jobIdRef.current && !myTask) {
+          cleanup();
+          setStatus("completed");
+          onComplete();
+          setTimeout(() => setStatus("idle"), 3000);
+        } else if (!jobIdRef.current && tasks.length === 0) {
+          cleanup();
+          setStatus("completed");
+          onComplete();
+          setTimeout(() => setStatus("idle"), 3000);
+        }
+      } catch { /* keep polling */ }
+    }, intervalMs);
+    timeoutRef.current = setTimeout(() => {
+      cleanup();
+      setStatus("timeout");
+      onComplete();
+      setTimeout(() => setStatus("idle"), 5000);
+    }, maxMs);
+  }, [cleanup, onComplete, intervalMs, maxMs]);
+
+  const reset = useCallback(() => { cleanup(); setStatus("idle"); }, [cleanup]);
+
+  useEffect(() => cleanup, [cleanup]);
+
+  return { status, start, reset };
+}
+
+function TaskStatusBadge({ status, t }: { status: TaskStatus; t: (k: string) => string }) {
+  if (status === "idle") return null;
+  const config = {
+    submitted: { icon: <Loader2 className="w-3 h-3 animate-spin" />, text: t("fv.task_submitted"), cls: "text-blue-600 bg-blue-500/10" },
+    polling: { icon: <Clock className="w-3 h-3 animate-pulse" />, text: t("fv.task_running"), cls: "text-amber-600 bg-amber-500/10" },
+    completed: { icon: <CheckCircle2 className="w-3 h-3" />, text: t("fv.task_completed"), cls: "text-emerald-600 bg-emerald-500/10" },
+    timeout: { icon: <Clock className="w-3 h-3" />, text: t("fv.task_timeout"), cls: "text-orange-600 bg-orange-500/10" },
+  }[status];
+  if (!config) return null;
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full", config.cls)}>
+      {config.icon}{config.text}
+    </span>
+  );
+}
+
 export default function FileDetail() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
@@ -149,6 +220,7 @@ export default function FileDetail() {
   const [mdEditContent, setMdEditContent] = useState("");
   const [mdSaving, setMdSaving] = useState(false);
   const [mdExpanded, setMdExpanded] = useState(false);
+  const [mdDirty, setMdDirty] = useState(false);
 
   const [convertEngine, setConvertEngine] = useState("docling");
   const [convertOverwrite, setConvertOverwrite] = useState(true);
@@ -186,31 +258,45 @@ export default function FileDetail() {
     } finally { setLoading(false); }
   }, [fileUrl]);
 
+  const refreshMarkdown = useCallback(async () => {
+    if (!fileUrl) return;
+    try {
+      const res = await apiGet<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(fileUrl)}/markdown`);
+      setMarkdown(res.markdown || null);
+      if (res.markdown?.markdown_content) setMdEditContent(res.markdown.markdown_content);
+    } catch { setMarkdown(null); }
+  }, [fileUrl]);
+
+  const refreshChunks = useCallback(async () => {
+    if (!fileUrl) return;
+    try {
+      const res = await apiGet<{ data?: { chunk_sets?: ChunkSet[] }; chunk_sets?: ChunkSet[] }>(`/api/files/${encodeURIComponent(fileUrl)}/chunk-sets`);
+      setChunkSets(res.data?.chunk_sets || res.chunk_sets || []);
+    } catch { setChunkSets([]); }
+  }, [fileUrl]);
+
+  const conversionPoller = useTaskPoller(refreshMarkdown);
+  const catalogPoller = useTaskPoller(fetchFile);
+
+  const anyTaskRunning = converting || catalogSubmitting || chunkSubmitting ||
+    conversionPoller.status === "polling" ||
+    catalogPoller.status === "polling";
+  const mdEditMode = mdTab === "edit";
+  const isLocked = editing || mdEditMode || anyTaskRunning;
+
   useEffect(() => { fetchFile(); }, [fetchFile]);
 
   useEffect(() => {
     if (!fileUrl) return;
     setMdLoading(true);
-    apiGet<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(fileUrl)}/markdown`)
-      .then((res) => {
-        setMarkdown(res.markdown || null);
-        if (res.markdown?.markdown_content) setMdEditContent(res.markdown.markdown_content);
-      })
-      .catch(() => setMarkdown(null))
-      .finally(() => setMdLoading(false));
-  }, [fileUrl]);
+    refreshMarkdown().finally(() => setMdLoading(false));
+  }, [fileUrl, refreshMarkdown]);
 
   useEffect(() => {
     if (!fileUrl) return;
     setChunkSetsLoading(true);
-    apiGet<{ data?: { chunk_sets?: ChunkSet[] }; chunk_sets?: ChunkSet[] }>(`/api/files/${encodeURIComponent(fileUrl)}/chunk-sets`)
-      .then((res) => {
-        const sets = res.data?.chunk_sets || res.chunk_sets || [];
-        setChunkSets(sets);
-      })
-      .catch(() => setChunkSets([]))
-      .finally(() => setChunkSetsLoading(false));
-  }, [fileUrl]);
+    refreshChunks().finally(() => setChunkSetsLoading(false));
+  }, [fileUrl, refreshChunks]);
 
   useEffect(() => {
     apiGet<CategoriesConfig>("/api/config/categories")
@@ -266,6 +352,7 @@ export default function FileDetail() {
       });
       if (res.markdown) setMarkdown(res.markdown);
       setMdTab("view");
+      setMdDirty(false);
     } catch { /* ignore */ } finally { setMdSaving(false); }
   }
 
@@ -273,21 +360,14 @@ export default function FileDetail() {
     if (!file) return;
     setConverting(true);
     try {
-      await apiPost("/api/collections/run", {
-        type: "markdown",
+      const res = await apiPost<{ job_id?: string }>("/api/collections/run", {
+        type: "markdown_conversion",
         name: `MD Convert: ${file.title || file.original_filename}`,
         file_urls: [file.url],
         engine: convertEngine,
         overwrite_existing: convertOverwrite,
       });
-      setTimeout(() => {
-        apiGet<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(fileUrl)}/markdown`)
-          .then((res) => {
-            setMarkdown(res.markdown || null);
-            if (res.markdown?.markdown_content) setMdEditContent(res.markdown.markdown_content);
-          })
-          .catch(() => {});
-      }, 3000);
+      conversionPoller.start(res.job_id);
     } catch { /* ignore */ } finally { setConverting(false); }
   }
 
@@ -295,7 +375,7 @@ export default function FileDetail() {
     if (!file) return;
     setCatalogSubmitting(true);
     try {
-      await apiPost("/api/collections/run", {
+      const res = await apiPost<{ job_id?: string }>("/api/collections/run", {
         type: "catalog",
         name: `Catalog: ${file.title || file.original_filename}`,
         file_urls: [file.url],
@@ -303,7 +383,7 @@ export default function FileDetail() {
         overwrite_existing: catalogOverwrite,
       });
       setShowCatalogModal(false);
-      setTimeout(() => fetchFile(), 5000);
+      catalogPoller.start(res.job_id);
     } catch { /* ignore */ } finally { setCatalogSubmitting(false); }
   }
 
@@ -332,11 +412,7 @@ export default function FileDetail() {
         kb_id: chunkKbId || undefined,
       });
       setShowChunkModal(false);
-      setTimeout(() => {
-        apiGet<{ data?: { chunk_sets?: ChunkSet[] }; chunk_sets?: ChunkSet[] }>(`/api/files/${encodeURIComponent(fileUrl)}/chunk-sets`)
-          .then((res) => setChunkSets(res.data?.chunk_sets || res.chunk_sets || []))
-          .catch(() => {});
-      }, 3000);
+      await refreshChunks();
     } catch { /* ignore */ } finally { setChunkSubmitting(false); }
   }
 
@@ -381,8 +457,20 @@ export default function FileDetail() {
   const keywords = editing ? editKeywords.split(",").map((k) => k.trim()).filter(Boolean) : file.keywords || [];
   const hasMarkdown = !!(markdown?.markdown_content);
 
+  const disabledBtn = "opacity-40 pointer-events-none cursor-not-allowed";
+
+  const canEdit = !isLocked;
+  const canCatalog = !isLocked;
+  const canDownload = !editing && !anyTaskRunning;
+  const canPreview = !editing && !mdEditMode && !anyTaskRunning;
+  const canDelete = !isLocked;
+  const canModifyChunk = !editing && !mdEditMode && !anyTaskRunning;
+  const canSwitchMdEdit = !editing && !anyTaskRunning;
+  const canConvert = !editing && !anyTaskRunning;
+
   return (
     <div className="space-y-6 max-w-4xl">
+      {/* Section 1: Header */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
         <button onClick={() => navigate("/database")} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back">
           <ArrowLeft className="w-5 h-5" />
@@ -391,7 +479,7 @@ export default function FileDetail() {
           <h1 className="text-xl sm:text-2xl font-serif font-bold tracking-tight truncate" data-testid="text-file-title">
             {file.title || file.original_filename || "Untitled"}
           </h1>
-          <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
               {contentTypeLabel(file.content_type)}
             </span>
@@ -405,10 +493,13 @@ export default function FileDetail() {
         </div>
       </motion.div>
 
+      {/* Section 1b: Toolbar */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
-        className="flex flex-wrap gap-2">
+        className="flex flex-wrap items-center gap-2">
         {!editing ? (
-          <button onClick={startEdit} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors" data-testid="button-edit">
+          <button onClick={startEdit} disabled={!canEdit}
+            className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canEdit && disabledBtn)}
+            data-testid="button-edit">
             <Pencil className="w-3.5 h-3.5" />{t("fv.edit")}
           </button>
         ) : (
@@ -416,23 +507,30 @@ export default function FileDetail() {
             <button onClick={saveEdit} disabled={saving} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm hover:bg-primary/90 transition-colors disabled:opacity-50" data-testid="button-save">
               {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}{t("fv.save")}
             </button>
-            <button onClick={() => setEditing(false)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors" data-testid="button-cancel">
+            <button onClick={() => { setEditing(false); setShowCategoryPicker(false); }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors" data-testid="button-cancel">
               <X className="w-3.5 h-3.5" />{t("fv.cancel")}
             </button>
           </>
         )}
-        <button onClick={() => setShowCatalogModal(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors" data-testid="button-catalog">
+        <button onClick={() => setShowCatalogModal(true)} disabled={!canCatalog}
+          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canCatalog && disabledBtn)}
+          data-testid="button-catalog">
           <Sparkles className="w-3.5 h-3.5" />{t("fv.catalog")}
         </button>
-        <button onClick={handleDownload} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors" data-testid="button-download">
+        <button onClick={handleDownload} disabled={!canDownload}
+          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canDownload && disabledBtn)}
+          data-testid="button-download">
           <Download className="w-3.5 h-3.5" />{t("fv.download")}
         </button>
-        <button onClick={() => navigate(`/file-preview?file_url=${encodeURIComponent(file.url)}`)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors" data-testid="button-preview">
+        <button onClick={() => navigate(`/file-preview?file_url=${encodeURIComponent(file.url)}`)} disabled={!canPreview}
+          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canPreview && disabledBtn)}
+          data-testid="button-preview">
           <Eye className="w-3.5 h-3.5" />{t("fv.preview")}
         </button>
         {!deleteConfirm ? (
-          <button onClick={() => setDeleteConfirm(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive text-sm hover:bg-destructive/10 transition-colors" data-testid="button-delete">
+          <button onClick={() => setDeleteConfirm(true)} disabled={!canDelete}
+            className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive text-sm hover:bg-destructive/10 transition-colors", !canDelete && disabledBtn)}
+            data-testid="button-delete">
             <Trash2 className="w-3.5 h-3.5" />{t("fv.delete")}
           </button>
         ) : (
@@ -445,8 +543,13 @@ export default function FileDetail() {
             </button>
           </div>
         )}
+        <div className="flex items-center gap-1.5 ml-auto">
+          <TaskStatusBadge status={conversionPoller.status} t={t} />
+          <TaskStatusBadge status={catalogPoller.status} t={t} />
+        </div>
       </motion.div>
 
+      {/* Section 2: Metadata Card */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
         className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
@@ -484,6 +587,7 @@ export default function FileDetail() {
         </div>
       </motion.div>
 
+      {/* Section 3: Catalog Information */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
         className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
@@ -570,14 +674,106 @@ export default function FileDetail() {
         </div>
       </motion.div>
 
+      {/* Section 4: Markdown Content */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+        className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold">{t("fv.md_content")}</h3>
+          </div>
+          <div className="flex items-center gap-1">
+            <button onClick={() => { setMdTab("view"); setMdDirty(false); }}
+              className={cn("text-xs px-2.5 py-1 rounded-lg transition-colors", mdTab === "view" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground")}
+              data-testid="button-md-view">{t("fv.view")}</button>
+            <button onClick={() => { setMdTab("edit"); if (markdown?.markdown_content) setMdEditContent(markdown.markdown_content); setMdDirty(false); }}
+              disabled={!canSwitchMdEdit}
+              className={cn("text-xs px-2.5 py-1 rounded-lg transition-colors",
+                mdTab === "edit" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground",
+                !canSwitchMdEdit && disabledBtn
+              )}
+              data-testid="button-md-edit">{t("fv.md_edit")}</button>
+            {hasMarkdown && (
+              <button onClick={() => setMdExpanded(!mdExpanded)}
+                className="text-xs px-2 py-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors" data-testid="button-md-expand">
+                {mdExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="p-4">
+          {mdLoading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />{t("fv.loading")}</div>
+          ) : mdTab === "view" ? (
+            hasMarkdown ? (
+              <div className={cn("prose prose-sm dark:prose-invert max-w-none overflow-y-auto transition-all", mdExpanded ? "max-h-none" : "max-h-[60vh]")}
+                data-testid="text-markdown-content">
+                <pre className="whitespace-pre-wrap text-sm font-sans">{markdown?.markdown_content}</pre>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">{t("fv.no_md")}</p>
+            )
+          ) : (
+            <div className="space-y-3">
+              <textarea value={mdEditContent} onChange={(e) => { setMdEditContent(e.target.value); setMdDirty(true); }} rows={16}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder={t("fv.md_edit_ph")} data-testid="input-markdown" />
+              <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted-foreground">{t("fv.convert_engine")}</label>
+                  <select value={convertEngine} onChange={(e) => setConvertEngine(e.target.value)}
+                    disabled={!canConvert}
+                    className={cn("text-xs px-2 py-1 rounded-lg border border-border bg-background", !canConvert && disabledBtn)}
+                    data-testid="select-convert-engine">
+                    <option value="docling">Docling</option>
+                    <option value="marker">Marker</option>
+                    <option value="mistral">Mistral OCR</option>
+                    <option value="deepseekocr">DeepSeek OCR</option>
+                  </select>
+                </div>
+                <label className={cn("flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer", !canConvert && disabledBtn)}>
+                  <input type="checkbox" checked={convertOverwrite} onChange={(e) => setConvertOverwrite(e.target.checked)} className="rounded" disabled={!canConvert} />
+                  {t("fv.overwrite_md")}
+                </label>
+                <button onClick={triggerConversion} disabled={converting || !canConvert}
+                  className={cn("text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5", !canConvert && disabledBtn)}
+                  data-testid="button-convert">
+                  {converting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {t("fv.convert_btn")}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={saveMarkdown} disabled={mdSaving}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  data-testid="button-save-md">
+                  {mdSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  {t("fv.save_md")}
+                </button>
+                <button onClick={() => { setMdTab("view"); setMdDirty(false); }} className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                  data-testid="button-cancel-md">{t("fv.cancel")}</button>
+                {markdown?.markdown_updated_at && (
+                  <span className="text-[11px] text-muted-foreground ml-auto">
+                    {t("fv.last_updated")}: {formatDate(markdown.markdown_updated_at)}
+                    {markdown.markdown_source && ` (${markdown.markdown_source})`}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </motion.div>
+
+      {/* Section 5: RAG Chunks */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
         className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-primary" />
             <h3 className="text-sm font-semibold">{t("fv.chunk_status")}</h3>
           </div>
-          <button onClick={openChunkModal} className="text-xs px-2.5 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors" data-testid="button-modify-chunk">
+          <button onClick={openChunkModal} disabled={!canModifyChunk}
+            className={cn("text-xs px-2.5 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors", !canModifyChunk && disabledBtn)}
+            data-testid="button-modify-chunk">
             {t("fv.modify_chunk")}
           </button>
         </div>
@@ -605,88 +801,7 @@ export default function FileDetail() {
         </div>
       </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
-        className="rounded-xl border border-border bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold">{t("fv.md_content")}</h3>
-          </div>
-          <div className="flex items-center gap-1">
-            <button onClick={() => setMdTab("view")}
-              className={cn("text-xs px-2.5 py-1 rounded-lg transition-colors", mdTab === "view" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground")}
-              data-testid="button-md-view">{t("fv.view")}</button>
-            <button onClick={() => { setMdTab("edit"); if (markdown?.markdown_content) setMdEditContent(markdown.markdown_content); }}
-              className={cn("text-xs px-2.5 py-1 rounded-lg transition-colors", mdTab === "edit" ? "bg-primary text-primary-foreground" : "hover:bg-muted text-muted-foreground")}
-              data-testid="button-md-edit">{t("fv.md_edit")}</button>
-            {hasMarkdown && (
-              <button onClick={() => setMdExpanded(!mdExpanded)}
-                className="text-xs px-2 py-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors" data-testid="button-md-expand">
-                {mdExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="p-4">
-          {mdLoading ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />{t("fv.loading")}</div>
-          ) : mdTab === "view" ? (
-            hasMarkdown ? (
-              <div className={cn("prose prose-sm dark:prose-invert max-w-none overflow-y-auto transition-all", mdExpanded ? "max-h-none" : "max-h-[60vh]")}
-                data-testid="text-markdown-content">
-                <pre className="whitespace-pre-wrap text-sm font-sans">{markdown?.markdown_content}</pre>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">{t("fv.no_md")}</p>
-            )
-          ) : (
-            <div className="space-y-3">
-              <textarea value={mdEditContent} onChange={(e) => setMdEditContent(e.target.value)} rows={16}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
-                placeholder={t("fv.md_edit_ph")} data-testid="input-markdown" />
-              <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-muted-foreground">{t("fv.convert_engine")}</label>
-                  <select value={convertEngine} onChange={(e) => setConvertEngine(e.target.value)}
-                    className="text-xs px-2 py-1 rounded-lg border border-border bg-background" data-testid="select-convert-engine">
-                    <option value="docling">Docling</option>
-                    <option value="marker">Marker</option>
-                    <option value="mistral">Mistral OCR</option>
-                    <option value="deepseekocr">DeepSeek OCR</option>
-                  </select>
-                </div>
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-                  <input type="checkbox" checked={convertOverwrite} onChange={(e) => setConvertOverwrite(e.target.checked)} className="rounded" />
-                  {t("fv.overwrite_md")}
-                </label>
-                <button onClick={triggerConversion} disabled={converting}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                  data-testid="button-convert">
-                  {converting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  {t("fv.convert_btn")}
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={saveMarkdown} disabled={mdSaving}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                  data-testid="button-save-md">
-                  {mdSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                  {t("fv.save_md")}
-                </button>
-                <button onClick={() => setMdTab("view")} className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
-                  data-testid="button-cancel-md">{t("fv.cancel")}</button>
-                {markdown?.markdown_updated_at && (
-                  <span className="text-[11px] text-muted-foreground ml-auto">
-                    {t("fv.last_updated")}: {formatDate(markdown.markdown_updated_at)}
-                    {markdown.markdown_source && ` (${markdown.markdown_source})`}
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </motion.div>
-
+      {/* Modal: AI Catalog */}
       {showCatalogModal && (
         <Modal onClose={() => setShowCatalogModal(false)}>
           <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
@@ -727,6 +842,7 @@ export default function FileDetail() {
         </Modal>
       )}
 
+      {/* Modal: Chunk Generation */}
       {showChunkModal && (
         <Modal onClose={() => setShowChunkModal(false)}>
           <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
