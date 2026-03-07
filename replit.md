@@ -19,6 +19,7 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
   - `client/src/hooks/` - useI18n (EN/ZH), useTheme (dark mode), useTaskOptions (dynamic backend data for task forms)
   - `client/src/lib/` - API helper (`api.ts`), class merging (`utils.ts`)
 - `config/` - YAML configuration (sites, categories, AI providers)
+- `config/backups/` - Auto-generated timestamped backups of sites.yaml (created before imports, restores, and periodically before site edits)
 - `data/` - Downloads, database, logs, task outputs
 - `doc_to_md/` - Document-to-Markdown conversion engines
 
@@ -31,9 +32,15 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 - **Dashboard** (`/`) - Stats cards, quick actions, recent files
 - **Database** (`/database`) - File browser with search, filters, pagination, download
 - **Chat** (`/chat`) - AI chatbot with conversation management, mode/KB selection, citations
-- **Tasks** (`/tasks`) - 9 task types: Scheduled, Web Crawl (quick_check), URL, File Import, Search, Catalog, Markdown, Chunk, RAG Index. Each with full parameter forms, stats banners. Scheduled type has 3-tab management: Run Now, Scheduled Jobs (CRUD for generic recurring tasks), Sites (CRUD for site configs). History with logs
+- **Tasks** (`/tasks`) - 9 task types in a grid: Site Configuration (YAML import/export, site CRUD, per-site crawl, backup management), Web Crawl, URL, File Import, Search, Catalog, Markdown, Chunk, RAG Index. Below the grid: standalone Scheduled Tasks section (CRUD for generic recurring tasks, scheduler status, reinit).
 - **Knowledge** (`/knowledge`) - RAG knowledge base management, chunk profiles
-- **Settings** (`/settings`) - Backend config, LLM providers, search engines, AI models
+- **Settings** (`/settings`) - Backend config, LLM providers, search engines, AI models, Task History (admin-only, collapsible with log viewer)
+
+## YAML Config Backup System
+- Backend auto-backs up `config/sites.yaml` to `config/backups/sites_YYYYMMDD_HHMMSS.yaml` before imports, restores, and site edits (throttled to max 1 backup per 5 min for edits)
+- API endpoints: `POST /api/config/sites/import` (merge/overwrite + preview mode), `GET /api/config/sites/export`, `GET /api/config/sites/sample`, `GET /api/config/backups`, `POST /api/config/backups/restore`, `POST /api/config/backups/delete`
+- Import supports both `{ sites: [...] }` JSON and `{ yaml_text: "..." }` raw YAML parsing
+- Frontend uses fetch+blob download for export/sample (auth-compatible)
 
 ## Design System
 - Fonts: Inter (body), Source Serif 4 (headings)

@@ -17,8 +17,6 @@ import {
   Database,
   Link2,
   X,
-  ScrollText,
-  Inbox,
   ArrowLeft,
   AlertCircle,
   Compass,
@@ -33,6 +31,7 @@ import {
   Timer,
   Zap,
   Save,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -150,7 +149,7 @@ function formatDate(dateStr: string): string {
 }
 
 const taskTypes = [
-  { type: "scheduled", apiType: "scheduled", icon: Globe, color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  { type: "site_config", apiType: "scheduled", icon: Globe, color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
   { type: "web_crawl", apiType: "quick_check", icon: Compass, color: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
   { type: "adhoc_url", apiType: "url", icon: Link2, color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   { type: "file_import", apiType: "file", icon: FileUp, color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
@@ -232,35 +231,443 @@ function StatsBanner({ items }: { items: { label: string; value: string | number
   );
 }
 
-function ScheduledRunTab({ sites, onSubmit, submitting }: { sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: { sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; onSitesChanged: () => void }) {
   const { t } = useTranslation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importMode, setImportMode] = useState<"merge" | "overwrite">("merge");
+  const [importPreview, setImportPreview] = useState<{ count: number; names: string[] } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importYamlText, setImportYamlText] = useState("");
+  const [importResult, setImportResult] = useState<string | null>(null);
+
+  const [showAddSite, setShowAddSite] = useState(false);
+  const [editingSite, setEditingSite] = useState<SiteConfig | null>(null);
+  const [deletingSite, setDeletingSite] = useState<string | null>(null);
+  const [expandedSite, setExpandedSite] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
   const [site, setSite] = useState("");
   const [maxPages, setMaxPages] = useState("");
   const [maxDepth, setMaxDepth] = useState("");
 
+  const [formName, setFormName] = useState("");
+  const [formUrl, setFormUrl] = useState("");
+  const [formMaxPages, setFormMaxPages] = useState("");
+  const [formMaxDepth, setFormMaxDepth] = useState("");
+  const [formKeywords, setFormKeywords] = useState("");
+  const [formExcludeKw, setFormExcludeKw] = useState("");
+  const [formExcludePfx, setFormExcludePfx] = useState("");
+  const [formSelector, setFormSelector] = useState("");
+  const [formInterval, setFormInterval] = useState("");
+
+  const [backups, setBackups] = useState<Array<{ filename: string; timestamp?: string; size?: number }>>([]);
+  const [showBackups, setShowBackups] = useState(false);
+  const [loadingBackups, setLoadingBackups] = useState(false);
+
+  const resetSiteForm = () => {
+    setFormName(""); setFormUrl(""); setFormMaxPages(""); setFormMaxDepth("");
+    setFormKeywords(""); setFormExcludeKw(""); setFormExcludePfx("");
+    setFormSelector(""); setFormInterval("");
+    setShowAddSite(false); setEditingSite(null);
+  };
+
+  const openEditForm = (s: SiteConfig) => {
+    setEditingSite(s);
+    setFormName(s.name);
+    setFormUrl(s.url || "");
+    setFormMaxPages(s.max_pages?.toString() || "");
+    setFormMaxDepth(s.max_depth?.toString() || "");
+    setFormKeywords(s.keywords?.join(", ") || "");
+    setFormExcludeKw(s.exclude_keywords?.join(", ") || "");
+    setFormExcludePfx(s.exclude_prefixes?.join(", ") || "");
+    setFormSelector(s.content_selector || "");
+    setFormInterval(s.schedule_interval || "");
+    setShowAddSite(true);
+  };
+
+  const handleSaveSite = async () => {
+    if (!formName.trim() || !formUrl.trim()) return;
+    setSaving(true);
+    try {
+      const data: Record<string, unknown> = {
+        name: formName.trim(), url: formUrl.trim(),
+        max_pages: formMaxPages || undefined, max_depth: formMaxDepth || undefined,
+        keywords: formKeywords || undefined, exclude_keywords: formExcludeKw || undefined,
+        exclude_prefixes: formExcludePfx || undefined,
+        content_selector: formSelector || undefined, schedule_interval: formInterval || undefined,
+      };
+      if (editingSite) {
+        data.original_name = editingSite.name;
+        await apiPost("/api/config/sites/update", data);
+      } else {
+        await apiPost("/api/config/sites/add", data);
+      }
+      resetSiteForm();
+      onSitesChanged();
+    } catch { /* ignore */ }
+    finally { setSaving(false); }
+  };
+
+  const handleDeleteSite = async (name: string) => {
+    setSaving(true);
+    try {
+      await apiPost("/api/config/sites/delete", { name });
+      setDeletingSite(null);
+      onSitesChanged();
+    } catch { /* ignore */ }
+    finally { setSaving(false); }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const yamlText = ev.target?.result as string;
+      setImportYamlText(yamlText);
+      try {
+        const res = await apiPost<{ count?: number; names?: string[] }>("/api/config/sites/import", { yaml_text: yamlText, preview: true });
+        setImportPreview({ count: res.count || 0, names: res.names || [] });
+      } catch { setImportPreview(null); }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleConfirmImport = async () => {
+    setImporting(true);
+    try {
+      const res = await apiPost<{ imported?: number; skipped?: number }>("/api/config/sites/import", { yaml_text: importYamlText, mode: importMode });
+      setImportResult(t("tasks.sites.import_result").replace("{imported}", String(res.imported || 0)).replace("{skipped}", String(res.skipped || 0)));
+      onSitesChanged();
+      setImportPreview(null);
+      setImportFile(null);
+      setImportYamlText("");
+      setTimeout(() => setImportResult(null), 4000);
+    } catch { /* ignore */ }
+    finally { setImporting(false); }
+  };
+
+  const fetchBackups = async () => {
+    setLoadingBackups(true);
+    try {
+      const res = await apiGet<{ backups?: Array<{ filename: string; timestamp?: string; size?: number }> }>("/api/config/backups");
+      setBackups(res.backups || []);
+    } catch { setBackups([]); }
+    finally { setLoadingBackups(false); }
+  };
+
+  const handleRestoreBackup = async (filename: string) => {
+    if (!confirm(t("tasks.sites.restore_confirm"))) return;
+    try {
+      await apiPost("/api/config/backups/restore", { filename });
+      onSitesChanged();
+    } catch { /* ignore */ }
+  };
+
+  const handleDeleteBackup = async (filename: string) => {
+    try {
+      await apiPost("/api/config/backups/delete", { filename });
+      await fetchBackups();
+    } catch { /* ignore */ }
+  };
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">{t("tasks.form.scheduled_desc")}</p>
-      <FormField label={t("tasks.form.target_site")}>
-        <SelectField value={site} onChange={setSite} testId="select-site"
-          options={[{ value: "", label: t("tasks.form.all_sites") + ` (${sites.length})` }, ...sites.map((s) => ({ value: s.name, label: s.name }))]} />
-      </FormField>
-      <div className="grid grid-cols-2 gap-3">
-        <FormField label={t("tasks.form.max_pages")} hint={t("tasks.form.default_hint") + " 200"}>
-          <InputField value={maxPages} onChange={setMaxPages} placeholder="200" type="number" testId="input-max-pages" />
-        </FormField>
-        <FormField label={t("tasks.form.max_depth")} hint={t("tasks.form.default_hint") + " 2"}>
-          <InputField value={maxDepth} onChange={setMaxDepth} placeholder="2" type="number" testId="input-max-depth" />
-        </FormField>
+    <div className="space-y-5">
+      <input ref={fileInputRef} type="file" accept=".yaml,.yml" className="hidden" onChange={handleFileSelect} data-testid="input-import-file" />
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => fileInputRef.current?.click()}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          data-testid="button-import-yaml">
+          <FileUp className="w-3 h-3" />{t("tasks.sites.import_yaml")}
+        </button>
+        <button onClick={async () => {
+            try {
+              const res = await fetch("/api/config/sites/export");
+              if (!res.ok) return;
+              const blob = await res.blob();
+              const cd = res.headers.get("content-disposition") || "";
+              const match = cd.match(/filename=([^;]+)/);
+              const fname = match ? match[1] : "sites_export.yaml";
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = fname;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            } catch { /* ignore */ }
+          }}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          data-testid="button-export-current">
+          <Download className="w-3 h-3" />{t("tasks.sites.export_current")}
+        </button>
+        <button onClick={async () => {
+            try {
+              const res = await fetch("/api/config/sites/sample");
+              if (!res.ok) return;
+              const blob = await res.blob();
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = "sites_sample.yaml";
+              a.click();
+              URL.revokeObjectURL(a.href);
+            } catch { /* ignore */ }
+          }}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          data-testid="button-download-sample">
+          <Download className="w-3 h-3" />{t("tasks.sites.download_sample")}
+        </button>
       </div>
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting}
-        onClick={() => onSubmit({ type: "scheduled", name: site ? `Scheduled: ${site}` : "Scheduled Collection",
-          site: site || undefined, max_pages: maxPages ? parseInt(maxPages) : undefined, max_depth: maxDepth ? parseInt(maxDepth) : undefined })} />
+
+      {importResult && (
+        <div className="text-xs px-2.5 py-1.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" data-testid="text-import-result">{importResult}</div>
+      )}
+
+      {importPreview && (
+        <div className="rounded-lg border border-primary/30 bg-card p-4 space-y-3" data-testid="panel-import-preview">
+          <p className="text-sm font-medium">{t("tasks.sites.import_preview").replace("{n}", String(importPreview.count))}</p>
+          <div className="flex flex-wrap gap-1">
+            {importPreview.names.map((name) => (
+              <span key={name} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{name}</span>
+            ))}
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground">{t("tasks.sites.import_mode")}</p>
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="radio" name="importMode" checked={importMode === "merge"} onChange={() => setImportMode("merge")} data-testid="radio-mode-merge" />
+              {t("tasks.sites.mode_merge")}
+            </label>
+            <label className="flex items-center gap-2 text-xs cursor-pointer">
+              <input type="radio" name="importMode" checked={importMode === "overwrite"} onChange={() => setImportMode("overwrite")} data-testid="radio-mode-overwrite" />
+              {t("tasks.sites.mode_overwrite")}
+            </label>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={handleConfirmImport} disabled={importing}
+              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-confirm-import">
+              {importing && <Loader2 className="w-3 h-3 animate-spin" />}
+              {t("tasks.sites.import_confirm")}
+            </button>
+            <button onClick={() => { setImportPreview(null); setImportFile(null); setImportYamlText(""); }}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+              data-testid="button-cancel-import">{t("tasks.sched.cancel")}</button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">{t("tasks.form.scheduled_desc")}</p>
+        <FormField label={t("tasks.form.target_site")}>
+          <SelectField value={site} onChange={setSite} testId="select-site"
+            options={[{ value: "", label: t("tasks.form.all_sites") + ` (${sites.length})` }, ...sites.map((s) => ({ value: s.name, label: s.name }))]} />
+        </FormField>
+        <div className="grid grid-cols-2 gap-3">
+          <FormField label={t("tasks.form.max_pages")} hint={t("tasks.form.default_hint") + " 200"}>
+            <InputField value={maxPages} onChange={setMaxPages} placeholder="200" type="number" testId="input-max-pages" />
+          </FormField>
+          <FormField label={t("tasks.form.max_depth")} hint={t("tasks.form.default_hint") + " 2"}>
+            <InputField value={maxDepth} onChange={setMaxDepth} placeholder="2" type="number" testId="input-max-depth" />
+          </FormField>
+        </div>
+        <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting}
+          onClick={() => onSubmit({ type: "scheduled", name: site ? `Scheduled: ${site}` : "Scheduled Collection",
+            site: site || undefined, max_pages: maxPages ? parseInt(maxPages) : undefined, max_depth: maxDepth ? parseInt(maxDepth) : undefined })} />
+      </div>
+
+      <div className="border-t border-border pt-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">{sites.length} {t("tasks.configured_sites").toLowerCase()}</p>
+          <button onClick={() => { resetSiteForm(); setShowAddSite(true); }}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+            data-testid="button-add-site">
+            <Plus className="w-3 h-3" />{t("tasks.sched.add_site")}
+          </button>
+        </div>
+
+        {showAddSite && (
+          <div className="rounded-lg border border-primary/30 bg-card p-4 space-y-3" data-testid="form-site">
+            <h4 className="text-sm font-medium">{editingSite ? t("tasks.sched.edit_site") : t("tasks.sched.add_site")}</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={t("tasks.sched.site_name")}>
+                <InputField value={formName} onChange={setFormName} placeholder="SOA" testId="input-site-name" />
+              </FormField>
+              <FormField label={t("tasks.sched.site_url")}>
+                <InputField value={formUrl} onChange={setFormUrl} placeholder="https://www.soa.org" testId="input-site-url" />
+              </FormField>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <FormField label={t("tasks.form.max_pages")}>
+                <InputField value={formMaxPages} onChange={setFormMaxPages} placeholder="200" type="number" testId="input-site-max-pages" />
+              </FormField>
+              <FormField label={t("tasks.form.max_depth")}>
+                <InputField value={formMaxDepth} onChange={setFormMaxDepth} placeholder="2" type="number" testId="input-site-max-depth" />
+              </FormField>
+              <FormField label={t("tasks.sched.schedule_interval_site")}>
+                <InputField value={formInterval} onChange={setFormInterval} placeholder="weekly" testId="input-site-interval" />
+              </FormField>
+            </div>
+            <FormField label={t("tasks.form.keywords")} hint={t("tasks.form.comma_separated")}>
+              <InputField value={formKeywords} onChange={setFormKeywords} placeholder="artificial intelligence, actuarial" testId="input-site-keywords" />
+            </FormField>
+            <FormField label={t("tasks.form.exclude_keywords")} hint={t("tasks.form.comma_separated")}>
+              <InputField value={formExcludeKw} onChange={setFormExcludeKw} placeholder="newsletter" testId="input-site-exclude-kw" />
+            </FormField>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={t("tasks.sched.exclude_prefixes")} hint={t("tasks.form.comma_separated")}>
+                <InputField value={formExcludePfx} onChange={setFormExcludePfx} placeholder="/archive, /old" testId="input-site-exclude-pfx" />
+              </FormField>
+              <FormField label={t("tasks.form.content_selector")}>
+                <InputField value={formSelector} onChange={setFormSelector} placeholder="article.content" testId="input-site-selector" />
+              </FormField>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <button onClick={resetSiteForm}
+                className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                data-testid="button-cancel-site">{t("tasks.sched.cancel")}</button>
+              <button onClick={handleSaveSite} disabled={saving || !formName.trim() || !formUrl.trim()}
+                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                data-testid="button-save-site">
+                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                {saving ? t("tasks.sched.saving") : t("tasks.sched.save")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {sites.length === 0 && !showAddSite ? (
+          <div className="text-center py-8 rounded-lg border border-dashed border-border bg-card" data-testid="text-no-sites">
+            <Globe className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+            <p className="text-sm font-medium text-muted-foreground">{t("tasks.sched.no_sites")}</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">{t("tasks.sched.no_sites_desc")}</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {sites.map((s) => (
+              <div key={s.name} className="rounded-lg border border-border bg-card overflow-hidden" data-testid={`card-site-${s.name}`}>
+                <div className="flex items-center gap-3 px-3.5 py-2.5">
+                  <button onClick={() => setExpandedSite(expandedSite === s.name ? null : s.name)}
+                    className="flex items-center gap-3 flex-1 min-w-0 text-left hover:bg-muted/50 -m-1 p-1 rounded transition-colors">
+                    <Globe className="w-4 h-4 text-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium truncate block">{s.name}</span>
+                      {s.url && <span className="text-[11px] text-muted-foreground truncate block">{s.url}</span>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {s.schedule_interval && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">{s.schedule_interval}</span>
+                      )}
+                      {expandedSite === s.name ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => onSubmit({ type: "scheduled", name: `Scheduled: ${s.name}`, site: s.name })}
+                      className="p-1.5 rounded hover:bg-emerald-500/10 transition-colors text-muted-foreground hover:text-emerald-600"
+                      data-testid={`button-run-site-${s.name}`} title={t("tasks.sites.run_crawl")}><Play className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => openEditForm(s)}
+                      className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                      data-testid={`button-edit-site-${s.name}`}><Pencil className="w-3.5 h-3.5" /></button>
+                    {deletingSite === s.name ? (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => handleDeleteSite(s.name)}
+                          className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
+                          data-testid={`button-confirm-delete-site-${s.name}`}>{t("tasks.sched.confirm_delete")}</button>
+                        <button onClick={() => setDeletingSite(null)}
+                          className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setDeletingSite(s.name)}
+                        className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600"
+                        data-testid={`button-delete-site-${s.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                    )}
+                  </div>
+                </div>
+                {expandedSite === s.name && (
+                  <div className="px-3.5 pb-3 pt-1 border-t border-border space-y-2 text-xs">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                      <div><span className="text-muted-foreground">{t("tasks.form.max_pages")}:</span> <span className="font-medium">{s.max_pages ?? "—"}</span></div>
+                      <div><span className="text-muted-foreground">{t("tasks.form.max_depth")}:</span> <span className="font-medium">{s.max_depth ?? "—"}</span></div>
+                    </div>
+                    {s.keywords && s.keywords.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">{t("tasks.form.keywords")}:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {s.keywords.map((kw) => (
+                            <span key={kw} className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{kw}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {s.exclude_keywords && s.exclude_keywords.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">{t("tasks.form.exclude_keywords")}:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {s.exclude_keywords.map((kw) => (
+                            <span key={kw} className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 text-[10px]">{kw}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {s.content_selector && (
+                      <div><span className="text-muted-foreground">{t("tasks.form.content_selector")}:</span> <code className="text-[10px] bg-muted px-1 rounded">{s.content_selector}</code></div>
+                    )}
+                    {s.url && (
+                      <a href={s.url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline mt-1">
+                        <ExternalLink className="w-3 h-3" />{t("tasks.form.visit_site")}
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-border pt-4">
+        <button onClick={() => { if (!showBackups) fetchBackups(); setShowBackups(!showBackups); }}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+          data-testid="button-toggle-backups">
+          {showBackups ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          {t("tasks.sites.backups")}
+        </button>
+        {showBackups && (
+          <div className="mt-3 space-y-2">
+            {loadingBackups ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /></div>
+            ) : backups.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">{t("tasks.sites.no_backups")}</p>
+            ) : (
+              backups.map((b) => (
+                <div key={b.filename} className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-card text-xs" data-testid={`row-backup-${b.filename}`}>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-medium truncate block">{b.filename}</span>
+                    <div className="flex items-center gap-3 text-muted-foreground mt-0.5">
+                      {b.timestamp && <span>{formatDate(b.timestamp)}</span>}
+                      {b.size != null && <span>{(b.size / 1024).toFixed(1)} KB</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => handleRestoreBackup(b.filename)}
+                      className="text-[10px] px-2 py-1 rounded border border-border hover:bg-muted transition-colors"
+                      data-testid={`button-restore-backup-${b.filename}`}>{t("tasks.sites.restore")}</button>
+                    <button onClick={() => handleDeleteBackup(b.filename)}
+                      className="text-[10px] px-2 py-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-600 transition-colors"
+                      data-testid={`button-delete-backup-${b.filename}`}><Trash2 className="w-3 h-3" /></button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function ScheduledJobsTab({ sites }: { sites: SiteConfig[] }) {
+function ScheduledTasksSection() {
   const { t } = useTranslation();
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
@@ -366,406 +773,160 @@ function ScheduledJobsTab({ sites }: { sites: SiteConfig[] }) {
     { value: "url", label: t("tasks.type.adhoc_url") },
   ];
 
-  if (loading) {
-    return <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-16 rounded-lg bg-muted animate-pulse" />)}</div>;
-  }
-
   return (
     <div className="space-y-5">
-      {scheduleStatus && (
-        <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Timer className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium">{t("tasks.sched.scheduler_jobs")}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
-                {scheduleStatus.job_count || scheduleStatus.jobs?.length || 0} {t("tasks.sched.job_count").toLowerCase()}
-              </span>
-            </div>
-            <button onClick={handleReinit}
-              className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
-              data-testid="button-reinit-scheduler">
-              <RefreshCw className="w-3 h-3" />{t("tasks.sched.reinit")}
-            </button>
-          </div>
-          {reinitMsg && (
-            <div className="text-xs px-2.5 py-1.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">{reinitMsg}</div>
-          )}
-          {scheduleStatus.global_schedule && (
-            <div className="text-xs text-muted-foreground">
-              {t("tasks.sched.global_interval")}: <span className="font-medium text-foreground">{scheduleStatus.global_schedule}</span>
-            </div>
-          )}
-          {scheduleStatus.jobs && scheduleStatus.jobs.length > 0 && (
-            <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
-              {scheduleStatus.jobs.map((job, i) => (
-                <div key={i} className="flex items-center justify-between text-xs px-2.5 py-2 rounded bg-background border border-border">
-                  <span className="font-medium truncate flex-1">{job.tag || `Job ${i + 1}`}</span>
-                  <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
-                    <span>{job.interval}</span>
-                    {job.next_run && <span>{t("tasks.sched.next_run")}: {job.next_run}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className="text-sm font-medium">{t("tasks.sched.configured_tasks")}</h4>
-            <p className="text-[11px] text-muted-foreground">{t("tasks.sched.configured_tasks_desc")}</p>
-          </div>
-          <button onClick={() => { resetForm(); setShowAddForm(true); }}
-            className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
-            data-testid="button-add-scheduled-task">
-            <Plus className="w-3 h-3" />{t("tasks.sched.add_task")}
-          </button>
-        </div>
-
-        {showAddForm && (
-          <div className="rounded-lg border border-primary/30 bg-card p-4 space-y-3" data-testid="form-scheduled-task">
-            <h4 className="text-sm font-medium">{editingTask ? t("tasks.sched.edit_task") : t("tasks.sched.add_task")}</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label={t("tasks.sched.task_name")}>
-                <InputField value={formName} onChange={setFormName} placeholder="Daily Catalog" testId="input-sched-name" />
-              </FormField>
-              <FormField label={t("tasks.sched.task_type")}>
-                <SelectField value={formType} onChange={setFormType} options={taskTypeOptions} testId="select-sched-type" />
-              </FormField>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label={t("tasks.sched.schedule_interval")} hint={t("tasks.sched.interval_hint")}>
-                <InputField value={formInterval} onChange={setFormInterval} placeholder="daily at 02:00" testId="input-sched-interval" />
-              </FormField>
-              <FormField label={t("tasks.sched.enabled")}>
-                <button type="button" onClick={() => setFormEnabled(!formEnabled)}
-                  className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border bg-background w-full"
-                  data-testid="toggle-sched-enabled">
-                  {formEnabled ? <ToggleRight className="w-5 h-5 text-primary" /> : <ToggleLeft className="w-5 h-5 text-muted-foreground" />}
-                  {formEnabled ? t("tasks.sched.enabled") : t("tasks.sched.disabled")}
-                </button>
-              </FormField>
-            </div>
-            <FormField label={t("tasks.sched.parameters")} hint="JSON">
-              <textarea value={formParams} onChange={(e) => setFormParams(e.target.value)} rows={3}
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
-                data-testid="input-sched-params" />
-            </FormField>
-            <div className="flex items-center gap-2 justify-end">
-              <button onClick={resetForm}
-                className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
-                data-testid="button-cancel-sched">{t("tasks.sched.cancel")}</button>
-              <button onClick={handleSave} disabled={saving || !formName.trim()}
-                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                data-testid="button-save-sched">
-                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                {saving ? t("tasks.sched.saving") : t("tasks.sched.save")}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {scheduledTasks.length === 0 && !showAddForm ? (
-          <div className="text-center py-8 rounded-lg border border-dashed border-border bg-card" data-testid="text-no-scheduled-tasks">
-            <Clock className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
-            <p className="text-sm font-medium text-muted-foreground">{t("tasks.sched.no_jobs")}</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">{t("tasks.sched.no_jobs_desc")}</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {scheduledTasks.map((task) => (
-              <div key={task.name} className="flex items-center gap-3 px-3.5 py-3 rounded-lg border border-border bg-card hover:bg-muted/30 transition-colors"
-                data-testid={`row-sched-task-${task.name}`}>
-                <div className={cn("w-2 h-2 rounded-full shrink-0", task.enabled ? "bg-emerald-500" : "bg-muted-foreground/40")} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium truncate">{task.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{task.type}</span>
-                  </div>
-                  <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
-                    <span>{t("tasks.sched.interval")}: {task.interval}</span>
-                    <span>{task.enabled ? t("tasks.sched.enabled") : t("tasks.sched.disabled")}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => openEditForm(task)}
-                    className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                    data-testid={`button-edit-sched-${task.name}`}><Pencil className="w-3.5 h-3.5" /></button>
-                  {deletingTask === task.name ? (
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => handleDelete(task.name)}
-                        className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
-                        data-testid={`button-confirm-delete-sched-${task.name}`}>{t("tasks.sched.confirm_delete")}</button>
-                      <button onClick={() => setDeletingTask(null)}
-                        className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
-                    </div>
-                  ) : (
-                    <button onClick={() => setDeletingTask(task.name)}
-                      className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600"
-                      data-testid={`button-delete-sched-${task.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ScheduledSitesTab({ sites, onSitesChanged }: { sites: SiteConfig[]; onSitesChanged: () => void }) {
-  const { t } = useTranslation();
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [editingSite, setEditingSite] = useState<SiteConfig | null>(null);
-  const [deletingSite, setDeletingSite] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [expandedSite, setExpandedSite] = useState<string | null>(null);
-
-  const [formName, setFormName] = useState("");
-  const [formUrl, setFormUrl] = useState("");
-  const [formMaxPages, setFormMaxPages] = useState("");
-  const [formMaxDepth, setFormMaxDepth] = useState("");
-  const [formKeywords, setFormKeywords] = useState("");
-  const [formExcludeKw, setFormExcludeKw] = useState("");
-  const [formExcludePfx, setFormExcludePfx] = useState("");
-  const [formSelector, setFormSelector] = useState("");
-  const [formInterval, setFormInterval] = useState("");
-
-  const resetForm = () => {
-    setFormName(""); setFormUrl(""); setFormMaxPages(""); setFormMaxDepth("");
-    setFormKeywords(""); setFormExcludeKw(""); setFormExcludePfx("");
-    setFormSelector(""); setFormInterval("");
-    setShowAddForm(false); setEditingSite(null);
-  };
-
-  const openEditForm = (site: SiteConfig) => {
-    setEditingSite(site);
-    setFormName(site.name);
-    setFormUrl(site.url || "");
-    setFormMaxPages(site.max_pages?.toString() || "");
-    setFormMaxDepth(site.max_depth?.toString() || "");
-    setFormKeywords(site.keywords?.join(", ") || "");
-    setFormExcludeKw(site.exclude_keywords?.join(", ") || "");
-    setFormExcludePfx(site.exclude_prefixes?.join(", ") || "");
-    setFormSelector(site.content_selector || "");
-    setFormInterval(site.schedule_interval || "");
-    setShowAddForm(true);
-  };
-
-  const handleSave = async () => {
-    if (!formName.trim() || !formUrl.trim()) return;
-    setSaving(true);
-    try {
-      const data: Record<string, unknown> = {
-        name: formName.trim(), url: formUrl.trim(),
-        max_pages: formMaxPages || undefined, max_depth: formMaxDepth || undefined,
-        keywords: formKeywords || undefined, exclude_keywords: formExcludeKw || undefined,
-        exclude_prefixes: formExcludePfx || undefined,
-        content_selector: formSelector || undefined, schedule_interval: formInterval || undefined,
-      };
-      if (editingSite) {
-        data.original_name = editingSite.name;
-        await apiPost("/api/config/sites/update", data);
-      } else {
-        await apiPost("/api/config/sites/add", data);
-      }
-      resetForm();
-      onSitesChanged();
-    } catch { /* ignore */ }
-    finally { setSaving(false); }
-  };
-
-  const handleDelete = async (name: string) => {
-    setSaving(true);
-    try {
-      await apiPost("/api/config/sites/delete", { name });
-      setDeletingSite(null);
-      onSitesChanged();
-    } catch { /* ignore */ }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{sites.length} {t("tasks.configured_sites").toLowerCase()}</p>
-        <button onClick={() => { resetForm(); setShowAddForm(true); }}
-          className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
-          data-testid="button-add-site">
-          <Plus className="w-3 h-3" />{t("tasks.sched.add_site")}
-        </button>
+      <div>
+        <h2 className="text-lg font-semibold">{t("tasks.scheduled.title")}</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">{t("tasks.scheduled.desc")}</p>
       </div>
 
-      {showAddForm && (
-        <div className="rounded-lg border border-primary/30 bg-card p-4 space-y-3" data-testid="form-site">
-          <h4 className="text-sm font-medium">{editingSite ? t("tasks.sched.edit_site") : t("tasks.sched.add_site")}</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label={t("tasks.sched.site_name")}>
-              <InputField value={formName} onChange={setFormName} placeholder="SOA" testId="input-site-name" />
-            </FormField>
-            <FormField label={t("tasks.sched.site_url")}>
-              <InputField value={formUrl} onChange={setFormUrl} placeholder="https://www.soa.org" testId="input-site-url" />
-            </FormField>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <FormField label={t("tasks.form.max_pages")}>
-              <InputField value={formMaxPages} onChange={setFormMaxPages} placeholder="200" type="number" testId="input-site-max-pages" />
-            </FormField>
-            <FormField label={t("tasks.form.max_depth")}>
-              <InputField value={formMaxDepth} onChange={setFormMaxDepth} placeholder="2" type="number" testId="input-site-max-depth" />
-            </FormField>
-            <FormField label={t("tasks.sched.schedule_interval_site")}>
-              <InputField value={formInterval} onChange={setFormInterval} placeholder="weekly" testId="input-site-interval" />
-            </FormField>
-          </div>
-          <FormField label={t("tasks.form.keywords")} hint={t("tasks.form.comma_separated")}>
-            <InputField value={formKeywords} onChange={setFormKeywords} placeholder="artificial intelligence, actuarial" testId="input-site-keywords" />
-          </FormField>
-          <FormField label={t("tasks.form.exclude_keywords")} hint={t("tasks.form.comma_separated")}>
-            <InputField value={formExcludeKw} onChange={setFormExcludeKw} placeholder="newsletter" testId="input-site-exclude-kw" />
-          </FormField>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label={t("tasks.sched.exclude_prefixes")} hint={t("tasks.form.comma_separated")}>
-              <InputField value={formExcludePfx} onChange={setFormExcludePfx} placeholder="/archive, /old" testId="input-site-exclude-pfx" />
-            </FormField>
-            <FormField label={t("tasks.form.content_selector")}>
-              <InputField value={formSelector} onChange={setFormSelector} placeholder="article.content" testId="input-site-selector" />
-            </FormField>
-          </div>
-          <div className="flex items-center gap-2 justify-end">
-            <button onClick={resetForm}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
-              data-testid="button-cancel-site">{t("tasks.sched.cancel")}</button>
-            <button onClick={handleSave} disabled={saving || !formName.trim() || !formUrl.trim()}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              data-testid="button-save-site">
-              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-              {saving ? t("tasks.sched.saving") : t("tasks.sched.save")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {sites.length === 0 && !showAddForm ? (
-        <div className="text-center py-8 rounded-lg border border-dashed border-border bg-card" data-testid="text-no-sites">
-          <Globe className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
-          <p className="text-sm font-medium text-muted-foreground">{t("tasks.sched.no_sites")}</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">{t("tasks.sched.no_sites_desc")}</p>
-        </div>
+      {loading ? (
+        <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-16 rounded-lg bg-muted animate-pulse" />)}</div>
       ) : (
-        <div className="space-y-2">
-          {sites.map((site) => (
-            <div key={site.name} className="rounded-lg border border-border bg-card overflow-hidden" data-testid={`card-site-${site.name}`}>
-              <div className="flex items-center gap-3 px-3.5 py-2.5">
-                <button onClick={() => setExpandedSite(expandedSite === site.name ? null : site.name)}
-                  className="flex items-center gap-3 flex-1 min-w-0 text-left hover:bg-muted/50 -m-1 p-1 rounded transition-colors">
-                  <Globe className="w-4 h-4 text-primary shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium truncate block">{site.name}</span>
-                    {site.url && <span className="text-[11px] text-muted-foreground truncate block">{site.url}</span>}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {site.schedule_interval && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">{site.schedule_interval}</span>
-                    )}
-                    {expandedSite === site.name ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
-                  </div>
-                </button>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button onClick={() => openEditForm(site)}
-                    className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                    data-testid={`button-edit-site-${site.name}`}><Pencil className="w-3.5 h-3.5" /></button>
-                  {deletingSite === site.name ? (
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => handleDelete(site.name)}
-                        className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
-                        data-testid={`button-confirm-delete-site-${site.name}`}>{t("tasks.sched.confirm_delete")}</button>
-                      <button onClick={() => setDeletingSite(null)}
-                        className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
-                    </div>
-                  ) : (
-                    <button onClick={() => setDeletingSite(site.name)}
-                      className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600"
-                      data-testid={`button-delete-site-${site.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
-                  )}
+        <>
+          {scheduleStatus && (
+            <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Timer className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium">{t("tasks.sched.scheduler_jobs")}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                    {scheduleStatus.job_count || scheduleStatus.jobs?.length || 0} {t("tasks.sched.job_count").toLowerCase()}
+                  </span>
                 </div>
+                <button onClick={handleReinit}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+                  data-testid="button-reinit-scheduler">
+                  <RefreshCw className="w-3 h-3" />{t("tasks.sched.reinit")}
+                </button>
               </div>
-              {expandedSite === site.name && (
-                <div className="px-3.5 pb-3 pt-1 border-t border-border space-y-2 text-xs">
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                    <div><span className="text-muted-foreground">{t("tasks.form.max_pages")}:</span> <span className="font-medium">{site.max_pages ?? "—"}</span></div>
-                    <div><span className="text-muted-foreground">{t("tasks.form.max_depth")}:</span> <span className="font-medium">{site.max_depth ?? "—"}</span></div>
-                  </div>
-                  {site.keywords && site.keywords.length > 0 && (
-                    <div>
-                      <span className="text-muted-foreground">{t("tasks.form.keywords")}:</span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {site.keywords.map((kw) => (
-                          <span key={kw} className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{kw}</span>
-                        ))}
+              {reinitMsg && (
+                <div className="text-xs px-2.5 py-1.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">{reinitMsg}</div>
+              )}
+              {scheduleStatus.global_schedule && (
+                <div className="text-xs text-muted-foreground">
+                  {t("tasks.sched.global_interval")}: <span className="font-medium text-foreground">{scheduleStatus.global_schedule}</span>
+                </div>
+              )}
+              {scheduleStatus.jobs && scheduleStatus.jobs.length > 0 && (
+                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                  {scheduleStatus.jobs.map((job, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs px-2.5 py-2 rounded bg-background border border-border">
+                      <span className="font-medium truncate flex-1">{job.tag || `Job ${i + 1}`}</span>
+                      <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
+                        <span>{job.interval}</span>
+                        {job.next_run && <span>{t("tasks.sched.next_run")}: {job.next_run}</span>}
                       </div>
                     </div>
-                  )}
-                  {site.exclude_keywords && site.exclude_keywords.length > 0 && (
-                    <div>
-                      <span className="text-muted-foreground">{t("tasks.form.exclude_keywords")}:</span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {site.exclude_keywords.map((kw) => (
-                          <span key={kw} className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 text-[10px]">{kw}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {site.content_selector && (
-                    <div><span className="text-muted-foreground">{t("tasks.form.content_selector")}:</span> <code className="text-[10px] bg-muted px-1 rounded">{site.content_selector}</code></div>
-                  )}
-                  {site.url && (
-                    <a href={site.url} target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-primary hover:underline mt-1">
-                      <ExternalLink className="w-3 h-3" />{t("tasks.form.visit_site")}
-                    </a>
-                  )}
+                  ))}
                 </div>
               )}
             </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+          )}
 
-function ScheduledForm({ sites, onSubmit, submitting, onSitesChanged }: { sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean; onSitesChanged: () => void }) {
-  const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<"run" | "jobs" | "sites">("run");
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-medium">{t("tasks.sched.configured_tasks")}</h4>
+                <p className="text-[11px] text-muted-foreground">{t("tasks.sched.configured_tasks_desc")}</p>
+              </div>
+              <button onClick={() => { resetForm(); setShowAddForm(true); }}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+                data-testid="button-add-scheduled-task">
+                <Plus className="w-3 h-3" />{t("tasks.sched.add_task")}
+              </button>
+            </div>
 
-  const tabs = [
-    { key: "run" as const, label: t("tasks.sched.tab_run"), icon: Zap },
-    { key: "jobs" as const, label: t("tasks.sched.tab_jobs"), icon: Timer },
-    { key: "sites" as const, label: t("tasks.sched.tab_sites"), icon: Globe },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-1 p-1 rounded-lg bg-muted/50 border border-border" data-testid="tabs-scheduled">
-        {tabs.map(({ key, label, icon: Icon }) => (
-          <button key={key} onClick={() => setActiveTab(key)}
-            className={cn(
-              "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md transition-colors",
-              activeTab === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            {showAddForm && (
+              <div className="rounded-lg border border-primary/30 bg-card p-4 space-y-3" data-testid="form-scheduled-task">
+                <h4 className="text-sm font-medium">{editingTask ? t("tasks.sched.edit_task") : t("tasks.sched.add_task")}</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label={t("tasks.sched.task_name")}>
+                    <InputField value={formName} onChange={setFormName} placeholder="Daily Catalog" testId="input-sched-name" />
+                  </FormField>
+                  <FormField label={t("tasks.sched.task_type")}>
+                    <SelectField value={formType} onChange={setFormType} options={taskTypeOptions} testId="select-sched-type" />
+                  </FormField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label={t("tasks.sched.schedule_interval")} hint={t("tasks.sched.interval_hint")}>
+                    <InputField value={formInterval} onChange={setFormInterval} placeholder="daily at 02:00" testId="input-sched-interval" />
+                  </FormField>
+                  <FormField label={t("tasks.sched.enabled")}>
+                    <button type="button" onClick={() => setFormEnabled(!formEnabled)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border bg-background w-full"
+                      data-testid="toggle-sched-enabled">
+                      {formEnabled ? <ToggleRight className="w-5 h-5 text-primary" /> : <ToggleLeft className="w-5 h-5 text-muted-foreground" />}
+                      {formEnabled ? t("tasks.sched.enabled") : t("tasks.sched.disabled")}
+                    </button>
+                  </FormField>
+                </div>
+                <FormField label={t("tasks.sched.parameters")} hint="JSON">
+                  <textarea value={formParams} onChange={(e) => setFormParams(e.target.value)} rows={3}
+                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                    data-testid="input-sched-params" />
+                </FormField>
+                <div className="flex items-center gap-2 justify-end">
+                  <button onClick={resetForm}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                    data-testid="button-cancel-sched">{t("tasks.sched.cancel")}</button>
+                  <button onClick={handleSave} disabled={saving || !formName.trim()}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    data-testid="button-save-sched">
+                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    {saving ? t("tasks.sched.saving") : t("tasks.sched.save")}
+                  </button>
+                </div>
+              </div>
             )}
-            data-testid={`tab-sched-${key}`}>
-            <Icon className="w-3.5 h-3.5" />{label}
-          </button>
-        ))}
-      </div>
-      {activeTab === "run" && <ScheduledRunTab sites={sites} onSubmit={onSubmit} submitting={submitting} />}
-      {activeTab === "jobs" && <ScheduledJobsTab sites={sites} />}
-      {activeTab === "sites" && <ScheduledSitesTab sites={sites} onSitesChanged={onSitesChanged} />}
+
+            {scheduledTasks.length === 0 && !showAddForm ? (
+              <div className="text-center py-8 rounded-lg border border-dashed border-border bg-card" data-testid="text-no-scheduled-tasks">
+                <Clock className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+                <p className="text-sm font-medium text-muted-foreground">{t("tasks.sched.no_jobs")}</p>
+                <p className="text-xs text-muted-foreground/70 mt-1">{t("tasks.sched.no_jobs_desc")}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {scheduledTasks.map((task) => (
+                  <div key={task.name} className="flex items-center gap-3 px-3.5 py-3 rounded-lg border border-border bg-card hover:bg-muted/30 transition-colors"
+                    data-testid={`row-sched-task-${task.name}`}>
+                    <div className={cn("w-2 h-2 rounded-full shrink-0", task.enabled ? "bg-emerald-500" : "bg-muted-foreground/40")} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium truncate">{task.name}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{task.type}</span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
+                        <span>{t("tasks.sched.interval")}: {task.interval}</span>
+                        <span>{task.enabled ? t("tasks.sched.enabled") : t("tasks.sched.disabled")}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => openEditForm(task)}
+                        className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                        data-testid={`button-edit-sched-${task.name}`}><Pencil className="w-3.5 h-3.5" /></button>
+                      {deletingTask === task.name ? (
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => handleDelete(task.name)}
+                            className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
+                            data-testid={`button-confirm-delete-sched-${task.name}`}>{t("tasks.sched.confirm_delete")}</button>
+                          <button onClick={() => setDeletingTask(null)}
+                            className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setDeletingTask(task.name)}
+                          className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600"
+                          data-testid={`button-delete-sched-${task.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1294,11 +1455,8 @@ function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, u
 export default function Tasks() {
   const { t } = useTranslation();
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
-  const [historyTasks, setHistoryTasks] = useState<Task[]>([]);
   const [sites, setSites] = useState<SiteConfig[]>([]);
   const [loading, setLoading] = useState(true);
-  const [logModal, setLogModal] = useState<{ taskId: string; log: string } | null>(null);
-  const [logLoading, setLogLoading] = useState(false);
   const [activeForm, setActiveForm] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -1307,12 +1465,8 @@ export default function Tasks() {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const [activeRes, historyRes] = await Promise.all([
-        apiGet<{ tasks: Task[] }>("/api/tasks/active"),
-        apiGet<{ tasks: Task[] }>("/api/tasks/history?limit=20"),
-      ]);
+      const activeRes = await apiGet<{ tasks: Task[] }>("/api/tasks/active");
       setActiveTasks(activeRes.tasks || []);
-      setHistoryTasks(historyRes.tasks || []);
     } catch (e) { console.error("Failed to fetch tasks:", e); }
   }, []);
 
@@ -1332,16 +1486,6 @@ export default function Tasks() {
   const stopTask = async (taskId: string) => {
     try { await apiPost(`/api/tasks/stop/${taskId}`); await fetchTasks(); }
     catch (e) { console.error("Failed to stop task:", e); }
-  };
-
-  const viewLog = async (taskId: string) => {
-    setLogLoading(true);
-    setLogModal({ taskId, log: "" });
-    try {
-      const res = await apiGet<{ log: string }>(`/api/tasks/log/${taskId}`);
-      setLogModal({ taskId, log: res.log || t("tasks.form.no_log") });
-    } catch { setLogModal({ taskId, log: t("tasks.form.log_error") }); }
-    finally { setLogLoading(false); }
   };
 
   const handleSubmitTask = async (data: Record<string, unknown>) => {
@@ -1364,7 +1508,7 @@ export default function Tasks() {
 
   function renderForm() {
     switch (activeForm) {
-      case "scheduled": return <ScheduledForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} onSitesChanged={fetchSites} />;
+      case "site_config": return <SiteConfigForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} onSitesChanged={fetchSites} />;
       case "web_crawl": return <WebCrawlForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "adhoc_url": return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "file_import": return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} />;
@@ -1492,64 +1636,8 @@ export default function Tasks() {
         )}
       </div>
 
-      <div>
-        <h2 className="text-lg font-semibold mb-3">{t("tasks.history")}</h2>
-        {loading ? (
-          <div className="space-y-2">{[...Array(4)].map((_, i) => <div key={i} className="h-12 rounded-lg bg-muted animate-pulse" />)}</div>
-        ) : historyTasks.length === 0 ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-            className="text-center py-10 rounded-xl border border-dashed border-border bg-card" data-testid="text-no-history">
-            <Inbox className="w-10 h-10 mx-auto text-muted-foreground/40 mb-2" />
-            <p className="font-medium text-muted-foreground">{t("tasks.no_history")}</p>
-          </motion.div>
-        ) : (
-          <div className="rounded-xl border border-border bg-card overflow-hidden">
-            <div className="hidden sm:grid grid-cols-[1fr_100px_100px_120px_60px] gap-4 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              <span>{t("tasks.col.name")}</span><span>{t("tasks.col.type")}</span><span>{t("tasks.col.status")}</span>
-              <span>{t("tasks.col.started")}</span><span>{t("tasks.col.items")}</span>
-            </div>
-            {historyTasks.map((task, i) => (
-              <motion.div key={task.id} custom={i} variants={fadeUp} initial="hidden" animate="visible"
-                className="grid sm:grid-cols-[1fr_100px_100px_120px_60px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer"
-                onClick={() => viewLog(task.id)} data-testid={`row-history-task-${task.id}`}>
-                <div className="flex items-center gap-2 min-w-0">
-                  <ScrollText className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
-                  <span className="text-sm font-medium truncate">{task.name}</span>
-                </div>
-                <span className="text-xs text-muted-foreground hidden sm:flex items-center">{task.type}</span>
-                <span className="hidden sm:flex items-center">{statusBadge(task.status)}</span>
-                <span className="text-xs text-muted-foreground hidden sm:flex items-center">{formatDate(task.started_at)}</span>
-                <span className="text-xs text-muted-foreground hidden sm:flex items-center">{task.items_processed}</span>
-              </motion.div>
-            ))}
-          </div>
-        )}
-      </div>
+      <ScheduledTasksSection />
 
-      <AnimatePresence>
-        {logModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-            onClick={() => setLogModal(null)}>
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-card rounded-xl border border-border shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
-              onClick={(e) => e.stopPropagation()} data-testid="modal-task-log">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-                <h3 className="font-semibold text-sm">{t("tasks.log_title")} — {logModal.taskId}</h3>
-                <button onClick={() => setLogModal(null)} className="p-1.5 rounded-lg hover:bg-muted transition-colors" data-testid="button-close-log">
-                  <X className="w-4 h-4" /></button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-5">
-                {logLoading ? (
-                  <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-                ) : (
-                  <pre className="text-xs font-mono whitespace-pre-wrap text-muted-foreground leading-relaxed" data-testid="text-task-log">{logModal.log}</pre>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
