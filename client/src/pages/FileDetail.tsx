@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
 import { useTaskOptions } from "@/hooks/use-task-options";
+import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface FileData {
   url: string;
@@ -463,7 +464,7 @@ export default function FileDetail() {
     if (!file) return;
     setDeleting(true);
     try {
-      await apiPost("/api/files/delete", { url: file.url });
+      await apiPost("/api/files/delete", { url: file.url, confirm: "DELETE" });
       navigate("/database");
     } catch { setDeleting(false); }
   }
@@ -570,22 +571,18 @@ export default function FileDetail() {
           data-testid="button-preview">
           <Eye className="w-3.5 h-3.5" />{t("fv.preview")}
         </button>
-        {!deleteConfirm ? (
-          <button onClick={() => setDeleteConfirm(true)} disabled={!canDelete}
-            className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive text-sm hover:bg-destructive/10 transition-colors", !canDelete && disabledBtn)}
-            data-testid="button-delete">
-            <Trash2 className="w-3.5 h-3.5" />{t("fv.delete")}
-          </button>
-        ) : (
-          <div className="flex items-center gap-1">
-            <button onClick={handleDelete} disabled={deleting} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm hover:bg-destructive/90 transition-colors disabled:opacity-50" data-testid="button-confirm-delete">
-              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}{t("fv.confirm_delete")}
-            </button>
-            <button onClick={() => setDeleteConfirm(false)} className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted transition-colors" data-testid="button-cancel-delete">
-              {t("fv.cancel")}
-            </button>
-          </div>
-        )}
+        <button onClick={() => setDeleteConfirm(true)} disabled={!canDelete}
+          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-destructive/30 text-destructive text-sm hover:bg-destructive/10 transition-colors", !canDelete && disabledBtn)}
+          data-testid="button-delete">
+          <Trash2 className="w-3.5 h-3.5" />{t("fv.delete")}
+        </button>
+        <ConfirmDeleteModal
+          open={!!deleteConfirm}
+          onClose={() => setDeleteConfirm(false)}
+          onConfirm={handleDelete}
+          title={t("fv.confirm_delete")}
+          loading={deleting}
+        />
         <div className="flex items-center gap-1.5 ml-auto">
           <TaskStatusBadge status={conversionPoller.status} t={t} />
           <TaskStatusBadge status={catalogPoller.status} t={t} />

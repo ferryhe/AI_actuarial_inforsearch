@@ -15,7 +15,7 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 - `ai_actuarial/web/` - Flask web application (templates, static assets, API routes)
 - `client/` - React frontend source
   - `client/src/pages/` - Dashboard, Database, Chat, Tasks, Knowledge, Settings
-  - `client/src/components/` - Layout (sidebar, header, i18n context, theme toggle), TagSelect (multi-select tag picker)
+  - `client/src/components/` - Layout (sidebar, header, i18n context, theme toggle), TagSelect (multi-select tag picker), ConfirmDeleteModal (type-to-confirm delete modal matching original system's "confirm delete" pattern)
   - `client/src/hooks/` - useI18n (EN/ZH), useTheme (dark mode), useTaskOptions (dynamic backend data for task forms)
   - `client/src/lib/` - API helper (`api.ts`), class merging (`utils.ts`)
 - `config/` - YAML configuration (sites, categories, AI providers)
@@ -30,15 +30,15 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 
 ## React Frontend Pages
 - **Dashboard** (`/`) - Stats cards, quick actions, recent files
-- **Database** (`/database`) - File browser with search, filters, pagination, download. Rows are clickable → navigates to File Detail.
+- **Database** (`/database`) - File browser with search, filters, pagination, download, bulk select (checkboxes) with bulk delete. Rows are clickable → navigates to File Detail.
 - **File Detail** (`/file/:url+`) - Full file details: metadata table, category/summary/keywords editing, AI cataloging modal, markdown viewer/editor (with conversion engines: Docling, Marker, Mistral OCR, DeepSeek OCR), RAG chunk status with modify modal (profile selection, KB binding), download/delete/preview actions.
 - **File Preview** (`/file-preview?file_url=...`) - Desktop-only (≥1024px) side-by-side view: left pane renders PDF (via PDF.js CDN) or image, right pane shows RAG chunks with token counts and section hierarchy. Chunk set version switching via dropdown. Mobile shows "desktop only" message.
 - **Chat** (`/chat`) - AI chatbot with conversation management, mode/KB selection, citations
-- **Tasks** (`/tasks`) - 9 task types in a grid: Site Configuration (YAML import/export, site CRUD, per-site crawl, backup management), Web Crawl, URL, File Import (with folder browser), Search, Catalog, Markdown, Chunk, RAG Index. Below the grid: standalone Scheduled Tasks section (CRUD for generic recurring tasks, scheduler status, reinit).
+- **Tasks** (`/tasks`) - 9 task types in a grid: Site Configuration (YAML import/export, site CRUD, per-site crawl, backup management), Web Crawl, URL, File Import (with folder browser), Search, Catalog, Markdown, Chunk, RAG Index. Below the grid: standalone Scheduled Tasks section (CRUD for generic recurring tasks, scheduler status, reinit, delete confirmations with messages). Task History collapsible section at bottom.
 - **Knowledge** (`/knowledge`) - RAG knowledge base list with rich cards (status, mode, categories, description, stats), create KB (kb_id, embedding model dropdown, chunk_size/overlap, mode selector: manual/category, categories required highlight for category mode), delete with confirmation, chunk profiles table (name, size, overlap, splitter, tokenizer) with create/delete, orphan chunk set cleanup (dry-run preview + execute)
 - **KB Detail** (`/knowledge/:kbId`) - Full KB management: inline-editable name/description, stats cards (files, chunks, indexed, pending), category management (add/remove linked categories), bound files list with binding mode badges (pin/follow_latest), file binding dialog (search selectable files, choose binding mode), file removal, incremental index/force-reindex actions, view pending files list
 - **Settings** (`/settings`) - 4-tab interactive configuration: AI Configuration (LLM provider API key management, model selection per function), Search & Crawler (search engine API keys, editable crawler defaults), Categories (add/delete/edit categories with keywords, AI filter keywords), API Tokens (create/revoke tokens)
-- **Logs** (`/logs`) - System logs viewer with newest-first default, search/filter, log level filtering (INFO/WARNING/ERROR), task history section
+- **Logs** (`/logs`) - System logs viewer with newest-first default, search/filter, log level filtering (INFO/WARNING/ERROR), auto-scroll toggle, scroll-to-bottom button, task history section
 - **Users** (`/users`) - Admin user management: role changes, enable/disable accounts, quota reset, activity log viewer
 
 ## YAML Config Backup System
