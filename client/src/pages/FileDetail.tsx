@@ -67,7 +67,8 @@ interface ChunkSet {
 }
 
 interface ChunkProfile {
-  id: string;
+  id?: string;
+  profile_id?: string;
   name: string;
   chunk_size?: number;
   chunk_overlap?: number;
@@ -410,14 +411,16 @@ export default function FileDetail() {
   async function openChunkModal() {
     setShowChunkModal(true);
     try {
-      const profilesRes = await apiGet<{ data?: { profiles?: ChunkProfile[] }; profiles?: ChunkProfile[] }>("/api/chunk/profiles");
-      const p = profilesRes.data?.profiles || profilesRes.profiles || [];
+      const profilesRes = await apiGet<Record<string, unknown>>("/api/chunk/profiles");
+      const pd = profilesRes.data as Record<string, unknown> | undefined;
+      const p: ChunkProfile[] = Array.isArray(pd) ? pd : Array.isArray(pd?.profiles) ? pd.profiles as ChunkProfile[] : [];
       setChunkProfiles(p);
-      if (p.length > 0 && !chunkProfileId) setChunkProfileId(p[0].id);
+      if (p.length > 0 && !chunkProfileId) setChunkProfileId(p[0].profile_id || p[0].id);
     } catch { /* ignore */ }
     try {
-      const kbsRes = await apiGet<{ data?: { knowledge_bases?: KnowledgeBase[] }; knowledge_bases?: KnowledgeBase[] }>("/api/rag/knowledge-bases");
-      const k = kbsRes.data?.knowledge_bases || kbsRes.knowledge_bases || [];
+      const kbsRes = await apiGet<Record<string, unknown>>("/api/rag/knowledge-bases");
+      const kd = kbsRes.data;
+      const k: KnowledgeBase[] = Array.isArray(kd) ? kd : [];
       setKnowledgeBases(k);
       setKbLoadError(false);
     } catch {
