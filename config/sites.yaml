@@ -123,11 +123,9 @@ sites:
   url: https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/
   max_pages: 100
   max_depth: 2
-  # allow_url_patterns: only follow sub-pages under the bulletin path or globalassets PDFs
   allow_url_patterns:
-    - /resources/research-reports/2025/research-ai-bulletin
-    - /globalassets/
-  # No content_selector: removed to avoid cutting PDF links that may be outside main/article
+  - /resources/research-reports/2025/research-ai-bulletin
+  - /globalassets/
   keywords:
   - artificial intelligence
   - machine learning
@@ -624,8 +622,8 @@ ai_config:
     enable_response_validation: true
     max_query_length: 1000
   ocr:
-    provider: local
-    model: docling
+    provider: mistral
+    model: mistral-ocr-latest
     mistral:
       max_pdf_tokens: 9000
       max_pages_per_chunk: 10
