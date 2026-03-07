@@ -13,6 +13,8 @@ import {
   ArrowDown,
   Filter,
   X,
+  Eye,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -25,6 +27,12 @@ interface FileItem {
   source_site: string;
   content_type: string;
   last_seen: string;
+  category: string | null;
+  summary: string | null;
+  markdown_content: string | null;
+  markdown_source: string | null;
+  bytes: number | null;
+  deleted_at: string | null;
 }
 
 interface FilesResponse {
@@ -80,7 +88,15 @@ function formatDate(dateStr: string): string {
   }
 }
 
-type SortField = "title" | "source_site" | "content_type" | "last_seen";
+function formatSize(bytes: number | null | undefined): string {
+  if (!bytes && bytes !== 0) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+type SortField = "title" | "source_site" | "content_type" | "last_seen" | "bytes";
 type SortDir = "asc" | "desc";
 
 export default function DatabasePage() {
@@ -96,6 +112,7 @@ export default function DatabasePage() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [source, setSource] = useState("");
   const [category, setCategory] = useState("");
+  const [includeDeleted, setIncludeDeleted] = useState(false);
   const [orderBy, setOrderBy] = useState<SortField>("last_seen");
   const [orderDir, setOrderDir] = useState<SortDir>("desc");
 
@@ -110,7 +127,7 @@ export default function DatabasePage() {
 
   useEffect(() => {
     setOffset(0);
-  }, [debouncedQuery, source, category, orderBy, orderDir]);
+  }, [debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
 
   useEffect(() => {
     apiGet<{ sources: string[] }>("/api/sources")
@@ -132,6 +149,7 @@ export default function DatabasePage() {
     if (debouncedQuery) params.set("query", debouncedQuery);
     if (source) params.set("source", source);
     if (category) params.set("category", category);
+    if (includeDeleted) params.set("include_deleted", "true");
 
     apiGet<FilesResponse>(`/api/files?${params}`)
       .then((data) => {
@@ -143,7 +161,7 @@ export default function DatabasePage() {
         setTotal(0);
       })
       .finally(() => setLoading(false));
-  }, [offset, debouncedQuery, source, category, orderBy, orderDir]);
+  }, [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
 
   useEffect(() => {
     fetchFiles();
@@ -170,7 +188,15 @@ export default function DatabasePage() {
     window.open(`/api/download?url=${encodeURIComponent(file.url)}`, "_blank");
   }
 
-  const activeFilterCount = [source, category].filter(Boolean).length;
+  function navigateToFile(file: FileItem) {
+    navigate(`/file-detail?url=${encodeURIComponent(file.url)}`);
+  }
+
+  function navigateToPreview(file: FileItem) {
+    navigate(`/file-preview?file_url=${encodeURIComponent(file.url)}`);
+  }
+
+  const activeFilterCount = [source, category, includeDeleted ? "y" : ""].filter(Boolean).length;
 
   return (
     <div className="space-y-6">
@@ -228,9 +254,9 @@ export default function DatabasePage() {
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: "auto" }}
           exit={{ opacity: 0, height: 0 }}
-          className="flex flex-col sm:flex-row gap-3"
+          className="flex flex-col sm:flex-row gap-3 flex-wrap"
         >
-          <div className="flex-1">
+          <div className="flex-1 min-w-[160px]">
             <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.source")}</label>
             <select
               value={source}
@@ -244,7 +270,7 @@ export default function DatabasePage() {
               ))}
             </select>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-[160px]">
             <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.category")}</label>
             <select
               value={category}
@@ -253,6 +279,7 @@ export default function DatabasePage() {
               data-testid="select-category"
             >
               <option value="">{t("db.all_categories")}</option>
+              <option value="__uncategorized__">{t("db.uncategorized")}</option>
               {categories.map((c) => (
                 <option key={c.name} value={c.name}>
                   {c.name} ({c.count})
@@ -260,17 +287,46 @@ export default function DatabasePage() {
               ))}
             </select>
           </div>
-          {activeFilterCount > 0 && (
-            <div className="flex items-end">
+          <div className="flex-1 min-w-[160px]">
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("db.sort_by")}</label>
+            <select
+              value={`${orderBy}:${orderDir}`}
+              onChange={(e) => {
+                const [f, d] = e.target.value.split(":") as [SortField, SortDir];
+                setOrderBy(f);
+                setOrderDir(d);
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              data-testid="select-sort"
+            >
+              <option value="last_seen:desc">{t("db.sort_date_newest")}</option>
+              <option value="last_seen:asc">{t("db.sort_date_oldest")}</option>
+              <option value="title:asc">{t("db.sort_title_az")}</option>
+              <option value="source_site:asc">{t("db.sort_source_az")}</option>
+              <option value="bytes:desc">{t("db.sort_size_largest")}</option>
+            </select>
+          </div>
+          <div className="flex items-end gap-3">
+            <label className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-border bg-card text-sm" data-testid="checkbox-include-deleted">
+              <input
+                type="checkbox"
+                checked={includeDeleted}
+                onChange={(e) => setIncludeDeleted(e.target.checked)}
+                className="rounded border-border"
+              />
+              <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+              {t("db.include_deleted")}
+            </label>
+            {activeFilterCount > 0 && (
               <button
-                onClick={() => { setSource(""); setCategory(""); }}
+                onClick={() => { setSource(""); setCategory(""); setIncludeDeleted(false); }}
                 className="px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 data-testid="button-clear-filters"
               >
                 {t("db.clear_filters")}
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </motion.div>
       )}
 
@@ -297,68 +353,125 @@ export default function DatabasePage() {
         </motion.div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="hidden sm:grid grid-cols-[1fr_140px_80px_100px_44px] gap-4 px-4 py-2.5 bg-muted/50">
-            {([
-              { field: "title" as SortField, label: t("table.title") },
-              { field: "source_site" as SortField, label: t("table.source") },
-              { field: "content_type" as SortField, label: t("table.type") },
-              { field: "last_seen" as SortField, label: t("table.date") },
-            ]).map(({ field, label }) => (
-              <button
-                key={field}
-                onClick={() => handleSort(field)}
-                className="flex items-center gap-1 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors text-left"
-                data-testid={`sort-${field}`}
-              >
-                {label}
-                <SortIcon field={field} />
-              </button>
-            ))}
-            <span />
+          <div className="hidden lg:grid grid-cols-[36px_1fr_110px_120px_50px_70px_90px_68px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            <span>#</span>
+            <button onClick={() => handleSort("title")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-title">
+              {t("table.title")} <SortIcon field="title" />
+            </button>
+            <button onClick={() => handleSort("source_site")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-source_site">
+              {t("table.source")} <SortIcon field="source_site" />
+            </button>
+            <span>{t("table.category")}</span>
+            <span>{t("table.md")}</span>
+            <button onClick={() => handleSort("bytes")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-bytes">
+              {t("table.size")} <SortIcon field="bytes" />
+            </button>
+            <button onClick={() => handleSort("last_seen")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-last_seen">
+              {t("table.date")} <SortIcon field="last_seen" />
+            </button>
+            <span>{t("table.actions")}</span>
           </div>
 
-          {files.map((file, i) => (
-            <motion.div
-              key={file.url}
-              custom={i}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-              className="grid sm:grid-cols-[1fr_140px_80px_100px_44px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer"
-              onClick={() => navigate(`/file/${encodeURIComponent(file.url)}`)}
-              data-testid={`file-row-${i}`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
-                <span className="text-sm font-medium truncate" data-testid={`text-title-${i}`}>
-                  {file.title || file.original_filename || "Untitled"}
+          {files.map((file, i) => {
+            const rowNum = offset + i + 1;
+            const hasMd = !!file.markdown_content || !!file.markdown_source;
+            const isDeleted = !!file.deleted_at;
+
+            return (
+              <motion.div
+                key={file.url}
+                custom={i}
+                variants={fadeUp}
+                initial="hidden"
+                animate="visible"
+                className={cn(
+                  "grid lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_68px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
+                  isDeleted && "opacity-50"
+                )}
+                onClick={() => navigateToFile(file)}
+                data-testid={`file-row-${i}`}
+              >
+                <span className="hidden lg:flex items-center text-xs text-muted-foreground/60 tabular-nums" data-testid={`text-rownum-${i}`}>
+                  {rowNum}
                 </span>
-              </div>
-              <span className="text-sm text-muted-foreground truncate hidden sm:block" data-testid={`text-source-${i}`}>
-                {file.source_site || "-"}
-              </span>
-              <span className="hidden sm:block">
-                {file.content_type && (
-                  <span className={cn("inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
+
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
+                    <span className="text-sm font-medium truncate" data-testid={`text-title-${i}`}>
+                      {file.title || file.original_filename || "Untitled"}
+                    </span>
+                    {file.content_type && (
+                      <span className={cn("hidden sm:inline-block lg:hidden text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0", contentTypeBadgeColor(file.content_type))}>
+                        {contentTypeLabel(file.content_type)}
+                      </span>
+                    )}
+                    {isDeleted && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 shrink-0">
+                        {t("db.deleted_label")}
+                      </span>
+                    )}
+                  </div>
+                  {file.summary && (
+                    <p className="text-xs text-muted-foreground/70 mt-0.5 truncate pl-6" data-testid={`text-summary-${i}`}>
+                      {file.summary.length > 120 ? file.summary.slice(0, 120) + "…" : file.summary}
+                    </p>
+                  )}
+                </div>
+
+                <span className="text-xs text-muted-foreground truncate hidden lg:flex items-center" data-testid={`text-source-${i}`}>
+                  {file.source_site || "-"}
+                </span>
+
+                <span className="text-xs text-muted-foreground truncate hidden lg:flex items-center" data-testid={`text-category-${i}`}>
+                  {file.category || "-"}
+                </span>
+
+                <span className="hidden lg:flex items-center" data-testid={`text-md-${i}`}>
+                  {hasMd ? (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">Y</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground/40">-</span>
+                  )}
+                </span>
+
+                <span className="text-xs text-muted-foreground tabular-nums hidden lg:flex items-center" data-testid={`text-size-${i}`}>
+                  {formatSize(file.bytes)}
+                </span>
+
+                <span className="text-xs text-muted-foreground hidden lg:flex items-center" data-testid={`text-date-${i}`}>
+                  {formatDate(file.last_seen)}
+                </span>
+
+                <div className="hidden lg:flex items-center gap-0.5">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigateToPreview(file); }}
+                    className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    title={t("db.preview")}
+                    data-testid={`button-preview-${i}`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
+                    className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    title={t("db.download")}
+                    data-testid={`button-download-${i}`}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 sm:hidden mt-1">
+                  <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
                     {contentTypeLabel(file.content_type)}
                   </span>
-                )}
-              </span>
-              <span className="text-xs text-muted-foreground hidden sm:flex items-center" data-testid={`text-date-${i}`}>
-                {formatDate(file.last_seen)}
-              </span>
-              <div className="hidden sm:flex items-center justify-center">
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
-                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                  title={t("db.download")}
-                  data-testid={`button-download-${i}`}
-                >
-                  <Download className="w-4 h-4" />
-                </button>
-              </div>
-            </motion.div>
-          ))}
+                  <span className="text-xs text-muted-foreground">{formatDate(file.last_seen)}</span>
+                  <span className="text-xs text-muted-foreground">{formatSize(file.bytes)}</span>
+                </div>
+              </motion.div>
+            );
+          })}
         </div>
       )}
 

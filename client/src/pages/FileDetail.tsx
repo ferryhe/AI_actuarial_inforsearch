@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useRoute, useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -127,8 +127,8 @@ function contentTypeBadgeColor(ct: string): string {
 export default function FileDetail() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
-  const [, params] = useRoute("/file/:url+");
-  const fileUrl = params?.url ? decodeURIComponent(params.url) : "";
+  const searchString = useSearch();
+  const fileUrl = new URLSearchParams(searchString).get("url") || "";
 
   const [file, setFile] = useState<FileData | null>(null);
   const [loading, setLoading] = useState(true);
