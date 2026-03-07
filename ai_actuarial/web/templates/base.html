@@ -71,7 +71,7 @@
                 </div>
                 {% else %}
                 <div style="display:flex; align-items:center; gap: 10px; margin-left: 12px;">
-                    {% if request.endpoint not in ('email_login', 'login') %}
+                    {% if request.endpoint not in ('email_login', 'login', 'register') %}
                     <a href="{{ url_for('register') }}" class="btn btn-primary btn-sm">Register</a>
                     <a href="{{ url_for('email_login') }}" class="btn btn-secondary btn-sm" data-i18n="nav.login">Login</a>
                     {% endif %}
