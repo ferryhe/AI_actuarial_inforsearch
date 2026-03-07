@@ -248,6 +248,11 @@ export default function FileDetail() {
   const [chunkSubmitting, setChunkSubmitting] = useState(false);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
 
+  const [inlineChunkSize, setInlineChunkSize] = useState(800);
+  const [inlineChunkOverlap, setInlineChunkOverlap] = useState(100);
+  const [inlineSplitter, setInlineSplitter] = useState("recursive");
+  const [inlineTokenizer, setInlineTokenizer] = useState("cl100k_base");
+
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -429,15 +434,26 @@ export default function FileDetail() {
     }
   }
 
+  const hasProfiles = chunkProfiles.length > 0;
+
   async function submitChunk() {
-    if (!file || !chunkProfileId) return;
+    if (!file) return;
+    if (hasProfiles && !chunkProfileId) return;
     setChunkSubmitting(true);
     try {
-      await apiPost(`/api/files/${encodeURIComponent(file.url)}/chunk-sets/generate`, {
-        profile_id: chunkProfileId,
+      const body: Record<string, unknown> = {
         overwrite_same_profile: chunkOverwrite,
         kb_id: chunkKbId || undefined,
-      });
+      };
+      if (hasProfiles && chunkProfileId) {
+        body.profile_id = chunkProfileId;
+      } else {
+        body.chunk_size = inlineChunkSize;
+        body.chunk_overlap = inlineChunkOverlap;
+        body.splitter = inlineSplitter;
+        body.tokenizer = inlineTokenizer;
+      }
+      await apiPost(`/api/files/${encodeURIComponent(file.url)}/chunk-sets/generate`, body);
       setShowChunkModal(false);
       await refreshChunks();
     } catch { /* ignore */ } finally { setChunkSubmitting(false); }
@@ -878,16 +894,57 @@ export default function FileDetail() {
           </h3>
           <p className="text-xs text-muted-foreground mb-4">{t("fv.chunk_hint")}</p>
           <div className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.chunk_profile")}</label>
-              <select value={chunkProfileId} onChange={(e) => setChunkProfileId(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-chunk-profile">
-                {chunkProfiles.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.chunk_size || "?"})</option>
-                ))}
-              </select>
-              <p className="text-[11px] text-muted-foreground mt-1">{t("fv.chunk_profile_hint")}</p>
-            </div>
+            {hasProfiles ? (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.chunk_profile")}</label>
+                <select value={chunkProfileId} onChange={(e) => setChunkProfileId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-chunk-profile">
+                  {chunkProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.chunk_size || "?"})</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">{t("fv.chunk_profile_hint")}</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400">
+                  {t("fv.no_profiles_hint")}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.inline_chunk_size")}</label>
+                    <input type="number" value={inlineChunkSize} onChange={(e) => setInlineChunkSize(Number(e.target.value))}
+                      min={64} max={8192}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-inline-chunk-size" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.inline_chunk_overlap")}</label>
+                    <input type="number" value={inlineChunkOverlap} onChange={(e) => setInlineChunkOverlap(Number(e.target.value))}
+                      min={0} max={2048}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-inline-chunk-overlap" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.inline_splitter")}</label>
+                    <select value={inlineSplitter} onChange={(e) => setInlineSplitter(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-inline-splitter">
+                      <option value="recursive">{t("knowledge.splitter_recursive")}</option>
+                      <option value="semantic">{t("knowledge.splitter_semantic")}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.inline_tokenizer")}</label>
+                    <select value={inlineTokenizer} onChange={(e) => setInlineTokenizer(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-inline-tokenizer">
+                      <option value="cl100k_base">cl100k_base</option>
+                      <option value="p50k_base">p50k_base</option>
+                      <option value="r50k_base">r50k_base</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.bind_kb")}</label>
               {kbLoadError ? (
@@ -913,7 +970,7 @@ export default function FileDetail() {
               <button onClick={() => setShowChunkModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}
               </button>
-              <button onClick={submitChunk} disabled={chunkSubmitting || !chunkProfileId}
+              <button onClick={submitChunk} disabled={chunkSubmitting || (hasProfiles && !chunkProfileId)}
                 className="text-sm px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 data-testid="button-submit-chunk">
                 {chunkSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}

@@ -20,6 +20,8 @@ import {
   Zap,
   FolderOpen,
   X,
+  Search,
+  LinkIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -63,6 +65,13 @@ interface KBCategory {
   file_count?: number;
 }
 
+interface SelectableFile {
+  file_url: string;
+  title?: string;
+  category?: string;
+  source_site?: string;
+}
+
 function StatusDot({ status }: { status?: string }) {
   const s = (status || "").toLowerCase();
   const color =
@@ -97,6 +106,18 @@ export default function KBDetail() {
   const [newCategory, setNewCategory] = useState("");
 
   const [fileSearch, setFileSearch] = useState("");
+
+  const [showPendingFiles, setShowPendingFiles] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<KBFile[]>([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+
+  const [showBindDialog, setShowBindDialog] = useState(false);
+  const [bindSearch, setBindSearch] = useState("");
+  const [bindableFiles, setBindableFiles] = useState<SelectableFile[]>([]);
+  const [bindLoading, setBindLoading] = useState(false);
+  const [selectedBindFiles, setSelectedBindFiles] = useState<string[]>([]);
+  const [bindingMode, setBindingMode] = useState<"pin" | "follow_latest">("follow_latest");
+  const [bindSubmitting, setBindSubmitting] = useState(false);
 
   const loadMeta = useCallback(async () => {
     if (!kbId) return;
@@ -213,15 +234,76 @@ export default function KBDetail() {
   const handleBuildIndex = async (force: boolean) => {
     setIndexing(true);
     try {
-      const endpoint = force
-        ? `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index/build`
-        : `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`;
-      await apiPost(endpoint, force ? {} : { incremental: true });
+      const endpoint = `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`;
+      await apiPost(endpoint, force ? { force_reindex: true } : { incremental: true });
       await loadStats();
     } catch (err) {
       console.error("Failed to build index:", err);
     } finally {
       setIndexing(false);
+    }
+  };
+
+  const handleSearchBindable = async (query?: string) => {
+    setBindLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (query) params.set("q", query);
+      params.set("limit", "50");
+      const url = `/api/rag/files/selectable?${params.toString()}`;
+      const res = await apiGet<{ files?: SelectableFile[]; data?: { files?: SelectableFile[] } }>(url);
+      setBindableFiles(res.data?.files || res.files || []);
+    } catch {
+      setBindableFiles([]);
+    } finally {
+      setBindLoading(false);
+    }
+  };
+
+  const handleOpenBindDialog = () => {
+    setShowBindDialog(true);
+    setBindSearch("");
+    setSelectedBindFiles([]);
+    setBindingMode("follow_latest");
+    handleSearchBindable();
+  };
+
+  const handleToggleBindFile = (fileUrl: string) => {
+    setSelectedBindFiles((prev) =>
+      prev.includes(fileUrl) ? prev.filter((u) => u !== fileUrl) : [...prev, fileUrl]
+    );
+  };
+
+  const handleSubmitBindings = async () => {
+    if (selectedBindFiles.length === 0) return;
+    setBindSubmitting(true);
+    try {
+      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/bindings`, {
+        file_urls: selectedBindFiles,
+        binding_mode: bindingMode,
+      });
+      setShowBindDialog(false);
+      setSelectedBindFiles([]);
+      await Promise.all([loadFiles(), loadStats()]);
+    } catch (err) {
+      console.error("Failed to bind files:", err);
+    } finally {
+      setBindSubmitting(false);
+    }
+  };
+
+  const loadPendingFiles = async () => {
+    setLoadingPending(true);
+    try {
+      const res = await apiGet<{ files?: KBFile[]; data?: { files?: KBFile[] } }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files/pending`);
+      setPendingFiles(res.data?.files || res.files || []);
+      setShowPendingFiles(true);
+    } catch (err) {
+      console.error("Failed to load pending files:", err);
+      setPendingFiles([]);
+      setShowPendingFiles(true);
+    } finally {
+      setLoadingPending(false);
     }
   };
 
@@ -392,7 +474,82 @@ export default function KBDetail() {
           <RefreshCw className={cn("w-4 h-4", indexing && "animate-spin")} />
           {t("kb.rebuild_index")}
         </button>
+        {pendingCount > 0 && (
+          <button
+            onClick={loadPendingFiles}
+            disabled={loadingPending}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50"
+            data-testid="button-view-pending"
+          >
+            {loadingPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
+            {t("kb.view_pending")} ({pendingCount})
+          </button>
+        )}
       </motion.div>
+
+      {showPendingFiles && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="rounded-xl border border-amber-500/30 bg-card overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-amber-500/5">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-500" />
+              <span className="text-sm font-semibold">{t("kb.pending_files")}</span>
+              <span className="text-xs text-muted-foreground">({pendingFiles.length})</span>
+            </div>
+            <button
+              onClick={() => setShowPendingFiles(false)}
+              className="p-1.5 rounded hover:bg-muted"
+              data-testid="button-close-pending"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {pendingFiles.length === 0 ? (
+            <div className="text-center py-8">
+              <CheckCircle2 className="w-6 h-6 mx-auto text-emerald-500 mb-2" />
+              <p className="text-sm text-muted-foreground">{t("kb.no_pending_files")}</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-border max-h-[30vh] overflow-y-auto">
+              {pendingFiles.map((file, i) => {
+                const fileName = file.file_url.split("/").pop() || file.file_url;
+                return (
+                  <div
+                    key={file.file_url}
+                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/20 transition-colors"
+                    data-testid={`row-pending-file-${i}`}
+                  >
+                    <FileText className="w-4 h-4 text-amber-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate" title={file.file_url}>
+                        {file.title || fileName}
+                      </p>
+                      <div className="flex items-center gap-3 mt-0.5 text-[10px] text-muted-foreground">
+                        {file.category && (
+                          <span className="flex items-center gap-0.5">
+                            <Tag className="w-2.5 h-2.5" />
+                            {file.category}
+                          </span>
+                        )}
+                        {file.status && (
+                          <span className="flex items-center gap-1">
+                            <StatusDot status={file.status} />
+                            {file.status}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {(meta.kb_mode === "category" || categories.length > 0) && (
         <motion.div
@@ -490,13 +647,23 @@ export default function KBDetail() {
             <span className="text-sm font-semibold">{t("kb.files")}</span>
             <span className="text-xs text-muted-foreground">({files.length})</span>
           </div>
-          <input
-            value={fileSearch}
-            onChange={(e) => setFileSearch(e.target.value)}
-            placeholder={t("kb.search_files")}
-            className="w-48 px-3 py-1.5 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
-            data-testid="input-search-kb-files"
-          />
+          <div className="flex items-center gap-2">
+            <input
+              value={fileSearch}
+              onChange={(e) => setFileSearch(e.target.value)}
+              placeholder={t("kb.search_files")}
+              className="w-48 px-3 py-1.5 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+              data-testid="input-search-kb-files"
+            />
+            <button
+              onClick={handleOpenBindDialog}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              data-testid="button-bind-files"
+            >
+              <LinkIcon className="w-3.5 h-3.5" />
+              {t("kb.bind_file")}
+            </button>
+          </div>
         </div>
 
         {filteredFiles.length === 0 ? (
@@ -564,6 +731,160 @@ export default function KBDetail() {
           </div>
         )}
       </motion.div>
+
+      {showBindDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-testid="dialog-bind-files">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-lg rounded-xl border border-border bg-card shadow-xl overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <LinkIcon className="w-5 h-5 text-primary" />
+                <h3 className="text-base font-semibold">{t("kb.bind_file_title")}</h3>
+              </div>
+              <button
+                onClick={() => setShowBindDialog(false)}
+                className="p-1.5 rounded hover:bg-muted transition-colors"
+                data-testid="button-close-bind-dialog"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    value={bindSearch}
+                    onChange={(e) => setBindSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSearchBindable(bindSearch);
+                    }}
+                    placeholder={t("kb.bind_search_placeholder")}
+                    className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    data-testid="input-bind-search"
+                  />
+                </div>
+                <button
+                  onClick={() => handleSearchBindable(bindSearch)}
+                  disabled={bindLoading}
+                  className="px-3 py-2 text-sm rounded-lg bg-muted hover:bg-muted/80 transition-colors disabled:opacity-50"
+                  data-testid="button-bind-search"
+                >
+                  {bindLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-4 mt-3">
+                <span className="text-xs text-muted-foreground">{t("kb.binding_mode")}:</span>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="bindingMode"
+                    value="follow_latest"
+                    checked={bindingMode === "follow_latest"}
+                    onChange={() => setBindingMode("follow_latest")}
+                    className="accent-primary"
+                    data-testid="radio-bind-follow-latest"
+                  />
+                  {t("kb.follow_latest")}
+                </label>
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="bindingMode"
+                    value="pin"
+                    checked={bindingMode === "pin"}
+                    onChange={() => setBindingMode("pin")}
+                    className="accent-primary"
+                    data-testid="radio-bind-pin"
+                  />
+                  {t("kb.pinned")}
+                </label>
+              </div>
+            </div>
+
+            <div className="max-h-[40vh] overflow-y-auto divide-y divide-border">
+              {bindLoading ? (
+                <div className="flex items-center justify-center py-10">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : bindableFiles.length === 0 ? (
+                <div className="text-center py-10">
+                  <FileText className="w-8 h-8 mx-auto text-muted-foreground/30 mb-2" />
+                  <p className="text-sm text-muted-foreground">{t("kb.no_selectable_files")}</p>
+                </div>
+              ) : (
+                bindableFiles.map((file) => {
+                  const selected = selectedBindFiles.includes(file.file_url);
+                  const fileName = file.file_url.split("/").pop() || file.file_url;
+                  return (
+                    <div
+                      key={file.file_url}
+                      onClick={() => handleToggleBindFile(file.file_url)}
+                      className={cn(
+                        "flex items-center gap-3 px-5 py-3 cursor-pointer transition-colors",
+                        selected ? "bg-primary/5" : "hover:bg-muted/20"
+                      )}
+                      data-testid={`row-bind-file-${file.file_url}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => handleToggleBindFile(file.file_url)}
+                        className="accent-primary shrink-0"
+                        data-testid={`checkbox-bind-file-${file.file_url}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{file.title || fileName}</p>
+                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
+                          {file.category && (
+                            <span className="flex items-center gap-0.5">
+                              <Tag className="w-2.5 h-2.5" />
+                              {file.category}
+                            </span>
+                          )}
+                          {file.source_site && <span>{file.source_site}</span>}
+                        </div>
+                      </div>
+                      {selected && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="flex items-center justify-between px-5 py-4 border-t border-border bg-muted/20">
+              <span className="text-xs text-muted-foreground">
+                {selectedBindFiles.length > 0
+                  ? `${selectedBindFiles.length} ${t("kb.files_selected")}`
+                  : t("kb.select_files_hint")}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowBindDialog(false)}
+                  className="px-3 py-2 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
+                  data-testid="button-cancel-bind"
+                >
+                  {t("knowledge.cancel")}
+                </button>
+                <button
+                  onClick={handleSubmitBindings}
+                  disabled={selectedBindFiles.length === 0 || bindSubmitting}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                  data-testid="button-submit-bind"
+                >
+                  {bindSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
+                  {t("kb.bind_submit")}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

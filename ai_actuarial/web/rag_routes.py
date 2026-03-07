@@ -939,9 +939,12 @@ def register_rag_routes(
 
             where_sql = " AND ".join(where_parts)
 
-            def _run(kb_manager, storage):
-                if kb_id and not kb_manager.get_kb(kb_id):
-                    return _api_error(f"Knowledge base '{kb_id}' not found", status_code=404)
+            def _run(storage):
+                conn = storage._conn
+                if kb_id:
+                    row = conn.execute("SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", [kb_id]).fetchone()
+                    if not row:
+                        return _api_error(f"Knowledge base '{kb_id}' not found", status_code=404)
 
                 count_sql = f"""
                     SELECT COUNT(*)
@@ -949,7 +952,7 @@ def register_rag_routes(
                     JOIN catalog_items c ON c.file_url = f.url
                     WHERE {where_sql}
                 """
-                total = int(storage._conn.execute(count_sql, params).fetchone()[0] or 0)
+                total = int(conn.execute(count_sql, params).fetchone()[0] or 0)
 
                 data_sql = f"""
                     SELECT
@@ -967,7 +970,7 @@ def register_rag_routes(
                     ORDER BY f.last_seen DESC, f.id DESC
                     LIMIT ? OFFSET ?
                 """
-                rows = storage._conn.execute(data_sql, params + [limit, offset]).fetchall()
+                rows = conn.execute(data_sql, params + [limit, offset]).fetchall()
                 files = [
                     {
                         "url": row[0],
@@ -992,7 +995,7 @@ def register_rag_routes(
                     }
                 )
 
-            return _with_manager(_run)
+            return _with_storage(_run)
         except ValueError as exc:
             return _api_error(str(exc), status_code=400)
         except Exception as exc:  # noqa: BLE001
