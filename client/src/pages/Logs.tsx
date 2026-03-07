@@ -161,13 +161,20 @@ export default function LogsPage() {
   const [historyFetched, setHistoryFetched] = useState(false);
   const [logModal, setLogModal] = useState<{ taskId: string; log: string } | null>(null);
   const [logModalLoading, setLogModalLoading] = useState(false);
+  const [logsApiDisabled, setLogsApiDisabled] = useState(false);
 
   const fetchLogs = useCallback(async () => {
     try {
       const res = await apiGet<{ log?: string; logs?: string }>("/api/logs/global");
       const raw = res.log || res.logs || "";
       setLogs(parseLogs(typeof raw === "string" ? raw : JSON.stringify(raw)));
-    } catch {
+      setLogsApiDisabled(false);
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status;
+      const msg = String((err as { message?: string })?.message || "");
+      if (status === 403 || msg.includes("403") || msg.toLowerCase().includes("forbidden") || msg.toLowerCase().includes("not enabled")) {
+        setLogsApiDisabled(true);
+      }
       setLogs([]);
     } finally {
       setLoading(false);
@@ -341,6 +348,12 @@ export default function LogsPage() {
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : logsApiDisabled ? (
+          <div className="text-center py-16" data-testid="text-logs-disabled">
+            <AlertTriangle className="w-10 h-10 mx-auto text-amber-500/60 mb-3" />
+            <p className="font-medium text-foreground mb-1">{t("logs.api_disabled_title")}</p>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">{t("logs.api_disabled_desc")}</p>
           </div>
         ) : filteredLogs.length === 0 ? (
           <div className="text-center py-16" data-testid="text-no-logs">

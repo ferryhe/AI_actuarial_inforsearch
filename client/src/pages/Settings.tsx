@@ -168,6 +168,116 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
   );
 }
 
+const OCR_ENGINE_DEFS = [
+  { name: "docling", provider: "local", displayName: "Docling", isLocal: true },
+  { name: "marker", provider: "local", displayName: "Marker", isLocal: true },
+  { name: "mistral", provider: "mistral", displayName: "Mistral OCR", isLocal: false },
+  { name: "deepseekocr", provider: "siliconflow", displayName: "DeepSeek OCR", isLocal: false },
+];
+
+function OcrEnginesRow({
+  available,
+  configuredNames,
+  known,
+  currentModels,
+  modelEdits,
+  updateModelEdit,
+  lang,
+  t,
+}: {
+  available: Record<string, AvailableModel[]>;
+  configuredNames: Set<string>;
+  known: Record<string, KnownProvider>;
+  currentModels: AiModelsCurrent | null;
+  modelEdits: Record<string, { provider: string; model: string }>;
+  updateModelEdit: (fn: AiFunction, field: "provider" | "model", value: string) => void;
+  lang: string;
+  t: (key: string) => string;
+}) {
+  const fnLabel = lang === "zh" ? FUNCTION_LABELS.ocr.zh : FUNCTION_LABELS.ocr.en;
+  const cur = modelEdits["ocr"] || currentModels?.ocr || { provider: "", model: "" };
+
+  const engines = OCR_ENGINE_DEFS.map((eng) => {
+    const isAvailable = eng.isLocal || configuredNames.has(eng.provider);
+    const providerLabel = eng.isLocal
+      ? t("settings.ocr_local")
+      : (known[eng.provider]?.display_name || eng.provider);
+    return { ...eng, isAvailable, providerLabel };
+  });
+
+  const availableApiProviders = Object.keys(available).filter((p) => {
+    if (!configuredNames.has(p)) return false;
+    return (available[p] || []).some((m) => (m.types || []).includes("ocr"));
+  });
+
+  const filteredModels = (available[cur.provider] || []).filter((m) => (m.types || []).includes("ocr"));
+
+  return (
+    <div className="px-5 py-4" data-testid="model-row-ocr">
+      <label className="text-xs font-semibold text-muted-foreground mb-3 block">{fnLabel}</label>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {engines.map((eng) => (
+            <div
+              key={eng.name}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg border text-xs",
+                eng.isAvailable
+                  ? "border-emerald-500/30 bg-emerald-500/5"
+                  : "border-border bg-muted/30 opacity-60"
+              )}
+              data-testid={`ocr-engine-${eng.name}`}
+            >
+              {eng.isAvailable ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              )}
+              <div className="min-w-0">
+                <span className="font-medium block truncate">{eng.displayName}</span>
+                <span className="text-[10px] text-muted-foreground block truncate">
+                  {eng.isLocal ? t("settings.ocr_no_key") : eng.providerLabel}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-muted-foreground">{t("settings.ocr_engines_hint")}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.ocr_default_provider")}</label>
+            <select
+              value={cur.provider}
+              onChange={(e) => updateModelEdit("ocr", "provider", e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+              data-testid="select-provider-ocr"
+            >
+              <option value="">—</option>
+              {availableApiProviders.map((p) => (
+                <option key={p} value={p}>{known[p]?.display_name || p}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
+            <select
+              value={cur.model}
+              onChange={(e) => updateModelEdit("ocr", "model", e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+              data-testid="select-model-ocr"
+            >
+              <option value="">—</option>
+              {filteredModels.map((m) => (
+                <option key={m.name} value={m.name}>{m.display_name || m.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AiConfigTab({ lang }: { lang: string }) {
   const { t } = useTranslation();
   const [known, setKnown] = useState<Record<string, KnownProvider>>({});
@@ -408,9 +518,15 @@ function AiConfigTab({ lang }: { lang: string }) {
           )}
         </div>
         <div className="divide-y divide-border">
-          {AI_FUNCTIONS.map((fn) => {
+          {AI_FUNCTIONS.filter((fn) => fn !== "ocr").map((fn) => {
             const cur = modelEdits[fn] || currentModels?.[fn] || { provider: "", model: "" };
-            const providerModels = available[cur.provider] || [];
+            const typeKey = fn === "chatbot" ? "chat" : fn;
+            const filteredProviders = Object.keys(available).filter((p) => {
+              if (!configuredNames.has(p)) return false;
+              const models = available[p] || [];
+              return models.some((m) => (m.types || []).includes(typeKey));
+            });
+            const filteredModels = (available[cur.provider] || []).filter((m) => (m.types || []).includes(typeKey));
             const fnLabel = lang === "zh" ? FUNCTION_LABELS[fn].zh : FUNCTION_LABELS[fn].en;
             return (
               <div key={fn} className="px-5 py-4" data-testid={`model-row-${fn}`}>
@@ -425,7 +541,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                       data-testid={`select-provider-${fn}`}
                     >
                       <option value="">—</option>
-                      {Object.keys(available).map((p) => (
+                      {filteredProviders.map((p) => (
                         <option key={p} value={p}>{known[p]?.display_name || p}</option>
                       ))}
                     </select>
@@ -439,7 +555,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                       data-testid={`select-model-${fn}`}
                     >
                       <option value="">—</option>
-                      {providerModels.map((m) => (
+                      {filteredModels.map((m) => (
                         <option key={m.name} value={m.name}>{m.display_name || m.name}</option>
                       ))}
                     </select>
@@ -448,6 +564,16 @@ function AiConfigTab({ lang }: { lang: string }) {
               </div>
             );
           })}
+          <OcrEnginesRow
+            available={available}
+            configuredNames={configuredNames}
+            known={known}
+            currentModels={currentModels}
+            modelEdits={modelEdits}
+            updateModelEdit={updateModelEdit}
+            lang={lang}
+            t={t}
+          />
         </div>
       </motion.div>
     </div>
@@ -643,11 +769,12 @@ function SearchCrawlerTab() {
               placeholder=".pdf, .doc, .docx" />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">{t("settings.keywords")}</label>
+            <label className="text-xs text-muted-foreground mb-1 block">{t("settings.crawler_keywords_label")}</label>
             <input type="text" value={(editDefaults.keywords || []).join(", ")}
               onChange={(e) => updateDefault("keywords", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-keywords"
               placeholder="artificial intelligence, machine learning, ..." />
+            <p className="text-[11px] text-muted-foreground mt-1">{t("settings.crawler_keywords_desc")}</p>
           </div>
           {settings?.paths && Object.keys(settings.paths).length > 0 && (
             <div className="pt-3 border-t border-border">
@@ -824,7 +951,7 @@ function CategoriesTab() {
             placeholder={t("settings.ai_filter_kw_ph")}
             data-testid="input-ai-filter-keywords"
           />
-          <p className="text-[11px] text-muted-foreground mt-1.5">{t("settings.ai_filter_kw_hint")}</p>
+          <p className="text-[11px] text-muted-foreground mt-1.5">{t("settings.ai_filter_kw_desc")}</p>
         </div>
       </motion.div>
     </div>
