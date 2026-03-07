@@ -104,10 +104,13 @@ export default function Knowledge() {
 
   const [kbForm, setKbForm] = useState({
     name: "",
+    kb_id: "",
     description: "",
     categories: "",
-    embedding_model: "",
+    embedding_model: "text-embedding-3-large",
     kb_mode: "manual",
+    chunk_size: 800,
+    chunk_overlap: 100,
   });
 
   const [profileForm, setProfileForm] = useState({
@@ -153,6 +156,7 @@ export default function Knowledge() {
 
   const handleCreateKB = async () => {
     if (!kbForm.name.trim()) return;
+    const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
     setCreating(true);
     try {
       const categories = kbForm.categories
@@ -160,14 +164,16 @@ export default function Knowledge() {
         .map((c) => c.trim())
         .filter(Boolean);
       await apiPost("/api/rag/knowledge-bases", {
-        kb_id: generateKbId(kbForm.name),
+        kb_id: finalKbId,
         name: kbForm.name,
         description: kbForm.description,
         categories,
         embedding_model: kbForm.embedding_model || undefined,
         kb_mode: kbForm.kb_mode,
+        chunk_size: kbForm.chunk_size,
+        chunk_overlap: kbForm.chunk_overlap,
       });
-      setKbForm({ name: "", description: "", categories: "", embedding_model: "", kb_mode: "manual" });
+      setKbForm({ name: "", kb_id: "", description: "", categories: "", embedding_model: "text-embedding-3-large", kb_mode: "manual", chunk_size: 800, chunk_overlap: 100 });
       setShowCreateKB(false);
       loadData();
     } catch (err) {
@@ -197,7 +203,7 @@ export default function Knowledge() {
       await apiPost("/api/chunk/profiles", {
         name: profileForm.name,
         chunk_size: profileForm.chunk_size,
-        overlap: profileForm.overlap,
+        chunk_overlap: profileForm.overlap,
         splitter: profileForm.splitter,
         tokenizer: profileForm.tokenizer,
       });
@@ -217,6 +223,30 @@ export default function Knowledge() {
       loadData();
     } catch (err) {
       console.error("Failed to delete profile:", err);
+    }
+  };
+
+  const [showCleanup, setShowCleanup] = useState(false);
+  const [cleanupDays, setCleanupDays] = useState(30);
+  const [cleanupDryRun, setCleanupDryRun] = useState(true);
+  const [cleanupRunning, setCleanupRunning] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<Record<string, unknown> | null>(null);
+
+  const handleCleanup = async () => {
+    setCleanupRunning(true);
+    setCleanupResult(null);
+    try {
+      const res = await apiPost<Record<string, unknown>>("/api/chunk-sets/cleanup", {
+        older_than_days: cleanupDays,
+        dry_run: cleanupDryRun,
+        limit: 5000,
+      });
+      setCleanupResult((res as Record<string, unknown>)?.data as Record<string, unknown> || res);
+      if (!cleanupDryRun) loadData();
+    } catch (err) {
+      console.error("Cleanup failed:", err);
+    } finally {
+      setCleanupRunning(false);
     }
   };
 
@@ -269,16 +299,37 @@ export default function Knowledge() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  {t("knowledge.name")}
+                  {t("knowledge.name")} <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   value={kbForm.name}
-                  onChange={(e) => setKbForm({ ...kbForm, name: e.target.value })}
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    setKbForm((f) => ({
+                      ...f,
+                      name,
+                      kb_id: f.kb_id === "" || f.kb_id === generateKbId(f.name) ? "" : f.kb_id,
+                    }));
+                  }}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   placeholder={t("knowledge.name_placeholder")}
                   data-testid="input-kb-name"
                 />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  {t("knowledge.kb_id_label")}
+                </label>
+                <input
+                  type="text"
+                  value={kbForm.kb_id || (kbForm.name ? generateKbId(kbForm.name) : "")}
+                  onChange={(e) => setKbForm({ ...kbForm, kb_id: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder={t("knowledge.kb_id_placeholder")}
+                  data-testid="input-kb-id"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.kb_id_hint")}</p>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
@@ -295,6 +346,21 @@ export default function Knowledge() {
                 </select>
                 <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.mode_hint")}</p>
               </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  {t("knowledge.embedding_model")}
+                </label>
+                <select
+                  value={kbForm.embedding_model}
+                  onChange={(e) => setKbForm({ ...kbForm, embedding_model: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  data-testid="select-kb-embedding"
+                >
+                  <option value="text-embedding-3-large">text-embedding-3-large</option>
+                  <option value="text-embedding-3-small">text-embedding-3-small</option>
+                  <option value="text-embedding-ada-002">text-embedding-ada-002</option>
+                </select>
+              </div>
               <div className="sm:col-span-2">
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.description")}
@@ -303,28 +369,43 @@ export default function Knowledge() {
                   value={kbForm.description}
                   onChange={(e) => setKbForm({ ...kbForm, description: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
-                  rows={3}
+                  rows={2}
                   placeholder={t("knowledge.desc_placeholder")}
                   data-testid="input-kb-description"
                 />
-                <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.desc_guidance")}</p>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  {t("knowledge.embedding_model")}
+                  {t("knowledge.chunk_size")}
                 </label>
                 <input
-                  type="text"
-                  value={kbForm.embedding_model}
-                  onChange={(e) => setKbForm({ ...kbForm, embedding_model: e.target.value })}
+                  type="number"
+                  value={kbForm.chunk_size}
+                  onChange={(e) => setKbForm({ ...kbForm, chunk_size: parseInt(e.target.value) || 800 })}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  placeholder={t("knowledge.embedding_placeholder")}
-                  data-testid="input-kb-embedding"
+                  min={64}
+                  max={8192}
+                  data-testid="input-kb-chunk-size"
                 />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  {t("knowledge.overlap")}
+                </label>
+                <input
+                  type="number"
+                  value={kbForm.chunk_overlap}
+                  onChange={(e) => setKbForm({ ...kbForm, chunk_overlap: parseInt(e.target.value) || 100 })}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  min={0}
+                  max={2048}
+                  data-testid="input-kb-chunk-overlap"
+                />
+              </div>
+              <div className={cn("sm:col-span-2", kbForm.kb_mode === "category" && "ring-2 ring-amber-500/30 rounded-lg p-3 -m-1")}>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.categories")}
+                  {kbForm.kb_mode === "category" && <span className="text-amber-600 ml-1">({t("knowledge.required")})</span>}
                 </label>
                 <input
                   type="text"
@@ -669,6 +750,76 @@ export default function Knowledge() {
             </table>
           </div>
         )}
+
+        <div className="flex items-center gap-3 mt-4">
+          <button
+            onClick={() => { setShowCleanup(!showCleanup); setCleanupResult(null); }}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:bg-muted/50 transition-colors"
+            data-testid="button-toggle-cleanup"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {t("knowledge.cleanup_orphan")}
+          </button>
+        </div>
+
+        <AnimatePresence>
+          {showCleanup && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="rounded-xl border border-border bg-card p-5 overflow-hidden"
+            >
+              <h4 className="text-sm font-semibold mb-3">{t("knowledge.cleanup_title")}</h4>
+              <p className="text-xs text-muted-foreground mb-4">{t("knowledge.cleanup_desc")}</p>
+              <div className="flex flex-wrap items-end gap-4">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                    {t("knowledge.cleanup_days")}
+                  </label>
+                  <input
+                    type="number"
+                    value={cleanupDays}
+                    onChange={(e) => setCleanupDays(parseInt(e.target.value) || 30)}
+                    className="w-24 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    min={1}
+                    max={365}
+                    data-testid="input-cleanup-days"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-sm cursor-pointer py-2">
+                  <input
+                    type="checkbox"
+                    checked={cleanupDryRun}
+                    onChange={(e) => setCleanupDryRun(e.target.checked)}
+                    className="rounded border-border"
+                    data-testid="checkbox-cleanup-dryrun"
+                  />
+                  <span className="text-xs text-muted-foreground">{t("knowledge.cleanup_dryrun")}</span>
+                </label>
+                <button
+                  onClick={handleCleanup}
+                  disabled={cleanupRunning}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
+                    cleanupDryRun
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                      : "bg-red-600 text-white hover:bg-red-700"
+                  )}
+                  data-testid="button-run-cleanup"
+                >
+                  {cleanupRunning && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {cleanupDryRun ? t("knowledge.cleanup_preview") : t("knowledge.cleanup_run")}
+                </button>
+              </div>
+              {cleanupResult && (
+                <div className="mt-4 p-3 rounded-lg bg-muted/50 text-xs font-mono whitespace-pre-wrap" data-testid="text-cleanup-result">
+                  {JSON.stringify(cleanupResult, null, 2)}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
