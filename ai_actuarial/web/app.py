@@ -2119,6 +2119,153 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error deleting site")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    # ── Generic Scheduled Tasks CRUD ──────────────────────────────────
+    VALID_SCHEDULED_TASK_TYPES = [
+        "scheduled", "quick_check", "url", "file", "search",
+        "catalog", "markdown_conversion", "chunk_generation",
+        "rag_indexing", "kb_index_build",
+    ]
+
+    VALID_INTERVALS = [
+        "daily", "weekly",
+    ]
+
+    @app.route("/api/scheduled-tasks")
+    @require_permissions("tasks.view")
+    def api_scheduled_tasks_list():
+        """List all generic scheduled tasks from config."""
+        try:
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                current_config = yaml.safe_load(f) or {}
+            tasks = current_config.get('scheduled_tasks') or []
+            return jsonify({"tasks": tasks})
+        except Exception as e:
+            logger.exception("Error listing scheduled tasks")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/scheduled-tasks/add", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_scheduled_tasks_add():
+        """Add a new generic scheduled task."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            name = str(data.get("name") or "").strip()
+            task_type = str(data.get("type") or "").strip()
+            interval = str(data.get("interval") or "").strip()
+
+            if not name:
+                return jsonify({"error": "Task name is required"}), 400
+            if task_type not in VALID_SCHEDULED_TASK_TYPES:
+                return jsonify({"error": f"Invalid task type: {task_type}"}), 400
+            if not interval:
+                return jsonify({"error": "Schedule interval is required"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if 'scheduled_tasks' not in config_data:
+                config_data['scheduled_tasks'] = []
+
+            for t in config_data['scheduled_tasks']:
+                if t.get('name') == name:
+                    return jsonify({"error": "Task name already exists"}), 400
+
+            new_task = {
+                'name': name,
+                'type': task_type,
+                'interval': interval,
+                'enabled': bool(data.get('enabled', True)),
+                'params': data.get('params') or {},
+            }
+
+            config_data['scheduled_tasks'].append(new_task)
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error adding scheduled task")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/scheduled-tasks/update", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_scheduled_tasks_update():
+        """Update an existing generic scheduled task."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            original_name = str(data.get("original_name") or "").strip()
+            name = str(data.get("name") or "").strip()
+
+            if not original_name or not name:
+                return jsonify({"error": "original_name and name are required"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+
+            found = False
+            for t in config_data.get('scheduled_tasks', []):
+                if t.get('name') == original_name:
+                    t['name'] = name
+                    if 'type' in data:
+                        t['type'] = str(data['type']).strip()
+                    if 'interval' in data:
+                        t['interval'] = str(data['interval']).strip()
+                    if 'enabled' in data:
+                        t['enabled'] = bool(data['enabled'])
+                    if 'params' in data:
+                        t['params'] = data['params'] or {}
+                    found = True
+                    break
+
+            if not found:
+                return jsonify({"error": "Task not found"}), 404
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error updating scheduled task")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/scheduled-tasks/delete", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_scheduled_tasks_delete():
+        """Delete a generic scheduled task by name."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            name = str(data.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "Task name is required"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+
+            tasks = list(config_data.get('scheduled_tasks') or [])
+            new_tasks = [t for t in tasks if str(t.get('name') or '') != name]
+            if len(new_tasks) == len(tasks):
+                return jsonify({"error": "Task not found"}), 404
+
+            config_data['scheduled_tasks'] = new_tasks
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting scheduled task")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
     # AI model configuration
     # Models are now fetched dynamically from LLM provider APIs
     # See ai_actuarial/llm_models.py for implementation
@@ -4975,6 +5122,31 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 except Exception as ex:
                     logger.error(f"Failed to parse schedule '{interval_str}': {ex}")
 
+            def make_generic_task_job(task_cfg):
+                """Factory for generic scheduled task callbacks."""
+                def job_wrapper():
+                    t_name = task_cfg.get('name', 'Generic Task')
+                    t_type = task_cfg.get('type', 'catalog')
+                    t_params = dict(task_cfg.get('params') or {})
+                    logger.info(f"Triggering generic scheduled task: {t_name} (type={t_type})")
+                    task_id = f"sched_{t_type}_{int(datetime.now().timestamp())}"
+                    with _task_lock:
+                        _active_tasks[task_id] = {
+                            "id": task_id,
+                            "name": f"Scheduled: {t_name}",
+                            "type": t_type,
+                            "status": "pending",
+                            "progress": 0,
+                            "started_at": datetime.now().isoformat()
+                        }
+                    data = dict(t_params)
+                    data.setdefault("name", f"Scheduled: {t_name}")
+                    threading.Thread(target=execute_collection_task,
+                                     args=(task_id, t_type, data)).start()
+                return job_wrapper
+
+            generic_tasks = site_config.get('scheduled_tasks') or []
+
             # Clear and register all jobs atomically to avoid races with scheduler_loop
             with _scheduler_lock:
                 schedule.clear()
@@ -4989,6 +5161,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     if not interval:
                         continue
                     _add_job(interval, make_site_job(site), site['name'])
+
+                # 3. Generic scheduled tasks (catalog, markdown, chunk, etc.)
+                for gtask in generic_tasks:
+                    if not gtask.get('enabled', True):
+                        continue
+                    g_interval = gtask.get('interval')
+                    if not g_interval:
+                        continue
+                    _add_job(g_interval, make_generic_task_job(gtask),
+                             f"generic_{gtask.get('name', 'unknown')}")
 
             # Only start the loop thread once
             if not _scheduler_loop_started:

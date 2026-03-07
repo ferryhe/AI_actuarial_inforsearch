@@ -15,8 +15,8 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 - `ai_actuarial/web/` - Flask web application (templates, static assets, API routes)
 - `client/` - React frontend source
   - `client/src/pages/` - Dashboard, Database, Chat, Tasks, Knowledge, Settings
-  - `client/src/components/` - Layout (sidebar, header, i18n context, theme toggle)
-  - `client/src/hooks/` - useI18n (EN/ZH), useTheme (dark mode)
+  - `client/src/components/` - Layout (sidebar, header, i18n context, theme toggle), TagSelect (multi-select tag picker)
+  - `client/src/hooks/` - useI18n (EN/ZH), useTheme (dark mode), useTaskOptions (dynamic backend data for task forms)
   - `client/src/lib/` - API helper (`api.ts`), class merging (`utils.ts`)
 - `config/` - YAML configuration (sites, categories, AI providers)
 - `data/` - Downloads, database, logs, task outputs
@@ -31,7 +31,7 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 - **Dashboard** (`/`) - Stats cards, quick actions, recent files
 - **Database** (`/database`) - File browser with search, filters, pagination, download
 - **Chat** (`/chat`) - AI chatbot with conversation management, mode/KB selection, citations
-- **Tasks** (`/tasks`) - 9 task types: Scheduled, Web Crawl (quick_check), URL, File Import, Search, Catalog, Markdown, Chunk, RAG Index. Each with full parameter forms, stats banners, site config viewer. History with logs
+- **Tasks** (`/tasks`) - 9 task types: Scheduled, Web Crawl (quick_check), URL, File Import, Search, Catalog, Markdown, Chunk, RAG Index. Each with full parameter forms, stats banners. Scheduled type has 3-tab management: Run Now, Scheduled Jobs (CRUD for generic recurring tasks), Sites (CRUD for site configs). History with logs
 - **Knowledge** (`/knowledge`) - RAG knowledge base management, chunk profiles
 - **Settings** (`/settings`) - Backend config, LLM providers, search engines, AI models
 
