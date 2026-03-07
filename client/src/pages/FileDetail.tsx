@@ -399,7 +399,6 @@ export default function FileDetail() {
         file_urls: [file.url],
         input_source: catalogSource,
         overwrite_existing: catalogOverwrite,
-        ...(catalogProvider ? { provider: catalogProvider } : {}),
       });
       setShowCatalogModal(false);
       catalogPoller.start(res.job_id);
@@ -836,21 +835,13 @@ export default function FileDetail() {
               </select>
               <p className="text-[11px] text-muted-foreground mt-1">{t("fv.catalog_from_hint")}</p>
             </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.ai_provider")}</label>
-              <select value={catalogProvider} onChange={(e) => setCatalogProvider(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-catalog-provider">
-                <option value="">{t("fv.default_provider")}{aiConfig?.current?.catalog ? ` (${aiConfig.current.catalog.provider})` : ""}</option>
-                {taskOptions.catalogProviders.map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-              {aiConfig?.current?.catalog && (
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  {t("fv.current_default")}: {aiConfig.current.catalog.provider} / {aiConfig.current.catalog.model}
-                </p>
-              )}
-            </div>
+            {aiConfig?.current?.catalog && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border text-xs text-muted-foreground">
+                <span className="font-medium">{t("fv.ai_provider")}:</span>
+                <span>{aiConfig.current.catalog.provider} / {aiConfig.current.catalog.model}</span>
+                <span className="ml-auto text-[10px]">({t("fv.configured_in_settings")})</span>
+              </div>
+            )}
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={catalogOverwrite} onChange={(e) => setCatalogOverwrite(e.target.checked)} className="rounded" />
               {t("fv.overwrite_recompute")}

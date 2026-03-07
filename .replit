@@ -64,3 +64,8 @@ externalPort = 3000
 [[ports]]
 localPort = 8000
 externalPort = 8000
+
+[userenv]
+
+[userenv.shared]
+ENABLE_GLOBAL_LOGS_API = "True"

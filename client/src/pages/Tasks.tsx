@@ -1195,12 +1195,11 @@ function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, 
 
 function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
-  const { providers, categories: dynamicCategories } = useTaskOptions();
+  const { categories: dynamicCategories } = useTaskOptions();
   const [scopeMode, setScopeMode] = useState("index");
   const [category, setCategory] = useState("");
   const [scanCount, setScanCount] = useState("100");
   const [startIndex, setStartIndex] = useState("1");
-  const [provider, setProvider] = useState("");
   const [inputSource, setInputSource] = useState("markdown");
   const [retryErrors, setRetryErrors] = useState(false);
   const [skipExisting, setSkipExisting] = useState(true);
@@ -1260,20 +1259,10 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
       <FormField label={t("tasks.form.start_index")} hint={t("tasks.form.start_index_hint")}>
         <InputField value={startIndex} onChange={setStartIndex} placeholder="1" type="number" testId="input-start-index" />
       </FormField>
-      <div className="grid grid-cols-2 gap-3">
-        <FormField label={t("tasks.form.provider")} hint={providers.length === 0 ? t("tasks.form.provider_hint") : undefined}>
-          {providers.length > 0 ? (
-            <SelectField value={provider} onChange={setProvider} testId="input-provider"
-              options={[{ value: "", label: t("tasks.form.provider_hint") }, ...providers.map((p) => ({ value: p, label: p }))]} />
-          ) : (
-            <InputField value={provider} onChange={setProvider} placeholder="openai" testId="input-provider" />
-          )}
-        </FormField>
-        <FormField label={t("tasks.form.input_source")}>
-          <SelectField value={inputSource} onChange={setInputSource} testId="select-input-source"
-            options={[{ value: "markdown", label: "Markdown" }, { value: "source", label: "Source" }]} />
-        </FormField>
-      </div>
+      <FormField label={t("tasks.form.input_source")}>
+        <SelectField value={inputSource} onChange={setInputSource} testId="select-input-source"
+          options={[{ value: "markdown", label: "Markdown" }, { value: "source", label: "Source" }]} />
+      </FormField>
       <div className="flex flex-wrap gap-x-5 gap-y-2">
         <CheckboxField checked={retryErrors} onChange={setRetryErrors} label={t("tasks.form.retry_errors")} testId="checkbox-retry-errors" />
         <CheckboxField checked={skipExisting} onChange={(v) => { setSkipExisting(v); if (v) setOverwriteExisting(false); }}
@@ -1284,7 +1273,7 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
         onClick={() => onSubmit({ type: "catalog", name: "AI Catalog", scope_mode: scopeMode,
           category: scopeMode === "category" ? category : undefined, scan_count: parseInt(scanCount) || 100,
-          scan_start_index: parseInt(startIndex) || 1, provider: provider || undefined, input_source: inputSource,
+          scan_start_index: parseInt(startIndex) || 1, input_source: inputSource,
           retry_errors: retryErrors, skip_existing: skipExisting, overwrite_existing: overwriteExisting })} />
     </div>
   );
