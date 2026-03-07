@@ -4,7 +4,6 @@ import {
   ScrollText,
   RefreshCw,
   Search,
-  ArrowDown,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -152,7 +151,7 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [levelFilter, setLevelFilter] = useState<string>("ALL");
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [newestFirst, setNewestFirst] = useState(true);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const [historyExpanded, setHistoryExpanded] = useState(false);
@@ -186,20 +185,14 @@ export default function LogsPage() {
   }, [fetchLogs]);
 
   useEffect(() => {
-    if (autoScroll && logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    if (newestFirst && logContainerRef.current) {
+      logContainerRef.current.scrollTop = 0;
     }
-  }, [logs, autoScroll]);
+  }, [logs, newestFirst]);
 
   const handleRefresh = () => {
     setLoading(true);
     fetchLogs();
-  };
-
-  const scrollToBottom = () => {
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
-    }
   };
 
   const filteredLogs = logs.filter((entry) => {
@@ -260,14 +253,6 @@ export default function LogsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={scrollToBottom}
-            className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            data-testid="button-scroll-bottom"
-            title={t("logs.scroll_bottom")}
-          >
-            <ArrowDown className="w-4 h-4" />
-          </button>
-          <button
             onClick={handleRefresh}
             className={cn(
               "p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors",
@@ -319,12 +304,12 @@ export default function LogsPage() {
         <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer shrink-0">
           <input
             type="checkbox"
-            checked={autoScroll}
-            onChange={(e) => setAutoScroll(e.target.checked)}
+            checked={newestFirst}
+            onChange={(e) => setNewestFirst(e.target.checked)}
             className="rounded"
-            data-testid="checkbox-auto-scroll"
+            data-testid="checkbox-newest-first"
           />
-          {t("logs.auto_scroll")}
+          {t("logs.newest_first")}
         </label>
       </motion.div>
 
@@ -366,7 +351,7 @@ export default function LogsPage() {
             className="max-h-[60vh] overflow-y-auto font-mono text-xs leading-relaxed"
             data-testid="container-log-entries"
           >
-            {filteredLogs.map((entry, i) => (
+            {(newestFirst ? [...filteredLogs].reverse() : filteredLogs).map((entry, i) => (
               <div
                 key={i}
                 className={cn(
