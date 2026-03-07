@@ -34,6 +34,7 @@ import {
   Download,
   FolderOpen,
   Folder,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -802,12 +803,16 @@ function ScheduledTasksSection() {
                   <RefreshCw className="w-3 h-3" />{t("tasks.sched.reinit")}
                 </button>
               </div>
+              <p className="text-[11px] text-muted-foreground">{t("tasks.sched.scheduler_jobs_desc")}</p>
               {reinitMsg && (
                 <div className="text-xs px-2.5 py-1.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">{reinitMsg}</div>
               )}
               {scheduleStatus.global_schedule && (
-                <div className="text-xs text-muted-foreground">
-                  {t("tasks.sched.global_interval")}: <span className="font-medium text-foreground">{scheduleStatus.global_schedule}</span>
+                <div>
+                  <div className="text-xs text-muted-foreground">
+                    {t("tasks.sched.global_interval")}: <span className="font-medium text-foreground">{scheduleStatus.global_schedule}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground/70 mt-0.5">{t("tasks.sched.global_hint")}</p>
                 </div>
               )}
               {scheduleStatus.jobs && scheduleStatus.jobs.length > 0 && (
@@ -817,6 +822,7 @@ function ScheduledTasksSection() {
                       <span className="font-medium truncate flex-1">{job.tag || `Job ${i + 1}`}</span>
                       <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
                         <span>{job.interval}</span>
+                        {job.last_run && <span>{t("tasks.sched.last_run")}: {job.last_run}</span>}
                         {job.next_run && <span>{t("tasks.sched.next_run")}: {job.next_run}</span>}
                       </div>
                     </div>
@@ -909,12 +915,15 @@ function ScheduledTasksSection() {
                         className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
                         data-testid={`button-edit-sched-${task.name}`}><Pencil className="w-3.5 h-3.5" /></button>
                       {deletingTask === task.name ? (
-                        <div className="flex items-center gap-1">
-                          <button onClick={() => handleDelete(task.name)}
-                            className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
-                            data-testid={`button-confirm-delete-sched-${task.name}`}>{t("tasks.sched.confirm_delete")}</button>
-                          <button onClick={() => setDeletingTask(null)}
-                            className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-[10px] text-muted-foreground">{t("tasks.sched.confirm_delete_msg")}</span>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => handleDelete(task.name)}
+                              className="text-[10px] px-2 py-1 rounded bg-destructive text-destructive-foreground"
+                              data-testid={`button-confirm-delete-sched-${task.name}`}>{t("tasks.sched.delete_task")}</button>
+                            <button onClick={() => setDeletingTask(null)}
+                              className="text-[10px] px-2 py-1 rounded border border-border">{t("tasks.sched.cancel")}</button>
+                          </div>
                         </div>
                       ) : (
                         <button onClick={() => setDeletingTask(task.name)}
@@ -963,7 +972,7 @@ function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, u
       <FormField label={t("tasks.form.keywords")}>
         <TagSelect value={keywords} onChange={setKeywords} placeholder="Add keyword..." testId="input-crawl-keywords" />
       </FormField>
-      <FormField label={t("tasks.form.file_extensions")}>
+      <FormField label={t("tasks.form.file_extensions")} hint={t("tasks.form.file_exts_hint")}>
         <TagSelect value={fileExts} onChange={setFileExts} presets={PRESET_FILE_EXTENSIONS} placeholder="Add extension..." testId="input-crawl-file-exts" />
       </FormField>
       <CheckboxField checked={checkDb} onChange={setCheckDb} label={t("tasks.form.check_database")} testId="checkbox-crawl-check-db" />
@@ -1122,7 +1131,7 @@ function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<string,
       {showBrowser && (
         <FolderBrowser onSelect={(p) => setDirPath(p)} onClose={() => setShowBrowser(false)} />
       )}
-      <FormField label={t("tasks.form.file_extensions")}>
+      <FormField label={t("tasks.form.file_extensions")} hint={t("tasks.form.file_exts_hint")}>
         <TagSelect value={extensions} onChange={setExtensions} presets={PRESET_FILE_EXTENSIONS} placeholder="Add extension..." testId="input-extensions" />
       </FormField>
       <CheckboxField checked={recursive} onChange={setRecursive} label={t("tasks.form.recursive")} testId="checkbox-recursive" />
@@ -1236,6 +1245,11 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
           { label: t("tasks.form.stat_first_candidate"), value: stats.first_candidate_index as number },
         ]} />
       )}
+      <FormField label={t("tasks.form.provider")} hint={t("tasks.form.provider_hint")}>
+        <div className="text-xs text-muted-foreground px-3 py-2 rounded-lg border border-border bg-muted/30" data-testid="text-provider-info">
+          {t("tasks.form.provider_hint")}
+        </div>
+      </FormField>
       <div className="grid grid-cols-2 gap-3">
         <FormField label={t("tasks.form.scope")}>
           <SelectField value={scopeMode} onChange={(v) => { setScopeMode(v); if (v === "index") loadStats(); }} testId="select-scope"
@@ -1555,6 +1569,13 @@ function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, u
   );
 }
 
+interface HistoryTask {
+  name?: string;
+  type?: string;
+  status?: string;
+  started_at?: string;
+}
+
 export default function Tasks() {
   const { t } = useTranslation();
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
@@ -1565,6 +1586,18 @@ export default function Tasks() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await apiGet<{ tasks?: HistoryTask[]; history?: HistoryTask[] }>("/api/tasks/history?limit=20");
+      setHistoryTasks(res.tasks || res.history || []);
+    } catch { setHistoryTasks([]); }
+    finally { setHistoryLoading(false); }
+  }, []);
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -1740,6 +1773,52 @@ export default function Tasks() {
       </div>
 
       <ScheduledTasksSection />
+
+      <div>
+        <button onClick={() => { if (!historyExpanded) fetchHistory(); setHistoryExpanded(!historyExpanded); }}
+          className="flex items-center gap-2 w-full text-left"
+          data-testid="button-toggle-history">
+          <History className="w-5 h-5 text-muted-foreground" />
+          <h2 className="text-lg font-semibold flex-1">{t("tasks.history")}</h2>
+          {historyExpanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
+        </button>
+        {historyExpanded && (
+          <div className="mt-3">
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+            ) : historyTasks.length === 0 ? (
+              <div className="text-center py-8 rounded-xl border border-dashed border-border bg-card" data-testid="text-no-history">
+                <History className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+                <p className="text-sm font-medium text-muted-foreground">{t("tasks.no_history")}</p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-border bg-card overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30">
+                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.name")}</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.type")}</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.status")}</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.started")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyTasks.map((task, i) => (
+                      <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors"
+                        data-testid={`row-history-task-${i}`}>
+                        <td className="px-4 py-2.5 font-medium truncate max-w-[200px]">{task.name || "-"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{task.type || "-"}</td>
+                        <td className="px-4 py-2.5">{task.status ? statusBadge(task.status) : "-"}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{task.started_at ? formatDate(task.started_at) : "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
     </div>
   );

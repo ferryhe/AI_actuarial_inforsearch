@@ -404,7 +404,12 @@ function AiConfigTab({ lang }: { lang: string }) {
           <span className="text-xs text-muted-foreground ml-auto">{configuredNames.size} {t("settings.configured").toLowerCase()}</span>
         </div>
         <div className="divide-y divide-border">
-          {llmProviders.map(([name, info]) => {
+          {llmProviders.length === 0 ? (
+            <div className="text-center py-10" data-testid="text-no-providers">
+              <Bot className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">{t("settings.no_providers")}</p>
+            </div>
+          ) : llmProviders.map(([name, info]) => {
             const isConfigured = configuredNames.has(name);
             const isEditing = editingProvider === name;
             return (
@@ -415,6 +420,11 @@ function AiConfigTab({ lang }: { lang: string }) {
                     <div>
                       <span className="text-sm font-semibold">{info.display_name}</span>
                       <span className="text-xs text-muted-foreground ml-2">({name})</span>
+                      {!isConfigured && (
+                        <span className="ml-2 inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400" data-testid={`badge-not-configured-${name}`}>
+                          {t("settings.not_configured")}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -676,12 +686,22 @@ function SearchCrawlerTab() {
           </div>
         </div>
         <div className="divide-y divide-border">
-          {searchEngines.map((engine) => (
+          {searchEngines.length === 0 ? (
+            <div className="text-center py-10" data-testid="text-no-search-engines">
+              <Search className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">{t("settings.no_data")}</p>
+            </div>
+          ) : searchEngines.map((engine) => (
             <div key={engine.id} className="px-5 py-4" data-testid={`search-engine-row-${engine.id}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <StatusBadge configured={engine.configured} />
                   <span className="text-sm font-semibold">{engine.name}</span>
+                  {!engine.configured && (
+                    <span className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400" data-testid={`badge-not-configured-search-${engine.id}`}>
+                      {t("settings.not_configured")}
+                    </span>
+                  )}
                 </div>
                 {searchKeyEdit?.engine !== engine.id && (
                   <button
@@ -903,6 +923,12 @@ function CategoriesTab() {
           </div>
 
           <div className="divide-y divide-border">
+            {catEntries.length === 0 && (
+              <div className="text-center py-8" data-testid="text-no-categories">
+                <Tag className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+                <p className="text-sm text-muted-foreground">{t("settings.no_data")}</p>
+              </div>
+            )}
             {catEntries.map(([name, kws]) => {
               const isExpanded = expandedCat === name;
               return (
@@ -952,6 +978,7 @@ function CategoriesTab() {
             data-testid="input-ai-filter-keywords"
           />
           <p className="text-[11px] text-muted-foreground mt-1.5">{t("settings.ai_filter_kw_desc")}</p>
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1" data-testid="text-ai-filter-kw-hint">{t("settings.ai_filter_kw_hint")}</p>
         </div>
       </motion.div>
     </div>
@@ -1126,15 +1153,37 @@ export default function SettingsPage() {
   const { t, lang } = useTranslation();
   const [activeTab, setActiveTab] = useState<SettingsTab>("ai");
 
+  const handleRefresh = () => {
+    setActiveTab((prev) => {
+      const cur = prev;
+      setTimeout(() => setActiveTab(cur), 0);
+      return cur;
+    });
+    window.location.reload();
+  };
+
   return (
     <div className="space-y-6">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-        <h1 className="text-2xl sm:text-3xl font-serif font-bold tracking-tight" data-testid="text-settings-title">
-          {t("settings.title")}
-        </h1>
-        <p className="text-muted-foreground mt-1.5 text-sm max-w-2xl leading-relaxed">
-          {t("settings.subtitle")}
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-serif font-bold tracking-tight" data-testid="text-settings-title">
+              {t("settings.title")}
+            </h1>
+            <p className="text-muted-foreground mt-1.5 text-sm max-w-2xl leading-relaxed">
+              {t("settings.subtitle")}
+            </p>
+          </div>
+          <button
+            onClick={handleRefresh}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border hover:bg-muted text-sm text-muted-foreground hover:text-foreground transition-colors"
+            data-testid="button-refresh-settings"
+            title={t("settings.refresh")}
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span className="hidden sm:inline">{t("settings.refresh")}</span>
+          </button>
+        </div>
       </motion.div>
 
       <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-border" data-testid="settings-tabs">

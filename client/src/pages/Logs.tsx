@@ -15,6 +15,7 @@ import {
   Filter,
   ChevronDown,
   ChevronUp,
+  ArrowDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -154,6 +155,8 @@ export default function LogsPage() {
   const [newestFirst, setNewestFirst] = useState(true);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
+  const [autoScroll, setAutoScroll] = useState(false);
+
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -185,10 +188,24 @@ export default function LogsPage() {
   }, [fetchLogs]);
 
   useEffect(() => {
-    if (newestFirst && logContainerRef.current) {
-      logContainerRef.current.scrollTop = 0;
+    if (logContainerRef.current) {
+      if (autoScroll) {
+        if (newestFirst) {
+          logContainerRef.current.scrollTop = 0;
+        } else {
+          logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+      } else if (newestFirst) {
+        logContainerRef.current.scrollTop = 0;
+      }
     }
-  }, [logs, newestFirst]);
+  }, [logs, newestFirst, autoScroll]);
+
+  const scrollToBottom = useCallback(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, []);
 
   const handleRefresh = () => {
     setLoading(true);
@@ -311,6 +328,16 @@ export default function LogsPage() {
           />
           {t("logs.newest_first")}
         </label>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer shrink-0">
+          <input
+            type="checkbox"
+            checked={autoScroll}
+            onChange={(e) => setAutoScroll(e.target.checked)}
+            className="rounded"
+            data-testid="checkbox-auto-scroll"
+          />
+          {t("logs.auto_scroll")}
+        </label>
       </motion.div>
 
       <motion.div
@@ -325,9 +352,20 @@ export default function LogsPage() {
             <ScrollText className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-semibold">{t("logs.system_logs")}</span>
           </div>
-          <span className="text-xs text-muted-foreground" data-testid="text-log-count">
-            {filteredLogs.length} {t("logs.entries")}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground" data-testid="text-log-count">
+              {filteredLogs.length} {t("logs.entries")}
+            </span>
+            <button
+              onClick={scrollToBottom}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="button-scroll-bottom"
+              title={t("logs.scroll_bottom")}
+            >
+              <ArrowDown className="w-3 h-3" />
+              {t("logs.scroll_bottom")}
+            </button>
+          </div>
         </div>
 
         {loading ? (

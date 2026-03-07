@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import {
   Search,
@@ -15,10 +15,13 @@ import {
   X,
   Eye,
   Trash2,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
+import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface FileItem {
   url: string;
@@ -120,6 +123,12 @@ export default function DatabasePage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(timer);
@@ -166,6 +175,58 @@ export default function DatabasePage() {
   useEffect(() => {
     fetchFiles();
   }, [fetchFiles]);
+
+  useEffect(() => {
+    setSelectedUrls(new Set());
+  }, [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
+
+  const toggleSelect = (url: string) => {
+    setSelectedUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedUrls.size === files.length) {
+      setSelectedUrls(new Set());
+    } else {
+      setSelectedUrls(new Set(files.map((f) => f.url)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const urls = Array.from(selectedUrls);
+    setBulkDeleting(true);
+    setBulkProgress({ current: 0, total: urls.length });
+    setBulkError(null);
+    try {
+      for (let i = 0; i < urls.length; i++) {
+        setBulkProgress({ current: i + 1, total: urls.length });
+        const res = await apiPost<{ success?: boolean; error?: string }>("/api/files/delete", { url: urls[i], confirm: "DELETE" });
+        if (res.error) {
+          if (res.error.toLowerCase().includes("disabled") || res.error.toLowerCase().includes("not enabled")) {
+            setBulkError(t("db.deletion_disabled"));
+            break;
+          }
+        }
+      }
+    } catch (err: unknown) {
+      const msg = String((err as { message?: string })?.message || "");
+      if (msg.includes("403") || msg.toLowerCase().includes("disabled") || msg.toLowerCase().includes("forbidden")) {
+        setBulkError(t("db.deletion_disabled"));
+      } else {
+        setBulkError(msg);
+      }
+    } finally {
+      setBulkDeleting(false);
+      setShowBulkDelete(false);
+      setSelectedUrls(new Set());
+      fetchFiles();
+    }
+  };
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
@@ -353,7 +414,12 @@ export default function DatabasePage() {
         </motion.div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="hidden lg:grid grid-cols-[36px_1fr_110px_120px_50px_70px_90px_68px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <div className="hidden lg:grid grid-cols-[28px_36px_1fr_110px_120px_50px_70px_90px_68px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            <span className="flex items-center">
+              <input type="checkbox" checked={selectedUrls.size === files.length && files.length > 0}
+                onChange={toggleSelectAll} className="rounded border-border cursor-pointer"
+                data-testid="checkbox-select-all" title={t("db.select_all")} />
+            </span>
             <span>#</span>
             <button onClick={() => handleSort("title")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-title">
               {t("table.title")} <SortIcon field="title" />
@@ -385,12 +451,18 @@ export default function DatabasePage() {
                 initial="hidden"
                 animate="visible"
                 className={cn(
-                  "grid lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_68px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
-                  isDeleted && "opacity-50"
+                  "grid lg:grid-cols-[28px_36px_1fr_110px_120px_50px_70px_90px_68px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
+                  isDeleted && "opacity-50",
+                  selectedUrls.has(file.url) && "bg-primary/5"
                 )}
                 onClick={() => navigateToFile(file)}
                 data-testid={`file-row-${i}`}
               >
+                <span className="hidden lg:flex items-center" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={selectedUrls.has(file.url)}
+                    onChange={() => toggleSelect(file.url)} className="rounded border-border cursor-pointer"
+                    data-testid={`checkbox-select-${i}`} />
+                </span>
                 <span className="hidden lg:flex items-center text-xs text-muted-foreground/60 tabular-nums" data-testid={`text-rownum-${i}`}>
                   {rowNum}
                 </span>
@@ -474,6 +546,58 @@ export default function DatabasePage() {
           })}
         </div>
       )}
+
+      <AnimatePresence>
+        {selectedUrls.size > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 rounded-xl bg-card border border-border shadow-xl"
+            data-testid="bar-bulk-actions"
+          >
+            <span className="text-sm font-medium" data-testid="text-selected-count">
+              {selectedUrls.size} {t("db.selected_count")}
+            </span>
+            <button
+              onClick={() => setShowBulkDelete(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors"
+              data-testid="button-bulk-delete"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {t("db.bulk_delete")}
+            </button>
+            <button
+              onClick={() => setSelectedUrls(new Set())}
+              className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
+              data-testid="button-clear-selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {bulkError && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          className="flex items-center gap-2 px-4 py-3 rounded-xl border border-amber-500/30 bg-amber-500/5 text-sm text-amber-700 dark:text-amber-300"
+          data-testid="text-bulk-error">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span className="flex-1">{bulkError}</span>
+          <button onClick={() => setBulkError(null)} className="p-1 rounded hover:bg-muted"><X className="w-3.5 h-3.5" /></button>
+        </motion.div>
+      )}
+
+      <ConfirmDeleteModal
+        open={showBulkDelete}
+        onClose={() => setShowBulkDelete(false)}
+        onConfirm={handleBulkDelete}
+        title={`${t("db.bulk_delete")} (${selectedUrls.size})`}
+        message={bulkDeleting
+          ? t("db.bulk_delete_progress").replace("{current}", String(bulkProgress.current)).replace("{total}", String(bulkProgress.total))
+          : t("common.confirm_delete_msg")}
+        loading={bulkDeleting}
+      />
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between pt-2">
