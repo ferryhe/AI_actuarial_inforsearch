@@ -44,3 +44,5 @@ dmypy.json
 
 # Logs
 *.log
+# Vite pre-bundled dependency cache
+client/.vite/

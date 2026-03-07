@@ -28,3 +28,22 @@ marker-pdf>=1.0.0
 # RAG (Retrieval-Augmented Generation) dependencies
 faiss-cpu>=1.7.4
 numpy>=1.24.0
+cryptography
+flask
+Flask-Limiter
+Flask-SeaSurf
+numpy
+openai
+Pillow
+pydantic-settings
+PyYAML
+schedule
+sqlalchemy
+tiktoken
+cryptography
+flask
+PyYAML
+schedule
+sqlalchemy
+PyYAML
+openai==1.68.0
