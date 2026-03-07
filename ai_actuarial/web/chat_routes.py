@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Callable
 from urllib.parse import quote
 
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, g
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,55 @@ def register_chat_routes(
         error = _check_chatbot_available()
         if error:
             return error
-        
+
+        # --- AI Chat quota enforcement ---
+        try:
+            from ai_actuarial.web.app import (
+                _AI_CHAT_QUOTA,
+                _get_client_ip,
+                _get_today_date,
+            )
+            from ai_actuarial.storage import Storage as _Storage
+            _token = getattr(g, "_auth_token", None)
+            _today = _get_today_date()
+            _ip = _get_client_ip()
+            _email_user = (_token or {}).get("_email_user") if _token else None
+            _role = ((_token or {}).get("group_name") or "anonymous").lower()
+            _limit = _AI_CHAT_QUOTA.get(_role, _AI_CHAT_QUOTA.get("anonymous", 1))
+
+            _quota_storage = _Storage(db_path)
+            try:
+                if _email_user:
+                    _allowed, _count = _quota_storage.check_and_increment_ai_chat_quota(
+                        _today, _limit, user_id=_email_user["id"]
+                    )
+                else:
+                    _allowed, _count = _quota_storage.check_and_increment_ai_chat_quota(
+                        _today, _limit, ip_address=_ip
+                    )
+            finally:
+                try:
+                    _quota_storage.close()
+                except Exception:
+                    pass
+
+            if not _allowed:
+                _upgrade_hint = (
+                    "Please register to get more queries." if _role == "anonymous"
+                    else "Please upgrade to Premium for higher limits." if _role == "registered"
+                    else "Daily quota exceeded."
+                )
+                return _api_error(
+                    f"Daily AI chat limit reached ({_limit}/day). {_upgrade_hint}",
+                    status_code=429,
+                )
+        except Exception:
+            logger.exception(
+                "Quota check failed; blocking request to prevent metered resource bypass"
+            )
+            return _api_error("Service temporarily unavailable; please try again.", status_code=503)
+        # --- End quota enforcement ---
+
         try:
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
