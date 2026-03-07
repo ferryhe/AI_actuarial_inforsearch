@@ -252,6 +252,7 @@ class TestRegistrationEndpoint(unittest.TestCase):
     def tearDown(self):
         os.close(self.db_fd)
         os.unlink(self.db_path)
+        os.close(self.cfg_fd)
         os.unlink(self.cfg_path)
         os.environ.clear()
         os.environ.update(self._orig_env)
@@ -331,6 +332,7 @@ class TestEmailLoginEndpoint(unittest.TestCase):
     def tearDown(self):
         os.close(self.db_fd)
         os.unlink(self.db_path)
+        os.close(self.cfg_fd)
         os.unlink(self.cfg_path)
         os.environ.clear()
         os.environ.update(self._orig_env)
@@ -376,14 +378,12 @@ class TestEmailLoginEndpoint(unittest.TestCase):
     def test_login_api_success(self):
         resp = self.client.post(
             "/email-login",
-            json={"email": "login@example.com", "password": "correctpass"},
-            content_type="application/json",
+            data={"email": "login@example.com", "password": "correctpass"},
+            follow_redirects=False,
         )
-        # /email-login redirects on success (web page, not /api/ path)
-        self.assertIn(resp.status_code, (200, 302))
-        if resp.status_code == 302:
-            with self.client.session_transaction() as sess:
-                self.assertIn("email_user_id", sess)
+        self.assertEqual(resp.status_code, 302)
+        with self.client.session_transaction() as sess:
+            self.assertIn("email_user_id", sess)
 
 
 class TestAdminUserEndpoints(unittest.TestCase):
@@ -421,6 +421,7 @@ class TestAdminUserEndpoints(unittest.TestCase):
     def tearDown(self):
         os.close(self.db_fd)
         os.unlink(self.db_path)
+        os.close(self.cfg_fd)
         os.unlink(self.cfg_path)
         os.environ.clear()
         os.environ.update(self._orig_env)

@@ -265,9 +265,7 @@ class Storage:
             )
             """
         )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)"
-        )
+        # email has UNIQUE constraint above which already creates an index.
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)"
         )
@@ -2794,6 +2792,9 @@ class Storage:
         Uses a single atomic UPDATE/INSERT so concurrent requests from the same
         user/IP cannot race past the limit.
         """
+        if limit <= 0:
+            # A limit of zero means the role has no AI chat access at all.
+            return False, 0
         now = self.now()
         if user_id is not None:
             # Try to increment an existing row only when still under the limit.

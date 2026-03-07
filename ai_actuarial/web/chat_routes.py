@@ -235,9 +235,9 @@ def register_chat_routes(
                     f"Daily AI chat limit reached ({_limit}/day). {_upgrade_hint}",
                     status_code=429,
                 )
-        except Exception as _qe:
-            logger.error(
-                "Quota check failed; blocking request to prevent metered resource bypass: %s", _qe
+        except Exception:
+            logger.exception(
+                "Quota check failed; blocking request to prevent metered resource bypass"
             )
             return _api_error("Service temporarily unavailable; please try again.", status_code=503)
         # --- End quota enforcement ---
