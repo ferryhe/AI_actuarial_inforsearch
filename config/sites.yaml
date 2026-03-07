@@ -596,6 +596,7 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
+scheduled_tasks: []
 ai_config:
   catalog:
     provider: openai
