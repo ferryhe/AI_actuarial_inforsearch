@@ -172,7 +172,7 @@ export default function LogsPage() {
     } catch (err: unknown) {
       const status = (err as { status?: number })?.status;
       const msg = String((err as { message?: string })?.message || "");
-      if (status === 403 || msg.includes("403") || msg.toLowerCase().includes("forbidden") || msg.toLowerCase().includes("not enabled")) {
+      if (status === 401 || status === 403 || msg.includes("403") || msg.includes("401") || msg.toLowerCase().includes("forbidden") || msg.toLowerCase().includes("not enabled") || msg.toLowerCase().includes("unauthorized")) {
         setLogsApiDisabled(true);
       }
       setLogs([]);
