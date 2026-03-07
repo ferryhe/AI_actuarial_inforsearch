@@ -27,6 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
+import { useTaskOptions } from "@/hooks/use-task-options";
 
 interface FileData {
   url: string;
@@ -222,7 +223,7 @@ export default function FileDetail() {
   const [mdExpanded, setMdExpanded] = useState(false);
   const [mdDirty, setMdDirty] = useState(false);
 
-  const [convertEngine, setConvertEngine] = useState("docling");
+  const [convertEngine, setConvertEngine] = useState("");
   const [convertOverwrite, setConvertOverwrite] = useState(true);
   const [converting, setConverting] = useState(false);
 
@@ -233,7 +234,10 @@ export default function FileDetail() {
   const [catalogSource, setCatalogSource] = useState("markdown");
   const [catalogOverwrite, setCatalogOverwrite] = useState(false);
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
+  const [catalogProvider, setCatalogProvider] = useState("");
   const [aiConfig, setAiConfig] = useState<AiModelsConfig | null>(null);
+
+  const taskOptions = useTaskOptions();
 
   const [showChunkModal, setShowChunkModal] = useState(false);
   const [chunkProfiles, setChunkProfiles] = useState<ChunkProfile[]>([]);
@@ -283,6 +287,15 @@ export default function FileDetail() {
     catalogPoller.status === "polling";
   const mdEditMode = mdTab === "edit";
   const isLocked = editing || mdEditMode || anyTaskRunning;
+
+  useEffect(() => {
+    if (!convertEngine && taskOptions.conversionToolsInfo.length > 0) {
+      setConvertEngine(taskOptions.conversionToolsInfo[0].name);
+    } else if (convertEngine && taskOptions.conversionToolsInfo.length > 0) {
+      const valid = taskOptions.conversionToolsInfo.some((t) => t.name === convertEngine);
+      if (!valid) setConvertEngine(taskOptions.conversionToolsInfo[0].name);
+    }
+  }, [taskOptions.conversionToolsInfo, convertEngine]);
 
   useEffect(() => { fetchFile(); }, [fetchFile]);
 
@@ -358,6 +371,10 @@ export default function FileDetail() {
 
   async function triggerConversion() {
     if (!file) return;
+    if (mdDirty) {
+      const ok = window.confirm(t("fv.confirm_discard_md"));
+      if (!ok) return;
+    }
     setConverting(true);
     try {
       const res = await apiPost<{ job_id?: string }>("/api/collections/run", {
@@ -367,6 +384,8 @@ export default function FileDetail() {
         engine: convertEngine,
         overwrite_existing: convertOverwrite,
       });
+      setMdTab("view");
+      setMdDirty(false);
       conversionPoller.start(res.job_id);
     } catch { /* ignore */ } finally { setConverting(false); }
   }
@@ -381,6 +400,7 @@ export default function FileDetail() {
         file_urls: [file.url],
         input_source: catalogSource,
         overwrite_existing: catalogOverwrite,
+        ...(catalogProvider ? { provider: catalogProvider } : {}),
       });
       setShowCatalogModal(false);
       catalogPoller.start(res.job_id);
@@ -725,10 +745,9 @@ export default function FileDetail() {
                     disabled={!canConvert}
                     className={cn("text-xs px-2 py-1 rounded-lg border border-border bg-background", !canConvert && disabledBtn)}
                     data-testid="select-convert-engine">
-                    <option value="docling">Docling</option>
-                    <option value="marker">Marker</option>
-                    <option value="mistral">Mistral OCR</option>
-                    <option value="deepseekocr">DeepSeek OCR</option>
+                    {taskOptions.conversionToolsInfo.map((tool) => (
+                      <option key={tool.name} value={tool.name}>{tool.displayName}</option>
+                    ))}
                   </select>
                 </div>
                 <label className={cn("flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer", !canConvert && disabledBtn)}>
@@ -818,15 +837,25 @@ export default function FileDetail() {
               </select>
               <p className="text-[11px] text-muted-foreground mt-1">{t("fv.catalog_from_hint")}</p>
             </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.ai_provider")}</label>
+              <select value={catalogProvider} onChange={(e) => setCatalogProvider(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-catalog-provider">
+                <option value="">{t("fv.default_provider")}{aiConfig?.current?.catalog ? ` (${aiConfig.current.catalog.provider})` : ""}</option>
+                {taskOptions.catalogProviders.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              {aiConfig?.current?.catalog && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {t("fv.current_default")}: {aiConfig.current.catalog.provider} / {aiConfig.current.catalog.model}
+                </p>
+              )}
+            </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={catalogOverwrite} onChange={(e) => setCatalogOverwrite(e.target.checked)} className="rounded" />
               {t("fv.overwrite_recompute")}
             </label>
-            {aiConfig && (
-              <p className="text-xs text-muted-foreground">
-                {t("fv.ai_provider")}: {aiConfig.current.catalog.provider} / {aiConfig.current.catalog.model}
-              </p>
-            )}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <button onClick={() => setShowCatalogModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}
