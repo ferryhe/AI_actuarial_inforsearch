@@ -28,7 +28,7 @@ def register_rag_routes(
     from ai_actuarial.storage import Storage
 
     try:
-        from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+        from ai_actuarial.rag.knowledge_base import KnowledgeBase, KnowledgeBaseManager
     except ImportError:
         rag_available = False
     else:

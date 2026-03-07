@@ -36,10 +36,10 @@ interface KnowledgeBase {
 }
 
 interface ChunkProfile {
-  id?: string;
+  profile_id?: string;
   name: string;
   chunk_size: number;
-  overlap: number;
+  chunk_overlap: number;
   splitter?: string;
   tokenizer?: string;
 }
@@ -634,17 +634,17 @@ export default function Knowledge() {
             </div>
             {profiles.map((profile, i) => (
               <div
-                key={profile.id || profile.name}
+                key={profile.profile_id || profile.name}
                 className="grid grid-cols-[1fr_80px_80px_90px_100px_40px] gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors items-center"
                 data-testid={`row-profile-${i}`}
               >
                 <span className="text-sm font-medium">{profile.name}</span>
                 <span className="text-sm text-muted-foreground">{profile.chunk_size}</span>
-                <span className="text-sm text-muted-foreground">{profile.overlap}</span>
+                <span className="text-sm text-muted-foreground">{profile.chunk_overlap}</span>
                 <span className="text-xs text-muted-foreground">{profile.splitter || "-"}</span>
                 <span className="text-xs text-muted-foreground font-mono">{profile.tokenizer || "-"}</span>
                 <button
-                  onClick={() => profile.id && handleDeleteProfile(profile.id)}
+                  onClick={() => profile.profile_id && handleDeleteProfile(profile.profile_id)}
                   className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
                   data-testid={`button-delete-profile-${i}`}
                 >
