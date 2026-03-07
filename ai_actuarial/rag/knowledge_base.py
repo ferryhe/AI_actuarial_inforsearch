@@ -123,7 +123,10 @@ class KnowledgeBaseManager:
             include_hierarchy=self.config.include_hierarchy
         )
         
-        self.embedding_generator = EmbeddingGenerator(self.config)
+        try:
+            self.embedding_generator = EmbeddingGenerator(self.config)
+        except Exception:
+            self.embedding_generator = None
     
     def _ensure_rag_tables(self) -> None:
         """Create RAG-specific tables if they don't exist."""
