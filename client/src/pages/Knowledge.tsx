@@ -102,12 +102,15 @@ export default function Knowledge() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const [embeddingModels, setEmbeddingModels] = useState<{provider: string; name: string; display_name: string}[]>([]);
+  const [defaultEmbedding, setDefaultEmbedding] = useState("text-embedding-3-large");
+
   const [kbForm, setKbForm] = useState({
     name: "",
     kb_id: "",
     description: "",
     categories: "",
-    embedding_model: "text-embedding-3-large",
+    embedding_model: "",
     kb_mode: "manual",
     chunk_size: 800,
     chunk_overlap: 100,
@@ -126,8 +129,9 @@ export default function Knowledge() {
     Promise.all([
       apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
       apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null),
+      apiGet<Record<string, unknown>>("/api/config/ai-models").catch(() => null),
     ])
-      .then(([kbResp, profileResp]) => {
+      .then(([kbResp, profileResp, aiResp]) => {
         const kbRaw = kbResp?.data;
         const kbList: KnowledgeBase[] = Array.isArray(kbRaw) ? kbRaw : [];
         setKbs(kbList);
@@ -139,6 +143,25 @@ export default function Knowledge() {
             ? (profRaw as Record<string, unknown>).profiles as ChunkProfile[]
             : [];
         setProfiles(pList);
+
+        if (aiResp) {
+          const available = (aiResp as Record<string, unknown>).available as Record<string, {name: string; display_name: string; types: string[]}[]> | undefined;
+          const current = (aiResp as Record<string, unknown>).current as Record<string, {provider?: string; model?: string}> | undefined;
+          if (available) {
+            const models: {provider: string; name: string; display_name: string}[] = [];
+            for (const [provider, providerModels] of Object.entries(available)) {
+              for (const m of providerModels) {
+                if (m.types?.includes("embeddings")) {
+                  models.push({ provider, name: m.name, display_name: m.display_name });
+                }
+              }
+            }
+            setEmbeddingModels(models);
+          }
+          if (current?.embeddings?.model) {
+            setDefaultEmbedding(current.embeddings.model);
+          }
+        }
       })
       .finally(() => setLoading(false));
   }, []);
@@ -168,12 +191,12 @@ export default function Knowledge() {
         name: kbForm.name,
         description: kbForm.description,
         categories,
-        embedding_model: kbForm.embedding_model || undefined,
+        embedding_model: kbForm.embedding_model || defaultEmbedding,
         kb_mode: kbForm.kb_mode,
         chunk_size: kbForm.chunk_size,
         chunk_overlap: kbForm.chunk_overlap,
       });
-      setKbForm({ name: "", kb_id: "", description: "", categories: "", embedding_model: "text-embedding-3-large", kb_mode: "manual", chunk_size: 800, chunk_overlap: 100 });
+      setKbForm({ name: "", kb_id: "", description: "", categories: "", embedding_model: "", kb_mode: "manual", chunk_size: 800, chunk_overlap: 100 });
       setShowCreateKB(false);
       loadData();
     } catch (err) {
@@ -351,14 +374,30 @@ export default function Knowledge() {
                   {t("knowledge.embedding_model")}
                 </label>
                 <select
-                  value={kbForm.embedding_model}
+                  value={kbForm.embedding_model || defaultEmbedding}
                   onChange={(e) => setKbForm({ ...kbForm, embedding_model: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="select-kb-embedding"
                 >
-                  <option value="text-embedding-3-large">text-embedding-3-large</option>
-                  <option value="text-embedding-3-small">text-embedding-3-small</option>
-                  <option value="text-embedding-ada-002">text-embedding-ada-002</option>
+                  {embeddingModels.length > 0 ? (
+                    Object.entries(
+                      embeddingModels.reduce<Record<string, {name: string; display_name: string}[]>>((acc, m) => {
+                        (acc[m.provider] ??= []).push(m);
+                        return acc;
+                      }, {})
+                    ).map(([provider, models]) => (
+                      <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
+                        {models.map((m) => (
+                          <option key={m.name} value={m.name}>{m.display_name}</option>
+                        ))}
+                      </optgroup>
+                    ))
+                  ) : (
+                    <>
+                      <option value="text-embedding-3-large">text-embedding-3-large</option>
+                      <option value="text-embedding-3-small">text-embedding-3-small</option>
+                    </>
+                  )}
                 </select>
               </div>
               <div className="sm:col-span-2">
