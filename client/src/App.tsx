@@ -1,0 +1,44 @@
+import { Switch, Route } from "wouter";
+import Layout from "@/components/Layout";
+import Dashboard from "@/pages/Dashboard";
+import Database from "@/pages/Database";
+import Chat from "@/pages/Chat";
+import Tasks from "@/pages/Tasks";
+import Knowledge from "@/pages/Knowledge";
+import KBDetail from "@/pages/KBDetail";
+import Settings from "@/pages/Settings";
+import Logs from "@/pages/Logs";
+import FileDetail from "@/pages/FileDetail";
+import FilePreview from "@/pages/FilePreview";
+import Users from "@/pages/Users";
+
+function Router() {
+  return (
+    <Switch>
+      <Route path="/" component={Dashboard} />
+      <Route path="/database" component={Database} />
+      <Route path="/file-detail" component={FileDetail} />
+      <Route path="/file-preview" component={FilePreview} />
+      <Route path="/chat" component={Chat} />
+      <Route path="/tasks" component={Tasks} />
+      <Route path="/logs" component={Logs} />
+      <Route path="/knowledge/:kbId" component={KBDetail} />
+      <Route path="/knowledge" component={Knowledge} />
+      <Route path="/settings" component={Settings} />
+      <Route path="/users" component={Users} />
+      <Route>
+        <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
+          404
+        </div>
+      </Route>
+    </Switch>
+  );
+}
+
+export default function App() {
+  return (
+    <Layout>
+      <Router />
+    </Layout>
+  );
+}

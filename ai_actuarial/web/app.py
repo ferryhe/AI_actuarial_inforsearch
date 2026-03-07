@@ -166,10 +166,22 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
+        "files.download",
+        "files.delete",
+        "catalog.read",
+        "catalog.write",
         "markdown.read",
+        "markdown.write",
+        "config.read",
+        "config.write",
+        "schedule.write",
+        "tasks.view",
+        "tasks.run",
         "chat.view",
         "chat.query",
         "chat.conversations",
+        "logs.task.read",
+        "logs.system.read",
     }
 )
 
@@ -2119,6 +2131,439 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error deleting site")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    # ── Site Config YAML import / export / backup ────────────────────
+    BACKUPS_DIR = os.path.join(os.path.dirname(_get_sites_config_path()), "backups")
+
+    def _ensure_backup_dir():
+        os.makedirs(BACKUPS_DIR, exist_ok=True)
+
+    def _backup_config(label: str = "") -> str:
+        """Create a timestamped backup of the current sites.yaml. Returns backup filename."""
+        _ensure_backup_dir()
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = f"_{label}" if label else ""
+        backup_name = f"sites_{ts}{suffix}.yaml"
+        backup_path = os.path.join(BACKUPS_DIR, backup_name)
+        config_path = _get_sites_config_path()
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as src:
+                content = src.read()
+            with open(backup_path, "w", encoding="utf-8") as dst:
+                dst.write(content)
+        return backup_name
+
+    def _should_auto_backup() -> bool:
+        """Only auto-backup if last backup is >5 min old."""
+        _ensure_backup_dir()
+        backups = sorted(Path(BACKUPS_DIR).glob("sites_*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not backups:
+            return True
+        age = time.time() - backups[0].stat().st_mtime
+        return age > 300
+
+    @app.route("/api/config/sites/import", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_sites_import():
+        """Import sites from JSON array or raw YAML text."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            incoming_sites = data.get("sites")
+            yaml_text = data.get("yaml_text")
+            mode = str(data.get("mode", "merge")).strip().lower()
+            preview_only = bool(data.get("preview"))
+
+            if yaml_text and not incoming_sites:
+                try:
+                    parsed = yaml.safe_load(yaml_text) or {}
+                except yaml.YAMLError as ye:
+                    return jsonify({"error": f"Invalid YAML: {ye}"}), 400
+                if isinstance(parsed, dict):
+                    incoming_sites = parsed.get("sites", [])
+                elif isinstance(parsed, list):
+                    incoming_sites = parsed
+                else:
+                    return jsonify({"error": "YAML must contain a 'sites' list or be a list of sites"}), 400
+
+            if not incoming_sites or not isinstance(incoming_sites, list):
+                return jsonify({"error": "sites array is required (provide 'sites' or 'yaml_text')"}), 400
+
+            if preview_only:
+                valid = [s for s in incoming_sites if isinstance(s, dict) and s.get("name") and s.get("url")]
+                names = [s.get("name", "") for s in valid]
+                return jsonify({"success": True, "count": len(valid), "names": names})
+
+            _backup_config("before_import")
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if "sites" not in config_data:
+                config_data["sites"] = []
+
+            imported = 0
+            skipped = 0
+            skipped_names = []
+            errors = []
+
+            if mode == "overwrite":
+                valid_sites = []
+                for s in incoming_sites:
+                    if not isinstance(s, dict) or not s.get("name") or not s.get("url"):
+                        errors.append(f"Invalid site entry: {s}")
+                        continue
+                    valid_sites.append(s)
+                config_data["sites"] = valid_sites
+                imported = len(valid_sites)
+            else:
+                existing_names = {s.get("name") for s in config_data["sites"]}
+                for s in incoming_sites:
+                    if not isinstance(s, dict) or not s.get("name") or not s.get("url"):
+                        errors.append(f"Invalid site entry: {s}")
+                        continue
+                    if s["name"] in existing_names:
+                        skipped += 1
+                        skipped_names.append(s["name"])
+                        continue
+                    config_data["sites"].append(s)
+                    existing_names.add(s["name"])
+                    imported += 1
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            result = {"success": True, "imported": imported, "skipped": skipped, "skipped_names": skipped_names}
+            if errors:
+                result["errors"] = errors
+            return jsonify(result)
+        except Exception as e:
+            logger.exception("Error importing sites")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/sites/export")
+    @require_permissions("schedule.write")
+    def api_config_sites_export():
+        """Export current sites config as downloadable YAML."""
+        try:
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            sites_only = {"sites": config_data.get("sites", [])}
+            content = yaml.dump(sites_only, sort_keys=False, allow_unicode=True, default_flow_style=False)
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            response = app.response_class(content, mimetype="application/x-yaml")
+            response.headers["Content-Disposition"] = f"attachment; filename=sites_export_{ts}.yaml"
+            return response
+        except Exception as e:
+            logger.exception("Error exporting sites")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/sites/sample")
+    @require_permissions("schedule.write")
+    def api_config_sites_sample():
+        """Download a sample YAML file with example sites."""
+        sample = """# AI Actuarial Info Search - Site Configuration Sample
+# Import this file to add sites for document crawling.
+# Each site requires at minimum: name and url.
+
+sites:
+  - name: Society of Actuaries (SOA)
+    url: https://www.soa.org/
+    max_pages: 200
+    max_depth: 3
+    keywords:
+      - artificial intelligence
+      - machine learning
+      - actuarial
+    exclude_keywords:
+      - newsletter
+      - curriculum
+    exclude_prefixes:
+      - /about/
+    content_selector: main
+    schedule_interval: weekly
+
+  - name: Institute and Faculty of Actuaries (IFoA)
+    url: https://www.actuaries.org.uk/
+    max_pages: 150
+    max_depth: 2
+    keywords:
+      - AI
+      - data science
+      - risk management
+    exclude_keywords:
+      - events
+    # schedule_interval is optional; omit to use the global schedule
+
+# Field Reference:
+# name (required)          - Unique display name for this site
+# url (required)           - Root URL to start crawling from
+# max_pages (optional)     - Maximum pages to crawl (default: from global config)
+# max_depth (optional)     - Maximum link depth (default: from global config)
+# keywords (optional)      - List of keywords to filter relevant pages
+# exclude_keywords (opt.)  - List of keywords to exclude pages
+# exclude_prefixes (opt.)  - URL path prefixes to skip
+# content_selector (opt.)  - CSS selector for main content area
+# schedule_interval (opt.) - Per-site schedule: daily, weekly, every N hours
+"""
+        response = app.response_class(sample, mimetype="application/x-yaml")
+        response.headers["Content-Disposition"] = "attachment; filename=sites_sample.yaml"
+        return response
+
+    @app.route("/api/config/backups")
+    @require_permissions("schedule.write")
+    def api_config_backups_list():
+        """List available configuration backups."""
+        try:
+            _ensure_backup_dir()
+            backups = []
+            for p in sorted(Path(BACKUPS_DIR).glob("sites_*.yaml"), key=lambda x: x.stat().st_mtime, reverse=True):
+                st = p.stat()
+                backups.append({
+                    "filename": p.name,
+                    "timestamp": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                    "size_bytes": st.st_size,
+                })
+            return jsonify({"backups": backups})
+        except Exception as e:
+            logger.exception("Error listing backups")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/backups/restore", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_backups_restore():
+        """Restore a backup file, backing up current config first."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            filename = str(data.get("filename") or "").strip()
+            if not filename or ".." in filename or "/" in filename or (os.sep != "/" and os.sep in filename):
+                return jsonify({"error": "Invalid filename"}), 400
+
+            backup_path = os.path.join(BACKUPS_DIR, filename)
+            backups_dir_abs = os.path.abspath(BACKUPS_DIR)
+            backup_path_abs = os.path.abspath(backup_path)
+            try:
+                common = os.path.commonpath([backups_dir_abs, backup_path_abs])
+            except ValueError:
+                return jsonify({"error": "Invalid filename"}), 400
+            if common != backups_dir_abs:
+                return jsonify({"error": "Invalid filename"}), 400
+
+            if not os.path.exists(backup_path_abs):
+                return jsonify({"error": "Backup file not found"}), 404
+
+            _backup_config("before_restore")
+
+            with open(backup_path_abs, "r", encoding="utf-8") as f:
+                backup_data = yaml.safe_load(f) or {}
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if "sites" in backup_data:
+                config_data["sites"] = backup_data["sites"]
+            if "scheduled_tasks" in backup_data:
+                config_data["scheduled_tasks"] = backup_data["scheduled_tasks"]
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error restoring backup")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/backups/delete", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_backups_delete():
+        """Delete a specific backup file."""
+        try:
+            data = request.get_json(silent=True) or {}
+            filename = str(data.get("filename") or "").strip()
+            if not filename or ".." in filename or "/" in filename or (os.sep != "/" and os.sep in filename):
+                return jsonify({"error": "Invalid filename"}), 400
+
+            backup_path = os.path.join(BACKUPS_DIR, filename)
+            backups_dir_abs = os.path.abspath(BACKUPS_DIR)
+            backup_path_abs = os.path.abspath(backup_path)
+            try:
+                common = os.path.commonpath([backups_dir_abs, backup_path_abs])
+            except ValueError:
+                return jsonify({"error": "Invalid filename"}), 400
+            if common != backups_dir_abs:
+                return jsonify({"error": "Invalid filename"}), 400
+
+            if not os.path.exists(backup_path_abs):
+                return jsonify({"error": "Backup file not found"}), 404
+
+            os.remove(backup_path_abs)
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting backup")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    # ── Generic Scheduled Tasks CRUD ──────────────────────────────────
+    VALID_SCHEDULED_TASK_TYPES = [
+        "scheduled", "quick_check", "url", "file", "search",
+        "catalog", "markdown_conversion", "chunk_generation",
+        "rag_indexing", "kb_index_build",
+    ]
+
+    VALID_INTERVALS = [
+        "daily", "weekly",
+    ]
+
+    @app.route("/api/scheduled-tasks")
+    @require_permissions("tasks.view")
+    def api_scheduled_tasks_list():
+        """List all generic scheduled tasks from config."""
+        try:
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                current_config = yaml.safe_load(f) or {}
+            tasks = current_config.get('scheduled_tasks') or []
+            return jsonify({"tasks": tasks})
+        except Exception as e:
+            logger.exception("Error listing scheduled tasks")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/scheduled-tasks/add", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_scheduled_tasks_add():
+        """Add a new generic scheduled task."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            name = str(data.get("name") or "").strip()
+            task_type = str(data.get("type") or "").strip()
+            interval = str(data.get("interval") or "").strip()
+
+            if not name:
+                return jsonify({"error": "Task name is required"}), 400
+            if task_type not in VALID_SCHEDULED_TASK_TYPES:
+                return jsonify({"error": f"Invalid task type: {task_type}"}), 400
+            if not interval:
+                return jsonify({"error": "Schedule interval is required"}), 400
+            if interval not in VALID_INTERVALS:
+                return jsonify({"error": f"Invalid schedule interval: {interval}. Valid values: {', '.join(VALID_INTERVALS)}"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if 'scheduled_tasks' not in config_data:
+                config_data['scheduled_tasks'] = []
+
+            for t in config_data['scheduled_tasks']:
+                if t.get('name') == name:
+                    return jsonify({"error": "Task name already exists"}), 400
+
+            new_task = {
+                'name': name,
+                'type': task_type,
+                'interval': interval,
+                'enabled': bool(data.get('enabled', True)),
+                'params': data.get('params') or {},
+            }
+
+            config_data['scheduled_tasks'].append(new_task)
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error adding scheduled task")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/scheduled-tasks/update", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_scheduled_tasks_update():
+        """Update an existing generic scheduled task."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            original_name = str(data.get("original_name") or "").strip()
+            name = str(data.get("name") or "").strip()
+
+            if not original_name or not name:
+                return jsonify({"error": "original_name and name are required"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+
+            found = False
+            for t in config_data.get('scheduled_tasks', []):
+                if t.get('name') == original_name:
+                    t['name'] = name
+                    if 'type' in data:
+                        new_type = str(data['type']).strip()
+                        if new_type not in VALID_SCHEDULED_TASK_TYPES:
+                            return jsonify({"error": f"Invalid task type: {new_type}"}), 400
+                        t['type'] = new_type
+                    if 'interval' in data:
+                        new_interval = str(data['interval']).strip()
+                        if new_interval not in VALID_INTERVALS:
+                            return jsonify({"error": f"Invalid schedule interval: {new_interval}. Valid values: {', '.join(VALID_INTERVALS)}"}), 400
+                        t['interval'] = new_interval
+                    if 'enabled' in data:
+                        t['enabled'] = bool(data['enabled'])
+                    if 'params' in data:
+                        t['params'] = data['params'] or {}
+                    found = True
+                    break
+
+            if not found:
+                return jsonify({"error": "Task not found"}), 404
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error updating scheduled task")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/scheduled-tasks/delete", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_scheduled_tasks_delete():
+        """Delete a generic scheduled task by name."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            name = str(data.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "Task name is required"}), 400
+
+            config_path = _get_sites_config_path()
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+
+            tasks = list(config_data.get('scheduled_tasks') or [])
+            new_tasks = [t for t in tasks if str(t.get('name') or '') != name]
+            if len(new_tasks) == len(tasks):
+                return jsonify({"error": "Task not found"}), 404
+
+            config_data['scheduled_tasks'] = new_tasks
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting scheduled task")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
     # AI model configuration
     # Models are now fetched dynamically from LLM provider APIs
     # See ai_actuarial/llm_models.py for implementation
@@ -2536,25 +2981,73 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     @app.route("/api/utils/browse-folder")
     @require_permissions("tasks.run")
     def api_browse_folder():
-        """Open system dialog to select a folder (Local usage only)."""
+        """List directories at a given path, restricted to the data root."""
         try:
-            import tkinter as tk
-            from tkinter import filedialog
-            
-            # Create a hidden root window
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)  # Make it appear on top
-            
-            folder_path = filedialog.askdirectory(title="Select Folder to Import")
-            root.destroy()
-            
-            if folder_path:
-                return jsonify({"path": folder_path.replace('/', os.sep)})
-            return jsonify({"path": ""})
+            data_root = site_config.get("paths", {}).get("download_dir", "data/files")
+            if not os.path.isabs(data_root):
+                data_root = os.path.abspath(data_root)
+            allowed_root = os.path.abspath(os.path.dirname(data_root) or os.getcwd())
+
+            target = request.args.get("path", "").strip()
+            if not target:
+                target = allowed_root
+
+            target = os.path.abspath(target)
+            if not target.startswith(allowed_root):
+                return jsonify({"error": "Access denied: path outside allowed directory", "path": target}), 403
+
+            if not os.path.isdir(target):
+                return jsonify({"error": "Not a valid directory", "path": target}), 400
+
+            entries = []
+            try:
+                for entry in sorted(os.scandir(target), key=lambda e: e.name.lower()):
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        entries.append({"name": entry.name, "type": "dir"})
+                    elif entry.is_file(follow_symlinks=False):
+                        try:
+                            size = entry.stat().st_size
+                        except OSError:
+                            size = 0
+                        entries.append({"name": entry.name, "type": "file", "size": size})
+            except PermissionError:
+                return jsonify({"error": "Permission denied", "path": target}), 403
+
+            parent = os.path.dirname(target)
+            has_parent = parent != target and parent.startswith(allowed_root)
+            return jsonify({
+                "path": target,
+                "parent": parent if has_parent else None,
+                "entries": entries,
+            })
         except Exception as e:
-            logger.error(f"Error opening file dialog: {e}")
-            return jsonify({"error": "Failed to open dialog. Please enter path manually."}), 500
+            logger.exception("Error browsing folder")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/files/detail")
+    @require_permissions("files.read")
+    def api_file_detail():
+        """Get single file detail as JSON (metadata + catalog info)."""
+        try:
+            url = request.args.get("url", "").strip()
+            if not url:
+                return jsonify({"error": "url parameter is required"}), 400
+
+            storage = Storage(db_path)
+            try:
+                file_data = storage.get_file_with_catalog(url)
+            finally:
+                storage.close()
+
+            if not file_data:
+                return jsonify({"error": "File not found"}), 404
+
+            return jsonify({"file": file_data})
+        except Exception as e:
+            logger.exception("Error fetching file detail")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
 
     @app.route("/file/<path:file_url>")
     def file_view(file_url):
@@ -4975,6 +5468,31 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 except Exception as ex:
                     logger.error(f"Failed to parse schedule '{interval_str}': {ex}")
 
+            def make_generic_task_job(task_cfg):
+                """Factory for generic scheduled task callbacks."""
+                def job_wrapper():
+                    t_name = task_cfg.get('name', 'Generic Task')
+                    t_type = task_cfg.get('type', 'catalog')
+                    t_params = dict(task_cfg.get('params') or {})
+                    logger.info(f"Triggering generic scheduled task: {t_name} (type={t_type})")
+                    task_id = f"sched_{t_type}_{int(datetime.now().timestamp())}"
+                    with _task_lock:
+                        _active_tasks[task_id] = {
+                            "id": task_id,
+                            "name": f"Scheduled: {t_name}",
+                            "type": t_type,
+                            "status": "pending",
+                            "progress": 0,
+                            "started_at": datetime.now().isoformat()
+                        }
+                    data = dict(t_params)
+                    data.setdefault("name", f"Scheduled: {t_name}")
+                    threading.Thread(target=execute_collection_task,
+                                     args=(task_id, t_type, data)).start()
+                return job_wrapper
+
+            generic_tasks = site_config.get('scheduled_tasks') or []
+
             # Clear and register all jobs atomically to avoid races with scheduler_loop
             with _scheduler_lock:
                 schedule.clear()
@@ -4989,6 +5507,16 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     if not interval:
                         continue
                     _add_job(interval, make_site_job(site), site['name'])
+
+                # 3. Generic scheduled tasks (catalog, markdown, chunk, etc.)
+                for gtask in generic_tasks:
+                    if not gtask.get('enabled', True):
+                        continue
+                    g_interval = gtask.get('interval')
+                    if not g_interval:
+                        continue
+                    _add_job(g_interval, make_generic_task_job(gtask),
+                             f"generic_{gtask.get('name', 'unknown')}")
 
             # Only start the loop thread once
             if not _scheduler_loop_started:

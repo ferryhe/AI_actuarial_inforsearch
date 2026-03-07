@@ -28,7 +28,7 @@ def register_rag_routes(
     from ai_actuarial.storage import Storage
 
     try:
-        from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+        from ai_actuarial.rag.knowledge_base import KnowledgeBase, KnowledgeBaseManager
     except ImportError:
         rag_available = False
     else:
@@ -480,21 +480,35 @@ def register_rag_routes(
             kb_mode = _norm(request.args.get("kb_mode"))
             search = _norm(request.args.get("search")).lower()
 
-            def _run(kb_manager, _storage):
-                kbs = kb_manager.list_kbs()
-                if kb_mode:
-                    kbs = [kb for kb in kbs if kb.kb_mode == kb_mode]
-                if search:
-                    kbs = [
-                        kb
-                        for kb in kbs
-                        if search in (kb.name or "").lower()
+            def _run(storage):
+                conn = storage._conn
+                cursor = conn.execute("""
+                    SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
+                           index_type, created_at, updated_at, file_count, chunk_count
+                    FROM rag_knowledge_bases
+                    ORDER BY created_at DESC
+                """)
+                kbs = []
+                for row in cursor.fetchall():
+                    kb = KnowledgeBase(
+                        kb_id=row[0], name=row[1], description=row[2],
+                        kb_mode=row[3] or "category",
+                        embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
+                        index_type=row[7], created_at=row[8], updated_at=row[9],
+                        file_count=row[10], chunk_count=row[11]
+                    )
+                    if kb_mode and kb.kb_mode != kb_mode:
+                        continue
+                    if search and not (
+                        search in (kb.name or "").lower()
                         or search in (kb.description or "").lower()
                         or search in (kb.kb_id or "").lower()
-                    ]
+                    ):
+                        continue
+                    kbs.append(kb)
                 return _api_success([_serialize_kb(kb) for kb in kbs])
 
-            return _with_manager(_run)
+            return _with_storage(_run)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Error listing KBs")
             return _api_error("Internal server error", status_code=500, detail=str(exc))
@@ -925,9 +939,12 @@ def register_rag_routes(
 
             where_sql = " AND ".join(where_parts)
 
-            def _run(kb_manager, storage):
-                if kb_id and not kb_manager.get_kb(kb_id):
-                    return _api_error(f"Knowledge base '{kb_id}' not found", status_code=404)
+            def _run(storage):
+                conn = storage._conn
+                if kb_id:
+                    row = conn.execute("SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", [kb_id]).fetchone()
+                    if not row:
+                        return _api_error(f"Knowledge base '{kb_id}' not found", status_code=404)
 
                 count_sql = f"""
                     SELECT COUNT(*)
@@ -935,7 +952,7 @@ def register_rag_routes(
                     JOIN catalog_items c ON c.file_url = f.url
                     WHERE {where_sql}
                 """
-                total = int(storage._conn.execute(count_sql, params).fetchone()[0] or 0)
+                total = int(conn.execute(count_sql, params).fetchone()[0] or 0)
 
                 data_sql = f"""
                     SELECT
@@ -953,7 +970,7 @@ def register_rag_routes(
                     ORDER BY f.last_seen DESC, f.id DESC
                     LIMIT ? OFFSET ?
                 """
-                rows = storage._conn.execute(data_sql, params + [limit, offset]).fetchall()
+                rows = conn.execute(data_sql, params + [limit, offset]).fetchall()
                 files = [
                     {
                         "url": row[0],
@@ -978,7 +995,7 @@ def register_rag_routes(
                     }
                 )
 
-            return _with_manager(_run)
+            return _with_storage(_run)
         except ValueError as exc:
             return _api_error(str(exc), status_code=400)
         except Exception as exc:  # noqa: BLE001
