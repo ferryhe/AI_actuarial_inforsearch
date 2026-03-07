@@ -19,6 +19,8 @@ import {
   X,
   ScrollText,
   Inbox,
+  ArrowLeft,
+  ChevronDown,
   AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,7 +42,11 @@ interface Task {
 interface SiteConfig {
   name: string;
   url?: string;
-  type?: string;
+}
+
+interface KBItem {
+  kb_id: string;
+  name: string;
 }
 
 const fadeUp = {
@@ -96,27 +102,510 @@ function formatDate(dateStr: string): string {
   if (!dateStr) return "-";
   try {
     const d = new Date(dateStr);
-    return d.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   } catch {
     return dateStr;
   }
 }
 
 const taskTypes = [
-  { type: "scheduled", icon: Globe, color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-  { type: "adhoc_url", icon: Link2, color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
-  { type: "file_import", icon: FileUp, color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
-  { type: "web_search", icon: Search, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  { type: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  { type: "markdown", icon: FileText, color: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
-  { type: "chunk", icon: Layers, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
-  { type: "rag_index", icon: Database, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
+  { type: "scheduled", apiType: "scheduled", icon: Globe, color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  { type: "adhoc_url", apiType: "url", icon: Link2, color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
+  { type: "file_import", apiType: "file", icon: FileUp, color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
+  { type: "web_search", apiType: "search", icon: Search, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  { type: "catalog", apiType: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  { type: "markdown", apiType: "markdown_conversion", icon: FileText, color: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
+  { type: "chunk", apiType: "chunk_generation", icon: Layers, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+  { type: "rag_index", apiType: "rag_indexing", icon: Database, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
 ];
+
+function FormField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function InputField({
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  testId,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  testId?: string;
+}) {
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+      data-testid={testId}
+    />
+  );
+}
+
+function ScheduledForm({ sites, onSubmit, submitting }: { sites: SiteConfig[]; onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [site, setSite] = useState("");
+  const [maxPages, setMaxPages] = useState("");
+  const [maxDepth, setMaxDepth] = useState("");
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.scheduled_desc")}</p>
+      <FormField label={t("tasks.form.target_site")}>
+        <select
+          value={site}
+          onChange={(e) => setSite(e.target.value)}
+          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          data-testid="select-site"
+        >
+          <option value="">{t("tasks.form.all_sites")}</option>
+          {sites.map((s) => (
+            <option key={s.name} value={s.name}>{s.name}</option>
+          ))}
+        </select>
+      </FormField>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label={t("tasks.form.max_pages")}>
+          <InputField value={maxPages} onChange={setMaxPages} placeholder="200" type="number" testId="input-max-pages" />
+        </FormField>
+        <FormField label={t("tasks.form.max_depth")}>
+          <InputField value={maxDepth} onChange={setMaxDepth} placeholder="2" type="number" testId="input-max-depth" />
+        </FormField>
+      </div>
+      <button
+        onClick={() => onSubmit({
+          type: "scheduled",
+          name: site ? `Scheduled: ${site}` : "Scheduled Collection",
+          site: site || undefined,
+          max_pages: maxPages ? parseInt(maxPages) : undefined,
+          max_depth: maxDepth ? parseInt(maxDepth) : undefined,
+        })}
+        disabled={submitting}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-scheduled"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
+
+function AdhocUrlForm({ onSubmit, submitting }: { onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [urls, setUrls] = useState("");
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.url_desc")}</p>
+      <FormField label={t("tasks.form.urls")}>
+        <textarea
+          value={urls}
+          onChange={(e) => setUrls(e.target.value)}
+          placeholder={t("tasks.form.urls_placeholder")}
+          rows={4}
+          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+          data-testid="input-urls"
+        />
+      </FormField>
+      <button
+        onClick={() => {
+          const urlList = urls.split("\n").map(u => u.trim()).filter(Boolean);
+          if (urlList.length === 0) return;
+          onSubmit({ type: "url", name: `URL Collection (${urlList.length})`, urls: urlList });
+        }}
+        disabled={submitting || !urls.trim()}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-url"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
+
+function FileImportForm({ onSubmit, submitting }: { onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [dirPath, setDirPath] = useState("");
+  const [extensions, setExtensions] = useState(".pdf,.docx,.pptx");
+  const [recursive, setRecursive] = useState(true);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.file_desc")}</p>
+      <FormField label={t("tasks.form.directory_path")}>
+        <InputField value={dirPath} onChange={setDirPath} placeholder="/path/to/files" testId="input-dir-path" />
+      </FormField>
+      <FormField label={t("tasks.form.file_extensions")}>
+        <InputField value={extensions} onChange={setExtensions} placeholder=".pdf,.docx,.pptx" testId="input-extensions" />
+      </FormField>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} className="rounded" data-testid="checkbox-recursive" />
+        {t("tasks.form.recursive")}
+      </label>
+      <button
+        onClick={() => {
+          if (!dirPath.trim()) return;
+          onSubmit({
+            type: "file",
+            name: `File Import: ${dirPath}`,
+            directory_path: dirPath,
+            extensions: extensions.split(",").map(e => e.trim()).filter(Boolean),
+            recursive,
+          });
+        }}
+        disabled={submitting || !dirPath.trim()}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-file"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
+
+function WebSearchForm({ onSubmit, submitting }: { onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState("");
+  const [engine, setEngine] = useState("brave");
+  const [count, setCount] = useState("20");
+  const [site, setSite] = useState("");
+
+  const engines = [
+    { id: "brave", name: "Brave Search" },
+    { id: "google", name: "Google (SerpAPI)" },
+    { id: "serper", name: "Google (Serper)" },
+    { id: "tavily", name: "Tavily" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.search_desc")}</p>
+      <FormField label={t("tasks.form.search_query")}>
+        <InputField value={query} onChange={setQuery} placeholder={t("tasks.form.search_query_placeholder")} testId="input-search-query" />
+      </FormField>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label={t("tasks.form.search_engine")}>
+          <select
+            value={engine}
+            onChange={(e) => setEngine(e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            data-testid="select-engine"
+          >
+            {engines.map((e) => (
+              <option key={e.id} value={e.id}>{e.name}</option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label={t("tasks.form.max_results")}>
+          <InputField value={count} onChange={setCount} placeholder="20" type="number" testId="input-count" />
+        </FormField>
+      </div>
+      <FormField label={t("tasks.form.site_filter")}>
+        <InputField value={site} onChange={setSite} placeholder="example.com" testId="input-site-filter" />
+      </FormField>
+      <button
+        onClick={() => {
+          if (!query.trim()) return;
+          onSubmit({
+            type: "search",
+            name: `Search: ${query}`,
+            query,
+            engine,
+            count: parseInt(count) || 20,
+            site: site || undefined,
+          });
+        }}
+        disabled={submitting || !query.trim()}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-search"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
+
+function CatalogForm({ onSubmit, submitting }: { onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [scopeMode, setScopeMode] = useState("index");
+  const [category, setCategory] = useState("");
+  const [scanCount, setScanCount] = useState("100");
+  const [provider, setProvider] = useState("");
+  const [inputSource, setInputSource] = useState("markdown");
+  const [retryErrors, setRetryErrors] = useState(false);
+  const [skipExisting, setSkipExisting] = useState(true);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.catalog_desc")}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label={t("tasks.form.scope")}>
+          <select
+            value={scopeMode}
+            onChange={(e) => setScopeMode(e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            data-testid="select-scope"
+          >
+            <option value="index">{t("tasks.form.scope_all")}</option>
+            <option value="category">{t("tasks.form.scope_category")}</option>
+          </select>
+        </FormField>
+        <FormField label={t("tasks.form.scan_count")}>
+          <InputField value={scanCount} onChange={setScanCount} placeholder="100" type="number" testId="input-scan-count" />
+        </FormField>
+      </div>
+      {scopeMode === "category" && (
+        <FormField label={t("tasks.form.category")}>
+          <InputField value={category} onChange={setCategory} placeholder="SOA, IAA..." testId="input-category" />
+        </FormField>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label={t("tasks.form.provider")}>
+          <InputField value={provider} onChange={setProvider} placeholder="openai" testId="input-provider" />
+        </FormField>
+        <FormField label={t("tasks.form.input_source")}>
+          <select
+            value={inputSource}
+            onChange={(e) => setInputSource(e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            data-testid="select-input-source"
+          >
+            <option value="markdown">Markdown</option>
+            <option value="source">Source</option>
+          </select>
+        </FormField>
+      </div>
+      <div className="flex gap-4">
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={retryErrors} onChange={(e) => setRetryErrors(e.target.checked)} className="rounded" data-testid="checkbox-retry-errors" />
+          {t("tasks.form.retry_errors")}
+        </label>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={skipExisting} onChange={(e) => setSkipExisting(e.target.checked)} className="rounded" data-testid="checkbox-skip-existing" />
+          {t("tasks.form.skip_existing")}
+        </label>
+      </div>
+      <button
+        onClick={() => onSubmit({
+          type: "catalog",
+          name: "AI Catalog",
+          scope_mode: scopeMode,
+          category: scopeMode === "category" ? category : undefined,
+          scan_count: parseInt(scanCount) || 100,
+          provider: provider || undefined,
+          input_source: inputSource,
+          retry_errors: retryErrors,
+          skip_existing: skipExisting,
+        })}
+        disabled={submitting || (scopeMode === "category" && !category.trim())}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-catalog"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
+
+function MarkdownForm({ onSubmit, submitting }: { onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [scopeMode, setScopeMode] = useState("index");
+  const [category, setCategory] = useState("");
+  const [scanCount, setScanCount] = useState("50");
+  const [tool, setTool] = useState("docling");
+
+  const tools = [
+    { id: "docling", name: "Docling" },
+    { id: "marker", name: "Marker" },
+    { id: "mistral", name: "Mistral OCR" },
+    { id: "auto", name: "Auto" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.markdown_desc")}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label={t("tasks.form.conversion_tool")}>
+          <select
+            value={tool}
+            onChange={(e) => setTool(e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            data-testid="select-tool"
+          >
+            {tools.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label={t("tasks.form.scan_count")}>
+          <InputField value={scanCount} onChange={setScanCount} placeholder="50" type="number" testId="input-md-scan-count" />
+        </FormField>
+      </div>
+      <FormField label={t("tasks.form.scope")}>
+        <select
+          value={scopeMode}
+          onChange={(e) => setScopeMode(e.target.value)}
+          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          data-testid="select-md-scope"
+        >
+          <option value="index">{t("tasks.form.scope_all")}</option>
+          <option value="category">{t("tasks.form.scope_category")}</option>
+        </select>
+      </FormField>
+      {scopeMode === "category" && (
+        <FormField label={t("tasks.form.category")}>
+          <InputField value={category} onChange={setCategory} placeholder="SOA, IAA..." testId="input-md-category" />
+        </FormField>
+      )}
+      <button
+        onClick={() => onSubmit({
+          type: "markdown_conversion",
+          name: `Markdown (${tool})`,
+          conversion_tool: tool,
+          scope_mode: scopeMode,
+          category: scopeMode === "category" ? category : undefined,
+          scan_count: parseInt(scanCount) || 50,
+        })}
+        disabled={submitting || (scopeMode === "category" && !category.trim())}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-markdown"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
+
+function ChunkForm({ onSubmit, submitting }: { onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [scopeMode, setScopeMode] = useState("index");
+  const [category, setCategory] = useState("");
+  const [scanCount, setScanCount] = useState("50");
+  const [profileName, setProfileName] = useState("");
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.chunk_desc")}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label={t("tasks.form.scan_count")}>
+          <InputField value={scanCount} onChange={setScanCount} placeholder="50" type="number" testId="input-chunk-scan-count" />
+        </FormField>
+        <FormField label={t("tasks.form.chunk_profile")}>
+          <InputField value={profileName} onChange={setProfileName} placeholder={t("tasks.form.default_profile")} testId="input-chunk-profile" />
+        </FormField>
+      </div>
+      <FormField label={t("tasks.form.scope")}>
+        <select
+          value={scopeMode}
+          onChange={(e) => setScopeMode(e.target.value)}
+          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          data-testid="select-chunk-scope"
+        >
+          <option value="index">{t("tasks.form.scope_all")}</option>
+          <option value="category">{t("tasks.form.scope_category")}</option>
+        </select>
+      </FormField>
+      {scopeMode === "category" && (
+        <FormField label={t("tasks.form.category")}>
+          <InputField value={category} onChange={setCategory} placeholder="SOA, IAA..." testId="input-chunk-category" />
+        </FormField>
+      )}
+      <button
+        onClick={() => onSubmit({
+          type: "chunk_generation",
+          name: "Chunk Generation",
+          scope_mode: scopeMode,
+          category: scopeMode === "category" ? category : undefined,
+          scan_count: parseInt(scanCount) || 50,
+          profile_name: profileName || undefined,
+        })}
+        disabled={submitting || (scopeMode === "category" && !category.trim())}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-chunk"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
+
+function RagIndexForm({ onSubmit, submitting }: { onSubmit: (data: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [kbId, setKbId] = useState("");
+  const [kbs, setKbs] = useState<KBItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiGet<{ knowledge_bases?: Array<Record<string, string>>; data?: { knowledge_bases?: Array<Record<string, string>> } }>("/api/rag/knowledge-bases")
+      .then((res) => {
+        const raw = res.data?.knowledge_bases || res.knowledge_bases || [];
+        setKbs(raw.map((kb) => ({ kb_id: kb.kb_id || kb.id || "", name: kb.name || kb.kb_id || kb.id || "" })));
+      })
+      .catch(() => setKbs([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.rag_desc")}</p>
+      <FormField label={t("tasks.form.knowledge_base")}>
+        {loading ? (
+          <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {t("tasks.form.loading_kbs")}
+          </div>
+        ) : kbs.length === 0 ? (
+          <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
+            <AlertCircle className="w-4 h-4" />
+            {t("tasks.form.no_kbs")}
+          </div>
+        ) : (
+          <select
+            value={kbId}
+            onChange={(e) => setKbId(e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            data-testid="select-kb"
+          >
+            <option value="">{t("tasks.form.select_kb")}</option>
+            {kbs.map((kb) => (
+              <option key={kb.kb_id} value={kb.kb_id}>{kb.name}</option>
+            ))}
+          </select>
+        )}
+      </FormField>
+      <button
+        onClick={() => {
+          if (!kbId) return;
+          onSubmit({ type: "rag_indexing", name: `RAG Index: ${kbId}`, kb_id: kbId });
+        }}
+        disabled={submitting || !kbId}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        data-testid="button-run-rag"
+      >
+        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+        {t("tasks.form.run")}
+      </button>
+    </div>
+  );
+}
 
 export default function Tasks() {
   const { t } = useTranslation();
@@ -126,7 +615,10 @@ export default function Tasks() {
   const [loading, setLoading] = useState(true);
   const [logModal, setLogModal] = useState<{ taskId: string; log: string } | null>(null);
   const [logLoading, setLogLoading] = useState(false);
-  const [startingTask, setStartingTask] = useState<string | null>(null);
+  const [activeForm, setActiveForm] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchTasks = useCallback(async () => {
@@ -173,25 +665,62 @@ export default function Tasks() {
     setLogModal({ taskId, log: "" });
     try {
       const res = await apiGet<{ log: string }>(`/api/tasks/log/${taskId}`);
-      setLogModal({ taskId, log: res.log || "No log available." });
+      setLogModal({ taskId, log: res.log || t("tasks.form.no_log") });
     } catch {
-      setLogModal({ taskId, log: "Failed to load log." });
+      setLogModal({ taskId, log: t("tasks.form.log_error") });
     } finally {
       setLogLoading(false);
     }
   };
 
-  const startTask = async (type: string) => {
-    setStartingTask(type);
+  const handleSubmitTask = async (data: Record<string, unknown>) => {
+    setSubmitting(true);
+    setSubmitError(null);
+    setSubmitSuccess(null);
     try {
-      await apiPost("/api/collections/run", { type, name: type });
+      const res = await apiPost<{ success?: boolean; job_id?: string; error?: string }>("/api/collections/run", data);
+      if (res.error) {
+        setSubmitError(res.error);
+        return;
+      }
+      setSubmitSuccess(res.job_id ? `${t("tasks.form.started")} (${res.job_id})` : t("tasks.form.started"));
       await fetchTasks();
-    } catch (e) {
-      console.error("Failed to start task:", e);
+      setTimeout(() => {
+        setActiveForm(null);
+        setSubmitSuccess(null);
+      }, 2000);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t("tasks.form.start_error");
+      setSubmitError(msg);
     } finally {
-      setStartingTask(null);
+      setSubmitting(false);
     }
   };
+
+  const activeTaskType = taskTypes.find((tt) => tt.type === activeForm);
+
+  function renderForm() {
+    switch (activeForm) {
+      case "scheduled":
+        return <ScheduledForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "adhoc_url":
+        return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "file_import":
+        return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "web_search":
+        return <WebSearchForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "catalog":
+        return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "markdown":
+        return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "chunk":
+        return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "rag_index":
+        return <RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      default:
+        return null;
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -231,7 +760,7 @@ export default function Tasks() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-center py-12 rounded-xl border border-dashed border-border bg-card"
+            className="text-center py-10 rounded-xl border border-dashed border-border bg-card"
             data-testid="text-no-active-tasks"
           >
             <CheckCircle2 className="w-10 h-10 mx-auto text-muted-foreground/40 mb-2" />
@@ -270,12 +799,9 @@ export default function Tasks() {
                     <Square className="w-4 h-4" />
                   </button>
                 </div>
-
                 <div className="mt-3">
                   <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
-                    <span>
-                      {task.items_processed}/{task.items_total || "?"}
-                    </span>
+                    <span>{task.items_processed}/{task.items_total || "?"}</span>
                     <span>{Math.round(task.progress)}%</span>
                   </div>
                   <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
@@ -287,7 +813,6 @@ export default function Tasks() {
                     />
                   </div>
                 </div>
-
                 <p className="text-[11px] text-muted-foreground mt-2">
                   {t("tasks.started")}: {formatDate(task.started_at)}
                 </p>
@@ -299,33 +824,81 @@ export default function Tasks() {
 
       <div>
         <h2 className="text-lg font-semibold mb-3">{t("tasks.new_task")}</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {taskTypes.map(({ type, icon: Icon, color }, i) => (
-            <motion.button
-              key={type}
-              custom={i}
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-              onClick={() => startTask(type)}
-              disabled={startingTask === type}
-              className={cn(
-                "flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:shadow-md transition-all duration-300 disabled:opacity-50"
-              )}
-              data-testid={`button-start-${type}`}
+
+        <AnimatePresence mode="wait">
+          {activeForm ? (
+            <motion.div
+              key="form"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="rounded-xl border border-border bg-card overflow-hidden"
             >
-              <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", color)}>
-                {startingTask === type ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Icon className="w-5 h-5" strokeWidth={1.8} />
+              <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+                <button
+                  onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitSuccess(null); }}
+                  className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+                  data-testid="button-back-tasks"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                {activeTaskType && (
+                  <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", activeTaskType.color)}>
+                    <activeTaskType.icon className="w-5 h-5" strokeWidth={1.8} />
+                  </div>
                 )}
+                <div>
+                  <h3 className="font-semibold text-sm">{t(`tasks.type.${activeForm}`)}</h3>
+                </div>
               </div>
-              <span className="text-xs font-medium text-center">{t(`tasks.type.${type}`)}</span>
-            </motion.button>
-          ))}
-        </div>
-        {sites.length > 0 && (
+              <div className="p-5">
+                {submitError && (
+                  <div className="mb-4 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-submit-error">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{submitError}</span>
+                    <button onClick={() => setSubmitError(null)} className="ml-auto shrink-0"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                )}
+                {submitSuccess && (
+                  <div className="mb-4 px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2" data-testid="text-submit-success">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{submitSuccess}</span>
+                  </div>
+                )}
+                {renderForm()}
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="grid"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="grid grid-cols-2 sm:grid-cols-4 gap-3"
+            >
+              {taskTypes.map(({ type, icon: Icon, color }, i) => (
+                <motion.button
+                  key={type}
+                  custom={i}
+                  variants={fadeUp}
+                  initial="hidden"
+                  animate="visible"
+                  onClick={() => { setActiveForm(type); setSubmitError(null); setSubmitSuccess(null); }}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:shadow-md transition-all duration-300"
+                  data-testid={`button-start-${type}`}
+                >
+                  <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", color)}>
+                    <Icon className="w-5 h-5" strokeWidth={1.8} />
+                  </div>
+                  <span className="text-xs font-medium text-center">{t(`tasks.type.${type}`)}</span>
+                </motion.button>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {!activeForm && sites.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             <span className="text-xs text-muted-foreground self-center">{t("tasks.configured_sites")}:</span>
             {sites.map((site) => (
@@ -353,7 +926,7 @@ export default function Tasks() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-center py-12 rounded-xl border border-dashed border-border bg-card"
+            className="text-center py-10 rounded-xl border border-dashed border-border bg-card"
             data-testid="text-no-history"
           >
             <Inbox className="w-10 h-10 mx-auto text-muted-foreground/40 mb-2" />
@@ -383,16 +956,10 @@ export default function Tasks() {
                   <ScrollText className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
                   <span className="text-sm font-medium truncate">{task.name}</span>
                 </div>
-                <span className="text-xs text-muted-foreground hidden sm:flex items-center">
-                  {task.type}
-                </span>
+                <span className="text-xs text-muted-foreground hidden sm:flex items-center">{task.type}</span>
                 <span className="hidden sm:flex items-center">{statusBadge(task.status)}</span>
-                <span className="text-xs text-muted-foreground hidden sm:flex items-center">
-                  {formatDate(task.started_at)}
-                </span>
-                <span className="text-xs text-muted-foreground hidden sm:flex items-center">
-                  {task.items_processed}
-                </span>
+                <span className="text-xs text-muted-foreground hidden sm:flex items-center">{formatDate(task.started_at)}</span>
+                <span className="text-xs text-muted-foreground hidden sm:flex items-center">{task.items_processed}</span>
               </motion.div>
             ))}
           </div>
@@ -434,10 +1001,7 @@ export default function Tasks() {
                     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
-                  <pre
-                    className="text-xs font-mono whitespace-pre-wrap text-muted-foreground leading-relaxed"
-                    data-testid="text-task-log"
-                  >
+                  <pre className="text-xs font-mono whitespace-pre-wrap text-muted-foreground leading-relaxed" data-testid="text-task-log">
                     {logModal.log}
                   </pre>
                 )}
