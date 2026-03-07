@@ -630,35 +630,43 @@ export default function Knowledge() {
             </p>
           </div>
         ) : (
-          <div className="rounded-xl border border-border bg-card overflow-hidden">
-            <div className="grid grid-cols-[1fr_80px_80px_90px_100px_40px] gap-4 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              <span>{t("knowledge.profile_name")}</span>
-              <span>{t("knowledge.chunk_size")}</span>
-              <span>{t("knowledge.overlap")}</span>
-              <span>{t("knowledge.splitter")}</span>
-              <span>{t("knowledge.tokenizer")}</span>
-              <span />
-            </div>
-            {profiles.map((profile, i) => (
-              <div
-                key={profile.profile_id || profile.name}
-                className="grid grid-cols-[1fr_80px_80px_90px_100px_40px] gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors items-center"
-                data-testid={`row-profile-${i}`}
-              >
-                <span className="text-sm font-medium">{profile.name}</span>
-                <span className="text-sm text-muted-foreground">{profile.chunk_size}</span>
-                <span className="text-sm text-muted-foreground">{profile.chunk_overlap}</span>
-                <span className="text-xs text-muted-foreground">{profile.splitter || "-"}</span>
-                <span className="text-xs text-muted-foreground font-mono">{profile.tokenizer || "-"}</span>
-                <button
-                  onClick={() => profile.profile_id && handleDeleteProfile(profile.profile_id)}
-                  className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
-                  data-testid={`button-delete-profile-${i}`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+          <div className="rounded-xl border border-border bg-card overflow-x-auto">
+            <table className="w-full min-w-[540px] text-sm">
+              <thead>
+                <tr className="bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  <th className="text-left px-4 py-2.5 whitespace-nowrap">{t("knowledge.profile_name")}</th>
+                  <th className="text-right px-4 py-2.5 whitespace-nowrap">{t("knowledge.chunk_size")}</th>
+                  <th className="text-right px-4 py-2.5 whitespace-nowrap">{t("knowledge.overlap")}</th>
+                  <th className="text-left px-4 py-2.5 whitespace-nowrap">{t("knowledge.splitter")}</th>
+                  <th className="text-left px-4 py-2.5 whitespace-nowrap">{t("knowledge.tokenizer")}</th>
+                  <th className="w-10 px-2 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map((profile, i) => (
+                  <tr
+                    key={profile.profile_id || profile.name}
+                    className="border-t border-border hover:bg-muted/30 transition-colors"
+                    data-testid={`row-profile-${i}`}
+                  >
+                    <td className="px-4 py-3 font-medium whitespace-nowrap">{profile.name}</td>
+                    <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">{profile.chunk_size}</td>
+                    <td className="px-4 py-3 text-right text-muted-foreground tabular-nums">{profile.chunk_overlap}</td>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{profile.splitter || "-"}</td>
+                    <td className="px-4 py-3 text-muted-foreground font-mono whitespace-nowrap">{profile.tokenizer || "-"}</td>
+                    <td className="px-2 py-3 text-center">
+                      <button
+                        onClick={() => profile.profile_id && handleDeleteProfile(profile.profile_id)}
+                        className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                        data-testid={`button-delete-profile-${i}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
