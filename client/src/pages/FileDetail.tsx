@@ -405,19 +405,25 @@ export default function FileDetail() {
     } catch { /* ignore */ } finally { setCatalogSubmitting(false); }
   }
 
+  const [kbLoadError, setKbLoadError] = useState(false);
+
   async function openChunkModal() {
     setShowChunkModal(true);
     try {
-      const [profiles, kbs] = await Promise.all([
-        apiGet<{ data?: { profiles?: ChunkProfile[] }; profiles?: ChunkProfile[] }>("/api/chunk/profiles"),
-        apiGet<{ data?: { knowledge_bases?: KnowledgeBase[] }; knowledge_bases?: KnowledgeBase[] }>("/api/rag/knowledge-bases"),
-      ]);
-      const p = profiles.data?.profiles || profiles.profiles || [];
-      const k = kbs.data?.knowledge_bases || kbs.knowledge_bases || [];
+      const profilesRes = await apiGet<{ data?: { profiles?: ChunkProfile[] }; profiles?: ChunkProfile[] }>("/api/chunk/profiles");
+      const p = profilesRes.data?.profiles || profilesRes.profiles || [];
       setChunkProfiles(p);
-      setKnowledgeBases(k);
       if (p.length > 0 && !chunkProfileId) setChunkProfileId(p[0].id);
     } catch { /* ignore */ }
+    try {
+      const kbsRes = await apiGet<{ data?: { knowledge_bases?: KnowledgeBase[] }; knowledge_bases?: KnowledgeBase[] }>("/api/rag/knowledge-bases");
+      const k = kbsRes.data?.knowledge_bases || kbsRes.knowledge_bases || [];
+      setKnowledgeBases(k);
+      setKbLoadError(false);
+    } catch {
+      setKnowledgeBases([]);
+      setKbLoadError(true);
+    }
   }
 
   async function submitChunk() {
@@ -881,13 +887,19 @@ export default function FileDetail() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.bind_kb")}</label>
-              <select value={chunkKbId} onChange={(e) => setChunkKbId(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-chunk-kb">
-                <option value="">{t("fv.no_bind")}</option>
-                {knowledgeBases.map((kb) => (
-                  <option key={kb.id} value={kb.id}>{kb.name}</option>
-                ))}
-              </select>
+              {kbLoadError ? (
+                <div className="px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400">
+                  {t("fv.kb_load_error")}
+                </div>
+              ) : (
+                <select value={chunkKbId} onChange={(e) => setChunkKbId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="select-chunk-kb">
+                  <option value="">{t("fv.no_bind")}</option>
+                  {knowledgeBases.map((kb) => (
+                    <option key={kb.id} value={kb.id}>{kb.name}</option>
+                  ))}
+                </select>
+              )}
               <p className="text-[11px] text-muted-foreground mt-1">{t("fv.bind_kb_hint")}</p>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">

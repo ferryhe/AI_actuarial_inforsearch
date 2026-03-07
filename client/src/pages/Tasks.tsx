@@ -1387,6 +1387,7 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
   const [overwriteSameProfile, setOverwriteSameProfile] = useState(false);
   const [kbId, setKbId] = useState("");
   const [kbs, setKbs] = useState<KBItem[]>([]);
+  const [kbLoadError, setKbLoadError] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
@@ -1406,7 +1407,8 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
       .then((res) => {
         const raw = res.data?.knowledge_bases || res.knowledge_bases || [];
         setKbs(raw.map((kb) => ({ kb_id: kb.kb_id || kb.id || "", name: kb.name || kb.kb_id || kb.id || "" })));
-      }).catch(() => setKbs([]));
+        setKbLoadError(false);
+      }).catch(() => { setKbs([]); setKbLoadError(true); });
   }, []);
 
   useEffect(() => {
@@ -1484,8 +1486,14 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
       <div className="border-t border-border pt-3 mt-1">
         <p className="text-xs font-medium text-muted-foreground mb-3">{t("tasks.form.kb_binding")}</p>
         <FormField label={t("tasks.form.bind_to_kb")} hint={t("tasks.form.bind_hint")}>
-          <SelectField value={kbId} onChange={setKbId} testId="select-chunk-kb"
-            options={[{ value: "", label: t("tasks.form.no_binding") }, ...kbs.map((kb) => ({ value: kb.kb_id, label: kb.name }))]} />
+          {kbLoadError ? (
+            <div className="px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400">
+              {t("tasks.form.kb_load_error")}
+            </div>
+          ) : (
+            <SelectField value={kbId} onChange={setKbId} testId="select-chunk-kb"
+              options={[{ value: "", label: t("tasks.form.no_binding") }, ...kbs.map((kb) => ({ value: kb.kb_id, label: kb.name }))]} />
+          )}
         </FormField>
       </div>
       <CheckboxField checked={overwriteSameProfile} onChange={setOverwriteSameProfile}
