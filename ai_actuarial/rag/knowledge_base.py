@@ -13,6 +13,7 @@ Features:
 """
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,8 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import KnowledgeBaseException
 from ai_actuarial.rag.semantic_chunking import SemanticChunker
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeBase:
@@ -125,7 +128,8 @@ class KnowledgeBaseManager:
         
         try:
             self.embedding_generator = EmbeddingGenerator(self.config)
-        except Exception:
+        except Exception as exc:
+            logger.warning("EmbeddingGenerator init failed: %s", exc)
             self.embedding_generator = None
     
     def _ensure_rag_tables(self) -> None:

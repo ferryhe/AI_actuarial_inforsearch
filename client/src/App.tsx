@@ -1,5 +1,4 @@
 import { Switch, Route } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Database from "@/pages/Database";
@@ -12,8 +11,6 @@ import Logs from "@/pages/Logs";
 import FileDetail from "@/pages/FileDetail";
 import FilePreview from "@/pages/FilePreview";
 import Users from "@/pages/Users";
-
-const queryClient = new QueryClient();
 
 function Router() {
   return (
@@ -40,10 +37,8 @@ function Router() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <Layout>
-        <Router />
-      </Layout>
-    </QueryClientProvider>
+    <Layout>
+      <Router />
+    </Layout>
   );
 }
