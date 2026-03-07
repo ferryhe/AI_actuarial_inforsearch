@@ -6,6 +6,7 @@ import Database from "@/pages/Database";
 import Chat from "@/pages/Chat";
 import Tasks from "@/pages/Tasks";
 import Knowledge from "@/pages/Knowledge";
+import KBDetail from "@/pages/KBDetail";
 import Settings from "@/pages/Settings";
 import Logs from "@/pages/Logs";
 import FileDetail from "@/pages/FileDetail";
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/chat" component={Chat} />
       <Route path="/tasks" component={Tasks} />
       <Route path="/logs" component={Logs} />
+      <Route path="/knowledge/:kbId" component={KBDetail} />
       <Route path="/knowledge" component={Knowledge} />
       <Route path="/settings" component={Settings} />
       <Route path="/users" component={Users} />
