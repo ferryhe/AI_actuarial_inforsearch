@@ -36,7 +36,9 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 - **Chat** (`/chat`) - AI chatbot with conversation management, mode/KB selection, citations
 - **Tasks** (`/tasks`) - 9 task types in a grid: Site Configuration (YAML import/export, site CRUD, per-site crawl, backup management), Web Crawl, URL, File Import (with folder browser), Search, Catalog, Markdown, Chunk, RAG Index. Below the grid: standalone Scheduled Tasks section (CRUD for generic recurring tasks, scheduler status, reinit).
 - **Knowledge** (`/knowledge`) - RAG knowledge base management, chunk profiles
-- **Settings** (`/settings`) - Backend config, LLM providers, search engines, AI models, Task History (admin-only, collapsible with log viewer)
+- **Settings** (`/settings`) - 4-tab interactive configuration: AI Configuration (LLM provider API key management, model selection per function), Search & Crawler (search engine API keys, editable crawler defaults), Categories (add/delete/edit categories with keywords, AI filter keywords), API Tokens (create/revoke tokens)
+- **Logs** (`/logs`) - System logs viewer with auto-scroll, search/filter, log level filtering (INFO/WARNING/ERROR), task history section
+- **Users** (`/users`) - Admin user management: role changes, enable/disable accounts, quota reset, activity log viewer
 
 ## YAML Config Backup System
 - Backend auto-backs up `config/sites.yaml` to `config/backups/sites_YYYYMMDD_HHMMSS.yaml` before imports, restores, and site edits (throttled to max 1 backup per 5 min for edits)
