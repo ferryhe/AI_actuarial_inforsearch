@@ -2119,6 +2119,266 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.exception("Error deleting site")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    # ── Site Config YAML import / export / backup ────────────────────
+    BACKUPS_DIR = os.path.join(os.path.dirname(_get_sites_config_path()), "backups")
+
+    def _ensure_backup_dir():
+        os.makedirs(BACKUPS_DIR, exist_ok=True)
+
+    def _backup_config(label: str = "") -> str:
+        """Create a timestamped backup of the current sites.yaml. Returns backup filename."""
+        _ensure_backup_dir()
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = f"_{label}" if label else ""
+        backup_name = f"sites_{ts}{suffix}.yaml"
+        backup_path = os.path.join(BACKUPS_DIR, backup_name)
+        config_path = _get_sites_config_path()
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as src:
+                content = src.read()
+            with open(backup_path, "w", encoding="utf-8") as dst:
+                dst.write(content)
+        return backup_name
+
+    def _should_auto_backup() -> bool:
+        """Only auto-backup if last backup is >5 min old."""
+        _ensure_backup_dir()
+        backups = sorted(Path(BACKUPS_DIR).glob("sites_*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not backups:
+            return True
+        age = time.time() - backups[0].stat().st_mtime
+        return age > 300
+
+    @app.route("/api/config/sites/import", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_sites_import():
+        """Import sites from JSON array or raw YAML text."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            incoming_sites = data.get("sites")
+            yaml_text = data.get("yaml_text")
+            mode = str(data.get("mode", "merge")).strip().lower()
+            preview_only = bool(data.get("preview"))
+
+            if yaml_text and not incoming_sites:
+                try:
+                    parsed = yaml.safe_load(yaml_text) or {}
+                except yaml.YAMLError as ye:
+                    return jsonify({"error": f"Invalid YAML: {ye}"}), 400
+                if isinstance(parsed, dict):
+                    incoming_sites = parsed.get("sites", [])
+                elif isinstance(parsed, list):
+                    incoming_sites = parsed
+                else:
+                    return jsonify({"error": "YAML must contain a 'sites' list or be a list of sites"}), 400
+
+            if not incoming_sites or not isinstance(incoming_sites, list):
+                return jsonify({"error": "sites array is required (provide 'sites' or 'yaml_text')"}), 400
+
+            if preview_only:
+                valid = [s for s in incoming_sites if isinstance(s, dict) and s.get("name") and s.get("url")]
+                names = [s.get("name", "") for s in valid]
+                return jsonify({"success": True, "count": len(valid), "names": names})
+
+            _backup_config("before_import")
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if "sites" not in config_data:
+                config_data["sites"] = []
+
+            imported = 0
+            skipped = 0
+            skipped_names = []
+            errors = []
+
+            if mode == "overwrite":
+                valid_sites = []
+                for s in incoming_sites:
+                    if not isinstance(s, dict) or not s.get("name") or not s.get("url"):
+                        errors.append(f"Invalid site entry: {s}")
+                        continue
+                    valid_sites.append(s)
+                config_data["sites"] = valid_sites
+                imported = len(valid_sites)
+            else:
+                existing_names = {s.get("name") for s in config_data["sites"]}
+                for s in incoming_sites:
+                    if not isinstance(s, dict) or not s.get("name") or not s.get("url"):
+                        errors.append(f"Invalid site entry: {s}")
+                        continue
+                    if s["name"] in existing_names:
+                        skipped += 1
+                        skipped_names.append(s["name"])
+                        continue
+                    config_data["sites"].append(s)
+                    existing_names.add(s["name"])
+                    imported += 1
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            result = {"success": True, "imported": imported, "skipped": skipped, "skipped_names": skipped_names}
+            if errors:
+                result["errors"] = errors
+            return jsonify(result)
+        except Exception as e:
+            logger.exception("Error importing sites")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/sites/export")
+    @require_permissions("schedule.write")
+    def api_config_sites_export():
+        """Export current sites config as downloadable YAML."""
+        try:
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            sites_only = {"sites": config_data.get("sites", [])}
+            content = yaml.dump(sites_only, sort_keys=False, allow_unicode=True, default_flow_style=False)
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            response = app.response_class(content, mimetype="application/x-yaml")
+            response.headers["Content-Disposition"] = f"attachment; filename=sites_export_{ts}.yaml"
+            return response
+        except Exception as e:
+            logger.exception("Error exporting sites")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/sites/sample")
+    @require_permissions("schedule.write")
+    def api_config_sites_sample():
+        """Download a sample YAML file with example sites."""
+        sample = """# AI Actuarial Info Search - Site Configuration Sample
+# Import this file to add sites for document crawling.
+# Each site requires at minimum: name and url.
+
+sites:
+  - name: Society of Actuaries (SOA)
+    url: https://www.soa.org/
+    max_pages: 200
+    max_depth: 3
+    keywords:
+      - artificial intelligence
+      - machine learning
+      - actuarial
+    exclude_keywords:
+      - newsletter
+      - curriculum
+    exclude_prefixes:
+      - /about/
+    content_selector: main
+    schedule_interval: weekly
+
+  - name: Institute and Faculty of Actuaries (IFoA)
+    url: https://www.actuaries.org.uk/
+    max_pages: 150
+    max_depth: 2
+    keywords:
+      - AI
+      - data science
+      - risk management
+    exclude_keywords:
+      - events
+    # schedule_interval is optional; omit to use the global schedule
+
+# Field Reference:
+# name (required)          - Unique display name for this site
+# url (required)           - Root URL to start crawling from
+# max_pages (optional)     - Maximum pages to crawl (default: from global config)
+# max_depth (optional)     - Maximum link depth (default: from global config)
+# keywords (optional)      - List of keywords to filter relevant pages
+# exclude_keywords (opt.)  - List of keywords to exclude pages
+# exclude_prefixes (opt.)  - URL path prefixes to skip
+# content_selector (opt.)  - CSS selector for main content area
+# schedule_interval (opt.) - Per-site schedule: daily, weekly, every N hours
+"""
+        response = app.response_class(sample, mimetype="application/x-yaml")
+        response.headers["Content-Disposition"] = "attachment; filename=sites_sample.yaml"
+        return response
+
+    @app.route("/api/config/backups")
+    @require_permissions("schedule.write")
+    def api_config_backups_list():
+        """List available configuration backups."""
+        try:
+            _ensure_backup_dir()
+            backups = []
+            for p in sorted(Path(BACKUPS_DIR).glob("sites_*.yaml"), key=lambda x: x.stat().st_mtime, reverse=True):
+                st = p.stat()
+                backups.append({
+                    "filename": p.name,
+                    "timestamp": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                    "size_bytes": st.st_size,
+                })
+            return jsonify({"backups": backups})
+        except Exception as e:
+            logger.exception("Error listing backups")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/backups/restore", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_backups_restore():
+        """Restore a backup file, backing up current config first."""
+        nonlocal site_config
+        try:
+            data = request.get_json(silent=True) or {}
+            filename = str(data.get("filename") or "").strip()
+            if not filename or ".." in filename or "/" in filename:
+                return jsonify({"error": "Invalid filename"}), 400
+
+            backup_path = os.path.join(BACKUPS_DIR, filename)
+            if not os.path.exists(backup_path):
+                return jsonify({"error": "Backup file not found"}), 404
+
+            _backup_config("before_restore")
+
+            with open(backup_path, "r", encoding="utf-8") as f:
+                backup_data = yaml.safe_load(f) or {}
+
+            config_path = _get_sites_config_path()
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f) or {}
+
+            if "sites" in backup_data:
+                config_data["sites"] = backup_data["sites"]
+            if "scheduled_tasks" in backup_data:
+                config_data["scheduled_tasks"] = backup_data["scheduled_tasks"]
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
+
+            site_config = config_data
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error restoring backup")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
+    @app.route("/api/config/backups/delete", methods=["POST"])
+    @require_permissions("schedule.write")
+    def api_config_backups_delete():
+        """Delete a specific backup file."""
+        try:
+            data = request.get_json(silent=True) or {}
+            filename = str(data.get("filename") or "").strip()
+            if not filename or ".." in filename or "/" in filename:
+                return jsonify({"error": "Invalid filename"}), 400
+
+            backup_path = os.path.join(BACKUPS_DIR, filename)
+            if not os.path.exists(backup_path):
+                return jsonify({"error": "Backup file not found"}), 404
+
+            os.remove(backup_path)
+            return jsonify({"success": True})
+        except Exception as e:
+            logger.exception("Error deleting backup")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
     # ── Generic Scheduled Tasks CRUD ──────────────────────────────────
     VALID_SCHEDULED_TASK_TYPES = [
         "scheduled", "quick_check", "url", "file", "search",
