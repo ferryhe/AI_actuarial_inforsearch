@@ -179,6 +179,9 @@ function loadPdfjsLib(): Promise<any> {
       document.head.appendChild(fallback);
     };
     document.head.appendChild(script);
+  }).catch((err) => {
+    _pdfjsLibPromise = null;
+    return Promise.reject(err);
   });
   return _pdfjsLibPromise;
 }

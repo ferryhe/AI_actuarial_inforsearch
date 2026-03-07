@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users as UsersIcon,
@@ -46,6 +46,17 @@ export default function UsersPage() {
   const [activityModal, setActivityModal] = useState<{ user: User; entries: ActivityEntry[] } | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
   const [roleDropdown, setRoleDropdown] = useState<number | null>(null);
+  const roleDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (roleDropdownRef.current && !roleDropdownRef.current.contains(e.target as Node)) {
+        setRoleDropdown(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -136,7 +147,7 @@ export default function UsersPage() {
     }
   };
 
-  const roleOptions = ["admin", "user", "viewer"];
+  const roleOptions = ["admin", "registered", "premium", "operator", "operator_ai"];
 
   return (
     <div className="space-y-6">
@@ -206,7 +217,7 @@ export default function UsersPage() {
                       {user.email || "—"}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="relative">
+                      <div className="relative" ref={roleDropdown === user.id ? roleDropdownRef : undefined}>
                         <button
                           onClick={() => setRoleDropdown(roleDropdown === user.id ? null : user.id)}
                           disabled={!!actionLoading[user.id]}
@@ -214,9 +225,11 @@ export default function UsersPage() {
                             "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
                             user.role === "admin"
                               ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                              : user.role === "viewer"
-                                ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                : "bg-green-500/10 text-green-600 dark:text-green-400"
+                              : user.role === "premium"
+                                ? "bg-violet-500/10 text-violet-600 dark:text-violet-400"
+                                : user.role === "operator" || user.role === "operator_ai"
+                                  ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                  : "bg-green-500/10 text-green-600 dark:text-green-400"
                           )}
                           data-testid={`button-role-${user.id}`}
                         >

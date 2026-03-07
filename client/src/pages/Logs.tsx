@@ -391,7 +391,7 @@ export default function LogsPage() {
           >
             {(newestFirst ? [...filteredLogs].reverse() : filteredLogs).map((entry, i) => (
               <div
-                key={i}
+                key={`${entry.timestamp}-${i}`}
                 className={cn(
                   "flex items-start gap-2 px-4 py-1.5 border-b border-border/50 hover:bg-muted/20 transition-colors",
                   levelBg(entry.level)

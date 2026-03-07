@@ -2341,16 +2341,25 @@ sites:
         try:
             data = request.get_json(silent=True) or {}
             filename = str(data.get("filename") or "").strip()
-            if not filename or ".." in filename or "/" in filename:
+            if not filename or ".." in filename or "/" in filename or (os.sep != "/" and os.sep in filename):
                 return jsonify({"error": "Invalid filename"}), 400
 
             backup_path = os.path.join(BACKUPS_DIR, filename)
-            if not os.path.exists(backup_path):
+            backups_dir_abs = os.path.abspath(BACKUPS_DIR)
+            backup_path_abs = os.path.abspath(backup_path)
+            try:
+                common = os.path.commonpath([backups_dir_abs, backup_path_abs])
+            except ValueError:
+                return jsonify({"error": "Invalid filename"}), 400
+            if common != backups_dir_abs:
+                return jsonify({"error": "Invalid filename"}), 400
+
+            if not os.path.exists(backup_path_abs):
                 return jsonify({"error": "Backup file not found"}), 404
 
             _backup_config("before_restore")
 
-            with open(backup_path, "r", encoding="utf-8") as f:
+            with open(backup_path_abs, "r", encoding="utf-8") as f:
                 backup_data = yaml.safe_load(f) or {}
 
             config_path = _get_sites_config_path()
@@ -2378,14 +2387,23 @@ sites:
         try:
             data = request.get_json(silent=True) or {}
             filename = str(data.get("filename") or "").strip()
-            if not filename or ".." in filename or "/" in filename:
+            if not filename or ".." in filename or "/" in filename or (os.sep != "/" and os.sep in filename):
                 return jsonify({"error": "Invalid filename"}), 400
 
             backup_path = os.path.join(BACKUPS_DIR, filename)
-            if not os.path.exists(backup_path):
+            backups_dir_abs = os.path.abspath(BACKUPS_DIR)
+            backup_path_abs = os.path.abspath(backup_path)
+            try:
+                common = os.path.commonpath([backups_dir_abs, backup_path_abs])
+            except ValueError:
+                return jsonify({"error": "Invalid filename"}), 400
+            if common != backups_dir_abs:
+                return jsonify({"error": "Invalid filename"}), 400
+
+            if not os.path.exists(backup_path_abs):
                 return jsonify({"error": "Backup file not found"}), 404
 
-            os.remove(backup_path)
+            os.remove(backup_path_abs)
             return jsonify({"success": True})
         except Exception as e:
             logger.exception("Error deleting backup")
@@ -2433,6 +2451,8 @@ sites:
                 return jsonify({"error": f"Invalid task type: {task_type}"}), 400
             if not interval:
                 return jsonify({"error": "Schedule interval is required"}), 400
+            if interval not in VALID_INTERVALS:
+                return jsonify({"error": f"Invalid schedule interval: {interval}. Valid values: {', '.join(VALID_INTERVALS)}"}), 400
 
             config_path = _get_sites_config_path()
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -2486,9 +2506,15 @@ sites:
                 if t.get('name') == original_name:
                     t['name'] = name
                     if 'type' in data:
-                        t['type'] = str(data['type']).strip()
+                        new_type = str(data['type']).strip()
+                        if new_type not in VALID_SCHEDULED_TASK_TYPES:
+                            return jsonify({"error": f"Invalid task type: {new_type}"}), 400
+                        t['type'] = new_type
                     if 'interval' in data:
-                        t['interval'] = str(data['interval']).strip()
+                        new_interval = str(data['interval']).strip()
+                        if new_interval not in VALID_INTERVALS:
+                            return jsonify({"error": f"Invalid schedule interval: {new_interval}. Valid values: {', '.join(VALID_INTERVALS)}"}), 400
+                        t['interval'] = new_interval
                     if 'enabled' in data:
                         t['enabled'] = bool(data['enabled'])
                     if 'params' in data:

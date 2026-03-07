@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { apiGet } from "@/lib/api";
 
 interface Stats {
   total_files: number;
@@ -144,8 +145,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/stats").then((r) => r.json()),
-      fetch("/api/files?limit=8&order_by=last_seen&order_dir=desc").then((r) => r.json()),
+      apiGet<Stats>("/api/stats"),
+      apiGet<{ files: FileItem[] }>("/api/files?limit=8&order_by=last_seen&order_dir=desc"),
     ])
       .then(([statsData, filesData]) => {
         setStats(statsData);
