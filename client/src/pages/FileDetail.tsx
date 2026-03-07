@@ -286,7 +286,6 @@ export default function FileDetail() {
     conversionPoller.status === "polling" ||
     catalogPoller.status === "polling";
   const mdEditMode = mdTab === "edit";
-  const isLocked = editing || mdEditMode || anyTaskRunning;
 
   useEffect(() => {
     if (!convertEngine && taskOptions.conversionToolsInfo.length > 0) {
@@ -479,12 +478,12 @@ export default function FileDetail() {
 
   const disabledBtn = "opacity-40 pointer-events-none cursor-not-allowed";
 
-  const canEdit = !isLocked;
-  const canCatalog = !isLocked;
-  const canDownload = !editing && !anyTaskRunning;
-  const canPreview = !editing && !mdEditMode && !anyTaskRunning;
-  const canDelete = !isLocked;
-  const canModifyChunk = !editing && !mdEditMode && !anyTaskRunning;
+  const canEdit = !anyTaskRunning && !mdEditMode;
+  const canCatalog = !anyTaskRunning && !editing && !mdEditMode;
+  const canDownload = true;
+  const canPreview = true;
+  const canDelete = !anyTaskRunning;
+  const canModifyChunk = !anyTaskRunning && !editing && !mdEditMode;
   const canSwitchMdEdit = !editing && !anyTaskRunning;
   const canConvert = !editing && !anyTaskRunning;
 

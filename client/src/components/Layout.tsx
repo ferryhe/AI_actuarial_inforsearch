@@ -12,6 +12,8 @@ import {
   Languages,
   Menu,
   X,
+  Users,
+  ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
@@ -33,7 +35,9 @@ const navItems = [
   { path: "/database", icon: Database, labelKey: "nav.database" },
   { path: "/chat", icon: MessageSquare, labelKey: "nav.chat" },
   { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks" },
+  { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },
   { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge" },
+  { path: "/users", icon: Users, labelKey: "nav.users" },
   { path: "/settings", icon: Settings, labelKey: "nav.settings" },
 ];
 

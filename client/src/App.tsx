@@ -7,8 +7,10 @@ import Chat from "@/pages/Chat";
 import Tasks from "@/pages/Tasks";
 import Knowledge from "@/pages/Knowledge";
 import Settings from "@/pages/Settings";
+import Logs from "@/pages/Logs";
 import FileDetail from "@/pages/FileDetail";
 import FilePreview from "@/pages/FilePreview";
+import Users from "@/pages/Users";
 
 const queryClient = new QueryClient();
 
@@ -21,8 +23,10 @@ function Router() {
       <Route path="/file-preview" component={FilePreview} />
       <Route path="/chat" component={Chat} />
       <Route path="/tasks" component={Tasks} />
+      <Route path="/logs" component={Logs} />
       <Route path="/knowledge" component={Knowledge} />
       <Route path="/settings" component={Settings} />
+      <Route path="/users" component={Users} />
       <Route>
         <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
           404
