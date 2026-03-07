@@ -7,6 +7,8 @@ import Chat from "@/pages/Chat";
 import Tasks from "@/pages/Tasks";
 import Knowledge from "@/pages/Knowledge";
 import Settings from "@/pages/Settings";
+import FileDetail from "@/pages/FileDetail";
+import FilePreview from "@/pages/FilePreview";
 
 const queryClient = new QueryClient();
 
@@ -15,6 +17,8 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/database" component={Database} />
+      <Route path="/file/:url+" component={FileDetail} />
+      <Route path="/file-preview" component={FilePreview} />
       <Route path="/chat" component={Chat} />
       <Route path="/tasks" component={Tasks} />
       <Route path="/knowledge" component={Knowledge} />

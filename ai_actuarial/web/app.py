@@ -2988,6 +2988,29 @@ sites:
             logger.exception("Error browsing folder")
             return _api_error("Internal server error", status_code=500, detail=str(e))
 
+    @app.route("/api/files/detail")
+    @require_permissions("files.read")
+    def api_file_detail():
+        """Get single file detail as JSON (metadata + catalog info)."""
+        try:
+            url = request.args.get("url", "").strip()
+            if not url:
+                return jsonify({"error": "url parameter is required"}), 400
+
+            storage = Storage(db_path)
+            try:
+                file_data = storage.get_file_with_catalog(url)
+            finally:
+                storage.close()
+
+            if not file_data:
+                return jsonify({"error": "File not found"}), 404
+
+            return jsonify({"file": file_data})
+        except Exception as e:
+            logger.exception("Error fetching file detail")
+            return _api_error("Internal server error", status_code=500, detail=str(e))
+
     @app.route("/file/<path:file_url>")
     def file_view(file_url):
         """File details page."""
