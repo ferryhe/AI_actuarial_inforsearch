@@ -137,6 +137,13 @@ export default function Knowledge() {
     loadData();
   }, [loadData]);
 
+  const generateKbId = (name: string) => {
+    return name.trim().toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "_")
+      .replace(/^_|_$/g, "")
+      .slice(0, 60) || "kb";
+  };
+
   const handleCreateKB = async () => {
     if (!kbForm.name.trim()) return;
     setCreating(true);
@@ -146,6 +153,7 @@ export default function Knowledge() {
         .map((c) => c.trim())
         .filter(Boolean);
       await apiPost("/api/rag/knowledge-bases", {
+        kb_id: generateKbId(kbForm.name),
         name: kbForm.name,
         description: kbForm.description,
         categories,

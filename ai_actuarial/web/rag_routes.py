@@ -480,21 +480,35 @@ def register_rag_routes(
             kb_mode = _norm(request.args.get("kb_mode"))
             search = _norm(request.args.get("search")).lower()
 
-            def _run(kb_manager, _storage):
-                kbs = kb_manager.list_kbs()
-                if kb_mode:
-                    kbs = [kb for kb in kbs if kb.kb_mode == kb_mode]
-                if search:
-                    kbs = [
-                        kb
-                        for kb in kbs
-                        if search in (kb.name or "").lower()
+            def _run(storage):
+                conn = storage._conn
+                cursor = conn.execute("""
+                    SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
+                           index_type, created_at, updated_at, file_count, chunk_count
+                    FROM rag_knowledge_bases
+                    ORDER BY created_at DESC
+                """)
+                kbs = []
+                for row in cursor.fetchall():
+                    kb = KnowledgeBase(
+                        kb_id=row[0], name=row[1], description=row[2],
+                        kb_mode=row[3] or "category",
+                        embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
+                        index_type=row[7], created_at=row[8], updated_at=row[9],
+                        file_count=row[10], chunk_count=row[11]
+                    )
+                    if kb_mode and kb.kb_mode != kb_mode:
+                        continue
+                    if search and not (
+                        search in (kb.name or "").lower()
                         or search in (kb.description or "").lower()
                         or search in (kb.kb_id or "").lower()
-                    ]
+                    ):
+                        continue
+                    kbs.append(kb)
                 return _api_success([_serialize_kb(kb) for kb in kbs])
 
-            return _with_manager(_run)
+            return _with_storage(_run)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Error listing KBs")
             return _api_error("Internal server error", status_code=500, detail=str(exc))
