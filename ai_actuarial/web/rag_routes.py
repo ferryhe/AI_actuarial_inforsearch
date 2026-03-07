@@ -538,68 +538,30 @@ def register_rag_routes(
             if kb_mode == "category" and not categories:
                 return _api_error("categories required for category mode", status_code=400)
 
-            def _run(storage):
-                from pathlib import Path as _Path
-                conn = storage._conn
-                cursor = conn.execute(
-                    "SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", (kb_id,)
-                )
-                if cursor.fetchone():
+            def _run(kb_manager, _storage):
+                if kb_manager.get_kb(kb_id):
                     return _api_error(f"Knowledge base '{kb_id}' already exists", status_code=409)
-
-                embedding_model = _norm(data.get("embedding_model") or "text-embedding-3-large")
-                description = _norm(data.get("description")) or ""
-                index_type = "Flat"
-                now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                kb_dir = _Path("data") / "rag" / kb_id
-                kb_dir.mkdir(parents=True, exist_ok=True)
-                conn.execute("""
-                    INSERT INTO rag_knowledge_bases
-                    (kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
-                     index_type, created_at, updated_at, file_count, chunk_count,
-                     index_path, metadata_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
-                """, (
-                    kb_id, name, description, kb_mode, embedding_model,
-                    chunk_size, chunk_overlap, index_type, now, now,
-                    str(kb_dir / "index.faiss"),
-                    str(kb_dir / "index.meta.pkl"),
-                ))
-
-                if kb_mode == "category" and categories:
-                    storage._conn.execute(
-                        "CREATE TABLE IF NOT EXISTS rag_kb_category_mappings "
-                        "(kb_id TEXT, category TEXT, auto_sync INTEGER DEFAULT 1, created_at TEXT, "
-                        "PRIMARY KEY (kb_id, category))"
-                    )
-                    for cat in categories:
-                        conn.execute(
-                            "INSERT OR REPLACE INTO rag_kb_category_mappings (kb_id, category, auto_sync, created_at) VALUES (?, ?, 1, ?)",
-                            (kb_id, cat, now),
-                        )
-
-                conn.commit()
-
-                row = conn.execute(
-                    "SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap, "
-                    "index_type, created_at, updated_at, file_count, chunk_count "
-                    "FROM rag_knowledge_bases WHERE kb_id = ?",
-                    (kb_id,),
-                ).fetchone()
-                kb = KnowledgeBase(
-                    kb_id=row[0], name=row[1], description=row[2],
-                    kb_mode=row[3] or "category",
-                    embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
-                    index_type=row[7], created_at=row[8], updated_at=row[9],
-                    file_count=row[10], chunk_count=row[11],
+                kb_manager.create_kb(
+                    kb_id=kb_id,
+                    name=name,
+                    description=_norm(data.get("description")),
+                    kb_mode=kb_mode,
+                    embedding_model=_norm(data.get("embedding_model") or "text-embedding-3-large"),
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
                 )
+                if kb_mode == "category":
+                    kb_manager.link_kb_to_categories(kb_id, categories)
+                elif file_urls:
+                    kb_manager.add_files_to_kb(kb_id, file_urls)
+                kb = kb_manager.get_kb(kb_id)
                 return _api_success(
                     _serialize_kb(kb),
                     message=f"Knowledge base '{name}' created successfully",
                     status_code=201,
                 )
 
-            return _with_storage(_run)
+            return _with_manager(_run)
         except ValueError as exc:
             return _api_error(str(exc), status_code=400)
         except Exception as exc:  # noqa: BLE001
