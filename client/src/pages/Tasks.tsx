@@ -22,6 +22,11 @@ import {
   ArrowLeft,
   AlertCircle,
   Info,
+  Compass,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  Settings2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -42,6 +47,13 @@ interface Task {
 interface SiteConfig {
   name: string;
   url?: string;
+  max_pages?: number;
+  max_depth?: number;
+  keywords?: string[];
+  exclude_keywords?: string[];
+  exclude_prefixes?: string[];
+  schedule_interval?: string;
+  content_selector?: string;
 }
 
 interface KBItem {
@@ -110,6 +122,7 @@ function formatDate(dateStr: string): string {
 
 const taskTypes = [
   { type: "scheduled", apiType: "scheduled", icon: Globe, color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  { type: "web_crawl", apiType: "quick_check", icon: Compass, color: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
   { type: "adhoc_url", apiType: "url", icon: Link2, color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   { type: "file_import", apiType: "file", icon: FileUp, color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
   { type: "web_search", apiType: "search", icon: Search, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
@@ -190,18 +203,79 @@ function StatsBanner({ items }: { items: { label: string; value: string | number
   );
 }
 
+function SiteDetailCard({ site, expanded, onToggle }: { site: SiteConfig; expanded: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 overflow-hidden" data-testid={`card-site-${site.name}`}>
+      <button onClick={onToggle}
+        className="w-full flex items-center gap-3 px-3.5 py-2.5 text-left hover:bg-muted/50 transition-colors">
+        <Globe className="w-4 h-4 text-primary shrink-0" />
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium truncate block">{site.name}</span>
+          {site.url && <span className="text-[11px] text-muted-foreground truncate block">{site.url}</span>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {site.schedule_interval && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">{site.schedule_interval}</span>
+          )}
+          {expanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-3.5 pb-3 pt-1 border-t border-border space-y-2 text-xs">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            <div><span className="text-muted-foreground">{t("tasks.form.max_pages")}:</span> <span className="font-medium">{site.max_pages ?? "—"}</span></div>
+            <div><span className="text-muted-foreground">{t("tasks.form.max_depth")}:</span> <span className="font-medium">{site.max_depth ?? "—"}</span></div>
+          </div>
+          {site.keywords && site.keywords.length > 0 && (
+            <div>
+              <span className="text-muted-foreground">{t("tasks.form.keywords")}:</span>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {site.keywords.map((kw) => (
+                  <span key={kw} className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {site.exclude_keywords && site.exclude_keywords.length > 0 && (
+            <div>
+              <span className="text-muted-foreground">{t("tasks.form.exclude_keywords")}:</span>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {site.exclude_keywords.map((kw) => (
+                  <span key={kw} className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 text-[10px]">{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {site.content_selector && (
+            <div><span className="text-muted-foreground">{t("tasks.form.content_selector")}:</span> <code className="text-[10px] bg-muted px-1 rounded">{site.content_selector}</code></div>
+          )}
+          {site.url && (
+            <a href={site.url} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline mt-1">
+              <ExternalLink className="w-3 h-3" />{t("tasks.form.visit_site")}
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScheduledForm({ sites, onSubmit, submitting }: { sites: SiteConfig[]; onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
   const [site, setSite] = useState("");
   const [maxPages, setMaxPages] = useState("");
   const [maxDepth, setMaxDepth] = useState("");
+  const [showSites, setShowSites] = useState(false);
+  const [expandedSite, setExpandedSite] = useState<string | null>(null);
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t("tasks.form.scheduled_desc")}</p>
       <FormField label={t("tasks.form.target_site")}>
         <SelectField value={site} onChange={setSite} testId="select-site"
-          options={[{ value: "", label: t("tasks.form.all_sites") }, ...sites.map((s) => ({ value: s.name, label: s.name }))]} />
+          options={[{ value: "", label: t("tasks.form.all_sites") + ` (${sites.length})` }, ...sites.map((s) => ({ value: s.name, label: s.name }))]} />
       </FormField>
       <div className="grid grid-cols-2 gap-3">
         <FormField label={t("tasks.form.max_pages")} hint={t("tasks.form.default_hint") + " 200"}>
@@ -211,9 +285,75 @@ function ScheduledForm({ sites, onSubmit, submitting }: { sites: SiteConfig[]; o
           <InputField value={maxDepth} onChange={setMaxDepth} placeholder="2" type="number" testId="input-max-depth" />
         </FormField>
       </div>
+      {sites.length > 0 && (
+        <div className="border-t border-border pt-3 mt-1">
+          <button onClick={() => setShowSites(!showSites)}
+            className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            data-testid="button-toggle-sites">
+            <Settings2 className="w-3.5 h-3.5" />
+            {t("tasks.form.configured_sites_detail")} ({sites.length})
+            {showSites ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          {showSites && (
+            <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto pr-1">
+              {sites.map((s) => (
+                <SiteDetailCard key={s.name} site={s}
+                  expanded={expandedSite === s.name}
+                  onToggle={() => setExpandedSite(expandedSite === s.name ? null : s.name)} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting}
         onClick={() => onSubmit({ type: "scheduled", name: site ? `Scheduled: ${site}` : "Scheduled Collection",
           site: site || undefined, max_pages: maxPages ? parseInt(maxPages) : undefined, max_depth: maxDepth ? parseInt(maxDepth) : undefined })} />
+    </div>
+  );
+}
+
+function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+  const { t } = useTranslation();
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+  const [maxPages, setMaxPages] = useState("10");
+  const [maxDepth, setMaxDepth] = useState("1");
+  const [keywords, setKeywords] = useState("");
+  const [fileExts, setFileExts] = useState("");
+  const [checkDb, setCheckDb] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("tasks.form.web_crawl_desc")}</p>
+      <FormField label={t("tasks.form.crawl_url")}>
+        <InputField value={url} onChange={setUrl} placeholder="https://example.org/reports/" testId="input-crawl-url" />
+      </FormField>
+      <FormField label={t("tasks.form.crawl_name")} hint={t("tasks.form.crawl_name_hint")}>
+        <InputField value={name} onChange={setName} placeholder="Quick Check" testId="input-crawl-name" />
+      </FormField>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label={t("tasks.form.max_pages")} hint={t("tasks.form.default_hint") + " 10"}>
+          <InputField value={maxPages} onChange={setMaxPages} placeholder="10" type="number" testId="input-crawl-max-pages" />
+        </FormField>
+        <FormField label={t("tasks.form.max_depth")} hint={t("tasks.form.default_hint") + " 1"}>
+          <InputField value={maxDepth} onChange={setMaxDepth} placeholder="1" type="number" testId="input-crawl-max-depth" />
+        </FormField>
+      </div>
+      <FormField label={t("tasks.form.keywords")} hint={t("tasks.form.comma_separated")}>
+        <InputField value={keywords} onChange={setKeywords} placeholder="artificial intelligence, actuarial" testId="input-crawl-keywords" />
+      </FormField>
+      <FormField label={t("tasks.form.file_extensions")} hint={t("tasks.form.file_exts_hint")}>
+        <InputField value={fileExts} onChange={setFileExts} placeholder=".pdf,.docx" testId="input-crawl-file-exts" />
+      </FormField>
+      <CheckboxField checked={checkDb} onChange={setCheckDb} label={t("tasks.form.check_database")} testId="checkbox-crawl-check-db" />
+      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !url.trim()}
+        onClick={() => { if (!url.trim()) return;
+          onSubmit({ type: "quick_check", name: name || "Quick Check", url: url.trim(),
+            max_pages: parseInt(maxPages) || 10, max_depth: parseInt(maxDepth) || 1,
+            keywords: keywords ? keywords.split(",").map((k) => k.trim()).filter(Boolean) : [],
+            file_exts: fileExts ? fileExts.split(",").map((e) => e.trim()).filter(Boolean) : undefined,
+            check_database: checkDb });
+        }} />
     </div>
   );
 }
@@ -755,6 +895,7 @@ export default function Tasks() {
   function renderForm() {
     switch (activeForm) {
       case "scheduled": return <ScheduledForm sites={sites} onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "web_crawl": return <WebCrawlForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "adhoc_url": return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "file_import": return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "web_search": return <WebSearchForm onSubmit={handleSubmitTask} submitting={submitting} />;
