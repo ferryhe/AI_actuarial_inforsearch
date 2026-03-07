@@ -48,10 +48,11 @@ publicDir = "dist/public"
 
 [agent]
 mockupState = "FULLSTACK"
+integrations = ["github:1.0.0"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["cargo", "freetype", "lcms2", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "openjpeg", "openssl", "pkg-config", "rustc", "tcl", "tk", "zlib", "libGL", "libGLU", "mesa"]
+packages = ["cargo", "freetype", "lcms2", "libGL", "libGLU", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "mesa", "openjpeg", "openssl", "pkg-config", "rustc", "tcl", "tk", "zlib"]
 
 [[ports]]
 localPort = 5000
