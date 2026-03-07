@@ -17,7 +17,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/database" component={Database} />
-      <Route path="/file/:url+" component={FileDetail} />
+      <Route path="/file-detail" component={FileDetail} />
       <Route path="/file-preview" component={FilePreview} />
       <Route path="/chat" component={Chat} />
       <Route path="/tasks" component={Tasks} />
