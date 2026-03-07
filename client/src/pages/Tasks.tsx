@@ -1403,9 +1403,10 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
 
   useEffect(() => { loadStats(); }, [loadStats]);
   useEffect(() => {
-    apiGet<{ knowledge_bases?: Array<Record<string, string>>; data?: { knowledge_bases?: Array<Record<string, string>> } }>("/api/rag/knowledge-bases")
+    apiGet<Record<string, unknown>>("/api/rag/knowledge-bases")
       .then((res) => {
-        const raw = res.data?.knowledge_bases || res.knowledge_bases || [];
+        const d = res.data;
+        const raw: Array<Record<string, string>> = Array.isArray(d) ? d : Array.isArray((d as Record<string, unknown>)?.knowledge_bases) ? (d as Record<string, unknown>).knowledge_bases as Array<Record<string, string>> : [];
         setKbs(raw.map((kb) => ({ kb_id: kb.kb_id || kb.id || "", name: kb.name || kb.kb_id || kb.id || "" })));
         setKbLoadError(false);
       }).catch(() => { setKbs([]); setKbLoadError(true); });
@@ -1518,9 +1519,10 @@ function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, u
   const [incremental, setIncremental] = useState(true);
 
   useEffect(() => {
-    apiGet<{ knowledge_bases?: Array<Record<string, string>>; data?: { knowledge_bases?: Array<Record<string, string>> } }>("/api/rag/knowledge-bases")
+    apiGet<Record<string, unknown>>("/api/rag/knowledge-bases")
       .then((res) => {
-        const raw = res.data?.knowledge_bases || res.knowledge_bases || [];
+        const d = res.data;
+        const raw: Array<Record<string, string>> = Array.isArray(d) ? d : Array.isArray((d as Record<string, unknown>)?.knowledge_bases) ? (d as Record<string, unknown>).knowledge_bases as Array<Record<string, string>> : [];
         setKbs(raw.map((kb) => ({ kb_id: kb.kb_id || kb.id || "", name: kb.name || kb.kb_id || kb.id || "" })));
       }).catch(() => setKbs([]))
       .finally(() => setLoading(false));

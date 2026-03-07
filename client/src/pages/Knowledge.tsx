@@ -121,13 +121,20 @@ export default function Knowledge() {
   const loadData = useCallback(() => {
     setLoading(true);
     Promise.all([
-      apiGet<{ knowledge_bases?: KnowledgeBase[] } | KnowledgeBase[]>("/api/rag/knowledge-bases").catch(() => []),
-      apiGet<{ profiles?: ChunkProfile[] } | ChunkProfile[]>("/api/chunk/profiles").catch(() => []),
+      apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
+      apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null),
     ])
-      .then(([kbData, profileData]) => {
-        const kbList = Array.isArray(kbData) ? kbData : (kbData as Record<string, unknown>)?.knowledge_bases as KnowledgeBase[] || [];
+      .then(([kbResp, profileResp]) => {
+        const kbRaw = kbResp?.data;
+        const kbList: KnowledgeBase[] = Array.isArray(kbRaw) ? kbRaw : [];
         setKbs(kbList);
-        const pList = Array.isArray(profileData) ? profileData : (profileData as Record<string, unknown>)?.profiles as ChunkProfile[] || [];
+
+        const profRaw = profileResp?.data;
+        const pList: ChunkProfile[] = Array.isArray(profRaw)
+          ? profRaw
+          : Array.isArray((profRaw as Record<string, unknown>)?.profiles)
+            ? (profRaw as Record<string, unknown>).profiles as ChunkProfile[]
+            : [];
         setProfiles(pList);
       })
       .finally(() => setLoading(false));
