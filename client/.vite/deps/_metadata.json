@@ -1,0 +1,88 @@
+{
+  "hash": "39c16fc6",
+  "configHash": "2dec8ddf",
+  "lockfileHash": "e3b0c442",
+  "browserHash": "fc31fc90",
+  "optimized": {
+    "react": {
+      "src": "../../../node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "cf77be81",
+      "needsInterop": true
+    },
+    "react-dom": {
+      "src": "../../../node_modules/react-dom/index.js",
+      "file": "react-dom.js",
+      "fileHash": "8f12cc4c",
+      "needsInterop": true
+    },
+    "react/jsx-dev-runtime": {
+      "src": "../../../node_modules/react/jsx-dev-runtime.js",
+      "file": "react_jsx-dev-runtime.js",
+      "fileHash": "09987af0",
+      "needsInterop": true
+    },
+    "react/jsx-runtime": {
+      "src": "../../../node_modules/react/jsx-runtime.js",
+      "file": "react_jsx-runtime.js",
+      "fileHash": "03ea1e6d",
+      "needsInterop": true
+    },
+    "@tanstack/react-query": {
+      "src": "../../../node_modules/@tanstack/react-query/build/modern/index.js",
+      "file": "@tanstack_react-query.js",
+      "fileHash": "16b79fde",
+      "needsInterop": false
+    },
+    "clsx": {
+      "src": "../../../node_modules/clsx/dist/clsx.mjs",
+      "file": "clsx.js",
+      "fileHash": "a41e5a5d",
+      "needsInterop": false
+    },
+    "framer-motion": {
+      "src": "../../../node_modules/framer-motion/dist/es/index.mjs",
+      "file": "framer-motion.js",
+      "fileHash": "0d6bd46f",
+      "needsInterop": false
+    },
+    "lucide-react": {
+      "src": "../../../node_modules/lucide-react/dist/esm/lucide-react.js",
+      "file": "lucide-react.js",
+      "fileHash": "762ffc02",
+      "needsInterop": false
+    },
+    "react-dom/client": {
+      "src": "../../../node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "fff54215",
+      "needsInterop": true
+    },
+    "tailwind-merge": {
+      "src": "../../../node_modules/tailwind-merge/dist/bundle-mjs.mjs",
+      "file": "tailwind-merge.js",
+      "fileHash": "26ac0ef8",
+      "needsInterop": false
+    },
+    "wouter": {
+      "src": "../../../node_modules/wouter/src/index.js",
+      "file": "wouter.js",
+      "fileHash": "61acf3eb",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-5XAGURBN": {
+      "file": "chunk-5XAGURBN.js"
+    },
+    "chunk-4KGH64R4": {
+      "file": "chunk-4KGH64R4.js"
+    },
+    "chunk-BDCR6G2P": {
+      "file": "chunk-BDCR6G2P.js"
+    },
+    "chunk-G3PMV62Z": {
+      "file": "chunk-G3PMV62Z.js"
+    }
+  }
+}
