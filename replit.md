@@ -30,9 +30,11 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 
 ## React Frontend Pages
 - **Dashboard** (`/`) - Stats cards, quick actions, recent files
-- **Database** (`/database`) - File browser with search, filters, pagination, download
+- **Database** (`/database`) - File browser with search, filters, pagination, download. Rows are clickable → navigates to File Detail.
+- **File Detail** (`/file/:url+`) - Full file details: metadata table, category/summary/keywords editing, AI cataloging modal, markdown viewer/editor (with conversion engines: Docling, Marker, Mistral OCR, DeepSeek OCR), RAG chunk status with modify modal (profile selection, KB binding), download/delete/preview actions.
+- **File Preview** (`/file-preview?file_url=...`) - Desktop-only (≥1024px) side-by-side view: left pane renders PDF (via PDF.js CDN) or image, right pane shows RAG chunks with token counts and section hierarchy. Chunk set version switching via dropdown. Mobile shows "desktop only" message.
 - **Chat** (`/chat`) - AI chatbot with conversation management, mode/KB selection, citations
-- **Tasks** (`/tasks`) - 9 task types in a grid: Site Configuration (YAML import/export, site CRUD, per-site crawl, backup management), Web Crawl, URL, File Import, Search, Catalog, Markdown, Chunk, RAG Index. Below the grid: standalone Scheduled Tasks section (CRUD for generic recurring tasks, scheduler status, reinit).
+- **Tasks** (`/tasks`) - 9 task types in a grid: Site Configuration (YAML import/export, site CRUD, per-site crawl, backup management), Web Crawl, URL, File Import (with folder browser), Search, Catalog, Markdown, Chunk, RAG Index. Below the grid: standalone Scheduled Tasks section (CRUD for generic recurring tasks, scheduler status, reinit).
 - **Knowledge** (`/knowledge`) - RAG knowledge base management, chunk profiles
 - **Settings** (`/settings`) - Backend config, LLM providers, search engines, AI models, Task History (admin-only, collapsible with log viewer)
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
+import { useLocation } from "wouter";
 import {
   Search,
   Download,
@@ -84,6 +85,7 @@ type SortDir = "asc" | "desc";
 
 export default function DatabasePage() {
   const { t } = useTranslation();
+  const [, navigate] = useLocation();
 
   const [files, setFiles] = useState<FileItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -322,7 +324,8 @@ export default function DatabasePage() {
               variants={fadeUp}
               initial="hidden"
               animate="visible"
-              className="grid sm:grid-cols-[1fr_140px_80px_100px_44px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors"
+              className="grid sm:grid-cols-[1fr_140px_80px_100px_44px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer"
+              onClick={() => navigate(`/file/${encodeURIComponent(file.url)}`)}
               data-testid={`file-row-${i}`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
@@ -346,7 +349,7 @@ export default function DatabasePage() {
               </span>
               <div className="hidden sm:flex items-center justify-center">
                 <button
-                  onClick={() => handleDownload(file)}
+                  onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
                   className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                   title={t("db.download")}
                   data-testid={`button-download-${i}`}
