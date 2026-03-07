@@ -2,7 +2,11 @@ import { Switch, Route } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
-import Placeholder from "@/pages/Placeholder";
+import Database from "@/pages/Database";
+import Chat from "@/pages/Chat";
+import Tasks from "@/pages/Tasks";
+import Knowledge from "@/pages/Knowledge";
+import Settings from "@/pages/Settings";
 
 const queryClient = new QueryClient();
 
@@ -10,12 +14,16 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
-      <Route path="/database" component={Placeholder} />
-      <Route path="/chat" component={Placeholder} />
-      <Route path="/tasks" component={Placeholder} />
-      <Route path="/knowledge" component={Placeholder} />
-      <Route path="/settings" component={Placeholder} />
-      <Route component={Placeholder} />
+      <Route path="/database" component={Database} />
+      <Route path="/chat" component={Chat} />
+      <Route path="/tasks" component={Tasks} />
+      <Route path="/knowledge" component={Knowledge} />
+      <Route path="/settings" component={Settings} />
+      <Route>
+        <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
+          404
+        </div>
+      </Route>
     </Switch>
   );
 }
