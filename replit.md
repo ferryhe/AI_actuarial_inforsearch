@@ -31,7 +31,7 @@ AI-powered system for discovering, downloading, and cataloging AI-related docume
 - **Dashboard** (`/`) - Stats cards, quick actions, recent files
 - **Database** (`/database`) - File browser with search, filters, pagination, download
 - **Chat** (`/chat`) - AI chatbot with conversation management, mode/KB selection, citations
-- **Tasks** (`/tasks`) - Active tasks with progress, new task launcher, history with logs
+- **Tasks** (`/tasks`) - 9 task types: Scheduled, Web Crawl (quick_check), URL, File Import, Search, Catalog, Markdown, Chunk, RAG Index. Each with full parameter forms, stats banners, site config viewer. History with logs
 - **Knowledge** (`/knowledge`) - RAG knowledge base management, chunk profiles
 - **Settings** (`/settings`) - Backend config, LLM providers, search engines, AI models
 
