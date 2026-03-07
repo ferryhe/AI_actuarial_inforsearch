@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}Sign In - AI Actuarial Info Search{% endblock %}
+
+{% block extra_css %}
+<style>
+  .auth-wrap {
+    min-height: calc(100vh - 190px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem 0 2.5rem 0;
+  }
+  .auth-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 30px;
+    width: min(480px, 100%);
+  }
+  .auth-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .auth-badge {
+    width: 44px; height: 44px; border-radius: 12px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, rgba(59,130,246,.20), rgba(16,185,129,.20));
+    border: 1px solid rgba(0,0,0,0.06);
+  }
+  [data-theme="dark"] .auth-badge { border: 1px solid rgba(255,255,255,0.10); }
+  .auth-badge svg { width: 22px; height: 22px; }
+  .alert-error {
+    background: rgba(239,68,68,.10);
+    border: 1px solid rgba(239,68,68,.30);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    color: var(--danger-color, #ef4444);
+    font-size: 0.9rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-title">
+      <div class="auth-badge" aria-hidden="true">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M12 2l7 4v6c0 5-3 9-7 10-4-1-7-5-7-10V6l7-4z"></path>
+        </svg>
+      </div>
+      <div>
+        <h2 style="margin:0;">Sign In</h2>
+        <div style="opacity:.85; font-size:.9rem;">Access your account</div>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="alert-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('email_login', next=next) }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="form-group">
+        <label for="email">Email Address</label>
+        <input id="email" name="email" type="email" class="form-control"
+               required placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" class="form-control"
+               required placeholder="Enter password" autocomplete="current-password">
+      </div>
+      <div style="display:flex; gap:10px; margin-top:1rem; align-items:center;">
+        <button type="submit" class="btn btn-primary">Sign In</button>
+        <a href="{{ url_for('register') }}" class="btn btn-secondary">Create Account</a>
+        <a href="{{ url_for('login') }}" class="btn btn-ghost" style="margin-left:auto; font-size:.85rem;">Token Login</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

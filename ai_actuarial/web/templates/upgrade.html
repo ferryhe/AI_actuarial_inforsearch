@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block title %}Upgrade Membership - AI Actuarial Info Search{% endblock %}
+
+{% block extra_css %}
+<style>
+  .upgrade-hero {
+    text-align: center;
+    padding: 2.5rem 0 1.5rem;
+  }
+  .plans-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+    max-width: 900px;
+    margin: 1.5rem auto;
+  }
+  .plan-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    position: relative;
+  }
+  .plan-card.featured {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59,130,246,.20), var(--shadow);
+  }
+  .plan-badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #3b82f6;
+    color: #fff;
+    font-size: .75rem;
+    font-weight: 700;
+    padding: 3px 12px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .plan-name { font-size: 1.2rem; font-weight: 700; margin-bottom: 4px; }
+  .plan-price {
+    font-size: 2rem;
+    font-weight: 800;
+    margin: 8px 0;
+    color: var(--primary-color, #3b82f6);
+  }
+  .plan-price .unit { font-size: 1rem; font-weight: 400; color: var(--text-secondary); }
+  .plan-features {
+    list-style: none;
+    padding: 0;
+    margin: 14px 0;
+  }
+  .plan-features li {
+    padding: 5px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .9rem;
+  }
+  .plan-features li::before { content: "✓"; color: #10b981; font-weight: 700; }
+  .plan-features li.no::before { content: "✗"; color: #6b7280; }
+  .plan-features li.no { color: var(--text-secondary); }
+  .contact-note {
+    text-align:center;
+    margin-top:1.5rem;
+    color:var(--text-secondary);
+    font-size:.9rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width:960px;">
+  <div class="upgrade-hero">
+    <h2>Membership Plans</h2>
+    <p style="color:var(--text-secondary); max-width:520px; margin:0 auto;">
+      Choose the plan that fits your needs. Upgrade anytime to unlock more AI queries and advanced features.
+    </p>
+  </div>
+
+  <div class="plans-grid">
+
+    <!-- Free -->
+    <div class="plan-card">
+      <div class="plan-name">Free</div>
+      <div class="plan-price">¥0 <span class="unit">/ month</span></div>
+      <ul class="plan-features">
+        <li>View homepage &amp; database</li>
+        <li>File detail view</li>
+        <li>AI Chat: 5 queries/day</li>
+        <li>Knowledge Base viewer</li>
+        <li class="no">Task management</li>
+        <li class="no">File upload &amp; edit</li>
+        <li class="no">Priority support</li>
+      </ul>
+      {% if not auth_token %}
+      <a href="{{ url_for('register') }}" class="btn btn-primary" style="width:100%; text-align:center;">Get Started Free</a>
+      {% else %}
+      <span class="btn btn-secondary" style="width:100%; text-align:center; cursor:default;">Current Plan</span>
+      {% endif %}
+    </div>
+
+    <!-- Premium -->
+    <div class="plan-card featured">
+      <div class="plan-badge">Most Popular</div>
+      <div class="plan-name">Premium</div>
+      <div class="plan-price">¥29 <span class="unit">/ month</span></div>
+      <ul class="plan-features">
+        <li>Everything in Free</li>
+        <li>AI Chat: <strong>100 queries/day</strong></li>
+        <li>Full Knowledge Base access</li>
+        <li>Download files</li>
+        <li>Priority support</li>
+        <li class="no">Task management</li>
+        <li class="no">System configuration</li>
+      </ul>
+      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Premium Upgrade Request" class="btn btn-primary" style="width:100%; text-align:center;">
+        Upgrade to Premium
+      </a>
+    </div>
+
+    <!-- Enterprise / Operator -->
+    <div class="plan-card">
+      <div class="plan-name">Enterprise</div>
+      <div class="plan-price">Custom</div>
+      <ul class="plan-features">
+        <li>Everything in Premium</li>
+        <li>Operator access (task management)</li>
+        <li>AI Chat: <strong>100 queries/day</strong></li>
+        <li>File upload &amp; configuration</li>
+        <li>Dedicated support</li>
+        <li>Custom quota limits</li>
+        <li>Audit logs access</li>
+      </ul>
+      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Enterprise Inquiry" class="btn btn-secondary" style="width:100%; text-align:center;">
+        Contact Us
+      </a>
+    </div>
+
+  </div>
+
+  <div class="contact-note">
+    To upgrade, contact <a href="mailto:{{ contact_email or 'admin@example.com' }}">{{ contact_email or 'admin@example.com' }}</a> or ask your system administrator.<br>
+    Admins can change your role directly in the <a href="{{ url_for('admin_users') if auth_group == 'admin' else '#' }}">User Management</a> panel.
+  </div>
+</div>
+{% endblock %}

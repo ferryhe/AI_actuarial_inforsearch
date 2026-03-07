@@ -221,6 +221,72 @@ class AuthToken(Base):
 # from ai_actuarial.models.api_token import ApiToken
 
 
+# ============== User Management Models ==============
+
+class User(Base):
+    """Email-based registered user accounts."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(Text, unique=True, nullable=False)
+    password_hash = Column(Text, nullable=False)
+    # role: registered | premium | operator | operator_ai | admin
+    role = Column(Text, nullable=False, default="registered")
+    is_active = Column(Integer, nullable=False, default=1)
+    email_verified = Column(Integer, nullable=False, default=0)
+    display_name = Column(Text)
+    notes = Column(Text)
+    created_at = Column(Text)
+    last_login_at = Column(Text)
+    email_verified_at = Column(Text)
+
+    __table_args__ = (
+        # email has unique=True above which already creates an index;
+        # only add the explicit role index here.
+        Index("idx_users_role", "role"),
+    )
+
+
+class UserQuota(Base):
+    """Daily usage quota tracking per user or IP address."""
+
+    __tablename__ = "user_quotas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # For registered users: user_id is set; for anonymous: ip_address is used
+    user_id = Column(Integer)
+    ip_address = Column(Text)
+    quota_date = Column(Text, nullable=False)  # ISO date YYYY-MM-DD
+    ai_chat_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(Text)
+    updated_at = Column(Text)
+
+    __table_args__ = (
+        Index("idx_user_quotas_user_date", "user_id", "quota_date"),
+        Index("idx_user_quotas_ip_date", "ip_address", "quota_date"),
+    )
+
+
+class UserActivityLog(Base):
+    """Audit trail of user actions."""
+
+    __tablename__ = "user_activity_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer)
+    ip_address = Column(Text)
+    action = Column(Text, nullable=False)
+    resource = Column(Text)
+    detail = Column(Text)
+    created_at = Column(Text)
+
+    __table_args__ = (
+        Index("idx_user_activity_user", "user_id"),
+        Index("idx_user_activity_created", "created_at"),
+    )
+
+
 def get_current_timestamp() -> str:
     """Get current timestamp in ISO format."""
     return datetime.now(timezone.utc).isoformat()
