@@ -298,20 +298,46 @@ class TestRegistrationEndpoint(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn(b"8", resp.data)
 
-    def test_register_api_success(self):
-        # /register processes form data (not JSON), regardless of content type,
-        # because it's not under /api/ path.
+    def test_register_json_api_success(self):
+        # When called with Content-Type: application/json, _is_api_request()
+        # returns True and the endpoint returns JSON (201) instead of a redirect.
         resp = self.client.post(
             "/register",
-            data={"email": "api@example.com", "password": "strongpassword1"},
-            follow_redirects=False,
+            json={"email": "json@example.com", "password": "strongpassword1"},
         )
-        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.status_code, 201)
+        body = resp.get_json()
+        self.assertIsNotNone(body)
+        self.assertTrue(body.get("success"))
+        self.assertEqual(body.get("email"), "json@example.com")
         storage = Storage(self.db_path)
-        user = storage.get_user_by_email("api@example.com")
+        user = storage.get_user_by_email("json@example.com")
         storage.close()
         self.assertIsNotNone(user)
         self.assertEqual(user["role"], "registered")
+
+    def test_register_json_api_duplicate_returns_409(self):
+        storage = Storage(self.db_path)
+        storage.create_user("dup@example.com", _hash_password("pw"))
+        storage.close()
+        resp = self.client.post(
+            "/register",
+            json={"email": "dup@example.com", "password": "strongpassword1"},
+        )
+        self.assertEqual(resp.status_code, 409)
+        body = resp.get_json()
+        self.assertIsNotNone(body)
+        self.assertIn("error", body)
+
+    def test_register_json_api_short_password_returns_400(self):
+        resp = self.client.post(
+            "/register",
+            json={"email": "short@example.com", "password": "abc"},
+        )
+        self.assertEqual(resp.status_code, 400)
+        body = resp.get_json()
+        self.assertIsNotNone(body)
+        self.assertIn("error", body)
 
 
 class TestEmailLoginEndpoint(unittest.TestCase):
@@ -375,15 +401,47 @@ class TestEmailLoginEndpoint(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn(b"disabled", resp.data.lower())
 
-    def test_login_api_success(self):
+    def test_login_json_api_success(self):
+        # When called with Content-Type: application/json, _is_api_request()
+        # returns True and the endpoint returns JSON instead of a redirect.
         resp = self.client.post(
             "/email-login",
-            data={"email": "login@example.com", "password": "correctpass"},
-            follow_redirects=False,
+            json={"email": "login@example.com", "password": "correctpass"},
         )
-        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertIsNotNone(body)
+        self.assertTrue(body.get("success"))
+        self.assertIn("role", body)
         with self.client.session_transaction() as sess:
             self.assertIn("email_user_id", sess)
+
+    def test_login_json_api_wrong_password_returns_401(self):
+        resp = self.client.post(
+            "/email-login",
+            json={"email": "login@example.com", "password": "wrongpassword"},
+        )
+        self.assertEqual(resp.status_code, 401)
+        body = resp.get_json()
+        self.assertIsNotNone(body)
+        self.assertIn("error", body)
+
+    def test_logout_json_api_returns_json(self):
+        # Log in first via JSON API, then verify /logout returns JSON too.
+        self.client.post(
+            "/email-login",
+            json={"email": "login@example.com", "password": "correctpass"},
+        )
+        resp = self.client.post(
+            "/logout",
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertIsNotNone(body)
+        self.assertTrue(body.get("success"))
+        with self.client.session_transaction() as sess:
+            self.assertNotIn("email_user_id", sess)
 
 
 class TestAdminUserEndpoints(unittest.TestCase):
