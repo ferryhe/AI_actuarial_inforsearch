@@ -336,7 +336,7 @@ export default function FileDetail() {
 
   function startEdit() {
     if (!file) return;
-    setEditTitle(file.title || file.original_filename || "");
+    setEditTitle(file.title || "");
     setEditCategory(file.category || "");
     setEditSummary(file.summary || "");
     setEditKeywords((file.keywords || []).join(", "));
@@ -348,7 +348,7 @@ export default function FileDetail() {
     setSaving(true);
     try {
       const kws = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-      const titleChanged = editTitle.trim() !== (file.title || file.original_filename || "").trim();
+      const titleChanged = editTitle.trim() !== (file.title || "").trim();
       const res = await apiPost<{ file?: FileData }>("/api/files/update", {
         url: file.url,
         title: titleChanged ? (editTitle.trim() || undefined) : undefined,

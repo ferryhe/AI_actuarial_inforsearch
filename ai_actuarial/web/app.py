@@ -5494,6 +5494,10 @@ sites:
             storage = Storage(db_path)
             
             try:
+                # Check that at least one field is being updated
+                if title is None and not any(v is not None for v in (category, summary, keywords)):
+                    return jsonify({"error": "No updates provided"}), 400
+
                 # Update title in files table if provided
                 if title is not None:
                     file_exists = storage._conn.execute(
@@ -5522,14 +5526,10 @@ sites:
                         if error_reason == "file_not_found":
                             logger.warning(f"File catalog update failed - file not found: {url}")
                             return jsonify({"error": "File not found"}), 404
-                        elif error_reason == "no_updates" and title is None:
-                            logger.warning(f"File catalog update had no changes: {url}")
-                            return jsonify({"error": "No updates provided"}), 400
-                        elif error_reason not in ("no_updates",):
+                        elif error_reason != "no_updates":
                             logger.error(f"File catalog update failed with unknown reason: {url}")
                             return jsonify({"error": "Update failed"}), 500
-                elif title is None:
-                    return jsonify({"error": "No updates provided"}), 400
+                        # "no_updates" is acceptable when title was successfully updated
 
                 logger.info(f"File updated successfully: {url}")
                 # Fetch updated data to return
