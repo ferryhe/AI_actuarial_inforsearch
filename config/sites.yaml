@@ -63,6 +63,9 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
+  queries:
+  - site:actuaries.org artificial intelligence filetype:pdf
+  - site:actuaries.org machine learning report filetype:pdf
 - name: International Association of Black Actuaries (IABA)
   url: https://www.blackactuaries.org/
   keywords:
@@ -75,6 +78,9 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
+  queries:
+  - site:blackactuaries.org artificial intelligence filetype:pdf
+  - site:blackactuaries.org machine learning filetype:pdf
 - name: Society of Actuaries (SOA)
   url: https://www.soa.org/
   keywords:
@@ -96,6 +102,11 @@ sites:
   - spring
   exclude_prefixes:
   - book
+  queries:
+  - site:soa.org artificial intelligence report filetype:pdf
+  - site:soa.org machine learning research filetype:pdf
+  - site:soa.org generative ai filetype:pdf
+  - site:soa.org large language model filetype:pdf
 - name: SOA AI Topic Landing (Focused)
   url: https://www.soa.org/research/topics/artificial-intelligence-topic-landing/
   max_pages: 100
@@ -166,6 +177,10 @@ sites:
   - community_
   - education_
   - library_
+  queries:
+  - site:casact.org artificial intelligence filetype:pdf
+  - site:casact.org machine learning research filetype:pdf
+  - site:casact.org generative ai filetype:pdf
 - name: American Academy of Actuaries (AAA)
   url: https://www.actuary.org/
   keywords:
@@ -178,6 +193,10 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
+  queries:
+  - site:actuary.org artificial intelligence filetype:pdf
+  - site:actuary.org machine learning filetype:pdf
+  - site:actuary.org generative ai filetype:pdf
 - name: Canadian Institute of Actuaries (CIA / ICA)
   url: https://www.cia-ica.ca/
   keywords:
@@ -373,6 +392,10 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
+  queries:
+  - site:actuaries.ch artificial intelligence filetype:pdf
+  - site:actuaries.ch machine learning filetype:pdf
+  - site:actuaries.ch künstliche intelligenz filetype:pdf
 - name: Ordine Nazionale degli Attuari (Italy)
   url: https://www.ordineattuari.it/
   keywords:

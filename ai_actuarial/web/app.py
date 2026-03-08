@@ -3720,6 +3720,7 @@ sites:
                         exclude_prefixes=merge_lists('exclude_prefixes'),
                         content_selector=s.get('content_selector'),
                         allow_url_patterns=s.get('allow_url_patterns'),
+                        queries=s.get('queries'),
                     )
                     sites_to_process.append(sc)
                 
@@ -3730,6 +3731,58 @@ sites:
                     metadata={"site_configs": sites_to_process}
                 )
                 result = collector.collect(config_obj, progress_callback=progress_callback)
+
+                # Run per-site search queries for sites that have them
+                search_cfg = site_config.get("search", {}) or {}
+                if search_cfg.get("enabled", False):
+                    from ..search import search_all as _search_all
+                    brave_key = os.environ.get("BRAVE_API_KEY")
+                    serpapi_key = os.environ.get("SERPAPI_API_KEY")
+                    serper_key = os.environ.get("SERPER_API_KEY")
+                    tavily_key = os.environ.get("TAVILY_API_KEY")
+                    search_max_results = int(search_cfg.get("max_results", 5))
+                    search_languages = search_cfg.get("languages", ["en"])
+                    search_country = search_cfg.get("country")
+                    for sc in sites_to_process:
+                        if not sc.queries:
+                            continue
+                        if stop_check and stop_check():
+                            break
+                        search_exclude = [k.lower() for k in (sc.exclude_keywords or search_cfg.get("exclude_keywords", []))]
+                        try:
+                            site_search_results = _search_all(
+                                sc.queries,
+                                search_max_results,
+                                brave_key,
+                                serpapi_key,
+                                site_config['defaults'].get('user_agent', 'AI-Actuarial-InfoSearch/0.1'),
+                                languages=search_languages,
+                                country=search_country,
+                                serper_key=serper_key,
+                                tavily_key=tavily_key,
+                            )
+                            for sr in site_search_results:
+                                if stop_check and stop_check():
+                                    break
+                                crawler.scan_page_for_files(
+                                    sr.url,
+                                    SiteConfig(
+                                        name=sc.name,
+                                        url=sr.url,
+                                        max_pages=1,
+                                        max_depth=1,
+                                        delay_seconds=search_cfg.get("delay_seconds", 0.5),
+                                        keywords=sc.keywords or site_config['defaults'].get('keywords', []),
+                                        file_exts=sc.file_exts or site_config['defaults'].get('file_exts', []),
+                                        exclude_keywords=search_exclude,
+                                    ),
+                                    source_site=sr.source,
+                                )
+                        except Exception as _se:
+                            logger.warning(
+                                "Per-site search queries failed for %s (%s: %s)",
+                                sc.name, type(_se).__name__, _se,
+                            )
             
             elif collection_type == "quick_check":
                 from ..collectors.adhoc import AdhocCollector
