@@ -447,6 +447,7 @@ def _process_single_row(
     db_path: str,
     provider: str,
     input_source: str,
+    catalog_system_prompt: str | None = None,
 ) -> tuple[dict, CatalogItem, str, str | None]:
     """Process a single row in a worker thread.
     Returns: (row_data, result_item, status, suggested_title)
@@ -503,7 +504,11 @@ def _process_single_row(
         else:
             from .catalog_llm import catalog_with_openai
 
-            llm = catalog_with_openai(title=title, content=text)
+            llm = catalog_with_openai(
+                title=title,
+                content=text,
+                custom_system_prompt=catalog_system_prompt,
+            )
             keywords = llm.keywords
             suggested_title = llm.suggested_title
 
@@ -568,6 +573,7 @@ def run_incremental_catalog(
     limit: int = 0,
     candidate_offset: int = 0,
     update_title: bool = False,
+    catalog_system_prompt: str | None = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Run incremental catalog processing.
@@ -585,6 +591,7 @@ def run_incremental_catalog(
         max_workers: Threads for parallel processing
         limit: Max total items to process (0 for unlimited)
         update_title: If True, update files.title with the AI-suggested title
+        catalog_system_prompt: Optional system prompt override for the LLM cataloger.
         
     Returns:
         dict with stats: {scanned, processed, written, skipped_ai, errors}
@@ -679,6 +686,7 @@ def run_incremental_catalog(
                     db_path=db_path,
                     provider=provider,
                     input_source=input_source,
+                    catalog_system_prompt=catalog_system_prompt,
                 ): r["url"]
                 for r in row_dicts
             }
@@ -821,6 +829,7 @@ def run_catalog_for_urls(
     input_source: str = "source",
     max_workers: int = 5,
     update_title: bool = False,
+    catalog_system_prompt: str | None = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
@@ -914,6 +923,7 @@ def run_catalog_for_urls(
                 db_path=db_path,
                 provider=provider,
                 input_source=input_source,
+                catalog_system_prompt=catalog_system_prompt,
             ): r["url"]
             for r in candidates
         }
