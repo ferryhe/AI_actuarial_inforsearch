@@ -245,6 +245,7 @@ export default function FileDetail() {
   const [catalogSource, setCatalogSource] = useState("markdown");
   const [catalogOverwrite, setCatalogOverwrite] = useState(false);
   const [catalogUpdateTitle, setCatalogUpdateTitle] = useState(false);
+  const [catalogOutputLanguage, setCatalogOutputLanguage] = useState("auto");
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
 
   const taskOptions = useTaskOptions();
@@ -415,6 +416,7 @@ export default function FileDetail() {
         input_source: catalogSource,
         overwrite_existing: catalogOverwrite,
         update_title: catalogUpdateTitle,
+        output_language: catalogOutputLanguage,
       });
       setShowCatalogModal(false);
       catalogPoller.start(res.job_id);
@@ -904,6 +906,20 @@ export default function FileDetail() {
                   <span className="ml-1 text-[11px] text-muted-foreground">{t("fv.update_title_hint")}</span>
                 </span>
               </label>
+            )}
+            {taskOptions.catalogProviders.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.output_language")}</label>
+                <select
+                  value={catalogOutputLanguage}
+                  onChange={(e) => setCatalogOutputLanguage(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background"
+                  data-testid="select-output-language">
+                  <option value="auto">{t("tasks.form.lang_auto")}</option>
+                  <option value="en">{t("tasks.form.lang_en")}</option>
+                  <option value="zh">{t("tasks.form.lang_zh")}</option>
+                </select>
+              </div>
             )}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <button onClick={() => setShowCatalogModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
