@@ -1213,6 +1213,7 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
   const [retryErrors, setRetryErrors] = useState(false);
   const [skipExisting, setSkipExisting] = useState(true);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
+  const [updateTitle, setUpdateTitle] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
@@ -1291,12 +1292,17 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
           label={t("tasks.form.skip_existing")} testId="checkbox-skip-existing" />
         <CheckboxField checked={overwriteExisting} onChange={(v) => { setOverwriteExisting(v); if (v) setSkipExisting(false); }}
           label={t("tasks.form.overwrite_existing")} testId="checkbox-overwrite-existing" />
+        {catalogProviders.length > 0 && (
+          <CheckboxField checked={updateTitle} onChange={setUpdateTitle}
+            label={t("tasks.form.update_title")} testId="checkbox-update-title" />
+        )}
       </div>
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || catalogProviders.length === 0}
         onClick={() => onSubmit({ type: "catalog", name: "AI Catalog", scope_mode: scopeMode,
           category: scopeMode === "category" ? category : undefined, scan_count: parseInt(scanCount) || 100,
           scan_start_index: parseInt(startIndex) || 1, input_source: inputSource,
-          retry_errors: retryErrors, skip_existing: skipExisting, overwrite_existing: overwriteExisting })} />
+          retry_errors: retryErrors, skip_existing: skipExisting, overwrite_existing: overwriteExisting,
+          update_title: updateTitle })} />
     </div>
   );
 }

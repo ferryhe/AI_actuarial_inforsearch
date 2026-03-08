@@ -19,6 +19,7 @@ class LlmCatalogResult:
     keywords: list[str]
     category: str
     model: str | None = None
+    suggested_title: str | None = None
 
 
 def _clean_keywords(items: Any, *, max_items: int = 12) -> list[str]:
@@ -115,6 +116,8 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
         "- keywords: 8-12 keyphrases (strings), no duplicates\n"
         "- categories: pick several mostly related categories in order from most to less relevant "
         "(array with 1-3 items from the provided list)\n"
+        "- suggested_title: a concise, descriptive title for the document (<= 20 words, plain text, no markdown), "
+        "based on the content; if the existing title is already accurate and descriptive leave it as-is\n"
         "Rules: do not invent facts. If content is insufficient, return categories=[\"Other\"] and keep summary short."
     )
 
@@ -138,7 +141,7 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
         + "Content:\n"
         + safe_content
         + "\n\n"
-        + "Return JSON only, with keys: summary, keywords, categories."
+        + "Return JSON only, with keys: summary, keywords, categories, suggested_title."
     )
 
     completion = client.chat.completions.create(
@@ -168,5 +171,6 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
     if not selected:
         selected = ["Other"]
     category = "; ".join(selected[:3])
+    suggested_title = str(payload.get("suggested_title") or "").strip() or None
 
-    return LlmCatalogResult(summary=summary, keywords=keywords, category=category, model=model)
+    return LlmCatalogResult(summary=summary, keywords=keywords, category=category, model=model, suggested_title=suggested_title)
