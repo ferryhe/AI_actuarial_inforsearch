@@ -3150,6 +3150,8 @@ sites:
             ai_config = config_data.get("ai_config") or {}
             
             # Get current configuration with defaults
+            _chatbot_cfg = ai_config.get("chatbot", {})
+            _chatbot_prompts = _chatbot_cfg.get("prompts", {})
             current_config = {
                 "catalog": {
                     "provider": ai_config.get("catalog", {}).get("provider", "openai"),
@@ -3161,8 +3163,16 @@ sites:
                     "model": ai_config.get("embeddings", {}).get("model", "text-embedding-3-large"),
                 },
                 "chatbot": {
-                    "provider": ai_config.get("chatbot", {}).get("provider", "openai"),
-                    "model": ai_config.get("chatbot", {}).get("model", "gpt-4-turbo"),
+                    "provider": _chatbot_cfg.get("provider", "openai"),
+                    "model": _chatbot_cfg.get("model", "gpt-4-turbo"),
+                    "prompts": {
+                        "base": _chatbot_prompts.get("base", ""),
+                        "expert": _chatbot_prompts.get("expert", ""),
+                        "summary": _chatbot_prompts.get("summary", ""),
+                        "tutorial": _chatbot_prompts.get("tutorial", ""),
+                        "comparison": _chatbot_prompts.get("comparison", ""),
+                    },
+                    "summarization_prompt": _chatbot_cfg.get("summarization_prompt", ""),
                 },
                 "ocr": {
                     "provider": ai_config.get("ocr", {}).get("provider", "local"),
@@ -3249,6 +3259,28 @@ sites:
                             config_data["ai_config"][function].pop("system_prompt", None)
                         else:
                             config_data["ai_config"][function]["system_prompt"] = str(sp)
+
+                    # Allow saving chatbot prompt overrides
+                    if function == "chatbot":
+                        if "prompts" in func_cfg and isinstance(func_cfg["prompts"], dict):
+                            config_data["ai_config"][function].setdefault("prompts", {})
+                            valid_prompt_keys = {"base", "expert", "summary", "tutorial", "comparison"}
+                            for k, v in func_cfg["prompts"].items():
+                                if k not in valid_prompt_keys:
+                                    continue
+                                if v is None or v == "":
+                                    config_data["ai_config"][function]["prompts"].pop(k, None)
+                                else:
+                                    config_data["ai_config"][function]["prompts"][k] = str(v)
+                            # Clean up empty dict
+                            if not config_data["ai_config"][function]["prompts"]:
+                                del config_data["ai_config"][function]["prompts"]
+                        if "summarization_prompt" in func_cfg:
+                            sp = func_cfg["summarization_prompt"]
+                            if sp is None or sp == "":
+                                config_data["ai_config"][function].pop("summarization_prompt", None)
+                            else:
+                                config_data["ai_config"][function]["summarization_prompt"] = str(sp)
             
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
@@ -3764,6 +3796,11 @@ sites:
                 category_filter = str(data.get("category") or "").strip()
                 update_title = bool(data.get("update_title", False))
 
+                # Read output language preference (auto/en/zh)
+                output_language = str(data.get("output_language") or "auto").strip().lower()
+                if output_language not in {"auto", "en", "zh"}:
+                    output_language = "auto"
+
                 # Read the configurable catalog system prompt from sites.yaml
                 _cfg = _load_yaml(_get_sites_config_path(), default={})
                 _catalog_system_prompt: str | None = (
@@ -3916,6 +3953,7 @@ sites:
                         max_workers=min(5, max(1, len(file_urls))),
                         update_title=update_title,
                         catalog_system_prompt=_catalog_system_prompt,
+                        output_language=output_language,
                         progress_callback=progress_callback,
                     )
                 else:
@@ -3933,6 +3971,7 @@ sites:
                         candidate_offset=candidate_offset,
                         update_title=update_title,
                         catalog_system_prompt=_catalog_system_prompt,
+                        output_language=output_language,
                         progress_callback=progress_callback,
                     )
                 

@@ -417,11 +417,24 @@ def register_chat_routes(
                     generation_time_ms = 0
                 else:
                     generation_start = time.time()
+                    # Load chatbot prompt overrides from config
+                    _chatbot_prompts_override: dict | None = None
+                    try:
+                        from config.yaml_config import load_yaml_config
+                        _chatbot_prompts_override = (
+                            load_yaml_config()
+                            .get("ai_config", {})
+                            .get("chatbot", {})
+                            .get("prompts") or None
+                        )
+                    except Exception:
+                        pass
                     response_text = llm_client.generate_response(
                         query=message,
                         chunks=chunks,
                         mode=mode,
-                        conversation_history=history[:-1]  # Exclude the message we just added
+                        conversation_history=history[:-1],  # Exclude the message we just added
+                        prompts_override=_chatbot_prompts_override,
                     )
                     generation_time_ms = int((time.time() - generation_start) * 1000)
                 
@@ -825,8 +838,19 @@ def register_chat_routes(
             config = ChatbotConfig()
             llm_client = LLMClient(config)
             
-            # Build summarization prompt based on mode
-            system_prompt = _build_summarization_system_prompt(mode)
+            # Build summarization prompt based on mode (load optional override from config)
+            _custom_sum_prompt: str | None = None
+            try:
+                from config.yaml_config import load_yaml_config
+                _custom_sum_prompt = (
+                    load_yaml_config()
+                    .get("ai_config", {})
+                    .get("chatbot", {})
+                    .get("summarization_prompt") or None
+                )
+            except Exception:
+                pass
+            system_prompt = _build_summarization_system_prompt(mode, _custom_sum_prompt)
             
             # Build user message
             user_message_parts = []
@@ -881,54 +905,63 @@ def register_chat_routes(
                 detail=str(e)
             )
     
-    def _build_summarization_system_prompt(mode: str) -> str:
-        """Build system prompt for document summarization."""
-        base_prompt = """You are an AI assistant specialized in analyzing and explaining documents related to actuarial science, insurance, and related topics.
+    def _build_summarization_system_prompt(mode: str, custom_prompt: str | None = None) -> str:
+        """Build system prompt for document summarization.
 
-Your task is to analyze the provided document and generate a clear, accurate response based on the document's content.
+        Args:
+            mode: One of ``summary``, ``detailed``, ``tutorial``.
+            custom_prompt: Optional full prompt override loaded from
+                ``ai_config.chatbot.summarization_prompt`` in sites.yaml.
+                When provided, it completely replaces the built-in prompt.
+        """
+        if custom_prompt and custom_prompt.strip():
+            return custom_prompt.strip()
 
-RULES:
-1. Base your response ONLY on the content provided in the document.
-2. Do not invent facts, figures, or information not present in the document.
-3. If the document doesn't contain enough information to fully answer, acknowledge what's missing.
-4. Maintain accuracy and cite specific sections when referencing details.
-5. Use clear, professional language appropriate for the insurance/actuarial field.
-"""
-        
+        base_prompt = (
+            "You are a precise AI assistant specialized in analyzing documents related to "
+            "actuarial science, insurance regulations, and related topics.\n\n"
+            "RULES:\n"
+            "1. Base your response ONLY on the content provided in the document.\n"
+            "2. Do not invent facts, figures, or information not present in the document.\n"
+            "3. Respond in the same language as the document content unless the user requests otherwise.\n"
+            "4. If the document doesn't contain enough information to fully answer, acknowledge what's missing.\n"
+            "5. Cite specific sections or figures when referencing details.\n"
+            "6. Use clear, professional language appropriate for the insurance/actuarial field.\n"
+        )
+
         mode_prompts = {
-            "summary": """
-SUMMARY MODE: Provide a concise summary (200-400 words) that captures:
-- The main purpose and scope of the document
-- Key findings, recommendations, or conclusions
-- Critical numbers, dates, or thresholds mentioned
-- Primary stakeholders or audience
-
-Focus on what a busy professional needs to know at a glance.
-""",
-            "detailed": """
-DETAILED MODE: Provide a comprehensive explanation that covers:
-- Document structure and organization
-- All major sections and their key points
-- Important definitions, formulas, or technical content
-- Supporting evidence, data, and examples
-- Relationships between different sections
-- Implications and practical applications
-
-Be thorough while maintaining clarity. This is for someone who wants to understand the document deeply without reading the full text.
-""",
-            "tutorial": """
-TUTORIAL MODE: Explain the document in an educational, step-by-step manner:
-- Start with the basics and build up progressively
-- Define technical terms before using them
-- Break down complex concepts into digestible parts
-- Use analogies or examples to clarify difficult points
-- Organize information logically for learning
-- Include a brief recap of key takeaways
-
-Write as if teaching someone who is new to this specific topic but has general knowledge of the field.
-"""
+            "summary": (
+                "\nSUMMARY MODE: Provide a concise summary (200-400 words) that captures:\n"
+                "- The main purpose and scope of the document\n"
+                "- Key findings, recommendations, or conclusions\n"
+                "- Critical numbers, dates, thresholds, or regulatory references mentioned\n"
+                "- Primary stakeholders or intended audience\n\n"
+                "Focus on what a busy professional needs to know at a glance.\n"
+            ),
+            "detailed": (
+                "\nDETAILED MODE: Provide a comprehensive explanation that covers:\n"
+                "- Document structure and organization\n"
+                "- All major sections and their key points\n"
+                "- Important definitions, formulas, or technical content\n"
+                "- Supporting evidence, data, and examples\n"
+                "- Relationships between different sections\n"
+                "- Practical implications and applications\n\n"
+                "Be thorough while maintaining clarity. This is for someone who wants to "
+                "understand the document deeply without reading the full text.\n"
+            ),
+            "tutorial": (
+                "\nTUTORIAL MODE: Explain the document in an educational, step-by-step manner:\n"
+                "- Start with the basics and build up progressively\n"
+                "- Define technical terms before using them\n"
+                "- Break down complex concepts into digestible parts\n"
+                "- Use analogies or examples to clarify difficult points\n"
+                "- Organize information logically for learning\n"
+                "- Include a brief recap of key takeaways\n\n"
+                "Write as if teaching someone new to this specific topic but with general "
+                "knowledge of the insurance/actuarial field.\n"
+            ),
         }
-        
+
         return base_prompt + mode_prompts.get(mode, mode_prompts["summary"])
     
     @app.route("/api/chat/knowledge-bases", methods=["GET"])

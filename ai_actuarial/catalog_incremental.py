@@ -448,6 +448,7 @@ def _process_single_row(
     provider: str,
     input_source: str,
     catalog_system_prompt: str | None = None,
+    output_language: str = "auto",
 ) -> tuple[dict, CatalogItem, str, str | None]:
     """Process a single row in a worker thread.
     Returns: (row_data, result_item, status, suggested_title)
@@ -508,6 +509,7 @@ def _process_single_row(
                 title=title,
                 content=text,
                 custom_system_prompt=catalog_system_prompt,
+                output_language=output_language,
             )
             keywords = llm.keywords
             suggested_title = llm.suggested_title
@@ -574,6 +576,7 @@ def run_incremental_catalog(
     candidate_offset: int = 0,
     update_title: bool = False,
     catalog_system_prompt: str | None = None,
+    output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Run incremental catalog processing.
@@ -592,6 +595,7 @@ def run_incremental_catalog(
         limit: Max total items to process (0 for unlimited)
         update_title: If True, update files.title with the AI-suggested title
         catalog_system_prompt: Optional system prompt override for the LLM cataloger.
+        output_language: Language for LLM output (``"auto"``, ``"en"``, ``"zh"``).
         
     Returns:
         dict with stats: {scanned, processed, written, skipped_ai, errors}
@@ -687,6 +691,7 @@ def run_incremental_catalog(
                     provider=provider,
                     input_source=input_source,
                     catalog_system_prompt=catalog_system_prompt,
+                    output_language=output_language,
                 ): r["url"]
                 for r in row_dicts
             }
@@ -830,6 +835,7 @@ def run_catalog_for_urls(
     max_workers: int = 5,
     update_title: bool = False,
     catalog_system_prompt: str | None = None,
+    output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
@@ -924,6 +930,7 @@ def run_catalog_for_urls(
                 provider=provider,
                 input_source=input_source,
                 catalog_system_prompt=catalog_system_prompt,
+                output_language=output_language,
             ): r["url"]
             for r in candidates
         }

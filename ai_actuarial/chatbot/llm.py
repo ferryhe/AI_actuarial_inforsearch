@@ -224,6 +224,7 @@ class LLMClient:
         chunks: List[Dict[str, Any]],
         mode: str = "expert",
         conversation_history: Optional[List[Dict[str, Any]]] = None,
+        prompts_override: Optional[Dict[str, str]] = None,
     ) -> str:
         """
         Build a chat prompt from query+chunks and generate a response.
@@ -235,6 +236,7 @@ class LLMClient:
             retrieved_chunks=chunks,
             query=query,
             conversation_history=conversation_history or [],
+            prompts_override=prompts_override,
         )
         return self.generate(messages=messages)
     
