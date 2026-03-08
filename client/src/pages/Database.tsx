@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import {
   Search,
   Download,
@@ -17,10 +17,12 @@ import {
   Trash2,
   Loader2,
   AlertCircle,
+  FileDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface FileItem {
@@ -105,19 +107,36 @@ type SortDir = "asc" | "desc";
 export default function DatabasePage() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
+  const searchStr = useSearch();
+  const { user } = useAuth();
+  const canExport = user?.role === "admin" || user?.role === "operator";
+
+  // Parse initial state from URL on first render
+  const initialParams = new URLSearchParams(searchStr);
+  const VALID_SORT_FIELDS: SortField[] = ["title", "source_site", "content_type", "last_seen", "bytes"];
+  const rawOrderBy = initialParams.get("order_by") || "";
+  const rawOrderDir = initialParams.get("order_dir") || "";
 
   const [files, setFiles] = useState<FileItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffset] = useState(() => {
+    const page = Math.max(1, parseInt(initialParams.get("page") || "1", 10));
+    return (page - 1) * PAGE_SIZE;
+  });
 
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [source, setSource] = useState("");
-  const [category, setCategory] = useState("");
-  const [includeDeleted, setIncludeDeleted] = useState(false);
-  const [orderBy, setOrderBy] = useState<SortField>("last_seen");
-  const [orderDir, setOrderDir] = useState<SortDir>("desc");
+  const [query, setQuery] = useState(initialParams.get("query") || "");
+  const [debouncedQuery, setDebouncedQuery] = useState(initialParams.get("query") || "");
+  const [source, setSource] = useState(initialParams.get("source") || "");
+  const [category, setCategory] = useState(initialParams.get("category") || "");
+  const [includeDeleted, setIncludeDeleted] = useState(initialParams.get("include_deleted") === "true");
+  const [orderBy, setOrderBy] = useState<SortField>(
+    VALID_SORT_FIELDS.includes(rawOrderBy as SortField) ? (rawOrderBy as SortField) : "last_seen"
+  );
+  const [orderDir, setOrderDir] = useState<SortDir>(rawOrderDir === "asc" ? "asc" : "desc");
+
+  // Track whether state was initialized from URL (avoid double-reset of offset)
+  const initializedRef = useRef(false);
 
   const [sources, setSources] = useState<string[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -135,8 +154,27 @@ export default function DatabasePage() {
   }, [query]);
 
   useEffect(() => {
+    // Only reset offset to 0 when filters change, not on initial render
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      return;
+    }
     setOffset(0);
   }, [debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
+
+  // Persist current state to URL so back-navigation restores filters/page
+  useEffect(() => {
+    const page = Math.floor(offset / PAGE_SIZE) + 1;
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("order_by", orderBy);
+    params.set("order_dir", orderDir);
+    if (debouncedQuery) params.set("query", debouncedQuery);
+    if (source) params.set("source", source);
+    if (category) params.set("category", category);
+    if (includeDeleted) params.set("include_deleted", "true");
+    window.history.replaceState(null, "", `/database?${params.toString()}`);
+  }, [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
 
   useEffect(() => {
     apiGet<{ sources: string[] }>("/api/sources")
@@ -249,6 +287,10 @@ export default function DatabasePage() {
     window.open(`/api/download?url=${encodeURIComponent(file.url)}`, "_blank");
   }
 
+  function handleExport(format: "csv" | "json" = "csv") {
+    window.open(`/api/export?format=${format}`, "_blank");
+  }
+
   function navigateToFile(file: FileItem) {
     navigate(`/file-detail?url=${encodeURIComponent(file.url)}`);
   }
@@ -261,11 +303,25 @@ export default function DatabasePage() {
 
   return (
     <div className="space-y-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-        <h1 className="text-2xl sm:text-3xl font-serif font-bold tracking-tight">
-          {t("db.title")}
-        </h1>
-        <p className="text-muted-foreground mt-1 text-sm">{t("db.subtitle")}</p>
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}
+        className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-serif font-bold tracking-tight">
+            {t("db.title")}
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">{t("db.subtitle")}</p>
+        </div>
+        {canExport && (
+          <button
+            onClick={() => handleExport("csv")}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+            title={t("db.export_csv")}
+            data-testid="button-export-csv"
+          >
+            <FileDown className="w-4 h-4" />
+            <span className="hidden sm:inline">{t("db.export_csv")}</span>
+          </button>
+        )}
       </motion.div>
 
       <div className="flex flex-col sm:flex-row gap-3">
@@ -484,6 +540,11 @@ export default function DatabasePage() {
                       </span>
                     )}
                   </div>
+                  {file.original_filename && file.original_filename !== file.title && (
+                    <p className="text-xs text-muted-foreground/50 mt-0.5 truncate pl-6" data-testid={`text-filename-${i}`}>
+                      {file.original_filename}
+                    </p>
+                  )}
                   {file.summary && (
                     <p className="text-xs text-muted-foreground/70 mt-0.5 truncate pl-6" data-testid={`text-summary-${i}`}>
                       {file.summary.length > 120 ? file.summary.slice(0, 120) + "…" : file.summary}
