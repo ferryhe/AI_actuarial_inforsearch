@@ -198,11 +198,18 @@ export default function FileDetail() {
   const fileUrl = new URLSearchParams(searchString).get("url") || "";
 
   function goBack() {
-    if (window.history.length > 1) {
-      window.history.back();
-    } else {
-      navigate("/database");
+    // Use same-origin referrer check: history.length alone is unreliable
+    // because it includes entries from outside the SPA (e.g. bookmarks).
+    try {
+      const ref = document.referrer;
+      if (ref && new URL(ref).origin === window.location.origin) {
+        window.history.back();
+        return;
+      }
+    } catch {
+      // URL parse failed — fall through to default
     }
+    navigate("/database");
   }
 
   const [file, setFile] = useState<FileData | null>(null);
