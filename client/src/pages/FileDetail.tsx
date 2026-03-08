@@ -352,7 +352,7 @@ export default function FileDetail() {
       const titleChanged = editTitle.trim() !== (file.title || "").trim();
       const res = await apiPost<{ file?: FileData }>("/api/files/update", {
         url: file.url,
-        title: titleChanged ? (editTitle.trim() || undefined) : undefined,
+        title: titleChanged ? editTitle.trim() : undefined,
         category: editCategory || undefined,
         summary: editSummary || undefined,
         keywords: kws.length > 0 ? kws : undefined,
