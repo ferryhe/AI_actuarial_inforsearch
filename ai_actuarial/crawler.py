@@ -90,6 +90,7 @@ class Crawler:
                     timeout=30,
                     allow_redirects=True,
                 )
+                resp.raise_for_status()
                 data = resp.content
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 return data, headers, resp.url
@@ -124,6 +125,7 @@ class Crawler:
                         allow_redirects=True,
                         stream=True,
                     )
+                    resp.raise_for_status()
                     headers = {k.lower(): v for k, v in resp.headers.items()}
                     final_url = resp.url
                     with open(tmp_path, "wb") as f:
