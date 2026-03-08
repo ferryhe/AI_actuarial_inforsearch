@@ -660,7 +660,7 @@ class Crawler:
             # Fallback to absolute path if relative path cannot be determined
             relative_path = str(local_path_resolved)
 
-        title = page_title or os.path.basename(parsed.path) or original_filename
+        title = original_filename or os.path.basename(parsed.path) or page_title
         content_type = headers.get("content-type")
         last_modified = headers.get("last-modified")
         etag = headers.get("etag")
