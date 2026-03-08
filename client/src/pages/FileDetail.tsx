@@ -217,6 +217,7 @@ export default function FileDetail() {
   const [error, setError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
   const [editCategory, setEditCategory] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editKeywords, setEditKeywords] = useState("");
@@ -243,6 +244,8 @@ export default function FileDetail() {
   const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [catalogSource, setCatalogSource] = useState("markdown");
   const [catalogOverwrite, setCatalogOverwrite] = useState(false);
+  const [catalogUpdateTitle, setCatalogUpdateTitle] = useState(false);
+  const [catalogOutputLanguage, setCatalogOutputLanguage] = useState("auto");
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
 
   const taskOptions = useTaskOptions();
@@ -334,6 +337,7 @@ export default function FileDetail() {
 
   function startEdit() {
     if (!file) return;
+    setEditTitle(file.title || "");
     setEditCategory(file.category || "");
     setEditSummary(file.summary || "");
     setEditKeywords((file.keywords || []).join(", "));
@@ -345,8 +349,10 @@ export default function FileDetail() {
     setSaving(true);
     try {
       const kws = editKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+      const titleChanged = editTitle.trim() !== (file.title || "").trim();
       const res = await apiPost<{ file?: FileData }>("/api/files/update", {
         url: file.url,
+        title: titleChanged ? editTitle.trim() : undefined,
         category: editCategory || undefined,
         summary: editSummary || undefined,
         keywords: kws.length > 0 ? kws : undefined,
@@ -409,6 +415,8 @@ export default function FileDetail() {
         file_urls: [file.url],
         input_source: catalogSource,
         overwrite_existing: catalogOverwrite,
+        update_title: catalogUpdateTitle,
+        output_language: catalogOutputLanguage,
       });
       setShowCatalogModal(false);
       catalogPoller.start(res.job_id);
@@ -638,6 +646,19 @@ export default function FileDetail() {
           <h3 className="text-sm font-semibold">{t("fv.catalog_info")}</h3>
         </div>
         <div className="p-4 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.title")}</label>
+            {editing ? (
+              <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder={t("fv.title_ph")} data-testid="input-title" />
+            ) : (
+              <p className="text-sm font-medium" data-testid="text-title">
+                {file.title || <span className="text-muted-foreground italic">{file.original_filename}</span>}
+              </p>
+            )}
+          </div>
+
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{t("fv.category")}</label>
             {editing ? (
@@ -877,6 +898,29 @@ export default function FileDetail() {
               <input type="checkbox" checked={catalogOverwrite} onChange={(e) => setCatalogOverwrite(e.target.checked)} className="rounded" />
               {t("fv.overwrite_recompute")}
             </label>
+            {taskOptions.catalogProviders.length > 0 && (
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={catalogUpdateTitle} onChange={(e) => setCatalogUpdateTitle(e.target.checked)} className="rounded" data-testid="checkbox-update-title" />
+                <span>
+                  {t("fv.update_title_with_ai")}
+                  <span className="ml-1 text-[11px] text-muted-foreground">{t("fv.update_title_hint")}</span>
+                </span>
+              </label>
+            )}
+            {taskOptions.catalogProviders.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.output_language")}</label>
+                <select
+                  value={catalogOutputLanguage}
+                  onChange={(e) => setCatalogOutputLanguage(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background"
+                  data-testid="select-output-language">
+                  <option value="auto">{t("tasks.form.lang_auto")}</option>
+                  <option value="en">{t("tasks.form.lang_en")}</option>
+                  <option value="zh">{t("tasks.form.lang_zh")}</option>
+                </select>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <button onClick={() => setShowCatalogModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}

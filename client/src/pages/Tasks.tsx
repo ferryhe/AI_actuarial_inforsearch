@@ -1213,6 +1213,8 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
   const [retryErrors, setRetryErrors] = useState(false);
   const [skipExisting, setSkipExisting] = useState(true);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
+  const [updateTitle, setUpdateTitle] = useState(false);
+  const [outputLanguage, setOutputLanguage] = useState("auto");
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
@@ -1285,18 +1287,33 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
         <SelectField value={inputSource} onChange={setInputSource} testId="select-input-source"
           options={[{ value: "markdown", label: "Markdown" }, { value: "source", label: "Source" }]} />
       </FormField>
+      {catalogProviders.length > 0 && (
+        <FormField label={t("tasks.form.output_language")}>
+          <SelectField value={outputLanguage} onChange={setOutputLanguage} testId="select-output-language"
+            options={[
+              { value: "auto", label: t("tasks.form.lang_auto") },
+              { value: "en", label: t("tasks.form.lang_en") },
+              { value: "zh", label: t("tasks.form.lang_zh") },
+            ]} />
+        </FormField>
+      )}
       <div className="flex flex-wrap gap-x-5 gap-y-2">
         <CheckboxField checked={retryErrors} onChange={setRetryErrors} label={t("tasks.form.retry_errors")} testId="checkbox-retry-errors" />
         <CheckboxField checked={skipExisting} onChange={(v) => { setSkipExisting(v); if (v) setOverwriteExisting(false); }}
           label={t("tasks.form.skip_existing")} testId="checkbox-skip-existing" />
         <CheckboxField checked={overwriteExisting} onChange={(v) => { setOverwriteExisting(v); if (v) setSkipExisting(false); }}
           label={t("tasks.form.overwrite_existing")} testId="checkbox-overwrite-existing" />
+        {catalogProviders.length > 0 && (
+          <CheckboxField checked={updateTitle} onChange={setUpdateTitle}
+            label={t("tasks.form.update_title")} testId="checkbox-update-title" />
+        )}
       </div>
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || catalogProviders.length === 0}
         onClick={() => onSubmit({ type: "catalog", name: "AI Catalog", scope_mode: scopeMode,
           category: scopeMode === "category" ? category : undefined, scan_count: parseInt(scanCount) || 100,
           scan_start_index: parseInt(startIndex) || 1, input_source: inputSource,
-          retry_errors: retryErrors, skip_existing: skipExisting, overwrite_existing: overwriteExisting })} />
+          retry_errors: retryErrors, skip_existing: skipExisting, overwrite_existing: overwriteExisting,
+          update_title: updateTitle, output_language: outputLanguage })} />
     </div>
   );
 }

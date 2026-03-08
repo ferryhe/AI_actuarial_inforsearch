@@ -440,23 +440,27 @@ def _load_markdown_text(db_path: str, file_url: str, max_chars: int) -> str:
 
 
 def _process_single_row(
-    row_data: dict, 
-    ai_only: bool, 
+    row_data: dict,
+    ai_only: bool,
     max_chars: int,
     *,
     db_path: str,
     provider: str,
     input_source: str,
-) -> tuple[dict, CatalogItem, str]:
+    catalog_system_prompt: str | None = None,
+    output_language: str = "auto",
+) -> tuple[dict, CatalogItem, str, str | None]:
     """Process a single row in a worker thread.
-    Returns: (row_data, result_item, status)
+    Returns: (row_data, result_item, status, suggested_title)
+    suggested_title is only populated when the OpenAI provider returns one.
     """
     file_url = row_data["url"]
     title = row_data["title"]
     source_site = row_data["source_site"]
     original_filename = row_data["original_filename"]
     local_path = row_data["local_path"]
-    
+    suggested_title: str | None = None
+
     try:
         provider_norm = (provider or "local").strip().lower()
         if provider_norm not in {"local", "openai"}:
@@ -479,7 +483,7 @@ def _process_single_row(
             if source_norm == "source" and not resolved_path.exists():
                 raise RuntimeError(f"File not found: {resolved_path} (orig: {local_path})")
             raise RuntimeError("empty extracted text")
-            
+
         if provider_norm == "local":
             keywords = extract_keywords(text, title=title)
 
@@ -494,15 +498,21 @@ def _process_single_row(
                     summary="",
                     category="(filtered: non-AI)",
                 )
-                return (row_data, item, "skipped")
+                return (row_data, item, "skipped", None)
 
             summary = summarize(text, keywords)
             category = categorize(title, text, keywords)
         else:
             from .catalog_llm import catalog_with_openai
 
-            llm = catalog_with_openai(title=title, content=text)
+            llm = catalog_with_openai(
+                title=title,
+                content=text,
+                custom_system_prompt=catalog_system_prompt,
+                output_language=output_language,
+            )
             keywords = llm.keywords
+            suggested_title = llm.suggested_title
 
             if ai_only and not is_ai_related(text, keywords, title=title):
                 item = CatalogItem(
@@ -515,11 +525,11 @@ def _process_single_row(
                     summary="",
                     category="(filtered: non-AI)",
                 )
-                return (row_data, item, "skipped")
+                return (row_data, item, "skipped", None)
 
             summary = llm.summary
             category = llm.category
-        
+
         item = CatalogItem(
             source_site=source_site,
             title=title,
@@ -530,8 +540,8 @@ def _process_single_row(
             summary=summary,
             category=category,
         )
-        return (row_data, item, "ok")
-        
+        return (row_data, item, "ok", suggested_title)
+
     except Exception as e:
         # Return error item
         item = CatalogItem(
@@ -544,10 +554,8 @@ def _process_single_row(
             summary="",
             category="(error)",
         )
-        # Store error in item temporarily or pass back? 
-        # We can attach it to the item wrapper or just use the status return
         # Using status to pass exception string
-        return (row_data, item, f"error:{str(e)}")
+        return (row_data, item, f"error:{str(e)}", None)
 
 
 def run_incremental_catalog(
@@ -566,6 +574,9 @@ def run_incremental_catalog(
     max_workers: int = 5,
     limit: int = 0,
     candidate_offset: int = 0,
+    update_title: bool = False,
+    catalog_system_prompt: str | None = None,
+    output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Run incremental catalog processing.
@@ -582,6 +593,9 @@ def run_incremental_catalog(
         retry_errors: If True, retry files that previously failed
         max_workers: Threads for parallel processing
         limit: Max total items to process (0 for unlimited)
+        update_title: If True, update files.title with the AI-suggested title
+        catalog_system_prompt: Optional system prompt override for the LLM cataloger.
+        output_language: Language for LLM output (``"auto"``, ``"en"``, ``"zh"``).
         
     Returns:
         dict with stats: {scanned, processed, written, skipped_ai, errors}
@@ -676,6 +690,8 @@ def run_incremental_catalog(
                     db_path=db_path,
                     provider=provider,
                     input_source=input_source,
+                    catalog_system_prompt=catalog_system_prompt,
+                    output_language=output_language,
                 ): r["url"]
                 for r in row_dicts
             }
@@ -685,7 +701,7 @@ def run_incremental_catalog(
             
             for future in as_completed(future_to_url):
                 try:
-                    r_data, item, status = future.result()
+                    r_data, item, status, suggested_title = future.result()
                     processed_at = datetime.now(timezone.utc).isoformat()
                     file_sha256 = r_data["sha256"] or ""
                     
@@ -702,6 +718,13 @@ def run_incremental_catalog(
                             status="ok",
                             processed_at=processed_at,
                         )
+                        if update_title and suggested_title:
+                            with _db_lock:
+                                conn.execute(
+                                    "UPDATE files SET title = ? WHERE url = ?",
+                                    (suggested_title, item.url),
+                                )
+                                conn.commit()
                         if progress_callback:
                             completed = (
                                 stats["processed"] + stats["skipped_ai"] + stats["errors"]
@@ -810,6 +833,9 @@ def run_catalog_for_urls(
     provider: str = "local",
     input_source: str = "source",
     max_workers: int = 5,
+    update_title: bool = False,
+    catalog_system_prompt: str | None = None,
+    output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
@@ -903,13 +929,15 @@ def run_catalog_for_urls(
                 db_path=db_path,
                 provider=provider,
                 input_source=input_source,
+                catalog_system_prompt=catalog_system_prompt,
+                output_language=output_language,
             ): r["url"]
             for r in candidates
         }
         for future in as_completed(future_to_url):
             url = future_to_url[future]
             try:
-                r_data, item, status = future.result()
+                r_data, item, status, suggested_title = future.result()
                 processed_at = datetime.now(timezone.utc).isoformat()
                 file_sha256 = (r_data.get("sha256") or "").strip()
                 if status == "ok":
@@ -924,6 +952,13 @@ def run_catalog_for_urls(
                         status="ok",
                         processed_at=processed_at,
                     )
+                    if update_title and suggested_title:
+                        with _db_lock:
+                            conn.execute(
+                                "UPDATE files SET title = ? WHERE url = ?",
+                                (suggested_title, item.url),
+                            )
+                            conn.commit()
                 elif status == "skipped":
                     stats["skipped_ai"] += 1
                     _upsert_catalog_row(
