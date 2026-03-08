@@ -15,11 +15,14 @@ import {
   Users,
   ScrollText,
   UserCircle,
+  LogOut,
+  LogIn,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
 import { useI18n } from "@/hooks/use-i18n";
 import { useState, createContext, useContext } from "react";
+import { useAuth } from "@/context/AuthContext";
 
 const I18nContext = createContext<ReturnType<typeof useI18n>>({
   lang: "en",
@@ -106,6 +109,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const i18n = useI18n();
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { user, isLoggedIn, logout } = useAuth();
 
   return (
     <I18nContext.Provider value={i18n}>
@@ -154,6 +158,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               >
                 {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
+              {isLoggedIn ? (
+                <>
+                  <Link href="/profile">
+                    <span
+                      className="hidden sm:flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                      title={user?.email ?? ""}
+                      data-testid="user-display-name"
+                    >
+                      <UserCircle className="w-4 h-4 shrink-0" />
+                      <span className="max-w-[120px] truncate">{user?.display_name || user?.email}</span>
+                    </span>
+                  </Link>
+                  <button
+                    onClick={logout}
+                    className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    data-testid="logout-btn"
+                    title="Sign out"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </>
+              ) : (
+                <Link href="/login">
+                  <span
+                    className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                    data-testid="login-link"
+                  >
+                    <LogIn className="w-4 h-4" />
+                    <span className="hidden sm:inline">Sign in</span>
+                  </span>
+                </Link>
+              )}
             </div>
           </header>
 

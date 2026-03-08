@@ -12,14 +12,17 @@ AI Actuarial Info Search is a system for discovering, downloading, and catalogin
 
 ## 项目架构说明（前后台组成）
 
-本项目由 **两层** 协同工作，而非两套独立的前台界面：
+本项目目前有 **两套 Web 界面**，均由同一个 Flask 后台提供 API 支持：
 
-| 层次 | 技术栈 | 职责 |
-|------|--------|------|
-| **前台（React SPA）** | React 19 + TypeScript + Vite + Tailwind | 现代化 Web UI，运行在浏览器中 |
-| **后台（Flask REST API）** | Python 3.10+ + Flask | 数据处理、爬取、AI 编目、文件管理，对外暴露 `/api/*` 接口 |
+| 界面 | 技术栈 | 访问方式 | 特点 |
+|------|--------|----------|------|
+| **Flask 模板界面（旧）** | Python + Jinja2 HTML | `http://localhost:8000` | 服务端渲染，首屏快，功能完整 |
+| **React SPA 界面（新）** | React 19 + TypeScript + Vite | `http://localhost:5173`（开发） | 客户端渲染，交互流畅，支持暗色主题 |
 
-两者 **都需要保留**：React 前台调用 Flask 后台的 REST API 来获取和操作数据。生产模式下，Flask 同时负责托管构建后的 React 静态文件。
+- **Flask 界面**：服务端渲染，页面由 Python 直接生成，首屏加载快，无需额外启动前端服务。
+- **React 界面**：现代 SPA，JS bundle 初次加载后切换页面极快，用户体验更好，是长期维护的主界面。
+
+两套界面都 **需要保留**，React 界面调用 Flask 的 `/api/*` REST 接口来获取和操作数据。
 
 ---
 
@@ -28,50 +31,43 @@ AI Actuarial Info Search is a system for discovering, downloading, and catalogin
 ### 前提条件
 
 - Python 3.10+
-- Node.js 18+（含 npm）
+- Node.js 18+（含 npm，仅 React 界面需要）
 - （可选）AI 服务的 API Key，配置在 `config/sites.yaml` 或 `.env`
 
-### 方式一：开发模式（前后台分开启动，推荐用于本地开发）
-
-**第一步：启动 Python 后台（Flask API，端口 8000）**
+### 只启动 Flask 界面（最简单，端口 8000）
 
 ```bash
 # 安装 Python 依赖
 pip install -r requirements.txt
 
-# 启动后台服务
+# 启动服务（含 Flask HTML 界面 + REST API）
 python -m ai_actuarial web --host 127.0.0.1 --port 8000
 ```
 
-**第二步：启动 React 前台开发服务器（端口 5173）**
+浏览器访问 `http://localhost:8000`，直接使用 Flask 服务端渲染界面。
+
+---
+
+### 同时启动 React 界面（两个终端）
+
+**终端 1：Flask 后台（端口 8000）**
+
+```bash
+pip install -r requirements.txt
+python -m ai_actuarial web --host 127.0.0.1 --port 8000
+```
+
+**终端 2：React 前台开发服务器（端口 5173）**
 
 ```bash
 # 安装 Node 依赖（首次运行）
 npm install
 
-# 启动前台开发服务器
+# 启动 Vite 开发服务器
 npm run dev
 ```
 
-Vite 开发服务器会将 `/api/*` 请求自动代理到 `http://127.0.0.1:8000`，直接在浏览器打开 `http://localhost:5173` 即可使用。
-
----
-
-### 方式二：生产模式（Flask 托管构建后的前台）
-
-```bash
-# 1. 安装 Python 依赖
-pip install -r requirements.txt
-
-# 2. 安装 Node 依赖并构建前台（输出到 dist/public/）
-npm install
-npm run build
-
-# 3. 启动 Flask 服务（自动托管 dist/public/ 中的静态文件）
-python -m ai_actuarial web --host 0.0.0.0 --port 8000
-```
-
-浏览器访问 `http://localhost:8000` 即可。
+Vite 会将 `/api/*` 请求自动代理到 `http://127.0.0.1:8000`，浏览器打开 `http://localhost:5173` 使用 React 界面。
 
 ---
 

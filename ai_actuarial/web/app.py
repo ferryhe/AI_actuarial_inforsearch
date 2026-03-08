@@ -800,7 +800,11 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             logger.error(f"Failed to load job history: {e}")
 
     def _is_api_request() -> bool:
-        return request.path.startswith("/api/")
+        return (
+            request.path.startswith("/api/")
+            or "application/json" in (request.content_type or "")
+            or request.headers.get("Accept", "").startswith("application/json")
+        )
 
     def _unauthorized_response():
         if _is_api_request():
@@ -1088,6 +1092,8 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         session.pop("auth_token_id", None)
         session.pop("auth_group_name", None)
         session.pop("email_user_id", None)
+        if _is_api_request():
+            return jsonify({"success": True}), 200
         return redirect(url_for("index"))
 
     if csrf is not None:
