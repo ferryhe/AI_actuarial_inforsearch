@@ -25,6 +25,11 @@ class DoclingEngine(Engine):
         if self._converter is not None:
             return self._converter
 
+        # On headless/server environments (no display), prevent Qt/xcb from being loaded
+        # by telling Qt to use the offscreen platform plugin instead of xcb.
+        # This avoids "libxcb.so.1: cannot open shared object file" errors.
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
         # Ensure HF models are stored in persistent data volume
         if "HF_HOME" not in os.environ:
             model_dir = PROJECT_ROOT / "data" / "models" / "huggingface"

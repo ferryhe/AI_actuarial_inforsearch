@@ -197,6 +197,21 @@ export default function FileDetail() {
   const searchString = useSearch();
   const fileUrl = new URLSearchParams(searchString).get("url") || "";
 
+  function goBack() {
+    // Use same-origin referrer check: history.length alone is unreliable
+    // because it includes entries from outside the SPA (e.g. bookmarks).
+    try {
+      const ref = document.referrer;
+      if (ref && new URL(ref).origin === window.location.origin) {
+        window.history.back();
+        return;
+      }
+    } catch {
+      // URL parse failed — fall through to default
+    }
+    navigate("/database");
+  }
+
   const [file, setFile] = useState<FileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -478,7 +493,7 @@ export default function FileDetail() {
       <div className="space-y-4 py-16 text-center">
         <AlertCircle className="w-12 h-12 mx-auto text-destructive/60" />
         <p className="text-muted-foreground">{error || "File not found"}</p>
-        <button onClick={() => navigate("/database")} className="text-sm text-primary hover:underline" data-testid="link-back-database">
+        <button onClick={() => goBack()} className="text-sm text-primary hover:underline" data-testid="link-back-database">
           {t("fv.back")}
         </button>
       </div>
@@ -504,7 +519,7 @@ export default function FileDetail() {
     <div className="space-y-6 max-w-4xl">
       {/* Section 1: Header */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
-        <button onClick={() => navigate("/database")} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back">
+        <button onClick={() => goBack()} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="min-w-0 flex-1">

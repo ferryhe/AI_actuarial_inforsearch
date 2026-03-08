@@ -242,6 +242,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "tasks.run",
             "tasks.stop",
             "logs.task.read",
+            "export.read",
         }
     ),
     # Operator with AI: full operator + AI chat
@@ -262,6 +263,7 @@ _GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
             "tasks.run",
             "tasks.stop",
             "logs.task.read",
+            "export.read",
             "chat.view",
             "chat.query",
             "chat.conversations",
