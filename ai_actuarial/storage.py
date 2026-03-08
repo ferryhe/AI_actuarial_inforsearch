@@ -2723,6 +2723,39 @@ class Storage:
         self._maybe_commit()
         return cur.rowcount > 0
 
+    def update_user_profile(
+        self,
+        user_id: int,
+        display_name: str | None = None,
+        password_hash: str | None = None,
+    ) -> bool:
+        """Update a user's display name and/or password hash.
+
+        Only the fields passed as non-None are updated.
+        Returns True if the user was found.
+        """
+        updates: list[str] = []
+        params: list = []
+        if display_name is not None:
+            updates.append("display_name = ?")
+            params.append(display_name or None)
+        if password_hash is not None:
+            updates.append("password_hash = ?")
+            params.append(password_hash)
+        if not updates:
+            # nothing to do; return True if user exists
+            row = self._conn.execute(
+                "SELECT id FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            return row is not None
+        params.append(user_id)
+        cur = self._conn.execute(
+            f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        self._maybe_commit()
+        return cur.rowcount > 0
+
     def list_users(
         self,
         page: int = 1,
