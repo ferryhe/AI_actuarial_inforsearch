@@ -77,6 +77,7 @@ def _site_configs(cfg: dict) -> list[SiteConfig]:
                 exclude_prefixes=excl_pfx,
                 content_selector=s.get("content_selector"),
                 allow_url_patterns=s.get("allow_url_patterns"),
+                queries=s.get("queries"),
             )
         )
     return sites
@@ -98,14 +99,56 @@ def cmd_update(args: argparse.Namespace) -> int:
     if args.max_depth is not None:
         for s in sites:
             s.max_depth = args.max_depth
+    search_cfg = cfg.get("search", {})
+    run_search = not args.no_search and search_cfg.get("enabled", False)
+
     for site in sites:
         new_items = crawler.crawl_site(site)
         all_new.extend(new_items)
 
-    search_cfg = cfg.get("search", {})
-    if not args.no_search and search_cfg.get("enabled", False):
+        # Run site-specific search queries immediately after crawling the site
+        if run_search and site.queries:
+            brave_key = os.getenv("BRAVE_API_KEY")
+            serpapi_key = os.getenv("SERPAPI_API_KEY")
+            serper_key = os.getenv("SERPER_API_KEY")
+            tavily_key = os.getenv("TAVILY_API_KEY")
+            max_results = int(search_cfg.get("max_results", 5))
+            languages = search_cfg.get("languages", ["en"])
+            country = search_cfg.get("country")
+            search_exclude = [k.lower() for k in (site.exclude_keywords or search_cfg.get("exclude_keywords", []))]
+            site_results = search_all(
+                site.queries,
+                max_results,
+                brave_key,
+                serpapi_key,
+                cfg["defaults"]["user_agent"],
+                languages=languages,
+                country=country,
+                serper_key=serper_key,
+                tavily_key=tavily_key,
+            )
+            for result in site_results:
+                items = crawler.scan_page_for_files(
+                    result.url,
+                    SiteConfig(
+                        name=site.name,
+                        url=result.url,
+                        max_pages=1,
+                        max_depth=1,
+                        delay_seconds=search_cfg.get("delay_seconds", 0.5),
+                        keywords=site.keywords or cfg["defaults"].get("keywords", []),
+                        file_exts=site.file_exts or cfg["defaults"].get("file_exts", []),
+                        exclude_keywords=search_exclude,
+                    ),
+                    source_site=result.source,
+                )
+                all_new.extend(items)
+
+    if run_search:
         brave_key = os.getenv("BRAVE_API_KEY")
         serpapi_key = os.getenv("SERPAPI_API_KEY")
+        serper_key = os.getenv("SERPER_API_KEY")
+        tavily_key = os.getenv("TAVILY_API_KEY")
         queries = search_cfg.get("queries", [])
         max_results = int(search_cfg.get("max_results", 5))
         languages = search_cfg.get("languages", ["en"])
@@ -119,6 +162,8 @@ def cmd_update(args: argparse.Namespace) -> int:
             cfg["defaults"]["user_agent"],
             languages=languages,
             country=country,
+            serper_key=serper_key,
+            tavily_key=tavily_key,
         )
         for result in results:
             items = crawler.scan_page_for_files(
