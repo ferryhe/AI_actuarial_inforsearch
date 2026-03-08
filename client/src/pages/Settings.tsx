@@ -630,6 +630,8 @@ function PromptEditorCard({
     try {
       await onSave(editing);
       setEditing(null);
+    } catch {
+      // onSave shows its own error toast; keep the editor open
     } finally {
       setSaving(false);
     }
@@ -712,9 +714,14 @@ function PromptsTab() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   async function savePrompt(payload: Record<string, unknown>) {
-    await apiPost("/api/config/ai-models", payload);
-    setToast({ message: t("settings.catalog_prompt_saved"), type: "success" });
-    await fetchData();
+    try {
+      await apiPost("/api/config/ai-models", payload);
+      setToast({ message: t("settings.catalog_prompt_saved"), type: "success" });
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.models_save_error"), type: "error" });
+      throw new Error("save failed");
+    }
   }
 
   if (loading) {
