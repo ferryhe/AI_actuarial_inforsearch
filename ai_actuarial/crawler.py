@@ -410,6 +410,7 @@ class Crawler:
                         source_page_url=final_url,
                         page_title=page_title,
                         published_time=published_time,
+                        link_text=link_text,
                     )
                     if item:
                         new_items.append(item)
@@ -584,6 +585,7 @@ class Crawler:
         page_title: str | None = None,
         published_time: str | None = None,
         source_site_override: str | None = None,
+        link_text: str | None = None,
     ) -> dict | None:
         if self.storage.file_exists(url):
             if tmp_path.exists():
@@ -660,7 +662,20 @@ class Crawler:
             # Fallback to absolute path if relative path cannot be determined
             relative_path = str(local_path_resolved)
 
-        title = page_title or os.path.basename(parsed.path) or original_filename
+        # Select the best available title using three signals:
+        # 1. link_text: anchor text from the HTML link — the most document-specific label.
+        # 2. page_title: HTML page title — good when each document has its own page, but
+        #    unhelpful when many files are listed on a generic page (e.g. the institution's
+        #    home/publications page).  Skip it when it equals the site name (cfg.name) to
+        #    avoid storing the institution name as the document title.
+        # 3. original_filename / URL basename: always available last resort.
+        clean_link_text = (link_text or "").strip() or None
+        useful_page_title: str | None = None
+        if page_title:
+            site_name = (cfg.name or "").strip().lower()
+            if not site_name or page_title.strip().lower() != site_name:
+                useful_page_title = page_title
+        title = clean_link_text or useful_page_title or original_filename or os.path.basename(parsed.path)
         content_type = headers.get("content-type")
         last_modified = headers.get("last-modified")
         etag = headers.get("etag")
@@ -814,6 +829,7 @@ class Crawler:
                 page_title=page_title,
                 published_time=published_time,
                 source_site_override=source_site,
+                link_text=link_text,
             )
             if item:
                 new_items.append(item)
