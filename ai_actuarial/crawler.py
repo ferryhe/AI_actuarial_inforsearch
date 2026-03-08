@@ -14,6 +14,14 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+try:
+    import curl_cffi.requests as _curl_requests  # type: ignore
+    _CURL_CFFI_AVAILABLE = True
+    logger.debug("curl_cffi available; using Chrome impersonation for HTTP requests")
+except ImportError:
+    _curl_requests = None  # type: ignore
+    _CURL_CFFI_AVAILABLE = False
+
 from .storage import Storage
 from .utils import (
     extract_metadata,
@@ -41,6 +49,7 @@ class SiteConfig:
     collect_page_content: bool = False  # Also save text extracted from HTML pages
     content_selector: str | None = None  # CSS selector to narrow link extraction to content area
     allow_url_patterns: list[str] | None = None  # Regex allow-list for sub-page URLs (Scrapy-style); if set, only matching sub-pages are queued
+    queries: list[str] | None = None  # Site-specific search queries to supplement or bypass direct crawling (useful for anti-bot-protected sites)
 
 
 class Crawler:
@@ -72,6 +81,22 @@ class Crawler:
             logger.info("Cleaned up %d stale temporary files", cleaned)
 
     def _request(self, url: str) -> tuple[bytes, dict[str, str], str]:
+        if _CURL_CFFI_AVAILABLE:
+            try:
+                resp = _curl_requests.get(
+                    url,
+                    impersonate="chrome",
+                    headers={"User-Agent": self.user_agent},
+                    timeout=30,
+                    allow_redirects=True,
+                )
+                resp.raise_for_status()
+                data = resp.content
+                headers = {k.lower(): v for k, v in resp.headers.items()}
+                return data, headers, resp.url
+            except Exception as exc:
+                logger.debug("curl_cffi request failed for %s, falling back to urllib: %s", url, exc)
+
         req = urllib.request.Request(
             url,
             headers={"User-Agent": self.user_agent},
@@ -82,10 +107,6 @@ class Crawler:
             return data, headers, resp.geturl()
 
     def _download_file(self, url: str, target_dir: Path) -> tuple[Path, dict[str, str], str, str, int]:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": self.user_agent},
-        )
         target_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir = target_dir / "_tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -94,6 +115,44 @@ class Crawler:
         size = 0
         success = False
         try:
+            if _CURL_CFFI_AVAILABLE:
+                try:
+                    resp = _curl_requests.get(
+                        url,
+                        impersonate="chrome",
+                        headers={"User-Agent": self.user_agent},
+                        timeout=60,
+                        allow_redirects=True,
+                        stream=True,
+                    )
+                    resp.raise_for_status()
+                    headers = {k.lower(): v for k, v in resp.headers.items()}
+                    final_url = resp.url
+                    with open(tmp_path, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=1024 * 128):
+                            if chunk:
+                                f.write(chunk)
+                                hasher.update(chunk)
+                                size += len(chunk)
+                    success = True
+                    logger.debug("Downloaded %s (%d bytes) via curl_cffi", url, size)
+                    return tmp_path, headers, final_url, hasher.hexdigest(), size
+                except Exception as exc:
+                    logger.debug("curl_cffi download failed for %s, falling back to urllib: %s", url, exc)
+                    # Reset state for fallback attempt
+                    try:
+                        if tmp_path.exists():
+                            tmp_path.unlink()
+                    except Exception:
+                        pass
+                    tmp_path = tmp_dir / f"download_{time.time_ns()}.part"
+                    hasher = hashlib.sha256()
+                    size = 0
+
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": self.user_agent},
+            )
             with urllib.request.urlopen(req, timeout=60) as resp:
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 final_url = resp.geturl()
