@@ -22,6 +22,8 @@ import {
   ChevronUp,
   X,
   Shield,
+  MessageSquare,
+  Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -45,7 +47,7 @@ interface ConfiguredProvider {
 }
 
 interface AiModelsCurrent {
-  catalog: { provider: string; model: string };
+  catalog: { provider: string; model: string; system_prompt?: string };
   embeddings: { provider: string; model: string };
   chatbot: { provider: string; model: string };
   ocr: { provider: string; model: string };
@@ -296,6 +298,8 @@ function AiConfigTab({ lang }: { lang: string }) {
 
   const [modelEdits, setModelEdits] = useState<Record<string, { provider: string; model: string }>>({});
   const [savingModels, setSavingModels] = useState(false);
+  const [catalogPromptEdit, setCatalogPromptEdit] = useState<string | null>(null);
+  const [savingPrompt, setSavingPrompt] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -373,6 +377,21 @@ function AiConfigTab({ lang }: { lang: string }) {
       setToast({ message: t("settings.models_save_error"), type: "error" });
     } finally {
       setSavingModels(false);
+    }
+  }
+
+  async function saveCatalogPrompt() {
+    if (catalogPromptEdit === null) return;
+    setSavingPrompt(true);
+    try {
+      await apiPost("/api/config/ai-models", { catalog: { system_prompt: catalogPromptEdit } });
+      setToast({ message: t("settings.catalog_prompt_saved"), type: "success" });
+      setCatalogPromptEdit(null);
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.models_save_error"), type: "error" });
+    } finally {
+      setSavingPrompt(false);
     }
   }
 
@@ -585,6 +604,57 @@ function AiConfigTab({ lang }: { lang: string }) {
             lang={lang}
             t={t}
           />
+        </div>
+      </motion.div>
+
+      {/* Catalog system prompt */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+        className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold">{t("settings.catalog_prompt_title")}</h3>
+          </div>
+          {catalogPromptEdit !== null && (
+            <div className="flex items-center gap-2">
+              <button onClick={() => setCatalogPromptEdit(null)}
+                className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
+                {t("settings.cancel")}
+              </button>
+              <button onClick={saveCatalogPrompt} disabled={savingPrompt}
+                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                data-testid="button-save-catalog-prompt">
+                {savingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                {t("settings.save")}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-4 space-y-2">
+          <p className="text-xs text-muted-foreground">{t("settings.catalog_prompt_hint")}</p>
+          {catalogPromptEdit !== null ? (
+            <textarea
+              aria-label={t("settings.catalog_prompt_title")}
+              value={catalogPromptEdit}
+              onChange={(e) => setCatalogPromptEdit(e.target.value)}
+              rows={8}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder={t("settings.catalog_prompt_ph")}
+              data-testid="input-catalog-prompt"
+            />
+          ) : (
+            <div className="flex items-start gap-3">
+              <pre className="flex-1 text-xs text-muted-foreground whitespace-pre-wrap break-words bg-muted/30 rounded-lg px-3 py-2 min-h-[4rem]">
+                {currentModels?.catalog?.system_prompt || t("settings.catalog_prompt_default")}
+              </pre>
+              <button
+                onClick={() => setCatalogPromptEdit(currentModels?.catalog?.system_prompt || "")}
+                className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors shrink-0"
+                data-testid="button-edit-catalog-prompt">
+                <Pencil className="w-3 h-3 inline mr-1" />{t("settings.edit")}
+              </button>
+            </div>
+          )}
         </div>
       </motion.div>
     </div>

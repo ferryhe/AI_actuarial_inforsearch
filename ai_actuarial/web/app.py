@@ -3154,6 +3154,7 @@ sites:
                 "catalog": {
                     "provider": ai_config.get("catalog", {}).get("provider", "openai"),
                     "model": ai_config.get("catalog", {}).get("model", "gpt-4o-mini"),
+                    "system_prompt": ai_config.get("catalog", {}).get("system_prompt", ""),
                 },
                 "embeddings": {
                     "provider": ai_config.get("embeddings", {}).get("provider", "openai"),
@@ -3240,6 +3241,14 @@ sites:
                                 }), 400
                         
                         config_data["ai_config"][function]["model"] = model
+
+                    # Allow saving an optional custom system prompt for the catalog function
+                    if function == "catalog" and "system_prompt" in func_cfg:
+                        sp = func_cfg["system_prompt"]
+                        if sp is None or sp == "":
+                            config_data["ai_config"][function].pop("system_prompt", None)
+                        else:
+                            config_data["ai_config"][function]["system_prompt"] = str(sp)
             
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
@@ -3755,6 +3764,12 @@ sites:
                 category_filter = str(data.get("category") or "").strip()
                 update_title = bool(data.get("update_title", False))
 
+                # Read the configurable catalog system prompt from sites.yaml
+                _cfg = _load_yaml(_get_sites_config_path(), default={})
+                _catalog_system_prompt: str | None = (
+                    _cfg.get("ai_config", {}).get("catalog", {}).get("system_prompt") or None
+                )
+
                 file_urls = data.get("file_urls") or []
                 if not isinstance(file_urls, list):
                     file_urls = []
@@ -3900,6 +3915,7 @@ sites:
                         input_source=input_source,
                         max_workers=min(5, max(1, len(file_urls))),
                         update_title=update_title,
+                        catalog_system_prompt=_catalog_system_prompt,
                         progress_callback=progress_callback,
                     )
                 else:
@@ -3916,6 +3932,7 @@ sites:
                         catalog_version=catalog_version,
                         candidate_offset=candidate_offset,
                         update_title=update_title,
+                        catalog_system_prompt=_catalog_system_prompt,
                         progress_callback=progress_callback,
                     )
                 
