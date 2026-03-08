@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings as SettingsIcon,
@@ -21,12 +21,13 @@ import {
   ChevronDown,
   ChevronUp,
   X,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 
-type SettingsTab = "ai" | "search" | "categories" | "tokens";
+type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system";
 
 interface KnownProvider {
   display_name: string;
@@ -985,6 +986,135 @@ function CategoriesTab() {
   );
 }
 
+function SystemTab() {
+  const { t } = useTranslation();
+  const [settings, setSettings] = useState<BackendSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [fileDeletionEnabled, setFileDeletionEnabled] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const hasInit = useRef(false);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiGet<BackendSettings>("/api/config/backend-settings");
+      setSettings(res);
+      if (!hasInit.current) {
+        const rt = res.runtime as Record<string, boolean> | undefined;
+        setFileDeletionEnabled(!!rt?.file_deletion_enabled);
+        hasInit.current = true;
+      }
+    } catch {
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const runtime = settings?.runtime as Record<string, boolean> | undefined;
+
+  const readOnlyFlags: Array<{ key: string; label: string }> = [
+    { key: "require_auth", label: t("settings.flag_require_auth") },
+    { key: "enable_global_logs_api", label: t("settings.flag_global_logs") },
+    { key: "enable_rate_limiting", label: t("settings.flag_rate_limiting") },
+    { key: "enable_csrf", label: t("settings.flag_csrf") },
+    { key: "enable_security_headers", label: t("settings.flag_security_headers") },
+  ];
+
+  async function saveSystemSettings() {
+    setSaving(true);
+    try {
+      await apiPost("/api/config/backend-settings", { system: { file_deletion_enabled: fileDeletionEnabled } });
+      setToast({ message: t("settings.system_saved"), type: "success" });
+      setDirty(false);
+      hasInit.current = false;
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.system_save_error"), type: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  }
+
+  return (
+    <div className="space-y-8">
+      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold">{t("settings.system_runtime")}</h3>
+          </div>
+          {dirty && (
+            <button onClick={saveSystemSettings} disabled={saving}
+              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-save-system">
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              {t("settings.save")}
+            </button>
+          )}
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-muted-foreground">{t("settings.system_runtime_desc")}</p>
+          <div className="divide-y divide-border">
+            {/* File deletion — YAML-configurable toggle */}
+            <div className="py-3 flex items-center justify-between" data-testid="system-flag-file_deletion_enabled">
+              <div>
+                <span className="text-sm font-medium">{t("settings.flag_file_deletion")}</span>
+                <span className="ml-2 text-[10px] text-muted-foreground bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                  {t("settings.flag_yaml_hint")}
+                </span>
+              </div>
+              <button
+                onClick={() => { setFileDeletionEnabled((v) => !v); setDirty(true); }}
+                className={cn(
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  fileDeletionEnabled ? "bg-emerald-500" : "bg-muted border border-border"
+                )}
+                data-testid="toggle-file-deletion"
+                aria-label={t("settings.flag_file_deletion")}
+              >
+                <span className={cn(
+                  "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform shadow-sm",
+                  fileDeletionEnabled ? "translate-x-4" : "translate-x-1"
+                )} />
+              </button>
+            </div>
+            {/* Read-only env-var flags */}
+            {readOnlyFlags.map(({ key, label }) => {
+              const val = !!runtime?.[key];
+              return (
+                <div key={key} className="py-3 flex items-center justify-between" data-testid={`system-flag-${key}`}>
+                  <div>
+                    <span className="text-sm font-medium">{label}</span>
+                    <span className="ml-2 text-[10px] text-muted-foreground">{t("settings.flag_env_hint")}</span>
+                  </div>
+                  <span className={cn(
+                    "text-[11px] font-semibold px-2 py-0.5 rounded-full",
+                    val
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      : "bg-muted text-muted-foreground"
+                  )}>
+                    {val ? t("settings.flag_enabled") : t("settings.flag_disabled")}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function ApiTokensTab() {
   const { t } = useTranslation();
   const [tokens, setTokens] = useState<ApiToken[]>([]);
@@ -1191,6 +1321,7 @@ export default function SettingsPage() {
         <TabButton active={activeTab === "search"} onClick={() => setActiveTab("search")} icon={Search} label={t("settings.tab_search")} testId="tab-search" />
         <TabButton active={activeTab === "categories"} onClick={() => setActiveTab("categories")} icon={Tag} label={t("settings.tab_categories")} testId="tab-categories" />
         <TabButton active={activeTab === "tokens"} onClick={() => setActiveTab("tokens")} icon={Key} label={t("settings.tab_tokens")} testId="tab-tokens" />
+        <TabButton active={activeTab === "system"} onClick={() => setActiveTab("system")} icon={Shield} label={t("settings.tab_system")} testId="tab-system" />
       </div>
 
       <div>
@@ -1198,6 +1329,7 @@ export default function SettingsPage() {
         {activeTab === "search" && <SearchCrawlerTab />}
         {activeTab === "categories" && <CategoriesTab />}
         {activeTab === "tokens" && <ApiTokensTab />}
+        {activeTab === "system" && <SystemTab />}
       </div>
     </div>
   );

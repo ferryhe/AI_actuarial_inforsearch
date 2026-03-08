@@ -484,6 +484,12 @@ def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
     defaults = config_data.get("defaults") or {}
     paths = config_data.get("paths") or {}
     search = config_data.get("search") or {}
+    system_cfg = config_data.get("system") or {}
+    # file_deletion_enabled: YAML takes precedence over env var so admins can toggle it via web UI
+    file_deletion_enabled = system_cfg.get(
+        "file_deletion_enabled",
+        os.getenv("ENABLE_FILE_DELETION") == "true",
+    )
     return {
         "defaults": {
             "user_agent": defaults.get("user_agent", ""),
@@ -517,7 +523,7 @@ def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "require_auth": _env_flag("REQUIRE_AUTH", False),
             "flask_secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
             "bootstrap_admin_token_set": bool(os.getenv("BOOTSTRAP_ADMIN_TOKEN")),
-            "file_deletion_enabled": os.getenv("ENABLE_FILE_DELETION") == "true",
+            "file_deletion_enabled": bool(file_deletion_enabled),
             "file_deletion_auth_required": bool(os.getenv("FILE_DELETION_AUTH_TOKEN")),
             "config_write_auth_required": bool(os.getenv("CONFIG_WRITE_AUTH_TOKEN")),
             "enable_global_logs_api": _env_flag("ENABLE_GLOBAL_LOGS_API", False),
@@ -527,6 +533,54 @@ def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "enable_security_headers": _env_flag("ENABLE_SECURITY_HEADERS", True),
         },
     }
+
+
+def _parse_yaml_bool(value: Any) -> bool:
+    """Coerce a YAML-sourced value to a Python bool conservatively.
+
+    YAML 1.1 may represent booleans as booleans, strings, or integers
+    depending on how the file was written.  This helper normalises all
+    three representations:
+
+    - ``bool`` values are returned as-is.
+    - Strings are matched against common truthy tokens
+      (``"1"`` / ``"true"`` / ``"yes"`` / ``"on"``); everything else is
+      ``False``.
+    - Integer-like objects (e.g. 0 / 1) are converted via ``int(value)``
+      to handle YAML integer scalars.
+    - Any other type is treated conservatively as ``False``.
+
+    Using ``bool(value)`` directly is *not* safe here because
+    ``bool("false") == True``.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    # Handle integer scalars (e.g. yaml value ``1`` or ``0``) that survive
+    # as Python ints when loaded via yaml.safe_load.
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
+def _is_file_deletion_enabled() -> bool:
+    """Return True if file deletion is enabled.
+
+    YAML ``system.file_deletion_enabled`` takes precedence over the
+    ``ENABLE_FILE_DELETION`` environment variable so admins can toggle the
+    feature via the web UI without restarting the server.
+    """
+    try:
+        config_data = _load_yaml(_get_sites_config_path(), default={})
+        system_cfg = config_data.get("system") or {}
+        if "file_deletion_enabled" in system_cfg:
+            return _parse_yaml_bool(system_cfg["file_deletion_enabled"])
+    except Exception:
+        pass
+    return _env_flag("ENABLE_FILE_DELETION", default=False)
 
 
 def create_app(config: dict[str, Any] | None = None) -> Any:
@@ -2079,6 +2133,30 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                     search["queries"] = _normalize_list(
                         search_in.get("queries"), field_name="search.queries"
                     )
+
+            system_in = data.get("system")
+            if isinstance(system_in, dict):
+                config_data.setdefault("system", {})
+                system = config_data["system"]
+                if "file_deletion_enabled" in system_in:
+                    raw_val = system_in.get("file_deletion_enabled")
+                    # Accept booleans and parseable strings; reject everything else.
+                    if isinstance(raw_val, bool):
+                        system["file_deletion_enabled"] = raw_val
+                    elif isinstance(raw_val, str):
+                        val_norm = raw_val.strip().lower()
+                        if val_norm in ("1", "true", "yes", "on"):
+                            system["file_deletion_enabled"] = True
+                        elif val_norm in ("0", "false", "no", "off", ""):
+                            system["file_deletion_enabled"] = False
+                        else:
+                            return jsonify({
+                                "error": "Invalid value for system.file_deletion_enabled; expected boolean (true/false)."
+                            }), 400
+                    else:
+                        return jsonify({
+                            "error": "Invalid type for system.file_deletion_enabled; expected boolean."
+                        }), 400
 
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
@@ -5230,7 +5308,8 @@ sites:
         """Soft delete a file and optionally delete its stored copy.
         
         Security controls:
-        - Feature flag: ENABLE_FILE_DELETION=true must be set in the environment.
+        - Feature flag: system.file_deletion_enabled in sites.yaml (takes precedence)
+          OR ENABLE_FILE_DELETION=true env var must be set to enable deletion.
         - Optional authentication: if FILE_DELETION_AUTH_TOKEN is configured in
           app.config or the environment, requests must supply a matching
           X-Auth-Token header.
@@ -5238,10 +5317,10 @@ sites:
         - Path validation: only delete files within the configured download_dir.
         """
         try:
-            # Feature flag check
-            if os.getenv("ENABLE_FILE_DELETION") != "true":
-                logger.warning("File deletion attempt rejected: ENABLE_FILE_DELETION not set to 'true'")
-                return jsonify({"error": "File deletion is disabled. Set ENABLE_FILE_DELETION=true in environment."}), 403
+            # Feature flag check (YAML system config takes precedence over env var)
+            if not _is_file_deletion_enabled():
+                logger.warning("File deletion attempt rejected: file deletion is not enabled")
+                return jsonify({"error": "File deletion is disabled. Enable it via Settings > System or set ENABLE_FILE_DELETION=true in environment."}), 403
 
             # Optional authentication check
             expected_token = app.config.get("FILE_DELETION_AUTH_TOKEN") or os.getenv(
