@@ -99,10 +99,12 @@ const ENGINE_DEFS: ConversionTool[] = [
   { name: "deepseekocr", provider: "siliconflow", displayName: "DeepSeek OCR" },
 ];
 
-function extractOcrTools(available: Record<string, AvailableModel[]>): ConversionTool[] {
+function extractOcrTools(available: Record<string, AvailableModel[]>, configuredProviders: Set<string>): ConversionTool[] {
   const providersWithOcr = new Set<string>();
   for (const [provider, models] of Object.entries(available)) {
     if (!Array.isArray(models)) continue;
+    // Only consider providers that actually have an API key configured.
+    if (!configuredProviders.has(provider)) continue;
     for (const m of models) {
       if ((m.types || []).includes("ocr")) {
         providersWithOcr.add(provider);
@@ -111,16 +113,18 @@ function extractOcrTools(available: Record<string, AvailableModel[]>): Conversio
     }
   }
   // Always include local tools (docling, marker, local — no API key required).
-  // Add API-based tools only when their provider has OCR-capable models configured.
+  // Add API-based tools only when their provider has an actual key configured.
   const localTools = ENGINE_DEFS.filter((e) => e.provider === "local");
   const apiTools = ENGINE_DEFS.filter((e) => e.provider !== "local" && providersWithOcr.has(e.provider));
   return [...localTools, ...apiTools];
 }
 
-function extractCatalogProviders(available: Record<string, AvailableModel[]>): string[] {
+function extractCatalogProviders(available: Record<string, AvailableModel[]>, configuredProviders: Set<string>): string[] {
   const providers = new Set<string>();
   for (const [provider, models] of Object.entries(available)) {
     if (!Array.isArray(models)) continue;
+    // Only list providers that actually have an API key configured.
+    if (!configuredProviders.has(provider)) continue;
     for (const m of models) {
       const types = m.types || [];
       if (types.includes("chat") || types.includes("catalog")) {
@@ -195,15 +199,20 @@ export function useTaskOptions(): TaskOptions {
     let fetchedToolsInfo = FALLBACK_CONVERSION_TOOLS_INFO;
     let fetchedCatalogProviders: string[] = [];
 
+    // Build the set of providers that actually have API keys configured.
+    // This is used to gate API-based tools (OCR, catalog) so we never
+    // show a tool as available when its provider key is missing.
+    const configuredProviderNamesSet = new Set(fetchedProviders);
+
     if (modelsResult.status === "fulfilled") {
       const modelRes = modelsResult.value;
       if (modelRes?.available && typeof modelRes.available === "object") {
-        const ocrTools = extractOcrTools(modelRes.available);
+        const ocrTools = extractOcrTools(modelRes.available, configuredProviderNamesSet);
         if (ocrTools.length > 0) {
           fetchedToolsInfo = ocrTools;
           fetchedTools = ocrTools.map((t) => t.name);
         }
-        fetchedCatalogProviders = extractCatalogProviders(modelRes.available);
+        fetchedCatalogProviders = extractCatalogProviders(modelRes.available, configuredProviderNamesSet);
       } else if (modelRes?.tools && Array.isArray(modelRes.tools) && modelRes.tools.length > 0) {
         fetchedTools = modelRes.tools;
         fetchedToolsInfo = modelRes.tools.map((t) => ({ name: t, provider: "unknown", displayName: t }));

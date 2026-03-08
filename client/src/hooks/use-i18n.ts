@@ -1197,7 +1197,7 @@ const translations: Record<string, Record<string, string>> = {
     "tasks.form.go_to_settings": "在设置中配置",
     "settings.tab_system": "系统",
     "settings.system_runtime": "运行时标志",
-    "settings.system_runtime_desc": "控制系统行为的功能标志。标注"YAML"的项可在此切换；其他项需要重启服务器更改环境变量。",
+    "settings.system_runtime_desc": "控制系统行为的功能标志。标注\"YAML\"的项可在此切换；其他项需要重启服务器更改环境变量。",
     "settings.flag_file_deletion": "文件删除",
     "settings.flag_require_auth": "需要身份验证",
     "settings.flag_global_logs": "全局日志 API",
