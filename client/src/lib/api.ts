@@ -53,6 +53,13 @@ export function apiPut<T = unknown>(url: string, body?: unknown): Promise<T> {
   });
 }
 
+export function apiPatch<T = unknown>(url: string, body?: unknown): Promise<T> {
+  return apiFetch<T>(url, {
+    method: "PATCH",
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
 export function apiDelete<T = unknown>(url: string): Promise<T> {
   return apiFetch<T>(url, { method: "DELETE" });
 }

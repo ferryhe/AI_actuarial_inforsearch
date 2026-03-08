@@ -11,6 +11,7 @@ import Logs from "@/pages/Logs";
 import FileDetail from "@/pages/FileDetail";
 import FilePreview from "@/pages/FilePreview";
 import Users from "@/pages/Users";
+import Profile from "@/pages/Profile";
 
 function Router() {
   return (
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/knowledge" component={Knowledge} />
       <Route path="/settings" component={Settings} />
       <Route path="/users" component={Users} />
+      <Route path="/profile" component={Profile} />
       <Route>
         <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
           404
