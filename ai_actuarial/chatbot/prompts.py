@@ -94,13 +94,22 @@ RESPONSE STYLE:
 }
 
 
-def get_system_prompt(mode: str, base_only: bool = False) -> str:
+def get_system_prompt(
+    mode: str,
+    base_only: bool = False,
+    prompts_override: "dict | None" = None,
+) -> str:
     """
     Get the system prompt for a specific chatbot mode.
 
     Args:
         mode: The chatbot mode (expert, summary, tutorial, comparison)
         base_only: If True, return only base instructions without mode-specific prompt
+        prompts_override: Optional dict of custom prompts loaded from
+            ``ai_config.chatbot.prompts`` in sites.yaml.  Supported keys:
+            ``base`` (replaces BASE_INSTRUCTIONS), and the four mode names
+            ``expert``, ``summary``, ``tutorial``, ``comparison``.
+            An empty string for any key means "use built-in default".
 
     Returns:
         Complete system prompt string
@@ -111,10 +120,14 @@ def get_system_prompt(mode: str, base_only: bool = False) -> str:
     if mode not in MODE_PROMPTS:
         raise ValueError(f"Unknown chatbot mode: {mode}. Available modes: {list(MODE_PROMPTS.keys())}")
 
-    if base_only:
-        return BASE_INSTRUCTIONS
+    overrides = prompts_override or {}
+    base = (overrides.get("base") or "").strip() or BASE_INSTRUCTIONS
 
-    return BASE_INSTRUCTIONS + "\n\n" + MODE_PROMPTS[mode]
+    if base_only:
+        return base
+
+    mode_body = (overrides.get(mode) or "").strip() or MODE_PROMPTS[mode]
+    return base + "\n\n" + mode_body
 
 
 def format_context_prompt(retrieved_chunks: list, conversation_history: list = None) -> str:
@@ -175,8 +188,13 @@ def format_user_query(query: str) -> str:
     return f"\nUSER QUERY:\n{query}\n\nYour response:"
 
 
-def build_full_prompt(mode: str, retrieved_chunks: list, query: str,
-                     conversation_history: list = None) -> list:
+def build_full_prompt(
+    mode: str,
+    retrieved_chunks: list,
+    query: str,
+    conversation_history: list = None,
+    prompts_override: "dict | None" = None,
+) -> list:
     """
     Build the complete prompt for the LLM, including system prompt, context, and query.
 
@@ -185,6 +203,7 @@ def build_full_prompt(mode: str, retrieved_chunks: list, query: str,
         retrieved_chunks: Retrieved chunks from RAG
         query: User's question
         conversation_history: Optional conversation history
+        prompts_override: Optional custom prompt overrides (see ``get_system_prompt``).
 
     Returns:
         List of message dicts in OpenAI format:
@@ -194,7 +213,7 @@ def build_full_prompt(mode: str, retrieved_chunks: list, query: str,
         ]
     """
     # System prompt
-    system_prompt = get_system_prompt(mode)
+    system_prompt = get_system_prompt(mode, prompts_override=prompts_override)
 
     # Context and history
     context_prompt = format_context_prompt(retrieved_chunks, conversation_history)

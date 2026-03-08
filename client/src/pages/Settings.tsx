@@ -22,12 +22,14 @@ import {
   ChevronUp,
   X,
   Shield,
+  MessageSquare,
+  Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 
-type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system";
+type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts";
 
 interface KnownProvider {
   display_name: string;
@@ -45,9 +47,20 @@ interface ConfiguredProvider {
 }
 
 interface AiModelsCurrent {
-  catalog: { provider: string; model: string };
+  catalog: { provider: string; model: string; system_prompt?: string };
   embeddings: { provider: string; model: string };
-  chatbot: { provider: string; model: string };
+  chatbot: {
+    provider: string;
+    model: string;
+    prompts?: {
+      base?: string;
+      expert?: string;
+      summary?: string;
+      tutorial?: string;
+      comparison?: string;
+    };
+    summarization_prompt?: string;
+  };
   ocr: { provider: string; model: string };
 }
 
@@ -587,6 +600,192 @@ function AiConfigTab({ lang }: { lang: string }) {
           />
         </div>
       </motion.div>
+    </div>
+  );
+}
+
+// ─── Reusable inline prompt editor card ──────────────────────────────────────
+function PromptEditorCard({
+  title,
+  hint,
+  defaultText,
+  value,
+  testIdPrefix,
+  onSave,
+}: {
+  title: string;
+  hint: string;
+  defaultText: string;
+  value: string;
+  testIdPrefix: string;
+  onSave: (v: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (editing === null) return;
+    setSaving(true);
+    try {
+      await onSave(editing);
+      setEditing(null);
+    } catch {
+      // onSave shows its own error toast; keep the editor open
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold">{title}</h3>
+        </div>
+        {editing !== null && (
+          <div className="flex items-center gap-2">
+            <button onClick={() => setEditing(null)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
+              {t("settings.cancel")}
+            </button>
+            <button onClick={handleSave} disabled={saving}
+              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid={`${testIdPrefix}-save`}>
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              {t("settings.save")}
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="px-5 py-4 space-y-2">
+        <p className="text-xs text-muted-foreground">{hint}</p>
+        {editing !== null ? (
+          <textarea
+            aria-label={title}
+            value={editing}
+            onChange={(e) => setEditing(e.target.value)}
+            rows={8}
+            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
+            placeholder={defaultText}
+            data-testid={`${testIdPrefix}-input`}
+          />
+        ) : (
+          <div className="flex items-start gap-3">
+            <pre className="flex-1 text-xs text-muted-foreground whitespace-pre-wrap break-words bg-muted/30 rounded-lg px-3 py-2 min-h-[3.5rem]">
+              {value || defaultText}
+            </pre>
+            <button onClick={() => setEditing(value)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors shrink-0"
+              data-testid={`${testIdPrefix}-edit`}>
+              <Pencil className="w-3 h-3 inline mr-1" />{t("settings.edit")}
+            </button>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── PromptsTab ───────────────────────────────────────────────────────────────
+// The four chatbot mode keys (must match backend valid_prompt_keys in app.py)
+const CHATBOT_MODE_KEYS = ["expert", "summary", "tutorial", "comparison"] as const;
+type ChatbotModeKey = (typeof CHATBOT_MODE_KEYS)[number];
+
+function PromptsTab() {
+  const { t } = useTranslation();
+  const [currentModels, setCurrentModels] = useState<AiModelsCurrent | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiGet<{ current: AiModelsCurrent }>("/api/config/ai-models");
+      setCurrentModels(res.current || null);
+    } catch {
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  async function savePrompt(payload: Record<string, unknown>) {
+    try {
+      await apiPost("/api/config/ai-models", payload);
+      setToast({ message: t("settings.catalog_prompt_saved"), type: "success" });
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.models_save_error"), type: "error" });
+      throw new Error("save failed");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+
+      {/* Catalog system prompt */}
+      <PromptEditorCard
+        title={t("settings.catalog_prompt_title")}
+        hint={t("settings.catalog_prompt_hint")}
+        defaultText={t("settings.catalog_prompt_default")}
+        value={currentModels?.catalog?.system_prompt || ""}
+        testIdPrefix="catalog-prompt"
+        onSave={async (v) => {
+          await savePrompt({ catalog: { system_prompt: v } });
+        }}
+      />
+
+      {/* Chatbot base instructions */}
+      <PromptEditorCard
+        title={t("settings.chatbot_base_prompt_title")}
+        hint={t("settings.chatbot_base_prompt_hint")}
+        defaultText={t("settings.chatbot_prompt_default")}
+        value={currentModels?.chatbot?.prompts?.base || ""}
+        testIdPrefix="chatbot-base-prompt"
+        onSave={async (v) => {
+          await savePrompt({ chatbot: { prompts: { base: v } } });
+        }}
+      />
+
+      {/* Chatbot mode prompts */}
+      {CHATBOT_MODE_KEYS.map((mode) => (
+        <PromptEditorCard
+          key={mode}
+          title={t(`settings.chatbot_mode_prompt_${mode}`)}
+          hint={t("settings.chatbot_mode_prompt_hint")}
+          defaultText={t("settings.chatbot_prompt_default")}
+          value={currentModels?.chatbot?.prompts?.[mode] || ""}
+          testIdPrefix={`chatbot-${mode}-prompt`}
+          onSave={async (v) => {
+            await savePrompt({ chatbot: { prompts: { [mode]: v } } });
+          }}
+        />
+      ))}
+
+      {/* Document summarization prompt */}
+      <PromptEditorCard
+        title={t("settings.summarization_prompt_title")}
+        hint={t("settings.summarization_prompt_hint")}
+        defaultText={t("settings.chatbot_prompt_default")}
+        value={currentModels?.chatbot?.summarization_prompt || ""}
+        testIdPrefix="summarization-prompt"
+        onSave={async (v) => {
+          await savePrompt({ chatbot: { summarization_prompt: v } });
+        }}
+      />
     </div>
   );
 }
@@ -1318,6 +1517,7 @@ export default function SettingsPage() {
 
       <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-border" data-testid="settings-tabs">
         <TabButton active={activeTab === "ai"} onClick={() => setActiveTab("ai")} icon={Bot} label={t("settings.tab_ai")} testId="tab-ai" />
+        <TabButton active={activeTab === "prompts"} onClick={() => setActiveTab("prompts")} icon={MessageSquare} label={t("settings.tab_prompts")} testId="tab-prompts" />
         <TabButton active={activeTab === "search"} onClick={() => setActiveTab("search")} icon={Search} label={t("settings.tab_search")} testId="tab-search" />
         <TabButton active={activeTab === "categories"} onClick={() => setActiveTab("categories")} icon={Tag} label={t("settings.tab_categories")} testId="tab-categories" />
         <TabButton active={activeTab === "tokens"} onClick={() => setActiveTab("tokens")} icon={Key} label={t("settings.tab_tokens")} testId="tab-tokens" />
@@ -1326,6 +1526,7 @@ export default function SettingsPage() {
 
       <div>
         {activeTab === "ai" && <AiConfigTab lang={lang} />}
+        {activeTab === "prompts" && <PromptsTab />}
         {activeTab === "search" && <SearchCrawlerTab />}
         {activeTab === "categories" && <CategoriesTab />}
         {activeTab === "tokens" && <ApiTokensTab />}

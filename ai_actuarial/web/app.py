@@ -3150,18 +3150,29 @@ sites:
             ai_config = config_data.get("ai_config") or {}
             
             # Get current configuration with defaults
+            _chatbot_cfg = ai_config.get("chatbot", {})
+            _chatbot_prompts = _chatbot_cfg.get("prompts", {})
             current_config = {
                 "catalog": {
                     "provider": ai_config.get("catalog", {}).get("provider", "openai"),
                     "model": ai_config.get("catalog", {}).get("model", "gpt-4o-mini"),
+                    "system_prompt": ai_config.get("catalog", {}).get("system_prompt", ""),
                 },
                 "embeddings": {
                     "provider": ai_config.get("embeddings", {}).get("provider", "openai"),
                     "model": ai_config.get("embeddings", {}).get("model", "text-embedding-3-large"),
                 },
                 "chatbot": {
-                    "provider": ai_config.get("chatbot", {}).get("provider", "openai"),
-                    "model": ai_config.get("chatbot", {}).get("model", "gpt-4-turbo"),
+                    "provider": _chatbot_cfg.get("provider", "openai"),
+                    "model": _chatbot_cfg.get("model", "gpt-4-turbo"),
+                    "prompts": {
+                        "base": _chatbot_prompts.get("base", ""),
+                        "expert": _chatbot_prompts.get("expert", ""),
+                        "summary": _chatbot_prompts.get("summary", ""),
+                        "tutorial": _chatbot_prompts.get("tutorial", ""),
+                        "comparison": _chatbot_prompts.get("comparison", ""),
+                    },
+                    "summarization_prompt": _chatbot_cfg.get("summarization_prompt", ""),
                 },
                 "ocr": {
                     "provider": ai_config.get("ocr", {}).get("provider", "local"),
@@ -3240,6 +3251,36 @@ sites:
                                 }), 400
                         
                         config_data["ai_config"][function]["model"] = model
+
+                    # Allow saving an optional custom system prompt for the catalog function
+                    if function == "catalog" and "system_prompt" in func_cfg:
+                        sp = func_cfg["system_prompt"]
+                        if sp is None or sp == "":
+                            config_data["ai_config"][function].pop("system_prompt", None)
+                        else:
+                            config_data["ai_config"][function]["system_prompt"] = str(sp)
+
+                    # Allow saving chatbot prompt overrides
+                    if function == "chatbot":
+                        if "prompts" in func_cfg and isinstance(func_cfg["prompts"], dict):
+                            config_data["ai_config"][function].setdefault("prompts", {})
+                            valid_prompt_keys = {"base", "expert", "summary", "tutorial", "comparison"}
+                            for k, v in func_cfg["prompts"].items():
+                                if k not in valid_prompt_keys:
+                                    continue
+                                if v is None or v == "":
+                                    config_data["ai_config"][function]["prompts"].pop(k, None)
+                                else:
+                                    config_data["ai_config"][function]["prompts"][k] = str(v)
+                            # Clean up empty dict
+                            if not config_data["ai_config"][function]["prompts"]:
+                                del config_data["ai_config"][function]["prompts"]
+                        if "summarization_prompt" in func_cfg:
+                            sp = func_cfg["summarization_prompt"]
+                            if sp is None or sp == "":
+                                config_data["ai_config"][function].pop("summarization_prompt", None)
+                            else:
+                                config_data["ai_config"][function]["summarization_prompt"] = str(sp)
             
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
@@ -3753,6 +3794,18 @@ sites:
                 if scope_mode not in {"index", "category"}:
                     scope_mode = "index"
                 category_filter = str(data.get("category") or "").strip()
+                update_title = bool(data.get("update_title", False))
+
+                # Read output language preference (auto/en/zh)
+                output_language = str(data.get("output_language") or "auto").strip().lower()
+                if output_language not in {"auto", "en", "zh"}:
+                    output_language = "auto"
+
+                # Read the configurable catalog system prompt from sites.yaml
+                _cfg = _load_yaml(_get_sites_config_path(), default={})
+                _catalog_system_prompt: str | None = (
+                    _cfg.get("ai_config", {}).get("catalog", {}).get("system_prompt") or None
+                )
 
                 file_urls = data.get("file_urls") or []
                 if not isinstance(file_urls, list):
@@ -3898,6 +3951,9 @@ sites:
                         provider=provider,
                         input_source=input_source,
                         max_workers=min(5, max(1, len(file_urls))),
+                        update_title=update_title,
+                        catalog_system_prompt=_catalog_system_prompt,
+                        output_language=output_language,
                         progress_callback=progress_callback,
                     )
                 else:
@@ -3913,6 +3969,9 @@ sites:
                         input_source=input_source,
                         catalog_version=catalog_version,
                         candidate_offset=candidate_offset,
+                        update_title=update_title,
+                        catalog_system_prompt=_catalog_system_prompt,
+                        output_language=output_language,
                         progress_callback=progress_callback,
                     )
                 
@@ -5453,7 +5512,7 @@ sites:
     @app.route("/api/files/update", methods=["POST"])
     @require_permissions("catalog.write")
     def api_files_update():
-        """Update file catalog information (category, summary, keywords)."""
+        """Update file catalog information (category, summary, keywords, title)."""
         try:
             data = request.get_json(silent=True)
             if not isinstance(data, dict):
@@ -5466,9 +5525,14 @@ sites:
                 return jsonify({"error": "No URL provided"}), 400
 
             # Extract update fields
+            title = data.get("title")
             category = data.get("category")
             summary = data.get("summary")
             keywords = data.get("keywords")
+
+            # Normalize title
+            if title is not None:
+                title = str(title).strip() or None
 
             # Accept category as list (multi-select) and store as semicolon-separated text.
             if isinstance(category, list):
@@ -5482,36 +5546,54 @@ sites:
             if keywords is not None and not isinstance(keywords, list):
                 return jsonify({"error": "Keywords must be a list"}), 400
 
-            logger.info(f"Updating file catalog for URL: {url}")
+            logger.info(f"Updating file for URL: {url}")
             storage = Storage(db_path)
             
             try:
-                success, error_reason = storage.update_file_catalog(
-                    url=url,
-                    category=category,
-                    summary=summary,
-                    keywords=keywords
-                )
-                
-                if success:
-                    logger.info(f"File catalog updated successfully: {url}")
-                    # Fetch updated data to return
-                    file_data = storage.get_file_with_catalog(url)
-                    return jsonify({
-                        "success": True,
-                        "file": file_data
-                    })
-                else:
-                    # Handle different failure reasons
-                    if error_reason == "file_not_found":
-                        logger.warning(f"File catalog update failed - file not found: {url}")
+                # Check that at least one field is being updated
+                if title is None and not any(v is not None for v in (category, summary, keywords)):
+                    return jsonify({"error": "No updates provided"}), 400
+
+                # Update title in files table if provided
+                if title is not None:
+                    file_exists = storage._conn.execute(
+                        "SELECT url FROM files WHERE url = ?", (url,)
+                    ).fetchone()
+                    if not file_exists:
+                        logger.warning(f"File update failed - file not found: {url}")
                         return jsonify({"error": "File not found"}), 404
-                    elif error_reason == "no_updates":
-                        logger.warning(f"File catalog update had no changes: {url}")
-                        return jsonify({"error": "No updates provided"}), 400
-                    else:
-                        logger.error(f"File catalog update failed with unknown reason: {url}")
-                        return jsonify({"error": "Update failed"}), 500
+                    storage._conn.execute(
+                        "UPDATE files SET title = ? WHERE url = ?",
+                        (title, url),
+                    )
+                    storage._maybe_commit()
+                    logger.info(f"File title updated: {url}")
+
+                # Update catalog fields if any are provided
+                if any(v is not None for v in (category, summary, keywords)):
+                    success, error_reason = storage.update_file_catalog(
+                        url=url,
+                        category=category,
+                        summary=summary,
+                        keywords=keywords
+                    )
+
+                    if not success:
+                        if error_reason == "file_not_found":
+                            logger.warning(f"File catalog update failed - file not found: {url}")
+                            return jsonify({"error": "File not found"}), 404
+                        elif error_reason != "no_updates":
+                            logger.error(f"File catalog update failed with unknown reason: {url}")
+                            return jsonify({"error": "Update failed"}), 500
+                        # "no_updates" is acceptable when title was successfully updated
+
+                logger.info(f"File updated successfully: {url}")
+                # Fetch updated data to return
+                file_data = storage.get_file_with_catalog(url)
+                return jsonify({
+                    "success": True,
+                    "file": file_data
+                })
                     
             finally:
                 storage.close()

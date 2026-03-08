@@ -19,6 +19,7 @@ class LlmCatalogResult:
     keywords: list[str]
     category: str
     model: str | None = None
+    suggested_title: str | None = None
 
 
 def _clean_keywords(items: Any, *, max_items: int = 12) -> list[str]:
@@ -84,10 +85,37 @@ def _clean_categories(items: Any, *, allowed: list[str], max_items: int = 3) -> 
     return out
 
 
-def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
+def catalog_with_openai(
+    *,
+    title: str | None,
+    content: str,
+    custom_system_prompt: str | None = None,
+    output_language: str = "auto",
+) -> LlmCatalogResult:
     """Use OpenAI Chat Completions to generate summary/keywords/category.
 
     Requires `OPENAI_API_KEY` in `.env` (read via `config.settings`).
+
+    Args:
+        title: Optional existing document title used as a context hint.
+        content: Document text to catalog.
+        custom_system_prompt: Optional system prompt override stored in ai_config.catalog
+            in sites.yaml. When provided, replaces the built-in default prompt entirely
+            (output_language is still appended to custom prompts).
+        output_language: Language for summary/keywords/suggested_title output.
+            ``"auto"`` (default) lets the LLM match the document language.
+            ``"en"`` forces English output.
+            ``"zh"`` forces Chinese output.
+            Categories are always returned as the fixed English identifiers regardless
+            of this setting, so no category-matching issues arise.
+
+    Notes:
+        The default prompt instructs the model to:
+        - Write the summary and suggested_title in the same language as the document content
+          (unless output_language overrides this).
+        - Generate a self-contained title that reflects the document's subject matter, not the
+          source website name or publication series header.
+        - Use specific domain keyphrases for keywords, avoiding generic words like 'report'.
     """
     settings = get_settings()
     if not settings.openai_api_key:
@@ -108,15 +136,44 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
     if len(safe_content) > 20000:
         safe_content = safe_content[:20000]
 
-    system_prompt = (
-        "You are a careful document cataloging assistant for an actuarial/insurance knowledge base. "
-        "Your job: read the document content and output a STRICT JSON object with:\n"
-        "- summary: concise, factual, 3-5 bullet points or a short paragraph (<= 300 words)\n"
-        "- keywords: 8-12 keyphrases (strings), no duplicates\n"
-        "- categories: pick several mostly related categories in order from most to less relevant "
-        "(array with 1-3 items from the provided list)\n"
-        "Rules: do not invent facts. If content is insufficient, return categories=[\"Other\"] and keep summary short."
-    )
+    if custom_system_prompt and custom_system_prompt.strip():
+        system_prompt = custom_system_prompt.strip()
+    else:
+        system_prompt = (
+            "You are a precise document cataloging assistant for an actuarial/insurance knowledge base. "
+            "Read the document and return a STRICT JSON object with exactly these keys:\n"
+            "- summary: factual summary in 3-5 concise bullet points or a short paragraph (≤300 words). "
+            "Write the summary in the same language as the document content.\n"
+            "- keywords: 8-12 specific keyphrases (strings), no generic words like 'report' or 'document', "
+            "no duplicates, focused on the core topics covered.\n"
+            "- categories: array of 1-3 most relevant categories from the provided list, "
+            "ordered by relevance (most relevant first). "
+            "Always return category names exactly as given — do NOT translate them.\n"
+            "- suggested_title: a concise, self-contained descriptive title for the document (≤15 words, "
+            "plain text, no markdown, no source-site name). "
+            "The title must reflect the document's actual subject matter — not the website name, "
+            "publication series, or section header. "
+            "If the document is primarily in Chinese, write the title in Chinese. "
+            "If the document is primarily in English, write the title in English.\n"
+            "Rules: do not invent facts. "
+            "If content is insufficient, return categories=[\"Other\"] and keep summary short. "
+            "Output valid JSON only — no code fences, no extra text."
+        )
+
+    # Append a language-override instruction when the caller requests a specific language.
+    # This supplements both the default prompt and any custom prompt so the user's
+    # language choice is always honoured.
+    lang_norm = (output_language or "auto").strip().lower()
+    if lang_norm == "en":
+        system_prompt += (
+            "\n\nOUTPUT LANGUAGE OVERRIDE: Write the summary, keywords, and suggested_title "
+            "in English, regardless of the document's original language."
+        )
+    elif lang_norm == "zh":
+        system_prompt += (
+            "\n\n输出语言要求：无论文档原始语言是什么，summary（摘要）、keywords（关键词）和 "
+            "suggested_title（建议标题）均必须使用中文输出。"
+        )
 
     cat_lines: list[str] = []
     for c in categories:
@@ -138,7 +195,7 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
         + "Content:\n"
         + safe_content
         + "\n\n"
-        + "Return JSON only, with keys: summary, keywords, categories."
+        + "Return JSON only, with keys: summary, keywords, categories, suggested_title."
     )
 
     completion = client.chat.completions.create(
@@ -168,5 +225,6 @@ def catalog_with_openai(*, title: str | None, content: str) -> LlmCatalogResult:
     if not selected:
         selected = ["Other"]
     category = "; ".join(selected[:3])
+    suggested_title = str(payload.get("suggested_title") or "").strip() or None
 
-    return LlmCatalogResult(summary=summary, keywords=keywords, category=category, model=model)
+    return LlmCatalogResult(summary=summary, keywords=keywords, category=category, model=model, suggested_title=suggested_title)
