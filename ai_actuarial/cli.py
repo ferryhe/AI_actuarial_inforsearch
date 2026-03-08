@@ -139,6 +139,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                         keywords=site.keywords or cfg["defaults"].get("keywords", []),
                         file_exts=site.file_exts or cfg["defaults"].get("file_exts", []),
                         exclude_keywords=search_exclude,
+                        exclude_prefixes=site.exclude_prefixes or [],
                     ),
                     source_site=result.source,
                 )

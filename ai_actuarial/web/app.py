@@ -3764,7 +3764,7 @@ sites:
                             for sr in site_search_results:
                                 if stop_check and stop_check():
                                     break
-                                crawler.scan_page_for_files(
+                                search_items = crawler.scan_page_for_files(
                                     sr.url,
                                     SiteConfig(
                                         name=sc.name,
@@ -3775,9 +3775,13 @@ sites:
                                         keywords=sc.keywords or site_config['defaults'].get('keywords', []),
                                         file_exts=sc.file_exts or site_config['defaults'].get('file_exts', []),
                                         exclude_keywords=search_exclude,
+                                        exclude_prefixes=sc.exclude_prefixes or site_config['defaults'].get('exclude_prefixes', []),
                                     ),
                                     source_site=sr.source,
                                 )
+                                if result is not None:
+                                    result.items_found += len(search_items)
+                                    result.items_downloaded += sum(1 for i in search_items if i.get("local_path"))
                         except Exception as _se:
                             logger.warning(
                                 "Per-site search queries failed for %s (%s: %s)",
