@@ -583,6 +583,8 @@ const translations: Record<string, Record<string, string>> = {
     "profile.no_changes": "No changes to save.",
     "profile.not_logged_in": "You are not logged in.",
     "profile.login_link": "Sign in",
+    "profile.load_error": "Failed to load profile. Please try again.",
+    "profile.retry": "Retry",
   },
   zh: {
     "nav.brand": "AI精算信息搜索",
@@ -1166,6 +1168,8 @@ const translations: Record<string, Record<string, string>> = {
     "profile.no_changes": "没有需要保存的更改。",
     "profile.not_logged_in": "您尚未登录。",
     "profile.login_link": "去登录",
+    "profile.load_error": "加载账户信息失败，请重试。",
+    "profile.retry": "重试",
   },
 };
 

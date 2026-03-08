@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type FormEvent } from "react";
 import {
   User,
   Shield,
@@ -59,6 +59,7 @@ export default function ProfilePage() {
   const [data, setData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Settings form state
   const [displayName, setDisplayName] = useState("");
@@ -70,13 +71,16 @@ export default function ProfilePage() {
   const fetchProfile = useCallback(async () => {
     setLoading(true);
     setAuthError(false);
+    setFetchError(null);
     try {
       const result = await apiGet<ProfileData & { success?: boolean }>("/api/user/me");
       setData(result);
       setDisplayName(result.user?.display_name || "");
     } catch (e: any) {
-      if (e.status === 401 || e.message?.includes("401") || e.message?.includes("authenticated")) {
+      if (e.status === 401 || e.status === 403 || e.message?.includes("authenticated")) {
         setAuthError(true);
+      } else {
+        setFetchError(e.message || "Failed to load profile");
       }
     } finally {
       setLoading(false);
@@ -87,7 +91,7 @@ export default function ProfilePage() {
     fetchProfile();
   }, [fetchProfile]);
 
-  const handleSave = async (e: React.FormEvent) => {
+  const handleSave = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setSaveMessage(null);
@@ -124,7 +128,7 @@ export default function ProfilePage() {
     );
   }
 
-  if (authError || !data) {
+  if (authError) {
     return (
       <div className="space-y-6">
         <div>
@@ -137,6 +141,27 @@ export default function ProfilePage() {
           <a href="/email-login" className="mt-3 inline-block text-primary underline text-sm">
             {t("profile.login_link")}
           </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (fetchError || !data) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">{t("profile.title")}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t("profile.subtitle")}</p>
+        </div>
+        <div className="bg-destructive/10 text-destructive rounded-lg p-8 text-center">
+          <AlertCircle className="w-10 h-10 mx-auto mb-3 opacity-60" />
+          <p>{fetchError || t("profile.load_error")}</p>
+          <button
+            onClick={fetchProfile}
+            className="mt-3 inline-block text-primary underline text-sm"
+          >
+            {t("profile.retry")}
+          </button>
         </div>
       </div>
     );

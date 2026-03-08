@@ -1408,9 +1408,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     def api_admin_user_activity(target_user_id: int):
         """Get activity log for a user (admin).
 
-        Returns both ``logs`` (canonical key) and ``activity`` (alias) so that
-        the React SPA, which uses ``data.activity``, and existing integrations
-        that read ``data.logs`` continue to work without a breaking change.
+        Returns both 'logs' (canonical key) and 'activity' (alias) so that
+        the React SPA, which uses 'data.activity', and existing integrations
+        that read 'data.logs' continue to work without a breaking change.
         """
         limit = _parse_int_clamped(request.args.get("limit", 50), default=50, min_value=1, max_value=200)
         offset = _parse_int_clamped(request.args.get("offset", 0), default=0, min_value=0)
@@ -1418,7 +1418,15 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         try:
             storage = Storage(db_path)
             logs = storage.list_user_activity(user_id=target_user_id, limit=limit, offset=offset)
-            return jsonify({"success": True, "logs": logs, "activity": logs})
+            # Normalize entries: add 'timestamp' alias from 'created_at' so the
+            # React admin UI (which renders entry.timestamp) shows correct dates while
+            # keeping 'created_at' for backwards compatibility.
+            normalized = []
+            for entry in logs or []:
+                if isinstance(entry, dict) and "timestamp" not in entry and "created_at" in entry:
+                    entry = {**entry, "timestamp": entry["created_at"]}
+                normalized.append(entry)
+            return jsonify({"success": True, "logs": normalized, "activity": normalized})
         finally:
             try:
                 if storage is not None:
@@ -1506,10 +1514,19 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         email_user = token.get("_email_user")
         if not email_user:
             return _api_error("Profile updates require an email account", status_code=403)
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return _api_error("Request body must be a JSON object", status_code=400)
         display_name = data.get("display_name")
         new_password = data.get("new_password")
         current_password = data.get("current_password")
+        # Validate field types when provided
+        if display_name is not None and not isinstance(display_name, str):
+            return _api_error("display_name must be a string", status_code=400)
+        if new_password is not None and not isinstance(new_password, str):
+            return _api_error("new_password must be a string", status_code=400)
+        if current_password is not None and not isinstance(current_password, str):
+            return _api_error("current_password must be a string", status_code=400)
         # Validate display_name length if provided
         if display_name is not None and len(display_name) > 100:
             return _api_error("Display name too long (max 100 characters)", status_code=400)
