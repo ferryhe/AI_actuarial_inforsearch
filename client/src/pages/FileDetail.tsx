@@ -81,13 +81,6 @@ interface KnowledgeBase {
   name: string;
 }
 
-interface AiModelsConfig {
-  current: {
-    catalog: { provider: string; model: string };
-    ocr: { provider: string; model: string };
-  };
-}
-
 interface CategoriesConfig {
   categories: Record<string, unknown>;
 }
@@ -236,8 +229,6 @@ export default function FileDetail() {
   const [catalogSource, setCatalogSource] = useState("markdown");
   const [catalogOverwrite, setCatalogOverwrite] = useState(false);
   const [catalogSubmitting, setCatalogSubmitting] = useState(false);
-  const [catalogProvider, setCatalogProvider] = useState("");
-  const [aiConfig, setAiConfig] = useState<AiModelsConfig | null>(null);
 
   const taskOptions = useTaskOptions();
 
@@ -323,9 +314,6 @@ export default function FileDetail() {
         const cats = res.categories || {};
         setAllCategories(Object.keys(cats));
       })
-      .catch(() => {});
-    apiGet<AiModelsConfig>("/api/config/ai-models")
-      .then((res) => setAiConfig(res))
       .catch(() => {});
   }, []);
 
@@ -848,6 +836,12 @@ export default function FileDetail() {
           </h3>
           <p className="text-xs text-muted-foreground mb-4">{t("fv.catalog_hint")}</p>
           <div className="space-y-4">
+            {taskOptions.catalogProviders.length === 0 && (
+              <div className="px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/5 text-xs text-amber-700 dark:text-amber-300">
+                {t("fv.no_catalog_provider")}{" "}
+                <a href="/settings" className="underline hover:no-underline">{t("fv.go_to_settings")}</a>
+              </div>
+            )}
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.catalog_from")}</label>
               <select value={catalogSource} onChange={(e) => setCatalogSource(e.target.value)}
@@ -857,10 +851,10 @@ export default function FileDetail() {
               </select>
               <p className="text-[11px] text-muted-foreground mt-1">{t("fv.catalog_from_hint")}</p>
             </div>
-            {aiConfig?.current?.catalog && (
+            {taskOptions.catalogProviders.length > 0 && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border text-xs text-muted-foreground">
                 <span className="font-medium">{t("fv.ai_provider")}:</span>
-                <span>{aiConfig.current.catalog.provider} / {aiConfig.current.catalog.model}</span>
+                <span>{taskOptions.catalogProviders.join(", ")}</span>
                 <span className="ml-auto text-[10px]">({t("fv.configured_in_settings")})</span>
               </div>
             )}
@@ -872,7 +866,7 @@ export default function FileDetail() {
               <button onClick={() => setShowCatalogModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}
               </button>
-              <button onClick={submitCatalog} disabled={catalogSubmitting}
+              <button onClick={submitCatalog} disabled={catalogSubmitting || taskOptions.catalogProviders.length === 0}
                 className="text-sm px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 data-testid="button-submit-catalog">
                 {catalogSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}

@@ -1204,7 +1204,7 @@ function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, 
 
 function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
-  const { categories: dynamicCategories } = useTaskOptions();
+  const { categories: dynamicCategories, catalogProviders } = useTaskOptions();
   const [scopeMode, setScopeMode] = useState("index");
   const [category, setCategory] = useState("");
   const [scanCount, setScanCount] = useState("100");
@@ -1245,10 +1245,18 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
           { label: t("tasks.form.stat_first_candidate"), value: stats.first_candidate_index as number },
         ]} />
       )}
-      <FormField label={t("tasks.form.provider")} hint={t("tasks.form.provider_hint")}>
-        <div className="text-xs text-muted-foreground px-3 py-2 rounded-lg border border-border bg-muted/30" data-testid="text-provider-info">
-          {t("tasks.form.provider_hint")}
-        </div>
+      <FormField label={t("tasks.form.provider")}>
+        {catalogProviders.length > 0 ? (
+          <div className="px-3 py-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-2" data-testid="text-provider-info">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            {t("tasks.form.catalog_provider_configured")}: {catalogProviders.join(", ")}
+          </div>
+        ) : (
+          <div className="px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400" data-testid="text-provider-info">
+            {t("tasks.form.no_catalog_provider")}{" "}
+            <a href="/settings" className="underline hover:no-underline">{t("tasks.form.go_to_settings")}</a>
+          </div>
+        )}
       </FormField>
       <div className="grid grid-cols-2 gap-3">
         <FormField label={t("tasks.form.scope")}>
@@ -1284,7 +1292,7 @@ function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, un
         <CheckboxField checked={overwriteExisting} onChange={(v) => { setOverwriteExisting(v); if (v) setSkipExisting(false); }}
           label={t("tasks.form.overwrite_existing")} testId="checkbox-overwrite-existing" />
       </div>
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
+      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || catalogProviders.length === 0}
         onClick={() => onSubmit({ type: "catalog", name: "AI Catalog", scope_mode: scopeMode,
           category: scopeMode === "category" ? category : undefined, scan_count: parseInt(scanCount) || 100,
           scan_start_index: parseInt(startIndex) || 1, input_source: inputSource,

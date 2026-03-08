@@ -110,7 +110,11 @@ function extractOcrTools(available: Record<string, AvailableModel[]>): Conversio
       }
     }
   }
-  return ENGINE_DEFS.filter((e) => providersWithOcr.has(e.provider));
+  // Always include local tools (docling, marker, local — no API key required).
+  // Add API-based tools only when their provider has OCR-capable models configured.
+  const localTools = ENGINE_DEFS.filter((e) => e.provider === "local");
+  const apiTools = ENGINE_DEFS.filter((e) => e.provider !== "local" && providersWithOcr.has(e.provider));
+  return [...localTools, ...apiTools];
 }
 
 function extractCatalogProviders(available: Record<string, AvailableModel[]>): string[] {
