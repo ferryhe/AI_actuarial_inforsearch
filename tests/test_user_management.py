@@ -523,6 +523,204 @@ class TestAdminUserEndpoints(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 403)
 
+    def test_enable_disable_convenience_endpoints(self):
+        # Disable
+        resp = self.client.post(
+            f"/api/admin/users/{self.target_uid}/disable",
+            headers=self._auth_header(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["success"])
+        self.assertFalse(data["is_active"])
+        storage = Storage(self.db_path)
+        user = storage.get_user_by_id(self.target_uid)
+        storage.close()
+        self.assertEqual(user["is_active"], 0)
+
+        # Enable
+        resp = self.client.post(
+            f"/api/admin/users/{self.target_uid}/enable",
+            headers=self._auth_header(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["success"])
+        self.assertTrue(data["is_active"])
+        storage = Storage(self.db_path)
+        user = storage.get_user_by_id(self.target_uid)
+        storage.close()
+        self.assertEqual(user["is_active"], 1)
+
+    def test_activity_log_returns_activity_key(self):
+        """Activity endpoint returns both 'logs' and 'activity' keys for compatibility."""
+        storage = Storage(self.db_path)
+        storage.log_user_activity("test_action", user_id=self.target_uid, ip_address="1.2.3.4")
+        storage.close()
+        resp = self.client.get(
+            f"/api/admin/users/{self.target_uid}/activity",
+            headers=self._auth_header(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIn("logs", data)
+        self.assertIn("activity", data)
+        self.assertEqual(data["logs"], data["activity"])
+
+
+class TestUserProfileEndpoints(unittest.TestCase):
+    """Integration tests for /api/user/me and /api/user/profile endpoints."""
+
+    def setUp(self):
+        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        self.cfg_fd, self.cfg_path = tempfile.mkstemp(suffix=".yaml", text=True)
+        _minimal_config(self.db_path, self.cfg_path)
+        self._orig_env = dict(os.environ)
+        self.app = _make_app_and_storage(self.db_path, self.cfg_path)
+        self.client = self.app.test_client()
+        # Create a test user
+        storage = Storage(self.db_path)
+        self.user_id = storage.create_user(
+            "profile@example.com",
+            _hash_password("mypassword1"),
+            role="registered",
+            display_name="Test User",
+        )
+        storage.close()
+
+    def tearDown(self):
+        os.close(self.db_fd)
+        os.unlink(self.db_path)
+        os.close(self.cfg_fd)
+        os.unlink(self.cfg_path)
+        os.environ.clear()
+        os.environ.update(self._orig_env)
+
+    def _login(self):
+        """Login and return a client with active session."""
+        self.client.post(
+            "/email-login",
+            data={"email": "profile@example.com", "password": "mypassword1"},
+            follow_redirects=False,
+        )
+
+    def test_me_requires_login(self):
+        resp = self.client.get("/api/user/me")
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_me_returns_user_info(self):
+        self._login()
+        resp = self.client.get("/api/user/me")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(data["user"]["email"], "profile@example.com")
+        self.assertEqual(data["user"]["role"], "registered")
+        self.assertEqual(data["user"]["display_name"], "Test User")
+        self.assertIn("quota", data)
+        self.assertIn("used", data["quota"])
+        self.assertIn("limit", data["quota"])
+        self.assertIn("remaining", data["quota"])
+
+    def test_update_display_name(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/user/profile",
+            json={"display_name": "New Name"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["success"])
+        # Verify persisted
+        storage = Storage(self.db_path)
+        user = storage.get_user_by_id(self.user_id)
+        storage.close()
+        self.assertEqual(user["display_name"], "New Name")
+
+    def test_change_password_requires_current_password(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/user/profile",
+            json={"new_password": "newpassword1"},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_change_password_wrong_current(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/user/profile",
+            json={"current_password": "wrongpassword", "new_password": "newpassword1"},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_change_password_success(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/user/profile",
+            json={"current_password": "mypassword1", "new_password": "newpassword1"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertTrue(data["success"])
+        # Verify new password works by logging in
+        self.client.post("/logout", follow_redirects=False)
+        resp2 = self.client.post(
+            "/email-login",
+            data={"email": "profile@example.com", "password": "newpassword1"},
+            follow_redirects=False,
+        )
+        self.assertEqual(resp2.status_code, 302)
+
+    def test_update_profile_no_fields(self):
+        self._login()
+        resp = self.client.patch("/api/user/profile", json={})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_update_display_name_too_long(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/user/profile",
+            json={"display_name": "x" * 101},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+
+class TestStorageUpdateUserProfile(unittest.TestCase):
+    """Unit tests for Storage.update_user_profile()."""
+
+    def setUp(self):
+        self.db_fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        self.storage = Storage(self.db_path)
+        self.user_id = self.storage.create_user(
+            "update@example.com", _hash_password("pw"), display_name="Original"
+        )
+
+    def tearDown(self):
+        self.storage.close()
+        os.close(self.db_fd)
+        os.unlink(self.db_path)
+
+    def test_update_display_name(self):
+        ok = self.storage.update_user_profile(self.user_id, display_name="Updated")
+        self.assertTrue(ok)
+        user = self.storage.get_user_by_id(self.user_id)
+        self.assertEqual(user["display_name"], "Updated")
+
+    def test_update_password_hash(self):
+        new_hash = _hash_password("newpassword")
+        ok = self.storage.update_user_profile(self.user_id, password_hash=new_hash)
+        self.assertTrue(ok)
+        user = self.storage.get_user_by_id(self.user_id)
+        self.assertTrue(_check_password("newpassword", user["password_hash"]))
+
+    def test_update_nonexistent_user(self):
+        ok = self.storage.update_user_profile(99999, display_name="Ghost")
+        self.assertFalse(ok)
+
+    def test_no_update_returns_true_for_existing_user(self):
+        ok = self.storage.update_user_profile(self.user_id)
+        self.assertTrue(ok)
+
 
 if __name__ == "__main__":
     unittest.main()

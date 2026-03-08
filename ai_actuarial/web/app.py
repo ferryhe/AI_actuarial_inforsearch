@@ -1353,17 +1353,223 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             except Exception:
                 pass
 
+    @app.route("/api/admin/users/<int:target_user_id>/enable", methods=["POST"])
+    @require_permissions("users.manage")
+    def api_admin_enable_user(target_user_id: int):
+        """Enable a user account (admin convenience endpoint)."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            ok = storage.update_user_active(target_user_id, True)
+            if not ok:
+                return _api_error("User not found", status_code=404)
+            actor = getattr(g, "_auth_token", {}) or {}
+            storage.log_user_activity(
+                "admin_set_active",
+                user_id=target_user_id,
+                ip_address=_get_client_ip(),
+                detail=f"is_active=True by {actor.get('subject', 'unknown')}",
+            )
+            return jsonify({"success": True, "user_id": target_user_id, "is_active": True})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/admin/users/<int:target_user_id>/disable", methods=["POST"])
+    @require_permissions("users.manage")
+    def api_admin_disable_user(target_user_id: int):
+        """Disable a user account (admin convenience endpoint)."""
+        storage = None
+        try:
+            storage = Storage(db_path)
+            ok = storage.update_user_active(target_user_id, False)
+            if not ok:
+                return _api_error("User not found", status_code=404)
+            actor = getattr(g, "_auth_token", {}) or {}
+            storage.log_user_activity(
+                "admin_set_active",
+                user_id=target_user_id,
+                ip_address=_get_client_ip(),
+                detail=f"is_active=False by {actor.get('subject', 'unknown')}",
+            )
+            return jsonify({"success": True, "user_id": target_user_id, "is_active": False})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
     @app.route("/api/admin/users/<int:target_user_id>/activity")
     @require_permissions("users.manage")
     def api_admin_user_activity(target_user_id: int):
-        """Get activity log for a user (admin)."""
+        """Get activity log for a user (admin).
+
+        Returns both 'logs' (canonical key) and 'activity' (alias) so that
+        the React SPA, which uses 'data.activity', and existing integrations
+        that read 'data.logs' continue to work without a breaking change.
+        """
         limit = _parse_int_clamped(request.args.get("limit", 50), default=50, min_value=1, max_value=200)
         offset = _parse_int_clamped(request.args.get("offset", 0), default=0, min_value=0)
         storage = None
         try:
             storage = Storage(db_path)
             logs = storage.list_user_activity(user_id=target_user_id, limit=limit, offset=offset)
-            return jsonify({"success": True, "logs": logs})
+            # Normalize entries: add 'timestamp' alias from 'created_at' so the
+            # React admin UI (which renders entry.timestamp) shows correct dates while
+            # keeping 'created_at' for backwards compatibility.
+            normalized = []
+            for entry in logs or []:
+                if isinstance(entry, dict) and "timestamp" not in entry and "created_at" in entry:
+                    entry = {**entry, "timestamp": entry["created_at"]}
+                normalized.append(entry)
+            return jsonify({"success": True, "logs": normalized, "activity": normalized})
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    # =========================================================================
+    # Current User Profile API
+    # =========================================================================
+
+    @app.route("/api/user/me")
+    def api_user_me():
+        """Return the current authenticated user's profile information."""
+        token = getattr(g, "_auth_token", None)
+        if not token:
+            return _api_error("Not authenticated", status_code=401)
+        email_user = token.get("_email_user")
+        storage = None
+        try:
+            storage = Storage(db_path)
+            today = _get_today_date()
+            if email_user:
+                used = storage.get_ai_chat_quota_used(today, user_id=email_user["id"])
+                role = email_user.get("role", "registered")
+                limit = _AI_CHAT_QUOTA.get(role, 5)
+                recent_activity = storage.list_user_activity(user_id=email_user["id"], limit=20)
+                return jsonify({
+                    "success": True,
+                    "user": {
+                        "id": email_user["id"],
+                        "email": email_user["email"],
+                        "display_name": email_user.get("display_name") or "",
+                        "role": role,
+                        "is_active": bool(email_user.get("is_active", True)),
+                        "created_at": email_user.get("created_at"),
+                        "last_login_at": email_user.get("last_login_at"),
+                    },
+                    "quota": {
+                        "used": used,
+                        "limit": limit,
+                        "remaining": max(0, limit - used),
+                        "date": today,
+                    },
+                    "recent_activity": recent_activity,
+                })
+            else:
+                # Token-based user
+                role = (token.get("group_name") or "registered").lower()
+                limit = _AI_CHAT_QUOTA.get(role, 5)
+                ip = _get_client_ip()
+                used = storage.get_ai_chat_quota_used(today, ip_address=ip)
+                return jsonify({
+                    "success": True,
+                    "user": {
+                        "id": None,
+                        "email": None,
+                        "display_name": token.get("subject") or "",
+                        "role": role,
+                        "is_active": True,
+                        "created_at": None,
+                        "last_login_at": None,
+                    },
+                    "quota": {
+                        "used": used,
+                        "limit": limit,
+                        "remaining": max(0, limit - used),
+                        "date": today,
+                    },
+                    "recent_activity": [],
+                })
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+            except Exception:
+                pass
+
+    @app.route("/api/user/profile", methods=["PATCH"])
+    def api_user_update_profile():
+        """Update the current email user's display name and/or password."""
+        token = getattr(g, "_auth_token", None)
+        if not token:
+            return _api_error("Not authenticated", status_code=401)
+        email_user = token.get("_email_user")
+        if not email_user:
+            return _api_error("Profile updates require an email account", status_code=403)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return _api_error("Request body must be a JSON object", status_code=400)
+        display_name = data.get("display_name")
+        new_password = data.get("new_password")
+        current_password = data.get("current_password")
+        # Validate field types when provided
+        if display_name is not None and not isinstance(display_name, str):
+            return _api_error("display_name must be a string", status_code=400)
+        if new_password is not None and not isinstance(new_password, str):
+            return _api_error("new_password must be a string", status_code=400)
+        if current_password is not None and not isinstance(current_password, str):
+            return _api_error("current_password must be a string", status_code=400)
+        # Validate display_name length if provided
+        if display_name is not None and len(display_name) > 100:
+            return _api_error("Display name too long (max 100 characters)", status_code=400)
+        # Validate password change if requested
+        password_hash = None
+        storage = None
+        try:
+            storage = Storage(db_path)
+            if new_password is not None:
+                if not current_password:
+                    return _api_error("current_password is required to change password", status_code=400)
+                # Re-fetch user to get password_hash (middleware strips it from g._auth_token)
+                user_with_hash = storage.get_user_by_id(email_user["id"])
+                if not user_with_hash:
+                    return _api_error("User not found", status_code=404)
+                if not _check_password(current_password, user_with_hash.get("password_hash", "")):
+                    return _api_error("Current password is incorrect", status_code=400)
+                if len(new_password) < 8:
+                    return _api_error("New password must be at least 8 characters", status_code=400)
+                if len(new_password) > 1024:
+                    return _api_error("New password is too long (max 1024 characters)", status_code=400)
+                password_hash = _hash_password(new_password)
+            if display_name is None and password_hash is None:
+                return _api_error("No fields to update. Provide display_name or new_password.", status_code=400)
+            ok = storage.update_user_profile(
+                email_user["id"],
+                display_name=display_name,
+                password_hash=password_hash,
+            )
+            if not ok:
+                return _api_error("User not found", status_code=404)
+            detail_parts = []
+            if display_name is not None:
+                detail_parts.append("display_name updated")
+            if password_hash is not None:
+                detail_parts.append("password changed")
+            storage.log_user_activity(
+                "profile_updated",
+                user_id=email_user["id"],
+                ip_address=_get_client_ip(),
+                detail=", ".join(detail_parts),
+            )
+            return jsonify({"success": True, "updated": detail_parts})
         finally:
             try:
                 if storage is not None:

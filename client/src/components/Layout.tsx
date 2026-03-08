@@ -14,6 +14,7 @@ import {
   X,
   Users,
   ScrollText,
+  UserCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
@@ -38,6 +39,7 @@ const navItems = [
   { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },
   { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge" },
   { path: "/users", icon: Users, labelKey: "nav.users" },
+  { path: "/profile", icon: UserCircle, labelKey: "nav.profile" },
   { path: "/settings", icon: Settings, labelKey: "nav.settings" },
 ];
 
