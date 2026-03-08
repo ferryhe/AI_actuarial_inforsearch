@@ -244,7 +244,7 @@ flowchart LR
     E --> H
     D --> E
     D --> I
-    I -->|/api/*| J
+    J -->|/api/*| I
 ```
 
 ## Runtime Environment
