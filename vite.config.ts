@@ -26,6 +26,18 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      "/email-login": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/register": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/logout": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
     },
   },
 });
