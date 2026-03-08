@@ -535,6 +535,37 @@ def _serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _parse_yaml_bool(value: Any) -> bool:
+    """Coerce a YAML-sourced value to a Python bool conservatively.
+
+    YAML 1.1 may represent booleans as booleans, strings, or integers
+    depending on how the file was written.  This helper normalises all
+    three representations:
+
+    - ``bool`` values are returned as-is.
+    - Strings are matched against common truthy tokens
+      (``"1"`` / ``"true"`` / ``"yes"`` / ``"on"``); everything else is
+      ``False``.
+    - Integer-like objects (e.g. 0 / 1) are converted via ``int(value)``
+      to handle YAML integer scalars.
+    - Any other type is treated conservatively as ``False``.
+
+    Using ``bool(value)`` directly is *not* safe here because
+    ``bool("false") == True``.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    # Handle integer scalars (e.g. yaml value ``1`` or ``0``) that survive
+    # as Python ints when loaded via yaml.safe_load.
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
 def _is_file_deletion_enabled() -> bool:
     """Return True if file deletion is enabled.
 
@@ -546,10 +577,10 @@ def _is_file_deletion_enabled() -> bool:
         config_data = _load_yaml(_get_sites_config_path(), default={})
         system_cfg = config_data.get("system") or {}
         if "file_deletion_enabled" in system_cfg:
-            return bool(system_cfg["file_deletion_enabled"])
+            return _parse_yaml_bool(system_cfg["file_deletion_enabled"])
     except Exception:
         pass
-    return os.getenv("ENABLE_FILE_DELETION") == "true"
+    return _env_flag("ENABLE_FILE_DELETION", default=False)
 
 
 def create_app(config: dict[str, Any] | None = None) -> Any:
@@ -2108,7 +2139,24 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
                 config_data.setdefault("system", {})
                 system = config_data["system"]
                 if "file_deletion_enabled" in system_in:
-                    system["file_deletion_enabled"] = bool(system_in.get("file_deletion_enabled"))
+                    raw_val = system_in.get("file_deletion_enabled")
+                    # Accept booleans and parseable strings; reject everything else.
+                    if isinstance(raw_val, bool):
+                        system["file_deletion_enabled"] = raw_val
+                    elif isinstance(raw_val, str):
+                        val_norm = raw_val.strip().lower()
+                        if val_norm in ("1", "true", "yes", "on"):
+                            system["file_deletion_enabled"] = True
+                        elif val_norm in ("0", "false", "no", "off", ""):
+                            system["file_deletion_enabled"] = False
+                        else:
+                            return jsonify({
+                                "error": "Invalid value for system.file_deletion_enabled; expected boolean (true/false)."
+                            }), 400
+                    else:
+                        return jsonify({
+                            "error": "Invalid type for system.file_deletion_enabled; expected boolean."
+                        }), 400
 
             _write_yaml(_get_sites_config_path(), config_data)
             site_config = config_data
