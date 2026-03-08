@@ -669,11 +669,11 @@ class Crawler:
         #    home/publications page).  Skip it when it equals the site name (cfg.name) to
         #    avoid storing the institution name as the document title.
         # 3. original_filename / URL basename: always available last resort.
-        clean_link_text = (link_text or "").strip() or None
+        clean_link_text = link_text.strip() if link_text else None
         useful_page_title: str | None = None
         if page_title:
             site_name = (cfg.name or "").strip().lower()
-            if not site_name or page_title.strip().lower() != site_name:
+            if not (site_name and page_title.strip().lower() == site_name):
                 useful_page_title = page_title
         title = clean_link_text or useful_page_title or original_filename or os.path.basename(parsed.path)
         content_type = headers.get("content-type")
