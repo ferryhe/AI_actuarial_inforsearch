@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useLocation } from "wouter";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, ApiError } from "@/lib/api";
 
 export interface AuthUser {
   id: number | null;
@@ -42,8 +42,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         apiGet<{ require_auth: boolean }>("/api/auth/me"),
       ]);
       setUser(meRes.status === "fulfilled" ? (meRes.value.user ?? null) : null);
-      // Default to false (open access) when the endpoint is unavailable
-      setRequireAuth(authRes.status === "fulfilled" ? Boolean(authRes.value.require_auth) : false);
+      // Derive requireAuth:
+      // - if /api/auth/me succeeds, use its require_auth flag
+      // - if it fails with status 401, the backend has auth enabled but the user
+      //   is unauthenticated — treat that as requireAuth=true so the guard activates
+      // - otherwise, default to false (open access) when the endpoint is unavailable
+      let requireAuthFlag = false;
+      if (authRes.status === "fulfilled") {
+        requireAuthFlag = Boolean(authRes.value.require_auth);
+      } else {
+        const reason: unknown = authRes.reason;
+        if (reason instanceof ApiError && reason.status === 401) {
+          requireAuthFlag = true;
+        }
+      }
+      setRequireAuth(requireAuthFlag);
     } catch {
       setUser(null);
       setRequireAuth(false);

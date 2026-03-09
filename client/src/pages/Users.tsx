@@ -43,7 +43,8 @@ export default function UsersPage() {
   const { t } = useTranslation();
   const { user: currentUser, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Start as not loading — actual fetch is gated on auth being ready and user being admin
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<Record<number, string>>({});
   const [activityModal, setActivityModal] = useState<{ user: User; entries: ActivityEntry[] } | null>(null);
@@ -76,8 +77,10 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    if (!authLoading && isAdmin) {
+      fetchUsers();
+    }
+  }, [authLoading, isAdmin, fetchUsers]);
 
   const handleRoleChange = async (userId: number, newRole: string) => {
     setActionLoading((prev) => ({ ...prev, [userId]: "role" }));
