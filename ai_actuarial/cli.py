@@ -432,6 +432,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_web.add_argument("--debug", action="store_true", help="Enable debug mode")
     p_web.set_defaults(func=cmd_web)
 
+    p_api = sub.add_parser("api", help="Start FastAPI gateway for the React frontend")
+    p_api.add_argument("--host", default="127.0.0.1", help="Host to bind to")
+    p_api.add_argument("--port", type=int, default=5000, help="Port to bind to")
+    p_api.add_argument("--reload", action="store_true", help="Enable auto reload")
+    p_api.set_defaults(func=cmd_api)
+
     return p
 
 
@@ -518,6 +524,26 @@ def cmd_web(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         print("\nShutting down...")
     
+    return 0
+
+
+def cmd_api(args: argparse.Namespace) -> int:
+    """Start FastAPI gateway for the React frontend."""
+    try:
+        from .api.app import run_server
+    except ImportError:
+        print("FastAPI is required for the API gateway.")
+        print("Install it with: pip install fastapi uvicorn")
+        return 1
+
+    print(f"Starting FastAPI gateway on {args.host}:{args.port}")
+    print("Press Ctrl+C to stop")
+
+    try:
+        run_server(host=args.host, port=args.port, reload=args.reload)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+
     return 0
 
 

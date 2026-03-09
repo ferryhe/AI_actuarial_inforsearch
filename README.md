@@ -48,26 +48,17 @@ python -m ai_actuarial web --host 127.0.0.1 --port 8000
 
 ---
 
-### 同时启动 React 界面（两个终端）
-
-**终端 1：Flask 后台（端口 8000）**
+### 启动 FastAPI 网关（React/FastAPI 迁移分支）
 
 ```bash
+# 安装 Python 依赖
 pip install -r requirements.txt
-python -m ai_actuarial web --host 127.0.0.1 --port 8000
+
+# 启动 FastAPI 网关（未迁移接口会回退到 legacy Flask）
+python -m ai_actuarial api --host 127.0.0.1 --port 8000
 ```
 
-**终端 2：React 前台开发服务器（端口 5173）**
-
-```bash
-# 安装 Node 依赖（首次运行）
-npm install
-
-# 启动 Vite 开发服务器
-npm run dev
-```
-
-Vite 会将 `/api/*` 请求自动代理到 `http://127.0.0.1:8000`，浏览器打开 `http://localhost:5173` 使用 React 界面。
+该入口主要用于 React/FastAPI 迁移过程，FastAPI 先承接新网关，未迁移接口继续兼容旧 Flask 应用。
 
 ---
 
