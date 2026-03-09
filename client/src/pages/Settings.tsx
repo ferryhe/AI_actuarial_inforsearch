@@ -330,7 +330,7 @@ function AiConfigTab({ lang }: { lang: string }) {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const llmProviders = Object.entries(known).filter(([, info]) => !info.is_search_provider);
-  const configuredNames = new Set(configured.filter((p) => p.configured || p.has_key).map((p) => p.name));
+  const configuredNames = new Set(configured.filter((p) => p.status === "active" || p.decrypt_ok).map((p) => p.provider));
 
   async function saveProvider(providerName: string) {
     if (!apiKeyInput.trim()) return;
