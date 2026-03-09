@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..deps import AuthContext, require_permissions
 from ..services.read import get_dashboard_stats, list_categories, list_files, parse_file_list_query
@@ -11,7 +11,7 @@ router = APIRouter()
 def _get_db_path(request: Request) -> str:
     db_path = str(getattr(request.app.state, "db_path", "") or "")
     if not db_path:
-        raise RuntimeError("FastAPI runtime database path is unavailable")
+        raise HTTPException(status_code=500, detail="Database path is unavailable")
     return db_path
 
 
