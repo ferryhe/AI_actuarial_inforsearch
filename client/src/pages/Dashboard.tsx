@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   FileText,
   BarChart3,
@@ -139,6 +139,7 @@ function contentTypeLabel(ct: string): string {
 
 export default function Dashboard() {
   const { t } = useTranslation();
+  const [, navigate] = useLocation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,6 +235,7 @@ export default function Dashboard() {
                 initial="hidden"
                 animate="visible"
                 className="grid sm:grid-cols-[1fr_150px_80px_100px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer"
+                onClick={() => navigate(`/file-detail?url=${encodeURIComponent(file.url)}`)}
                 data-testid={`file-row-${i}`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { apiPost, ApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { BookOpen } from "lucide-react";
@@ -96,9 +96,9 @@ export default function Login() {
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Don't have an account?{" "}
-          <a href="/register" className="font-medium text-primary hover:underline">
+          <Link href="/register" className="font-medium text-primary hover:underline">
             Register
-          </a>
+          </Link>
         </p>
       </div>
     </div>
