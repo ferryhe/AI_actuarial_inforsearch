@@ -1624,7 +1624,7 @@ export default function Tasks() {
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [logModal, setLogModal] = useState<{ taskId: string; taskName: string; log: string } | null>(null);
+  const [logModal, setLogModal] = useState<{ taskId: string; taskName: string; log: string; task?: HistoryTask } | null>(null);
   const [logModalLoading, setLogModalLoading] = useState(false);
 
   const fetchHistory = useCallback(async () => {
@@ -1659,15 +1659,15 @@ export default function Tasks() {
   // Auto-fetch history on load
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
-  const viewTaskLog = async (taskId: string | undefined, taskName: string | undefined) => {
+  const viewTaskLog = async (taskId: string | undefined, taskName: string | undefined, task?: HistoryTask) => {
     if (!taskId) return;
     setLogModalLoading(true);
-    setLogModal({ taskId, taskName: taskName || taskId, log: "" });
+    setLogModal({ taskId, taskName: taskName || taskId, log: "", task });
     try {
       const res = await apiGet<{ log?: string }>(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
-      setLogModal({ taskId, taskName: taskName || taskId, log: res.log || "(no log available)" });
+      setLogModal({ taskId, taskName: taskName || taskId, log: res.log || "(no log available)", task });
     } catch {
-      setLogModal({ taskId, taskName: taskName || taskId, log: "(failed to load log)" });
+      setLogModal({ taskId, taskName: taskName || taskId, log: "(failed to load log)", task });
     } finally {
       setLogModalLoading(false);
     }
@@ -1868,7 +1868,7 @@ export default function Tasks() {
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-muted-foreground hidden md:block">{itemCount}</span>
                           {task.id && (
-                            <button onClick={() => viewTaskLog(task.id, task.name)}
+                            <button onClick={() => viewTaskLog(task.id, task.name, task)}
                               className="text-[10px] px-2 py-1 rounded border border-border hover:bg-muted transition-colors flex items-center gap-1 shrink-0"
                               data-testid={`button-view-log-${i}`}>
                               <Zap className="w-3 h-3" />{t("tasks.log")}
@@ -1938,16 +1938,94 @@ export default function Tasks() {
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto p-4">
-                {logModalLoading ? (
-                  <div className="flex items-center justify-center py-10">
-                    <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {/* Box 1: Summary stats */}
+                {logModal.task && (
+                  <div className="rounded-lg border border-border bg-muted/30 p-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">{t("tasks.log_summary") || "Summary"}</h4>
+                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                      <div className="flex gap-1">
+                        <dt className="text-muted-foreground">{t("tasks.log_status") || "Status"}:</dt>
+                        <dd>{logModal.task.status ? statusBadge(logModal.task.status) : "-"}</dd>
+                      </div>
+                      <div className="flex gap-1">
+                        <dt className="text-muted-foreground">{t("tasks.log_started") || "Started"}:</dt>
+                        <dd>{logModal.task.started_at ? formatDate(logModal.task.started_at) : "-"}</dd>
+                      </div>
+                      <div className="flex gap-1">
+                        <dt className="text-muted-foreground">{t("tasks.log_completed") || "Completed"}:</dt>
+                        <dd>{logModal.task.completed_at ? formatDate(logModal.task.completed_at) : "-"}</dd>
+                      </div>
+                      {logModal.task.type === "catalog" ? (
+                        <>
+                          {logModal.task.catalog_scanned != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.scanned") || "Scanned"}:</dt><dd>{logModal.task.catalog_scanned}</dd></div>
+                          )}
+                          {logModal.task.catalog_ok != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.ok") || "OK"}:</dt><dd className="text-emerald-600 dark:text-emerald-400">{logModal.task.catalog_ok}</dd></div>
+                          )}
+                          {logModal.task.catalog_skipped != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.skipped") || "Skipped"}:</dt><dd>{logModal.task.catalog_skipped}</dd></div>
+                          )}
+                          {logModal.task.catalog_errors != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.errors") || "Errors"}:</dt><dd className={logModal.task.catalog_errors > 0 ? "text-red-500" : ""}>{logModal.task.catalog_errors}</dd></div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {logModal.task.items_processed != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.log_items_processed") || "Processed"}:</dt><dd>{logModal.task.items_processed}</dd></div>
+                          )}
+                          {logModal.task.items_downloaded != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.downloaded") || "New/Updated"}:</dt><dd>{logModal.task.items_downloaded}</dd></div>
+                          )}
+                          {logModal.task.items_skipped != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.skipped") || "Skipped"}:</dt><dd>{logModal.task.items_skipped}</dd></div>
+                          )}
+                          {logModal.task.errors != null && (
+                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.errors") || "Errors"}:</dt><dd className={logModal.task.errors.length > 0 ? "text-red-500" : ""}>{logModal.task.errors.length}</dd></div>
+                          )}
+                        </>
+                      )}
+                    </dl>
                   </div>
-                ) : (
-                  <pre className="text-xs font-mono whitespace-pre-wrap break-all text-foreground/80 leading-relaxed">
-                    {logModal.log}
-                  </pre>
                 )}
+
+                {/* Box 2: Error details */}
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">{t("tasks.log_error_details") || "Error Details"}</h4>
+                  {logModal.task?.errors && logModal.task.errors.length > 0 ? (
+                    <ul className="text-xs space-y-1">
+                      {logModal.task.errors.map((e, i) => (
+                        <li key={i} className="text-red-500 break-all">• {e}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">{t("tasks.log_no_errors") || "No errors"}</p>
+                  )}
+                </div>
+
+                {/* Box 3: Application log */}
+                <div className="rounded-lg border border-border bg-muted/30 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("tasks.log_app_log") || "Application Log"}</h4>
+                    <button
+                      onClick={() => viewTaskLog(logModal.taskId, logModal.taskName, logModal.task)}
+                      className="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-muted transition-colors text-muted-foreground"
+                    >
+                      {t("common.refresh") || "Refresh"}
+                    </button>
+                  </div>
+                  {logModalLoading ? (
+                    <div className="flex items-center justify-center py-6">
+                      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <pre className="text-xs font-mono whitespace-pre-wrap break-all text-foreground/80 leading-relaxed max-h-64 overflow-y-auto focus:outline-none focus:ring-1 focus:ring-primary/40 rounded" tabIndex={0} role="region" aria-label="application log">
+                      {logModal.log}
+                    </pre>
+                  )}
+                </div>
               </div>
             </motion.div>
           </motion.div>

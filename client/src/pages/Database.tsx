@@ -292,7 +292,8 @@ export default function DatabasePage() {
   }
 
   function navigateToFile(file: FileItem) {
-    navigate(`/file-detail?url=${encodeURIComponent(file.url)}`);
+    const from = encodeURIComponent(window.location.pathname + window.location.search);
+    navigate(`/file-detail?url=${encodeURIComponent(file.url)}&from=${from}`);
   }
 
   function navigateToPreview(file: FileItem) {

@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Database from "@/pages/Database";
@@ -14,7 +14,17 @@ import Users from "@/pages/Users";
 import Profile from "@/pages/Profile";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
-import { AuthProvider } from "@/context/AuthContext";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+
+/** Redirects to /login when require_auth is enabled and the user is not signed in. */
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { isLoading, isLoggedIn, requireAuth } = useAuth();
+  if (isLoading) return null;
+  if (requireAuth && !isLoggedIn) {
+    return <Redirect to="/login" />;
+  }
+  return <>{children}</>;
+}
 
 function Router() {
   return (
@@ -25,27 +35,29 @@ function Router() {
 
       {/* All other pages use the main Layout */}
       <Route>
-        <Layout>
-          <Switch>
-            <Route path="/" component={Dashboard} />
-            <Route path="/database" component={Database} />
-            <Route path="/file-detail" component={FileDetail} />
-            <Route path="/file-preview" component={FilePreview} />
-            <Route path="/chat" component={Chat} />
-            <Route path="/tasks" component={Tasks} />
-            <Route path="/logs" component={Logs} />
-            <Route path="/knowledge/:kbId" component={KBDetail} />
-            <Route path="/knowledge" component={Knowledge} />
-            <Route path="/settings" component={Settings} />
-            <Route path="/users" component={Users} />
-            <Route path="/profile" component={Profile} />
-            <Route>
-              <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
-                404
-              </div>
-            </Route>
-          </Switch>
-        </Layout>
+        <RequireAuth>
+          <Layout>
+            <Switch>
+              <Route path="/" component={Dashboard} />
+              <Route path="/database" component={Database} />
+              <Route path="/file-detail" component={FileDetail} />
+              <Route path="/file-preview" component={FilePreview} />
+              <Route path="/chat" component={Chat} />
+              <Route path="/tasks" component={Tasks} />
+              <Route path="/logs" component={Logs} />
+              <Route path="/knowledge/:kbId" component={KBDetail} />
+              <Route path="/knowledge" component={Knowledge} />
+              <Route path="/settings" component={Settings} />
+              <Route path="/users" component={Users} />
+              <Route path="/profile" component={Profile} />
+              <Route>
+                <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
+                  404
+                </div>
+              </Route>
+            </Switch>
+          </Layout>
+        </RequireAuth>
       </Route>
     </Switch>
   );
