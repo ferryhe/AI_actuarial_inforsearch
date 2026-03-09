@@ -1,16 +1,4 @@
 www.aiinforsearch.com, aiinforsearch.com {
-    # 前端静态文件
-    reverse_proxy 172.18.0.3:5173
-}
-
-www.aiinforsearch.com/api/*, aiinforsearch.com/api/* {
-    reverse_proxy 172.18.0.2:5000
-}
-
-www.aiinforsearch.com/login, aiinforsearch.com/login {
-    reverse_proxy 172.18.0.2:5000
-}
-
-www.aiinforsearch.com/email-login, aiinforsearch.com/email-login {
+    # Flask 模板页面与 API 统一由后端服务提供
     reverse_proxy 172.18.0.2:5000
 }

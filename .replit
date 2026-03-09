@@ -1,20 +1,15 @@
-modules = ["nodejs-20", "python-3.11"]
+modules = ["python-3.11"]
 
 [workflows]
 runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
-mode = "parallel"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Flask API"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Start application"
 
 [[workflows.workflow]]
 name = "Flask API"
@@ -26,28 +21,15 @@ args = "python3 -m ai_actuarial web --host 0.0.0.0 --port 8000"
 waitForPort = 8000
 
 [workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow]]
-name = "Start application"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npx vite --port 5000"
-waitForPort = 5000
-
-[workflows.workflow.metadata]
 outputType = "webview"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "./dist/index.cjs"]
-build = ["npm", "run", "build"]
-publicDir = "dist/public"
+run = ["python3", "-m", "ai_actuarial", "web", "--host", "0.0.0.0", "--port", "8000"]
+build = ["python3", "-m", "compileall", "ai_actuarial"]
 
 [agent]
-mockupState = "FULLSTACK"
+mockupState = "PYTHON_APP"
 integrations = ["github:1.0.0"]
 
 [nix]
@@ -55,20 +37,8 @@ channel = "stable-25_05"
 packages = ["cargo", "freetype", "lcms2", "libGL", "libGLU", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "mesa", "openjpeg", "openssl", "pkg-config", "rustc", "tcl", "tk", "zlib"]
 
 [[ports]]
-localPort = 5000
-externalPort = 80
-
-[[ports]]
-localPort = 5001
-externalPort = 3000
-
-[[ports]]
-localPort = 5002
-externalPort = 3002
-
-[[ports]]
 localPort = 8000
-externalPort = 8000
+externalPort = 80
 
 [userenv]
 
