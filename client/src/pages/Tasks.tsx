@@ -1595,10 +1595,20 @@ function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, u
 }
 
 interface HistoryTask {
+  id?: string;
   name?: string;
   type?: string;
   status?: string;
   started_at?: string;
+  completed_at?: string;
+  items_processed?: number;
+  items_downloaded?: number;
+  items_skipped?: number;
+  catalog_scanned?: number;
+  catalog_ok?: number;
+  catalog_skipped?: number;
+  catalog_errors?: number;
+  errors?: string[];
 }
 
 export default function Tasks() {
@@ -1611,9 +1621,11 @@ export default function Tasks() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(true);
   const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [logModal, setLogModal] = useState<{ taskId: string; taskName: string; log: string } | null>(null);
+  const [logModalLoading, setLogModalLoading] = useState(false);
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -1643,6 +1655,23 @@ export default function Tasks() {
     intervalRef.current = setInterval(fetchTasks, 5000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [fetchTasks, fetchSites]);
+
+  // Auto-fetch history on load
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const viewTaskLog = async (taskId: string | undefined, taskName: string | undefined) => {
+    if (!taskId) return;
+    setLogModalLoading(true);
+    setLogModal({ taskId, taskName: taskName || taskId, log: "" });
+    try {
+      const res = await apiGet<{ log?: string }>(`/api/tasks/log/${encodeURIComponent(taskId)}?tail=500`);
+      setLogModal({ taskId, taskName: taskName || taskId, log: res.log || "(no log available)" });
+    } catch {
+      setLogModal({ taskId, taskName: taskName || taskId, log: "(failed to load log)" });
+    } finally {
+      setLogModalLoading(false);
+    }
+  };
 
   const stopTask = async (taskId: string) => {
     try { await apiPost(`/api/tasks/stop/${taskId}`); await fetchTasks(); }
@@ -1689,8 +1718,58 @@ export default function Tasks() {
         <p className="text-muted-foreground mt-1.5 text-sm max-w-2xl leading-relaxed">{t("tasks.subtitle")}</p>
       </motion.div>
 
+      {/* 1. All Tasks (task type selection grid) */}
       <div>
-        <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-semibold mb-3">{t("tasks.new_task")}</h2>
+        <AnimatePresence mode="wait">
+          {activeForm ? (
+            <motion.div key="form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }} className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+                <button onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitSuccess(null); }}
+                  className="p-1.5 rounded-lg hover:bg-muted transition-colors" data-testid="button-back-tasks">
+                  <ArrowLeft className="w-4 h-4" /></button>
+                {activeTaskType && (
+                  <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", activeTaskType.color)}>
+                    <activeTaskType.icon className="w-5 h-5" strokeWidth={1.8} /></div>
+                )}
+                <h3 className="font-semibold text-sm">{t(`tasks.type.${activeForm}`)}</h3>
+              </div>
+              <div className="p-5 space-y-0">
+                {submitError && (
+                  <div className="mb-4 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-submit-error">
+                    <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{submitError}</span>
+                    <button onClick={() => setSubmitError(null)} className="shrink-0"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                )}
+                {submitSuccess && (
+                  <div className="mb-4 px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2" data-testid="text-submit-success">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" /><span>{submitSuccess}</span></div>
+                )}
+                {renderForm()}
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div key="grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+              {taskTypes.map(({ type, icon: Icon, color }, i) => (
+                <motion.button key={type} custom={i} variants={fadeUp} initial="hidden" animate="visible"
+                  onClick={() => { setActiveForm(type); setSubmitError(null); setSubmitSuccess(null); }}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:shadow-md transition-all duration-300"
+                  data-testid={`button-start-${type}`}>
+                  <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", color)}>
+                    <Icon className="w-5 h-5" strokeWidth={1.8} /></div>
+                  <span className="text-xs font-medium text-center">{t(`tasks.type.${type}`)}</span>
+                </motion.button>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* 2. Active Tasks */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold">{t("tasks.active")}</h2>
           <button onClick={fetchTasks} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             data-testid="button-refresh-tasks" title={t("tasks.refresh")}><RefreshCw className="w-4 h-4" /></button>
@@ -1699,11 +1778,9 @@ export default function Tasks() {
         {loading ? (
           <div className="space-y-3">{[...Array(2)].map((_, i) => <div key={i} className="h-24 rounded-xl bg-muted animate-pulse" />)}</div>
         ) : activeTasks.length === 0 ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-            className="text-center py-10 rounded-xl border border-dashed border-border bg-card" data-testid="text-no-active-tasks">
-            <CheckCircle2 className="w-10 h-10 mx-auto text-muted-foreground/40 mb-2" />
-            <p className="font-medium text-muted-foreground">{t("tasks.no_active")}</p>
-          </motion.div>
+          <p className="text-xs text-muted-foreground py-1" data-testid="text-no-active-tasks">
+            {t("tasks.no_active")}
+          </p>
         ) : (
           <div className="space-y-3">
             {activeTasks.map((task, i) => (
@@ -1740,75 +1817,23 @@ export default function Tasks() {
         )}
       </div>
 
+      {/* 3. Task History (after active tasks) */}
       <div>
-        <h2 className="text-lg font-semibold mb-3">{t("tasks.new_task")}</h2>
-        <AnimatePresence mode="wait">
-          {activeForm ? (
-            <motion.div key="form" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }} className="rounded-xl border border-border bg-card overflow-hidden">
-              <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-                <button onClick={() => { setActiveForm(null); setSubmitError(null); setSubmitSuccess(null); }}
-                  className="p-1.5 rounded-lg hover:bg-muted transition-colors" data-testid="button-back-tasks">
-                  <ArrowLeft className="w-4 h-4" /></button>
-                {activeTaskType && (
-                  <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center", activeTaskType.color)}>
-                    <activeTaskType.icon className="w-5 h-5" strokeWidth={1.8} /></div>
-                )}
-                <h3 className="font-semibold text-sm">{t(`tasks.type.${activeForm}`)}</h3>
-              </div>
-              <div className="p-5 space-y-0">
-                {submitError && (
-                  <div className="mb-4 px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-submit-error">
-                    <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{submitError}</span>
-                    <button onClick={() => setSubmitError(null)} className="shrink-0"><X className="w-3.5 h-3.5" /></button>
-                  </div>
-                )}
-                {submitSuccess && (
-                  <div className="mb-4 px-3 py-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2" data-testid="text-submit-success">
-                    <CheckCircle2 className="w-4 h-4 shrink-0" /><span>{submitSuccess}</span></div>
-                )}
-                {renderForm()}
-              </div>
-            </motion.div>
-          ) : (
-            <motion.div key="grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {taskTypes.map(({ type, icon: Icon, color }, i) => (
-                <motion.button key={type} custom={i} variants={fadeUp} initial="hidden" animate="visible"
-                  onClick={() => { setActiveForm(type); setSubmitError(null); setSubmitSuccess(null); }}
-                  className="flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:shadow-md transition-all duration-300"
-                  data-testid={`button-start-${type}`}>
-                  <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", color)}>
-                    <Icon className="w-5 h-5" strokeWidth={1.8} /></div>
-                  <span className="text-xs font-medium text-center">{t(`tasks.type.${type}`)}</span>
-                </motion.button>
-              ))}
-            </motion.div>
+        <div className="flex items-center justify-between mb-3">
+          <button onClick={() => { if (!historyExpanded) fetchHistory(); setHistoryExpanded(!historyExpanded); }}
+            className="flex items-center gap-2 text-left"
+            data-testid="button-toggle-history">
+            <History className="w-5 h-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold">{t("tasks.history")}</h2>
+            {historyExpanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
+          </button>
+          {historyExpanded && (
+            <button onClick={fetchHistory} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="button-refresh-history" title={t("tasks.refresh")}><RefreshCw className="w-4 h-4" /></button>
           )}
-        </AnimatePresence>
-        {!activeForm && sites.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <span className="text-xs text-muted-foreground self-center">{t("tasks.configured_sites")}:</span>
-            {sites.map((site) => (
-              <span key={site.name} className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground"
-                data-testid={`text-site-${site.name}`}>{site.name}</span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <ScheduledTasksSection />
-
-      <div>
-        <button onClick={() => { if (!historyExpanded) fetchHistory(); setHistoryExpanded(!historyExpanded); }}
-          className="flex items-center gap-2 w-full text-left"
-          data-testid="button-toggle-history">
-          <History className="w-5 h-5 text-muted-foreground" />
-          <h2 className="text-lg font-semibold flex-1">{t("tasks.history")}</h2>
-          {historyExpanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
-        </button>
+        </div>
         {historyExpanded && (
-          <div className="mt-3">
+          <div>
             {historyLoading ? (
               <div className="flex items-center justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
             ) : historyTasks.length === 0 ? (
@@ -1818,32 +1843,116 @@ export default function Tasks() {
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-card overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/30">
-                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.name")}</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.type")}</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.status")}</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">{t("tasks.col.started")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {historyTasks.map((task, i) => (
-                      <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors"
-                        data-testid={`row-history-task-${i}`}>
-                        <td className="px-4 py-2.5 font-medium truncate max-w-[200px]">{task.name || "-"}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground">{task.type || "-"}</td>
-                        <td className="px-4 py-2.5">{task.status ? statusBadge(task.status) : "-"}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground">{task.started_at ? formatDate(task.started_at) : "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="hidden md:grid grid-cols-[1fr_90px_110px_120px_120px_80px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  <span>{t("tasks.col.name")}</span>
+                  <span>{t("tasks.col.type")}</span>
+                  <span>{t("tasks.col.status")}</span>
+                  <span>{t("tasks.col.started")}</span>
+                  <span>{t("tasks.col.completed")}</span>
+                  <span>{t("tasks.col.items")}</span>
+                </div>
+                {historyTasks.map((task, i) => {
+                  const itemCount = task.type === "catalog"
+                    ? (task.catalog_ok ?? task.items_processed ?? 0)
+                    : (task.items_downloaded ?? task.items_processed ?? 0);
+                  const hasErrors = task.errors && task.errors.length > 0;
+                  return (
+                    <div key={i} className="border-t border-border hover:bg-muted/20 transition-colors"
+                      data-testid={`row-history-task-${i}`}>
+                      <div className="grid md:grid-cols-[1fr_90px_110px_120px_120px_80px] gap-1 md:gap-3 px-4 py-3 items-center">
+                        <div className="font-medium text-sm truncate max-w-full">{task.name || "-"}</div>
+                        <div className="text-xs text-muted-foreground hidden md:block">{task.type || "-"}</div>
+                        <div className="hidden md:block">{task.status ? statusBadge(task.status) : "-"}</div>
+                        <div className="text-xs text-muted-foreground hidden md:block">{task.started_at ? formatDate(task.started_at) : "-"}</div>
+                        <div className="text-xs text-muted-foreground hidden md:block">{task.completed_at ? formatDate(task.completed_at) : "-"}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground hidden md:block">{itemCount}</span>
+                          {task.id && (
+                            <button onClick={() => viewTaskLog(task.id, task.name)}
+                              className="text-[10px] px-2 py-1 rounded border border-border hover:bg-muted transition-colors flex items-center gap-1 shrink-0"
+                              data-testid={`button-view-log-${i}`}>
+                              <Zap className="w-3 h-3" />{t("tasks.log")}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {/* Extra stats row for catalog tasks */}
+                      {task.type === "catalog" && (task.catalog_scanned != null || task.catalog_ok != null) && (
+                        <div className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                          {task.catalog_scanned != null && <span>{t("tasks.stats.scanned")}: {task.catalog_scanned}</span>}
+                          {task.catalog_ok != null && <span className="text-emerald-600 dark:text-emerald-400">{t("tasks.stats.ok")}: {task.catalog_ok}</span>}
+                          {task.catalog_skipped != null && <span>{t("tasks.stats.skipped")}: {task.catalog_skipped}</span>}
+                          {task.catalog_errors != null && task.catalog_errors > 0 && <span className="text-red-500">{t("tasks.stats.errors")}: {task.catalog_errors}</span>}
+                        </div>
+                      )}
+                      {/* Items stats for non-catalog tasks */}
+                      {task.type !== "catalog" && ((task.items_downloaded ?? 0) > 0 || (task.items_skipped ?? 0) > 0) && (
+                        <div className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                          {(task.items_downloaded ?? 0) > 0 && <span>{t("tasks.stats.downloaded")}: {task.items_downloaded}</span>}
+                          {(task.items_skipped ?? 0) > 0 && <span>{t("tasks.stats.skipped")}: {task.items_skipped}</span>}
+                        </div>
+                      )}
+                      {/* Error summary */}
+                      {hasErrors && (
+                        <div className="px-4 pb-2 text-[11px] text-red-500 truncate">
+                          {task.errors![0]}{task.errors!.length > 1 ? ` (+${task.errors!.length - 1} ${t("tasks.errors.more")})` : ""}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
         )}
       </div>
+
+      <ScheduledTasksSection />
+
+      {/* Log Modal */}
+      <AnimatePresence>
+        {logModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+            onClick={() => setLogModal(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-card rounded-xl border border-border shadow-xl w-full max-w-3xl max-h-[80vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+              data-testid="modal-task-log"
+            >
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+                <div className="flex items-center gap-2 min-w-0">
+                  <History className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <h3 className="font-semibold text-sm truncate">{t("tasks.log_title")} — {logModal.taskName}</h3>
+                </div>
+                <button onClick={() => setLogModal(null)}
+                  className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
+                  data-testid="button-close-log-modal">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                {logModalLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <pre className="text-xs font-mono whitespace-pre-wrap break-all text-foreground/80 leading-relaxed">
+                    {logModal.log}
+                  </pre>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
