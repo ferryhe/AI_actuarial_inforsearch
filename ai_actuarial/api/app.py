@@ -10,6 +10,7 @@ from starlette.responses import PlainTextResponse
 
 from .routers.meta import router as meta_router
 from .routers.migration import router as migration_router
+from .routers.read import router as read_router
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,15 @@ def _native_paths(app: FastAPI) -> list[str]:
     return sorted(paths)
 
 
+def _resolve_db_path() -> str:
+    from ai_actuarial.web.app import _get_sites_config_path, _load_yaml
+
+    config_data = _load_yaml(_get_sites_config_path(), default={})
+    db_path = (config_data.get("paths") or {}).get("db", "data/index.db")
+    db_path = str(db_path or "data/index.db")
+    return os.path.abspath(db_path) if not os.path.isabs(db_path) else db_path
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Actuarial Info Search API",
@@ -48,17 +58,31 @@ def create_app() -> FastAPI:
 
     app.include_router(meta_router, prefix="/api", tags=["meta"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
+    app.include_router(read_router, prefix="/api", tags=["read"])
 
     app.state.legacy_backend = "flask"
     app.state.legacy_mount_enabled = False
     app.state.legacy_mount_error = None
+    app.state.legacy_flask_app = None
+    app.state.db_path = _resolve_db_path()
+    app.state.require_auth = os.getenv("REQUIRE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+    app.state.active_tasks_ref = {}
+    app.state.task_lock = None
 
     try:
-        from ai_actuarial.web.app import create_app as create_legacy_flask_app
+        from ai_actuarial.web.app import (
+            _active_tasks,
+            _task_lock,
+            create_app as create_legacy_flask_app,
+        )
 
         legacy_app = create_legacy_flask_app()
         app.mount("/", WSGIMiddleware(legacy_app))
         app.state.legacy_mount_enabled = True
+        app.state.legacy_flask_app = legacy_app
+        app.state.require_auth = bool(legacy_app.config.get("REQUIRE_AUTH", False))
+        app.state.active_tasks_ref = _active_tasks
+        app.state.task_lock = _task_lock
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to mount legacy Flask app into FastAPI gateway")
         app.state.legacy_mount_error = str(exc)
