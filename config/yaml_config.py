@@ -79,8 +79,8 @@ def _get_sites_config_path() -> Path:
     return locations[0]
 
 
-@lru_cache(maxsize=1)
-def _load_yaml_config_cached(cache_version: int) -> Dict[str, Any]:
+@lru_cache(maxsize=8)
+def _load_yaml_config_cached(config_path_str: str, cache_version: int) -> Dict[str, Any]:
     """
     Load sites.yaml configuration with caching.
     
@@ -90,7 +90,7 @@ def _load_yaml_config_cached(cache_version: int) -> Dict[str, Any]:
     Returns:
         Dict containing the full configuration
     """
-    config_path = _get_sites_config_path()
+    config_path = Path(config_path_str)
     
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -113,7 +113,8 @@ def load_yaml_config() -> Dict[str, Any]:
         Dict containing the full configuration
     """
     global _cache_version
-    return _load_yaml_config_cached(_cache_version)
+    config_path = _get_sites_config_path()
+    return _load_yaml_config_cached(str(config_path), _cache_version)
 
 
 def invalidate_config_cache():

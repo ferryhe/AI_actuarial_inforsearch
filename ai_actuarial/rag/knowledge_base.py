@@ -135,7 +135,16 @@ class KnowledgeBaseManager:
     def _ensure_rag_tables(self) -> None:
         """Create RAG-specific tables if they don't exist."""
         conn = self.storage._conn
-        
+
+        def ensure_columns(table: str, columns: dict[str, str]) -> None:
+            existing = {
+                row[1]
+                for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            for name, definition in columns.items():
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
         # rag_knowledge_bases table
         conn.execute("""
             CREATE TABLE IF NOT EXISTS rag_knowledge_bases (
@@ -155,7 +164,24 @@ class KnowledgeBaseManager:
                 metadata_path TEXT
             )
         """)
-        
+        ensure_columns(
+            "rag_knowledge_bases",
+            {
+                "description": "TEXT DEFAULT ''",
+                "kb_mode": "TEXT DEFAULT 'category'",
+                "embedding_model": "TEXT NOT NULL DEFAULT 'text-embedding-3-large'",
+                "chunk_size": "INTEGER NOT NULL DEFAULT 800",
+                "chunk_overlap": "INTEGER NOT NULL DEFAULT 100",
+                "index_type": "TEXT NOT NULL DEFAULT 'Flat'",
+                "created_at": "TEXT",
+                "updated_at": "TEXT",
+                "file_count": "INTEGER DEFAULT 0",
+                "chunk_count": "INTEGER DEFAULT 0",
+                "index_path": "TEXT",
+                "metadata_path": "TEXT",
+            },
+        )
+
         # rag_kb_files table (tracks which files are in which KBs)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS rag_kb_files (
@@ -169,7 +195,14 @@ class KnowledgeBaseManager:
                 FOREIGN KEY (file_url) REFERENCES files(url) ON DELETE CASCADE
             )
         """)
-        
+        ensure_columns(
+            "rag_kb_files",
+            {
+                "chunk_count": "INTEGER DEFAULT 0",
+                "indexed_at": "TEXT",
+            },
+        )
+
         # rag_chunks table (for debugging and granular tracking)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS rag_chunks (
@@ -186,6 +219,13 @@ class KnowledgeBaseManager:
                 FOREIGN KEY (file_url) REFERENCES files(url) ON DELETE CASCADE
             )
         """)
+        ensure_columns(
+            "rag_chunks",
+            {
+                "section_hierarchy": "TEXT",
+                "embedding_hash": "TEXT",
+            },
+        )
         
         # Create indices for performance
         conn.execute("""

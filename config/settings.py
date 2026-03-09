@@ -9,6 +9,7 @@ drift. It uses pydantic-settings to read values directly from the project's
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -136,6 +137,12 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return a cached Settings instance so imports stay cheap."""
+    ignore_dotenv = (
+        str(os.getenv("AI_ACTUARIAL_IGNORE_DOTENV", "")).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    if ignore_dotenv or os.getenv("PYTEST_CURRENT_TEST"):
+        return Settings(_env_file=None)
     return Settings()
 
 
