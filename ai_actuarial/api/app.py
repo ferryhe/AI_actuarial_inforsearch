@@ -65,13 +65,12 @@ def create_app() -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         async def legacy_unavailable(path: str) -> PlainTextResponse:
-            return PlainTextResponse(
-                (
-                    "Legacy Flask app is unavailable inside the FastAPI gateway.\n"
-                    f"Reason: {exc}\n"
-                ),
-                status_code=503,
-            )
+            base_message = "Legacy Flask app is unavailable inside the FastAPI gateway."
+            if os.getenv("FASTAPI_EXPOSE_ERROR_DETAILS") == "1":
+                body = f"{base_message}\nReason: {exc}\n"
+            else:
+                body = f"{base_message}\n"
+            return PlainTextResponse(body, status_code=503)
 
     app.state.native_paths = _native_paths(app)
     return app
