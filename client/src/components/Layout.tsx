@@ -34,8 +34,6 @@ export function useTranslation() {
   return useContext(I18nContext);
 }
 
-import { useAuth } from "@/context/AuthContext";
-
 const navItems = [
   { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
   { path: "/database", icon: Database, labelKey: "nav.database" },
