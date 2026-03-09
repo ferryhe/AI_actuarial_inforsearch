@@ -391,7 +391,9 @@ class ConversationManager:
         # Process in reverse to prioritize recent messages
         for msg in reversed(messages):
             # Skip if we'd exceed token limit
-            msg_tokens = msg.get('token_count', len(msg['content']) // 4)
+            msg_tokens = msg.get('token_count')
+            if not isinstance(msg_tokens, int) or msg_tokens < 0:
+                msg_tokens = max(1, len(msg.get('content') or "") // 4)
             
             if total_tokens + msg_tokens > max_tokens:
                 logger.info(

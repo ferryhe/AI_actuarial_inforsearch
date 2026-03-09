@@ -23,4 +23,4 @@ if ! dpkg -s libxcb1 >/dev/null 2>&1; then
 fi
 
 echo "Starting application..."
-exec python -m ai_actuarial web --host 0.0.0.0 --port 5000
+exec python -m ai_actuarial api --host 0.0.0.0 --port 5000

@@ -79,18 +79,22 @@ def _get_sites_config_path() -> Path:
     return locations[0]
 
 
-@lru_cache(maxsize=1)
-def _load_yaml_config_cached(cache_version: int) -> Dict[str, Any]:
+@lru_cache(maxsize=8)
+def _load_yaml_config_cached(config_path_str: str, cache_version: int) -> Dict[str, Any]:
     """
     Load sites.yaml configuration with caching.
     
     Args:
-        cache_version: Version number for cache invalidation
+        config_path_str: Absolute path to the YAML configuration file as a string.
+            Included in the cache key so that different config paths are cached
+            independently.
+        cache_version: Version number for cache invalidation. Increment this value
+            to force a reload from disk without clearing the entire cache.
         
     Returns:
         Dict containing the full configuration
     """
-    config_path = _get_sites_config_path()
+    config_path = Path(config_path_str)
     
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -113,7 +117,8 @@ def load_yaml_config() -> Dict[str, Any]:
         Dict containing the full configuration
     """
     global _cache_version
-    return _load_yaml_config_cached(_cache_version)
+    config_path = _get_sites_config_path()
+    return _load_yaml_config_cached(str(config_path), _cache_version)
 
 
 def invalidate_config_cache():

@@ -9,7 +9,7 @@ import logging
 import time
 from typing import List, Dict, Any, Optional
 
-from openai import OpenAI, APITimeoutError, RateLimitError, APIError, AuthenticationError
+import openai
 
 from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.exceptions import LLMException
@@ -49,7 +49,7 @@ class LLMClient:
         
         # Initialize OpenAI client
         if self.config.llm_provider == "openai":
-            self.client = OpenAI(
+            self.client = openai.OpenAI(
                 api_key=self.config.api_key,
                 timeout=60.0  # 60 second timeout
             )
@@ -147,14 +147,14 @@ class LLMClient:
                 
                 return content
                 
-            except AuthenticationError as e:
+            except openai.AuthenticationError as e:
                 # Authentication errors are not retryable
                 logger.error(f"Authentication error: {e}")
                 raise LLMException(
                     "Authentication failed. Please check your API key."
                 )
             
-            except RateLimitError as e:
+            except openai.RateLimitError as e:
                 # Rate limit - wait and retry
                 attempt += 1
                 last_error = e
@@ -172,7 +172,7 @@ class LLMClient:
                         f"Rate limit exceeded after {self.config.max_retries} retries"
                     )
             
-            except APITimeoutError as e:
+            except openai.APITimeoutError as e:
                 # Timeout - retry with backoff
                 attempt += 1
                 last_error = e
@@ -190,7 +190,7 @@ class LLMClient:
                         f"API timeout after {self.config.max_retries} retries"
                     )
             
-            except APIError as e:
+            except openai.APIError as e:
                 # General API error - retry
                 attempt += 1
                 last_error = e

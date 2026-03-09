@@ -15,6 +15,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch, call
+
+import httpx
 import numpy as np
 
 # Mock schedule module
@@ -34,6 +36,14 @@ from ai_actuarial.chatbot.prompts import build_full_prompt
 from ai_actuarial.chatbot.retrieval import RAGRetriever
 from ai_actuarial.chatbot.router import QueryRouter
 from ai_actuarial.storage import Storage
+
+
+def _mock_openai_request() -> httpx.Request:
+    return httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+
+
+def _mock_openai_response(status_code: int) -> httpx.Response:
+    return httpx.Response(status_code=status_code, request=_mock_openai_request())
 
 
 class TestChatbotIntegration(unittest.TestCase):
@@ -373,7 +383,7 @@ class TestChatbotIntegration(unittest.TestCase):
         
         # Mock client that always times out
         mock_client = Mock()
-        mock_client.chat.completions.create.side_effect = APITimeoutError("Timeout")
+        mock_client.chat.completions.create.side_effect = APITimeoutError(request=_mock_openai_request())
         
         mock_openai_class.return_value = mock_client
         
@@ -597,7 +607,11 @@ class TestChatbotIntegration(unittest.TestCase):
         
         # Mock authentication failure
         mock_client = Mock()
-        mock_client.chat.completions.create.side_effect = AuthenticationError("Invalid API key")
+        mock_client.chat.completions.create.side_effect = AuthenticationError(
+            "Invalid API key",
+            response=_mock_openai_response(401),
+            body=None,
+        )
         mock_openai_class.return_value = mock_client
         
         llm_client = LLMClient(self.config)
