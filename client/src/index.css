@@ -2,6 +2,9 @@
 @import "tw-animate-css";
 
 /* Responsive base font scaling: slightly larger on desktop for better readability */
+html {
+  font-size: 14px;
+}
 @media (min-width: 768px) {
   html {
     font-size: 15px;

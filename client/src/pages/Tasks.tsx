@@ -1848,7 +1848,7 @@ export default function Tasks() {
                   <span>{t("tasks.col.type")}</span>
                   <span>{t("tasks.col.status")}</span>
                   <span>{t("tasks.col.started")}</span>
-                  <span>{t("tasks.col.completed") || "Completed"}</span>
+                  <span>{t("tasks.col.completed")}</span>
                   <span>{t("tasks.col.items")}</span>
                 </div>
                 {historyTasks.map((task, i) => {
@@ -1871,7 +1871,7 @@ export default function Tasks() {
                             <button onClick={() => viewTaskLog(task.id, task.name)}
                               className="text-[10px] px-2 py-1 rounded border border-border hover:bg-muted transition-colors flex items-center gap-1 shrink-0"
                               data-testid={`button-view-log-${i}`}>
-                              <Zap className="w-3 h-3" />Log
+                              <Zap className="w-3 h-3" />{t("tasks.log")}
                             </button>
                           )}
                         </div>
@@ -1879,23 +1879,23 @@ export default function Tasks() {
                       {/* Extra stats row for catalog tasks */}
                       {task.type === "catalog" && (task.catalog_scanned != null || task.catalog_ok != null) && (
                         <div className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-                          {task.catalog_scanned != null && <span>Scanned: {task.catalog_scanned}</span>}
-                          {task.catalog_ok != null && <span className="text-emerald-600 dark:text-emerald-400">OK: {task.catalog_ok}</span>}
-                          {task.catalog_skipped != null && <span>Skipped: {task.catalog_skipped}</span>}
-                          {task.catalog_errors != null && task.catalog_errors > 0 && <span className="text-red-500">Errors: {task.catalog_errors}</span>}
+                          {task.catalog_scanned != null && <span>{t("tasks.stats.scanned")}: {task.catalog_scanned}</span>}
+                          {task.catalog_ok != null && <span className="text-emerald-600 dark:text-emerald-400">{t("tasks.stats.ok")}: {task.catalog_ok}</span>}
+                          {task.catalog_skipped != null && <span>{t("tasks.stats.skipped")}: {task.catalog_skipped}</span>}
+                          {task.catalog_errors != null && task.catalog_errors > 0 && <span className="text-red-500">{t("tasks.stats.errors")}: {task.catalog_errors}</span>}
                         </div>
                       )}
                       {/* Items stats for non-catalog tasks */}
                       {task.type !== "catalog" && ((task.items_downloaded ?? 0) > 0 || (task.items_skipped ?? 0) > 0) && (
                         <div className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-                          {(task.items_downloaded ?? 0) > 0 && <span>Downloaded: {task.items_downloaded}</span>}
-                          {(task.items_skipped ?? 0) > 0 && <span>Skipped: {task.items_skipped}</span>}
+                          {(task.items_downloaded ?? 0) > 0 && <span>{t("tasks.stats.downloaded")}: {task.items_downloaded}</span>}
+                          {(task.items_skipped ?? 0) > 0 && <span>{t("tasks.stats.skipped")}: {task.items_skipped}</span>}
                         </div>
                       )}
                       {/* Error summary */}
                       {hasErrors && (
                         <div className="px-4 pb-2 text-[11px] text-red-500 truncate">
-                          {task.errors![0]}{task.errors!.length > 1 ? ` (+${task.errors!.length - 1} more)` : ""}
+                          {task.errors![0]}{task.errors!.length > 1 ? ` (+${task.errors!.length - 1} ${t("tasks.errors.more")})` : ""}
                         </div>
                       )}
                     </div>
@@ -1930,7 +1930,7 @@ export default function Tasks() {
               <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                 <div className="flex items-center gap-2 min-w-0">
                   <History className="w-4 h-4 text-muted-foreground shrink-0" />
-                  <h3 className="font-semibold text-sm truncate">Log — {logModal.taskName}</h3>
+                  <h3 className="font-semibold text-sm truncate">{t("tasks.log_title")} — {logModal.taskName}</h3>
                 </div>
                 <button onClick={() => setLogModal(null)}
                   className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"
