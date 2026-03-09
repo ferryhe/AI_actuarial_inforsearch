@@ -14,13 +14,13 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxkbcommon-x11-0 \
     # For OpenCV (image processing)
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     # For Tesseract OCR
     tesseract-ocr \
     libtesseract-dev \
     # For other ML libraries
-    libomp1 \
+    libomp-dev \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
 
@@ -31,11 +31,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Make entrypoint executable
+RUN chmod +x docker-entrypoint.sh
+
 # Create data directory
 RUN mkdir -p /app/data
 
 # Expose port
 EXPOSE 5000
 
-# Run the application
-CMD ["python", "-m", "ai_actuarial", "web", "--host", "0.0.0.0", "--port", "5000"]
+# Use entrypoint script
+ENTRYPOINT ["./docker-entrypoint.sh"]
