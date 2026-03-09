@@ -161,27 +161,14 @@ _PERMISSIONS: frozenset[str] = frozenset(
 )
 
 # When REQUIRE_AUTH=false, we run the app in a "guest-enabled" mode:
-# only allowlisted permissions are available without a token.
+# only a minimal read-only allowlist is available without a token.
 _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
         "files.download",
-        "files.delete",
         "catalog.read",
-        "catalog.write",
         "markdown.read",
-        "markdown.write",
-        "config.read",
-        "config.write",
-        "schedule.write",
-        "tasks.view",
-        "tasks.run",
-        "chat.view",
-        "chat.query",
-        "chat.conversations",
-        "logs.task.read",
-        "logs.system.read",
     }
 )
 
