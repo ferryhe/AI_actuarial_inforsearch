@@ -169,6 +169,9 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
         "files.download",
         "catalog.read",
         "markdown.read",
+        "chat.view",
+        "chat.query",
+        "chat.conversations",
     }
 )
 
