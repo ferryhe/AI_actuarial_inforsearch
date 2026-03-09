@@ -85,7 +85,11 @@ def _load_yaml_config_cached(config_path_str: str, cache_version: int) -> Dict[s
     Load sites.yaml configuration with caching.
     
     Args:
-        cache_version: Version number for cache invalidation
+        config_path_str: Absolute path to the YAML configuration file as a string.
+            Included in the cache key so that different config paths are cached
+            independently.
+        cache_version: Version number for cache invalidation. Increment this value
+            to force a reload from disk without clearing the entire cache.
         
     Returns:
         Dict containing the full configuration
