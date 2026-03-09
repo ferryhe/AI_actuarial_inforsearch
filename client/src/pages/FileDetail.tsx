@@ -198,8 +198,13 @@ export default function FileDetail() {
   const fileUrl = new URLSearchParams(searchString).get("url") || "";
 
   function goBack() {
-    // Use same-origin referrer check: history.length alone is unreliable
-    // because it includes entries from outside the SPA (e.g. bookmarks).
+    // If navigated from within the app with an explicit "from" param, use it.
+    const fromParam = new URLSearchParams(searchString).get("from");
+    if (fromParam && fromParam.startsWith("/")) {
+      navigate(fromParam);
+      return;
+    }
+    // Fallback: browser history back if referrer is same origin.
     try {
       const ref = document.referrer;
       if (ref && new URL(ref).origin === window.location.origin) {

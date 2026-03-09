@@ -12,10 +12,12 @@ import {
   X,
   Eye,
   ChevronDown,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 interface User {
   id: number;
@@ -39,14 +41,17 @@ interface ActivityEntry {
 
 export default function UsersPage() {
   const { t } = useTranslation();
+  const { user: currentUser, isLoading: authLoading } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Start as not loading — actual fetch is gated on auth being ready and user being admin
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<Record<number, string>>({});
   const [activityModal, setActivityModal] = useState<{ user: User; entries: ActivityEntry[] } | null>(null);
   const [activityLoading, setActivityLoading] = useState(false);
   const [roleDropdown, setRoleDropdown] = useState<number | null>(null);
   const roleDropdownRef = useRef<HTMLDivElement | null>(null);
+  const isAdmin = currentUser?.role === "admin";
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -72,8 +77,10 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    if (!authLoading && isAdmin) {
+      fetchUsers();
+    }
+  }, [authLoading, isAdmin, fetchUsers]);
 
   const handleRoleChange = async (userId: number, newRole: string) => {
     setActionLoading((prev) => ({ ...prev, [userId]: "role" }));
@@ -151,6 +158,15 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
+      {/* Access denied message for non-admin users (shown after auth loading completes) */}
+      {!authLoading && !isAdmin && (
+        <div className="flex flex-col items-center justify-center py-32 gap-4 text-muted-foreground">
+          <Lock className="w-10 h-10 opacity-40" />
+          <p className="text-lg font-medium">{t("users.admin_only")}</p>
+          <p className="text-sm">{t("users.admin_only_desc")}</p>
+        </div>
+      )}
+      {(authLoading || isAdmin) && (<>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-users-title">
@@ -399,6 +415,7 @@ export default function UsersPage() {
           </motion.div>
         )}
       </AnimatePresence>
+      </>)}
     </div>
   );
 }

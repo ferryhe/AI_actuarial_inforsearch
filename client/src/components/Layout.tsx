@@ -41,7 +41,7 @@ const navItems = [
   { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks" },
   { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },
   { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge" },
-  { path: "/users", icon: Users, labelKey: "nav.users" },
+  { path: "/users", icon: Users, labelKey: "nav.users", adminOnly: true },
   { path: "/profile", icon: UserCircle, labelKey: "nav.profile" },
   { path: "/settings", icon: Settings, labelKey: "nav.settings" },
 ];
@@ -49,6 +49,8 @@ const navItems = [
 function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   return (
     <aside
@@ -81,7 +83,8 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
       </div>
 
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ path, icon: Icon, labelKey }) => {
+        {navItems.map(({ path, icon: Icon, labelKey, adminOnly }) => {
+          if (adminOnly && !isAdmin) return null;
           const active = location === path || (path !== "/" && location.startsWith(path));
           return (
             <Link key={path} href={path}>
