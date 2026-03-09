@@ -33,13 +33,13 @@ def register_chat_routes(
     
     # Check if chatbot functionality is available
     try:
-        from ai_actuarial.chatbot.retrieval import RAGRetriever
-        from ai_actuarial.chatbot.llm import LLMClient
-        from ai_actuarial.chatbot.conversation import ConversationManager
-        from ai_actuarial.chatbot.router import QueryRouter
-        from ai_actuarial.chatbot.config import ChatbotConfig
-        from ai_actuarial.chatbot.exceptions import NoResultsException
-        from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+        from ai_actuarial.chatbot import retrieval as chatbot_retrieval
+        from ai_actuarial.chatbot import llm as chatbot_llm
+        from ai_actuarial.chatbot import conversation as chatbot_conversation
+        from ai_actuarial.chatbot import router as chatbot_router
+        from ai_actuarial.chatbot import config as chatbot_config
+        from ai_actuarial.chatbot import exceptions as chatbot_exceptions
+        from ai_actuarial.rag import knowledge_base as rag_knowledge_base
         chatbot_available = True
     except ImportError as e:
         logger.warning(f"Chatbot functionality not available: {e}")
@@ -275,12 +275,12 @@ def register_chat_routes(
             
             # Initialize components
             storage = Storage(db_path)
-            config = ChatbotConfig(default_mode=mode)
+            config = chatbot_config.ChatbotConfig(default_mode=mode)
             
             try:
-                retriever = RAGRetriever(storage, config)
-                llm_client = LLMClient(config)
-                conv_manager = ConversationManager(storage, config)
+                retriever = chatbot_retrieval.RAGRetriever(storage, config)
+                llm_client = chatbot_llm.LLMClient(config)
+                conv_manager = chatbot_conversation.ConversationManager(storage, config)
                 
                 # Handle conversation
                 if conversation_id:
@@ -350,7 +350,7 @@ def register_chat_routes(
                     # Handle KB selection
                     if kb_ids == "auto":
                         # Use query router for automatic KB selection
-                        router = QueryRouter(storage, config)
+                        router = chatbot_router.QueryRouter(storage, config)
                         kb_ids = router.select_kb(message)
                     elif kb_ids is None or kb_ids == "all":
                         # Query all available KBs
@@ -369,7 +369,7 @@ def register_chat_routes(
                             top_k=config.top_k,
                             threshold=used_threshold
                         )
-                    except NoResultsException:
+                    except chatbot_exceptions.NoResultsException:
                         # Retry once with a lower threshold before giving up.
                         fallback_threshold = 0.1
                         if used_threshold > fallback_threshold:
@@ -387,7 +387,7 @@ def register_chat_routes(
                                     fallback_threshold,
                                     conversation_id,
                                 )
-                            except NoResultsException:
+                            except chatbot_exceptions.NoResultsException:
                                 chunks = []
                                 no_results = True
                         else:
@@ -547,10 +547,10 @@ def register_chat_routes(
         if request.method == "GET":
             try:
                 storage = Storage(db_path)
-                config = ChatbotConfig()
+                config = chatbot_config.ChatbotConfig()
                 
                 try:
-                    conv_manager = ConversationManager(storage, config)
+                    conv_manager = chatbot_conversation.ConversationManager(storage, config)
                     conversations = conv_manager.list_conversations(user_id)
                     
                     return _api_success({"conversations": conversations})
@@ -574,10 +574,10 @@ def register_chat_routes(
                 mode = data.get("mode", "expert")
                 
                 storage = Storage(db_path)
-                config = ChatbotConfig()
+                config = chatbot_config.ChatbotConfig()
                 
                 try:
-                    conv_manager = ConversationManager(storage, config)
+                    conv_manager = chatbot_conversation.ConversationManager(storage, config)
                     
                     conversation_id = conv_manager.create_conversation(
                         user_id=user_id,
@@ -616,10 +616,10 @@ def register_chat_routes(
         
         try:
             storage = Storage(db_path)
-            config = ChatbotConfig()
+            config = chatbot_config.ChatbotConfig()
             
             try:
-                conv_manager = ConversationManager(storage, config)
+                conv_manager = chatbot_conversation.ConversationManager(storage, config)
                 
                 # Verify conversation exists and belongs to user
                 conv = conv_manager.get_conversation(conversation_id)
@@ -835,8 +835,8 @@ def register_chat_routes(
                 logger.info(f"Document truncated from {original_length} to {MAX_DOC_LENGTH} chars")
             
             # Initialize LLM client
-            config = ChatbotConfig()
-            llm_client = LLMClient(config)
+            config = chatbot_config.ChatbotConfig()
+            llm_client = chatbot_llm.LLMClient(config)
             
             # Build summarization prompt based on mode (load optional override from config)
             _custom_sum_prompt: str | None = None
@@ -977,7 +977,7 @@ def register_chat_routes(
             storage = Storage(db_path)
             
             try:
-                kb_manager = KnowledgeBaseManager(storage)
+                kb_manager = rag_knowledge_base.KnowledgeBaseManager(storage)
                 kbs = kb_manager.list_kbs()
                 
                 # Format for frontend
