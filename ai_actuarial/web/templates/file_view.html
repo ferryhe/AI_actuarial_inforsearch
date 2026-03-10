@@ -1138,7 +1138,6 @@
         editMode = false;
         
         // Restore title display
-        const titleInput = document.getElementById('title-input');
         const titleDisplay = document.getElementById('title-display');
         titleInput.value = titleInput.dataset.currentValue || '';
         titleInput.style.display = 'none';
@@ -1240,7 +1239,11 @@
                 keywords: keywords
             };
             if (titleChanged) {
-                payload.title = title || null;
+                if (!title) {
+                    Toast.error('Title cannot be empty');
+                    return;
+                }
+                payload.title = title;
             }
             const response = await fetch('/api/files/update', {
                 method: 'POST',
@@ -1256,8 +1259,8 @@
                 // Update title display
                 if (titleChanged) {
                     const titleDisplay = document.getElementById('title-display');
-                    titleDisplay.textContent = title || 'Untitled';
-                    titleInput.dataset.currentValue = title || '';
+                    titleDisplay.textContent = title;
+                    titleInput.dataset.currentValue = title;
                 }
                 
                 // Update display values and store current values

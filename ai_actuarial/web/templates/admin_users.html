@@ -369,7 +369,11 @@
     const el = document.getElementById('um-user-count');
     if (!el || !window.I18n) return;
     const total = parseInt(el.dataset.total || '0', 10);
-    el.textContent = window.I18n.t('um.users_found').replace('{n}', total);
+    if (total === 1) {
+      el.textContent = window.I18n.t('um.user_found');
+    } else {
+      el.textContent = window.I18n.t('um.users_found').replace('{n}', total);
+    }
   }
   updateUserCount();
   document.addEventListener('langchange', updateUserCount);
