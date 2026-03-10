@@ -255,6 +255,71 @@ class TestChatRoutes(unittest.TestCase):
         self.assertIn("Solvency II", result["response"])
         self.assertEqual(len(result["citations"]), 1)
         self.assertEqual(result["citations"][0]["filename"], "regulation.pdf")
+
+    @patch('ai_actuarial.chatbot.retrieval.RAGRetriever')
+    @patch('openai.OpenAI')
+    def test_chat_query_uses_selected_provider_without_openai_key(self, mock_openai_class, mock_retriever_class):
+        """Chat queries should follow ai_config.chatbot.provider instead of forcing OpenAI."""
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ["DEEPSEEK_API_KEY"] = "deepseek-key-123"
+
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            config_data = yaml.safe_load(f) or {}
+        config_data.setdefault("ai_config", {})
+        config_data["ai_config"]["chatbot"] = {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "temperature": 0.7,
+            "max_tokens": 1000,
+        }
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(config_data, f)
+
+        from config.yaml_config import invalidate_config_cache
+        invalidate_config_cache()
+
+        mock_retriever = Mock()
+        mock_retriever.retrieve.return_value = [
+            {
+                'content': 'DeepSeek can answer this question.',
+                'metadata': {
+                    'filename': 'deepseek.pdf',
+                    'kb_id': 'test_kb1',
+                    'kb_name': 'General KB',
+                    'similarity_score': 0.91,
+                    'chunk_id': 'chunk_1',
+                    'file_url': '/database/deepseek.pdf'
+                }
+            }
+        ]
+        mock_retriever_class.return_value = mock_retriever
+
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "DeepSeek answer [Source: deepseek.pdf]."
+        mock_response.usage.total_tokens = 88
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        response = self.client.post(
+            "/api/chat/query",
+            headers=self.auth_header,
+            json={
+                "message": "Use deepseek provider",
+                "kb_ids": ["test_kb1"],
+                "mode": "expert"
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertIn("DeepSeek answer", data["data"]["response"])
+
+        kwargs = mock_openai_class.call_args.kwargs
+        self.assertEqual(kwargs["api_key"], "deepseek-key-123")
+        self.assertEqual(kwargs["base_url"], "https://api.deepseek.com/v1")
     
     def test_chat_query_missing_message(self):
         """Test chat query with missing message."""

@@ -339,7 +339,7 @@ function AiConfigTab({ lang }: { lang: string }) {
       await apiPost("/api/config/llm-providers", {
         provider: providerName,
         api_key: apiKeyInput.trim(),
-        base_url: baseUrlInput.trim() || undefined,
+        api_base_url: baseUrlInput.trim() || undefined,
       });
       setToast({ message: t("settings.provider_saved"), type: "success" });
       setEditingProvider(null);

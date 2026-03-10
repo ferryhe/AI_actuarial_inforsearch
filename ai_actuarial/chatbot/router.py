@@ -39,7 +39,7 @@ class QueryRouter:
             config: Chatbot configuration
         """
         self.storage = storage
-        self.config = config or ChatbotConfig()
+        self.config = config or ChatbotConfig.from_config()
         self.kb_manager = KnowledgeBaseManager(storage)
         
         # Common actuarial/insurance keywords by category

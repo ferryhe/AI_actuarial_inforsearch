@@ -88,6 +88,38 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.max_tokens, 500)
         self.assertEqual(config.top_k, 3)
         self.assertEqual(config.similarity_threshold, 0.6)
+
+    def test_from_env_uses_provider_specific_api_key(self):
+        """Provider-specific chatbot env config should not require OpenAI."""
+        os.environ["CHATBOT_LLM_PROVIDER"] = "deepseek"
+        os.environ["DEEPSEEK_API_KEY"] = "deepseek-key-123"
+        os.environ["CHATBOT_MODEL"] = "deepseek-chat"
+
+        config = ChatbotConfig.from_env()
+
+        self.assertEqual(config.llm_provider, "deepseek")
+        self.assertEqual(config.api_key, "deepseek-key-123")
+        self.assertEqual(config.model, "deepseek-chat")
+
+    def test_from_yaml_reads_chatbot_provider(self):
+        """sites.yaml chatbot.provider should be honored."""
+        yaml_config = {
+            "ai_config": {
+                "chatbot": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "temperature": 0.5,
+                }
+            }
+        }
+        os.environ["DEEPSEEK_API_KEY"] = "deepseek-key-456"
+
+        config = ChatbotConfig.from_yaml(yaml_config)
+
+        self.assertEqual(config.llm_provider, "deepseek")
+        self.assertEqual(config.api_key, "deepseek-key-456")
+        self.assertEqual(config.model, "deepseek-chat")
+        self.assertEqual(config.temperature, 0.5)
     
     def test_validation_success(self):
         """Test successful configuration validation."""
@@ -102,8 +134,21 @@ class TestChatbotConfig(unittest.TestCase):
         
         with self.assertRaises(ValueError) as ctx:
             config.validate()
-        
+
         self.assertIn("API key is required", str(ctx.exception))
+
+    def test_validation_missing_provider_specific_api_key(self):
+        """Validation error should mention the selected provider key name."""
+        config = ChatbotConfig(
+            llm_provider="deepseek",
+            api_key=None,
+            _apply_env_defaults=False,
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            config.validate()
+
+        self.assertIn("DEEPSEEK_API_KEY", str(ctx.exception))
     
     def test_validation_invalid_temperature(self):
         """Test validation fails with invalid temperature."""

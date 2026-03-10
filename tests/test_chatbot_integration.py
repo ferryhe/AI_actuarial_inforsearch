@@ -339,6 +339,25 @@ class TestChatbotIntegration(unittest.TestCase):
         
         # Verify API was called
         mock_client.chat.completions.create.assert_called_once()
+
+    @patch('openai.OpenAI')
+    def test_llm_client_uses_provider_base_url(self, mock_openai_class):
+        """OpenAI-compatible providers should initialize with their own base URL."""
+        config = ChatbotConfig(
+            llm_provider="deepseek",
+            model="deepseek-chat",
+            api_key="deepseek-key",
+            base_url="https://api.deepseek.com/v1",
+            _apply_env_defaults=False,
+        )
+
+        LLMClient(config)
+
+        mock_openai_class.assert_called_once_with(
+            api_key="deepseek-key",
+            base_url="https://api.deepseek.com/v1",
+            timeout=60.0,
+        )
     
     @patch('openai.OpenAI')
     def test_llm_generation_retry_on_rate_limit(self, mock_openai_class):
