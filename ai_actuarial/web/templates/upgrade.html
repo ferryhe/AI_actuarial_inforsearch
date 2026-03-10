@@ -76,8 +76,8 @@
 {% block content %}
 <div class="container" style="max-width:960px;">
   <div class="upgrade-hero">
-    <h2>Membership Plans</h2>
-    <p style="color:var(--text-secondary); max-width:520px; margin:0 auto;">
+    <h2 data-i18n="upg.title">Membership Plans</h2>
+    <p style="color:var(--text-secondary); max-width:520px; margin:0 auto;" data-i18n="upg.subtitle">
       Choose the plan that fits your needs. Upgrade anytime to unlock more AI queries and advanced features.
     </p>
   </div>
@@ -86,64 +86,64 @@
 
     <!-- Free -->
     <div class="plan-card">
-      <div class="plan-name">Free</div>
-      <div class="plan-price">¥0 <span class="unit">/ month</span></div>
+      <div class="plan-name" data-i18n="upg.free">Free</div>
+      <div class="plan-price">¥0 <span class="unit" data-i18n="upg.per_month">/ month</span></div>
       <ul class="plan-features">
-        <li>View homepage &amp; database</li>
-        <li>File detail view</li>
-        <li>AI Chat: 5 queries/day</li>
-        <li>Knowledge Base viewer</li>
-        <li class="no">Task management</li>
-        <li class="no">File upload &amp; edit</li>
-        <li class="no">Priority support</li>
+        <li data-i18n="upg.feat_homepage">View homepage &amp; database</li>
+        <li data-i18n="upg.feat_file_detail">File detail view</li>
+        <li data-i18n="upg.feat_chat_5">AI Chat: 5 queries/day</li>
+        <li data-i18n="upg.feat_kb_viewer">Knowledge Base viewer</li>
+        <li class="no" data-i18n="upg.feat_no_task">Task management</li>
+        <li class="no" data-i18n="upg.feat_no_upload">File upload &amp; edit</li>
+        <li class="no" data-i18n="upg.feat_no_priority">Priority support</li>
       </ul>
       {% if not auth_token %}
-      <a href="{{ url_for('register') }}" class="btn btn-primary" style="width:100%; text-align:center;">Get Started Free</a>
+      <a href="{{ url_for('register') }}" class="btn btn-primary" style="width:100%; text-align:center;" data-i18n="upg.get_started">Get Started Free</a>
       {% else %}
-      <span class="btn btn-secondary" style="width:100%; text-align:center; cursor:default;">Current Plan</span>
+      <span class="btn btn-secondary" style="width:100%; text-align:center; cursor:default;" data-i18n="upg.current_plan">Current Plan</span>
       {% endif %}
     </div>
 
     <!-- Premium -->
     <div class="plan-card featured">
-      <div class="plan-badge">Most Popular</div>
-      <div class="plan-name">Premium</div>
-      <div class="plan-price">¥29 <span class="unit">/ month</span></div>
+      <div class="plan-badge" data-i18n="upg.most_popular">Most Popular</div>
+      <div class="plan-name" data-i18n="upg.premium">Premium</div>
+      <div class="plan-price">¥29 <span class="unit" data-i18n="upg.per_month">/ month</span></div>
       <ul class="plan-features">
-        <li>Everything in Free</li>
-        <li>AI Chat: <strong>100 queries/day</strong></li>
-        <li>Full Knowledge Base access</li>
-        <li>Download files</li>
-        <li>Priority support</li>
-        <li class="no">Task management</li>
-        <li class="no">System configuration</li>
+        <li data-i18n="upg.feat_everything_free">Everything in Free</li>
+        <li data-i18n="upg.feat_chat_100">AI Chat: <strong>100 queries/day</strong></li>
+        <li data-i18n="upg.feat_full_kb">Full Knowledge Base access</li>
+        <li data-i18n="upg.feat_download">Download files</li>
+        <li data-i18n="upg.feat_priority">Priority support</li>
+        <li class="no" data-i18n="upg.feat_no_task">Task management</li>
+        <li class="no" data-i18n="upg.feat_no_config">System configuration</li>
       </ul>
-      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Premium Upgrade Request" class="btn btn-primary" style="width:100%; text-align:center;">
+      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Premium Upgrade Request" class="btn btn-primary" style="width:100%; text-align:center;" data-i18n="upg.upgrade_premium">
         Upgrade to Premium
       </a>
     </div>
 
     <!-- Enterprise / Operator -->
     <div class="plan-card">
-      <div class="plan-name">Enterprise</div>
-      <div class="plan-price">Custom</div>
+      <div class="plan-name" data-i18n="upg.enterprise">Enterprise</div>
+      <div class="plan-price" data-i18n="upg.custom_price">Custom</div>
       <ul class="plan-features">
-        <li>Everything in Premium</li>
-        <li>Operator access (task management)</li>
-        <li>AI Chat: <strong>100 queries/day</strong></li>
-        <li>File upload &amp; configuration</li>
-        <li>Dedicated support</li>
-        <li>Custom quota limits</li>
-        <li>Audit logs access</li>
+        <li data-i18n="upg.feat_everything_premium">Everything in Premium</li>
+        <li data-i18n="upg.feat_operator">Operator access (task management)</li>
+        <li data-i18n="upg.feat_chat_100">AI Chat: <strong>100 queries/day</strong></li>
+        <li data-i18n="upg.feat_upload_config">File upload &amp; configuration</li>
+        <li data-i18n="upg.feat_dedicated">Dedicated support</li>
+        <li data-i18n="upg.feat_custom_quota">Custom quota limits</li>
+        <li data-i18n="upg.feat_audit_logs">Audit logs access</li>
       </ul>
-      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Enterprise Inquiry" class="btn btn-secondary" style="width:100%; text-align:center;">
+      <a href="mailto:{{ contact_email or 'admin@example.com' }}?subject=Enterprise Inquiry" class="btn btn-secondary" style="width:100%; text-align:center;" data-i18n="upg.contact_us">
         Contact Us
       </a>
     </div>
 
   </div>
 
-  <div class="contact-note">
+  <div class="contact-note" data-i18n="upg.contact_note">
     To upgrade, contact <a href="mailto:{{ contact_email or 'admin@example.com' }}">{{ contact_email or 'admin@example.com' }}</a> or ask your system administrator.<br>
     Admins can change your role directly in the <a href="{{ url_for('admin_users') if auth_group == 'admin' else '#' }}">User Management</a> panel.
   </div>

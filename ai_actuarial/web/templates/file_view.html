@@ -19,7 +19,11 @@
     </div>
 
     <div class="file-details-card">
-        <h3>{{ file.title or file.original_filename or 'Untitled' }}</h3>
+        <h3 id="title-display">{{ file.title or file.original_filename or 'Untitled' }}</h3>
+        <input type="text" id="title-input" class="edit-input" style="display:none; font-size:1.2em; font-weight:600; width:100%; margin-bottom:0.5rem;"
+               data-i18n-placeholder="fv.title_ph" placeholder="File title / name"
+               data-current-value="{{ file.title or file.original_filename or '' }}"
+               value="{{ file.title or file.original_filename or '' }}">
         
         <div class="details-section">
             <table class="details-table">
@@ -253,6 +257,21 @@
         <small class="form-hint" data-i18n="fv.catalog_from_hint">Markdown uses converted/edited markdown content (if available).</small>
       </div>
       <div class="form-group">
+        <label for="file-catalog-output-language" data-i18n="fv.output_language">Output Language</label>
+        <select name="output_language" id="file-catalog-output-language">
+          <option value="auto" selected data-i18n="fv.lang_auto">Auto (match document language)</option>
+          <option value="en" data-i18n="fv.lang_en">English</option>
+          <option value="zh" data-i18n="fv.lang_zh">Chinese (中文)</option>
+        </select>
+        <small class="form-hint" data-i18n="fv.fh_output_language">Language for generated summary, keywords, and suggested title.</small>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="update_title" id="file-catalog-update-title"> <span data-i18n="fv.update_title">Update file title with AI-suggested title</span>
+        </label>
+        <small class="form-hint" data-i18n="fv.fh_update_title">When checked, the file title will be replaced by the AI-generated suggested title after cataloging.</small>
+      </div>
+      <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" name="overwrite_existing" id="file-catalog-overwrite-existing"> <span data-i18n="fv.overwrite_recompute">Overwrite existing content (recompute)</span>
         </label>
@@ -407,7 +426,9 @@
 
         const provider = document.getElementById('file-catalog-provider')?.value || 'openai';
         const inputSource = document.getElementById('file-catalog-input-source')?.value || 'markdown';
+        const outputLanguage = document.getElementById('file-catalog-output-language')?.value || 'auto';
         const overwrite = document.getElementById('file-catalog-overwrite-existing')?.checked || false;
+        const updateTitle = document.getElementById('file-catalog-update-title')?.checked || false;
         const skipExisting = !overwrite;
 
         try {
@@ -419,6 +440,8 @@
                     file_urls: [fileUrl],
                     provider: provider,
                     input_source: inputSource,
+                    output_language: outputLanguage,
+                    update_title: updateTitle,
                     skip_existing: skipExisting,
                     overwrite_existing: overwrite,
                     name: `Catalog - ${provider} (${inputSource}) (1 file)`
@@ -1054,6 +1077,10 @@
         await ensureCategoryOptions();
         editMode = true;
         
+        // Show title input, hide display
+        document.getElementById('title-display').style.display = 'none';
+        document.getElementById('title-input').style.display = 'block';
+        
         // Show input fields, hide display fields
         document.getElementById('category-editor').style.display = 'block';
         document.getElementById('category-display').style.display = 'none';
@@ -1079,32 +1106,42 @@
     
     function cancelEdit() {
         // Check if there are unsaved changes
+        const title = document.getElementById('title-input').value.trim();
         const category = categoryListToString(selectedCategories);
         const summary = document.getElementById('summary-input').value.trim();
         const keywordsText = document.getElementById('keywords-input').value.trim();
         const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
         
+        const titleInput = document.getElementById('title-input');
         const categoryInput = document.getElementById('category-input');
         const summaryInput = document.getElementById('summary-input');
         const keywordsInput = document.getElementById('keywords-input');
         
+        const originalTitle = titleInput.dataset.currentValue || '';
         const originalCategory = categoryInput.dataset.currentValue || '';
         const originalSummary = summaryInput.dataset.currentValue || '';
         const originalKeywords = keywordsInput.dataset.currentValue || '';
         const originalKeywordsArray = originalKeywords ? originalKeywords.split(',').map(k => k.trim()).filter(k => k) : [];
         
+        const titleChanged = title !== originalTitle;
         const categoryChanged = category !== originalCategory;
         const summaryChanged = summary !== originalSummary;
         const keywordsChanged = JSON.stringify(keywords.sort()) !== JSON.stringify(originalKeywordsArray.sort());
         
         // If there are changes, confirm before canceling
-        if (categoryChanged || summaryChanged || keywordsChanged) {
+        if (titleChanged || categoryChanged || summaryChanged || keywordsChanged) {
             if (!confirm('You have unsaved changes. Are you sure you want to discard them?')) {
                 return;
             }
         }
         
         editMode = false;
+        
+        // Restore title display
+        const titleDisplay = document.getElementById('title-display');
+        titleInput.value = titleInput.dataset.currentValue || '';
+        titleInput.style.display = 'none';
+        titleDisplay.style.display = 'block';
         
         // Hide input fields, show display fields
         selectedCategories = parseCategoryString(categoryInput.dataset.currentValue || '');
@@ -1165,47 +1202,66 @@
     }
     
     async function saveChanges() {
+        const title = document.getElementById('title-input').value.trim();
         const category = categoryListToString(selectedCategories);
         const summary = document.getElementById('summary-input').value.trim();
         const keywordsText = document.getElementById('keywords-input').value.trim();
         const keywords = keywordsText ? keywordsText.split(',').map(k => k.trim()).filter(k => k) : [];
         
         // Check if anything actually changed
+        const titleInput = document.getElementById('title-input');
         const categoryInput = document.getElementById('category-input');
         const summaryInput = document.getElementById('summary-input');
         const keywordsInput = document.getElementById('keywords-input');
         
+        const originalTitle = titleInput.dataset.currentValue || '';
         const originalCategory = categoryInput.dataset.currentValue || '';
         const originalSummary = summaryInput.dataset.currentValue || '';
         const originalKeywords = keywordsInput.dataset.currentValue || '';
         const originalKeywordsArray = originalKeywords ? originalKeywords.split(',').map(k => k.trim()).filter(k => k) : [];
         
+        const titleChanged = title !== originalTitle;
         const categoryChanged = category !== originalCategory;
         const summaryChanged = summary !== originalSummary;
         const keywordsChanged = JSON.stringify(keywords.sort()) !== JSON.stringify(originalKeywordsArray.sort());
         
-        if (!categoryChanged && !summaryChanged && !keywordsChanged) {
+        if (!titleChanged && !categoryChanged && !summaryChanged && !keywordsChanged) {
             Toast.info('No changes detected');
             cancelEdit();
             return;
         }
         
         try {
+            const payload = {
+                url: fileUrl,
+                category: category || '',
+                summary: summary || '',
+                keywords: keywords
+            };
+            if (titleChanged) {
+                if (!title) {
+                    Toast.error('Title cannot be empty');
+                    return;
+                }
+                payload.title = title;
+            }
             const response = await fetch('/api/files/update', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    url: fileUrl,
-                    category: category || '',
-                    summary: summary || '',
-                    keywords: keywords
-                })
+                body: JSON.stringify(payload)
             });
             
             const data = await response.json();
             
             if (response.ok && data.success) {
                 Toast.success('File details updated successfully');
+                
+                // Update title display
+                if (titleChanged) {
+                    const titleDisplay = document.getElementById('title-display');
+                    titleDisplay.textContent = title;
+                    titleInput.dataset.currentValue = title;
+                }
                 
                 // Update display values and store current values
                 document.getElementById('category-input').dataset.currentValue = category || '';

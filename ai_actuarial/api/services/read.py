@@ -111,6 +111,42 @@ def list_categories(*, db_path: str, mode: str = "") -> dict[str, list[str]]:
     return {"categories": categories}
 
 
+def list_sources(*, db_path: str) -> dict[str, list[str]]:
+    storage = Storage(db_path)
+    try:
+        sources = storage.get_unique_sources()
+    finally:
+        storage.close()
+    return {"sources": sources}
+
+
+def get_file_detail(*, db_path: str, url: str) -> dict[str, Any] | None:
+    storage = Storage(db_path)
+    try:
+        return storage.get_file_with_catalog(url)
+    finally:
+        storage.close()
+
+
+def get_file_markdown(*, db_path: str, url: str) -> dict[str, Any]:
+    storage = Storage(db_path)
+    try:
+        markdown_data = storage.get_file_markdown(url)
+    finally:
+        storage.close()
+
+    if markdown_data and markdown_data.get("markdown_content"):
+        return {
+            "success": True,
+            "markdown": markdown_data,
+        }
+
+    return {
+        "success": True,
+        "markdown": None,
+    }
+
+
 def list_files(*, db_path: str, query: FileListQuery) -> dict[str, Any]:
     storage = Storage(db_path)
     try:

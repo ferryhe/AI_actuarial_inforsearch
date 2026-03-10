@@ -103,23 +103,24 @@
 {% block content %}
 <div class="container">
   <div class="um-header">
-    <h2 style="margin:0;">User Management</h2>
+    <h2 style="margin:0;" data-i18n="um.title">User Management</h2>
     <div class="um-filters">
       <form method="GET" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-        <input name="q" type="text" value="{{ search }}" placeholder="Search email / name…" style="width:200px;">
+        <input name="q" type="text" value="{{ search }}" data-i18n-placeholder="um.search_ph" placeholder="Search email / name…" style="width:200px;">
         <select name="role">
-          <option value="">All Roles</option>
+          <option value="" data-i18n="um.all_roles">All Roles</option>
           {% for r in valid_roles %}
           <option value="{{ r }}" {% if role_filter == r %}selected{% endif %}>{{ r }}</option>
           {% endfor %}
         </select>
-        <button type="submit" class="btn btn-primary btn-sm">Filter</button>
-        <a href="{{ url_for('admin_users') }}" class="btn btn-secondary btn-sm">Reset</a>
+        <button type="submit" class="btn btn-primary btn-sm" data-i18n="um.filter">Filter</button>
+        <a href="{{ url_for('admin_users') }}" class="btn btn-secondary btn-sm" data-i18n="um.reset">Reset</a>
       </form>
     </div>
   </div>
 
-  <div style="color:var(--text-secondary); font-size:.85rem; margin-bottom:8px;">
+  <div id="um-user-count" style="color:var(--text-secondary); font-size:.85rem; margin-bottom:8px;"
+       data-total="{{ total }}">
     {{ total }} user{{ 's' if total != 1 }} found
   </div>
 
@@ -127,14 +128,14 @@
     <table class="user-table">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Email</th>
-          <th>Name</th>
-          <th>Role</th>
-          <th>Status</th>
-          <th>Joined</th>
-          <th>Last Login</th>
-          <th>Actions</th>
+          <th data-i18n="um.col_id">ID</th>
+          <th data-i18n="um.col_email">Email</th>
+          <th data-i18n="um.col_name">Name</th>
+          <th data-i18n="um.col_role">Role</th>
+          <th data-i18n="um.col_status">Status</th>
+          <th data-i18n="um.col_joined">Joined</th>
+          <th data-i18n="um.col_last_login">Last Login</th>
+          <th data-i18n="um.col_actions">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -148,9 +149,9 @@
           </td>
           <td>
             {% if u.is_active %}
-            <span style="color:#10b981;">● Active</span>
+            <span style="color:#10b981;">● <span data-i18n="um.active">Active</span></span>
             {% else %}
-            <span class="badge-role badge-disabled">Disabled</span>
+            <span class="badge-role badge-disabled" data-i18n="um.disabled">Disabled</span>
             {% endif %}
           </td>
           <td>{{ (u.created_at or '')[:10] }}</td>
@@ -159,25 +160,25 @@
             <div class="um-actions">
               <button class="btn btn-secondary btn-xs"
                       onclick="openRoleDialog({{ u.id }}, {{ u.email | tojson }}, {{ u.role | tojson }})">
-                Role
+                <span data-i18n="um.btn_role">Role</span>
               </button>
               <button class="btn btn-secondary btn-xs"
                       onclick="resetQuota({{ u.id }})">
-                Reset Quota
+                <span data-i18n="um.btn_reset_quota">Reset Quota</span>
               </button>
               <button class="btn btn-secondary btn-xs"
                       onclick="toggleActive({{ u.id }}, {{ 'true' if u.is_active else 'false' }})">
-                {{ 'Disable' if u.is_active else 'Enable' }}
+                <span data-i18n="{{ 'um.btn_disable' if u.is_active else 'um.btn_enable' }}">{{ 'Disable' if u.is_active else 'Enable' }}</span>
               </button>
               <button class="btn btn-secondary btn-xs"
                       onclick="viewActivity({{ u.id }}, {{ u.email | tojson }})">
-                Log
+                <span data-i18n="um.btn_log">Log</span>
               </button>
             </div>
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" style="text-align:center; color:var(--text-secondary);">No users found.</td></tr>
+        <tr><td colspan="8" style="text-align:center; color:var(--text-secondary);" data-i18n="um.no_users">No users found.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -207,7 +208,7 @@
 <!-- Role Change Dialog -->
 <div id="role-modal" class="activity-modal">
   <div class="activity-inner" style="max-height: none; width: min(400px, 96vw);">
-    <h3 style="margin:0 0 12px 0;">Change Role</h3>
+    <h3 style="margin:0 0 12px 0;" data-i18n="um.change_role">Change Role</h3>
     <div id="role-modal-email" style="color:var(--text-secondary); margin-bottom:12px; font-size:.9rem;"></div>
     <select id="role-modal-select" class="form-control" style="margin-bottom:14px;">
       {% for r in valid_roles %}
@@ -215,8 +216,8 @@
       {% endfor %}
     </select>
     <div style="display:flex; gap:10px;">
-      <button class="btn btn-primary" onclick="submitRoleChange()">Save</button>
-      <button class="btn btn-secondary" onclick="closeRoleModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitRoleChange()" data-i18n="um.save">Save</button>
+      <button class="btn btn-secondary" onclick="closeRoleModal()" data-i18n="um.cancel">Cancel</button>
     </div>
   </div>
 </div>
@@ -225,11 +226,11 @@
 <div id="activity-modal" class="activity-modal">
   <div class="activity-inner">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-      <h3 style="margin:0;" id="activity-modal-title">Activity Log</h3>
-      <button class="btn btn-secondary btn-xs" onclick="closeActivityModal()">✕ Close</button>
+      <h3 style="margin:0;" id="activity-modal-title" data-i18n="um.activity_log">Activity Log</h3>
+      <button class="btn btn-secondary btn-xs" onclick="closeActivityModal()">✕ <span data-i18n="um.close">Close</span></button>
     </div>
     <ul class="activity-list" id="activity-list-content">
-      <li>Loading…</li>
+      <li data-i18n="um.loading">Loading…</li>
     </ul>
   </div>
 </div>
@@ -253,6 +254,7 @@
   }
   async function submitRoleChange() {
     if (!_roleUserId) return;
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
     const role = document.getElementById('role-modal-select').value;
     try {
       const r = await fetch(`/api/admin/users/${_roleUserId}/role`, {
@@ -261,13 +263,14 @@
         body: JSON.stringify({ role }),
       });
       const d = await r.json();
-      if (!d.success) { alert('Error: ' + (d.error || 'Unknown')); return; }
+      if (!d.success) { alert(_t('um.error_prefix') + (d.error || 'Unknown')); return; }
       location.reload();
-    } catch (e) { alert('Request failed: ' + e); }
+    } catch (e) { alert(_t('um.request_failed') + e); }
   }
 
   async function resetQuota(userId) {
-    if (!confirm('Reset AI chat quota for this user for today?')) return;
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    if (!confirm(_t('um.confirm_reset_quota'))) return;
     try {
       const r = await fetch(`/api/admin/users/${userId}/reset-quota`, {
         method: 'POST',
@@ -275,14 +278,15 @@
         body: JSON.stringify({}),
       });
       const d = await r.json();
-      if (d.success) { alert('Quota reset successfully.'); }
-      else { alert('Error: ' + (d.error || 'Unknown')); }
-    } catch (e) { alert('Request failed: ' + e); }
+      if (d.success) { alert(_t('um.quota_reset_ok')); }
+      else { alert(_t('um.error_prefix') + (d.error || 'Unknown')); }
+    } catch (e) { alert(_t('um.request_failed') + e); }
   }
 
   async function toggleActive(userId, currentlyActive) {
-    const action = currentlyActive ? 'disable' : 'enable';
-    if (!confirm(`Are you sure you want to ${action} this user?`)) return;
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    const action = currentlyActive ? _t('um.btn_disable').toLowerCase() : _t('um.btn_enable').toLowerCase();
+    if (!confirm(_t('um.confirm_toggle_active').replace('{action}', action))) return;
     try {
       const r = await fetch(`/api/admin/users/${userId}/active`, {
         method: 'POST',
@@ -291,13 +295,14 @@
       });
       const d = await r.json();
       if (d.success) { location.reload(); }
-      else { alert('Error: ' + (d.error || 'Unknown')); }
-    } catch (e) { alert('Request failed: ' + e); }
+      else { alert(_t('um.error_prefix') + (d.error || 'Unknown')); }
+    } catch (e) { alert(_t('um.request_failed') + e); }
   }
 
   async function viewActivity(userId, email) {
-    document.getElementById('activity-modal-title').textContent = `Activity: ${email}`;
-    document.getElementById('activity-list-content').innerHTML = '<li>Loading…</li>';
+    const _t = k => window.I18n ? window.I18n.t(k) : k;
+    document.getElementById('activity-modal-title').textContent = _t('um.activity_for').replace('{email}', email);
+    document.getElementById('activity-list-content').innerHTML = '<li>' + _t('um.loading') + '</li>';
     document.getElementById('activity-modal').classList.add('open');
     try {
       const r = await fetch(`/api/admin/users/${userId}/activity?limit=50`);
@@ -306,7 +311,7 @@
       list.innerHTML = '';
       if (!d.success || !d.logs.length) {
         const li = document.createElement('li');
-        li.textContent = 'No activity recorded.';
+        li.textContent = _t('um.no_activity');
         list.appendChild(li);
         return;
       }
@@ -344,7 +349,8 @@
       const list = document.getElementById('activity-list-content');
       list.innerHTML = '';
       const li = document.createElement('li');
-      li.textContent = 'Failed to load activity.';
+      const _t2 = k => window.I18n ? window.I18n.t(k) : k;
+      li.textContent = _t2('um.activity_load_fail');
       list.appendChild(li);
     }
   }
@@ -357,5 +363,19 @@
   document.querySelectorAll('.activity-modal').forEach(m => {
     m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
   });
+
+  // Update user count text with i18n
+  function updateUserCount() {
+    const el = document.getElementById('um-user-count');
+    if (!el || !window.I18n) return;
+    const total = parseInt(el.dataset.total || '0', 10);
+    if (total === 1) {
+      el.textContent = window.I18n.t('um.user_found');
+    } else {
+      el.textContent = window.I18n.t('um.users_found').replace('{n}', total);
+    }
+  }
+  updateUserCount();
+  document.addEventListener('langchange', updateUserCount);
 </script>
 {% endblock %}

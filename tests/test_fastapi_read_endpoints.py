@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import yaml
 from fastapi.testclient import TestClient
@@ -68,6 +69,11 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
             },
             pipeline_version="v1",
             status="ok",
+        )
+        storage.update_file_markdown(
+            "https://alpha.example/doc-a.pdf",
+            "# Alpha Document\n\nMarkdown content for alpha.",
+            "manual",
         )
 
         storage.insert_file(
@@ -199,8 +205,11 @@ def test_fastapi_stats_and_categories_are_native(tmp_path: Path, monkeypatch) ->
     migration = client.get("/api/migration/status")
     body = migration.json()
     assert "/api/stats" in body["native_paths"]
+    assert "/api/sources" in body["native_paths"]
     assert "/api/categories" in body["native_paths"]
     assert "/api/files" in body["native_paths"]
+    assert "/api/files/detail" in body["native_paths"]
+    assert "/api/files/{file_url:path}/markdown" in body["native_paths"]
 
 
 def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monkeypatch) -> None:
@@ -246,6 +255,72 @@ def test_fastapi_native_read_routes_require_bearer_auth(tmp_path: Path, monkeypa
     assert authorized.json()["total"] == 2
 
 
+def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+
+    sources = client.get("/api/sources")
+    assert sources.status_code == 200
+    assert sources.json() == {
+        "sources": ["alpha.example", "beta.example", "gamma.example"],
+    }
+
+    detail = client.get("/api/files/detail?url=https%3A%2F%2Falpha.example%2Fdoc-a.pdf")
+    assert detail.status_code == 200
+    detail_body = detail.json()
+    assert detail_body["file"]["url"] == "https://alpha.example/doc-a.pdf"
+    assert detail_body["file"]["title"] == "Alpha Document"
+    assert detail_body["file"]["markdown_source"] == "manual"
+
+    missing_param = client.get("/api/files/detail")
+    assert missing_param.status_code == 400
+    assert missing_param.json() == {"error": "url parameter is required"}
+
+    missing_file = client.get("/api/files/detail?url=https%3A%2F%2Fmissing.example%2Fdoc.pdf")
+    assert missing_file.status_code == 404
+    assert missing_file.json() == {"error": "File not found"}
+
+    markdown = client.get(f"/api/files/{quote('https://alpha.example/doc-a.pdf', safe='')}/markdown")
+    assert markdown.status_code == 200
+    assert markdown.json()["success"] is True
+    assert markdown.json()["markdown"]["markdown_content"] == "# Alpha Document\n\nMarkdown content for alpha."
+    assert markdown.json()["markdown"]["markdown_source"] == "manual"
+
+    unknown_markdown = client.get(f"/api/files/{quote('https://missing.example/doc.pdf', safe='')}/markdown")
+    assert unknown_markdown.status_code == 200
+    assert unknown_markdown.json() == {"success": True, "markdown": None}
+
+
+def test_fastapi_markdown_route_preserves_percent_encoded_file_urls(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+
+    storage = Storage(str(app.state.db_path))
+    try:
+        encoded_url = "https://encoded.example/doc%20space.pdf"
+        storage.insert_file(
+            url=encoded_url,
+            sha256="hash-encoded",
+            title="Encoded Document",
+            source_site="encoded.example",
+            source_page_url="https://encoded.example",
+            original_filename="doc%20space.pdf",
+            local_path="/tmp/doc%20space.pdf",
+            bytes=333,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(
+            encoded_url,
+            "# Encoded Document\n\nStored under a percent-encoded URL.",
+            "manual",
+        )
+    finally:
+        storage.close()
+
+    response = client.get(f"/api/files/{quote(encoded_url, safe='')}/markdown")
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert response.json()["markdown"]["markdown_content"] == "# Encoded Document\n\nStored under a percent-encoded URL."
+
+
 def test_fastapi_native_read_routes_accept_flask_session_cookie(tmp_path: Path, monkeypatch) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
@@ -256,3 +331,15 @@ def test_fastapi_native_read_routes_accept_flask_session_cookie(tmp_path: Path, 
     response = client.get("/api/categories?mode=used")
     assert response.status_code == 200
     assert response.json()["categories"] == ["AI", "Archive", "Pricing", "Risk"]
+
+    sources = client.get("/api/sources")
+    assert sources.status_code == 200
+    assert sources.json()["sources"] == ["alpha.example", "beta.example", "gamma.example"]
+
+    detail = client.get("/api/files/detail?url=https%3A%2F%2Falpha.example%2Fdoc-a.pdf")
+    assert detail.status_code == 200
+    assert detail.json()["file"]["title"] == "Alpha Document"
+
+    markdown = client.get(f"/api/files/{quote('https://alpha.example/doc-a.pdf', safe='')}/markdown")
+    assert markdown.status_code == 200
+    assert markdown.json()["markdown"]["markdown_source"] == "manual"
