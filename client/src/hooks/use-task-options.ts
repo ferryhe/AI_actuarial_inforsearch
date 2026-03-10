@@ -32,6 +32,7 @@ interface EngineResponse {
 
 interface ProviderResponse {
   providers?: Array<{ name?: string; provider?: string; [key: string]: unknown }> | string[];
+  known?: Record<string, { display_name?: string; [key: string]: unknown }>;
   [key: string]: unknown;
 }
 
@@ -136,6 +137,46 @@ function extractCatalogProviders(available: Record<string, AvailableModel[]>, co
   return Array.from(providers);
 }
 
+function formatCatalogSelectionLabel(
+  provider: string,
+  model: string,
+  known: Record<string, { display_name?: string; [key: string]: unknown }>
+): string {
+  const providerLabel = known[provider]?.display_name || provider;
+  return model ? `${providerLabel} - ${model}` : providerLabel;
+}
+
+function extractConfiguredCatalogSelection(
+  available: Record<string, AvailableModel[]>,
+  configuredProviders: Set<string>,
+  currentCatalog: { provider?: string; model?: string } | undefined,
+  known: Record<string, { display_name?: string; [key: string]: unknown }>
+): string[] {
+  const provider = String(currentCatalog?.provider || "").trim().toLowerCase();
+  const modelName = String(currentCatalog?.model || "").trim();
+
+  if (!provider || !configuredProviders.has(provider)) {
+    return [];
+  }
+
+  const providerModels = Array.isArray(available[provider]) ? available[provider] : [];
+  const compatibleModels = providerModels.filter((m) => {
+    const types = m.types || [];
+    return types.includes("catalog") || types.includes("chat");
+  });
+
+  const matchedModel = compatibleModels.find((m) => m.name === modelName);
+
+  const selectedModel =
+    matchedModel?.display_name ||
+    matchedModel?.name ||
+    compatibleModels[0]?.display_name ||
+    compatibleModels[0]?.name ||
+    modelName;
+
+  return [formatCatalogSelectionLabel(provider, selectedModel || modelName, known)];
+}
+
 export function useTaskOptions(): TaskOptions {
   const [engines, setEngines] = useState<SearchEngine[]>(cache.engines || FALLBACK_ENGINES);
   const [providers, setProviders] = useState<string[]>(cache.providers || []);
@@ -198,6 +239,10 @@ export function useTaskOptions(): TaskOptions {
     let fetchedTools = FALLBACK_CONVERSION_TOOLS;
     let fetchedToolsInfo = FALLBACK_CONVERSION_TOOLS_INFO;
     let fetchedCatalogProviders: string[] = [];
+    const knownProviders =
+      providersResult.status === "fulfilled" && providersResult.value?.known && typeof providersResult.value.known === "object"
+        ? providersResult.value.known
+        : {};
 
     // Build the set of providers that actually have API keys configured.
     // This is used to gate API-based tools (OCR, catalog) so we never
@@ -212,7 +257,15 @@ export function useTaskOptions(): TaskOptions {
           fetchedToolsInfo = ocrTools;
           fetchedTools = ocrTools.map((t) => t.name);
         }
-        fetchedCatalogProviders = extractCatalogProviders(modelRes.available, configuredProviderNamesSet);
+        fetchedCatalogProviders = extractConfiguredCatalogSelection(
+          modelRes.available,
+          configuredProviderNamesSet,
+          modelRes.current?.catalog,
+          knownProviders
+        );
+        if (fetchedCatalogProviders.length === 0) {
+          fetchedCatalogProviders = extractCatalogProviders(modelRes.available, configuredProviderNamesSet);
+        }
       } else if (modelRes?.tools && Array.isArray(modelRes.tools) && modelRes.tools.length > 0) {
         fetchedTools = modelRes.tools;
         fetchedToolsInfo = modelRes.tools.map((t) => ({ name: t, provider: "unknown", displayName: t }));
