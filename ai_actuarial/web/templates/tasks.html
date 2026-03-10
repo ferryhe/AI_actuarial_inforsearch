@@ -398,6 +398,22 @@
                 <small class="form-hint" data-i18n="tasks.fh_catalog_from">Markdown uses converted/edited markdown content from File Details (if available).</small>
             </div>
             <div class="form-group">
+                <label data-i18n="tasks.output_language">Output Language</label>
+                <select name="output_language" id="catalog-output-language">
+                    <option value="auto" selected data-i18n="tasks.lang_auto">Auto (match document language)</option>
+                    <option value="en" data-i18n="tasks.lang_en">English</option>
+                    <option value="zh" data-i18n="tasks.lang_zh">Chinese (中文)</option>
+                </select>
+                <small class="form-hint" data-i18n="tasks.fh_output_language">Language for generated summary, keywords, and suggested title.</small>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="update_title" id="catalog-update-title">
+                    <span data-i18n="tasks.update_title">Update file title with AI-suggested title</span>
+                </label>
+                <small class="form-hint" data-i18n="tasks.fh_update_title">When checked, the file title will be replaced by the AI-generated suggested title after cataloging.</small>
+            </div>
+            <div class="form-group">
                 <label>
                     <input type="checkbox" name="overwrite_existing" id="catalog-overwrite-existing">
                     <span data-i18n="tasks.overwrite_existing">Overwrite existing content (recompute)</span>
@@ -1361,6 +1377,8 @@ function startCatalog(e) {
         skip_existing: skipExisting,
         overwrite_existing: overwrite,
         provider: formData.get('provider'),
+        output_language: formData.get('output_language') || 'auto',
+        update_title: formData.get('update_title') === 'on',
     };
     if (scopeMode === 'category') {
         payload.category = category;
