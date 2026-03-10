@@ -65,11 +65,16 @@ def _safe_float(value: str, var_name: str) -> float:
 def _get_sites_config_path() -> Path:
     """Get the path to sites.yaml configuration file."""
     # Try multiple locations
-    locations = [
+    explicit = os.getenv("CONFIG_PATH")
+    locations = []
+    if explicit:
+        locations.append(Path(explicit))
+
+    locations.extend([
         Path("config/sites.yaml"),  # Development
         Path("/app/config/sites.yaml"),  # Docker
         Path(__file__).parent / "sites.yaml",  # Relative to this file
-    ]
+    ])
     
     for path in locations:
         if path.exists():
@@ -173,7 +178,7 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
             "similarity_threshold": _safe_float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.4"), "RAG_SIMILARITY_THRESHOLD"),
         },
         "chatbot": {
-            "provider": "openai",
+            "provider": os.getenv("CHATBOT_LLM_PROVIDER", "openai"),
             "model": os.getenv("CHATBOT_MODEL", "gpt-4-turbo"),
             "temperature": _safe_float(os.getenv("CHATBOT_TEMPERATURE", "0.7"), "CHATBOT_TEMPERATURE"),
             "max_tokens": _safe_int(os.getenv("CHATBOT_MAX_TOKENS", "1000"), "CHATBOT_MAX_TOKENS"),

@@ -54,6 +54,14 @@ import csv
 import io
 import yaml
 import schedule
+from ..ai_runtime import (
+    AI_SUPPORTED_PROVIDERS,
+    KNOWN_LLM_PROVIDERS,
+    PROVIDER_BASE_URL_ENV_VARS,
+    PROVIDER_ENV_VARS,
+    PROVIDER_STARTUP_ENV_MAP,
+    resolve_ocr_runtime,
+)
 logger = logging.getLogger(__name__)
 
 # Global state for task tracking
@@ -348,13 +356,24 @@ def _permissions_for_group(group_name: str) -> frozenset[str]:
     return _GROUP_PERMISSIONS.get((group_name or "").strip().lower(), frozenset())
 
 
-def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type: str) -> dict[str, str]:
+def convert_file_to_markdown(
+    file_path: str,
+    conversion_tool: str,
+    content_type: str,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, str]:
     """Convert a local file to markdown using `doc_to_md` engines.
 
     Args:
         file_path: Local path to the file to convert.
         conversion_tool: Engine name ('marker', 'docling', 'mistral', 'deepseekocr').
         content_type: MIME type (kept for logging/diagnostics).
+        model: Optional model override for OCR/API engines.
+        api_key: Optional provider API key override.
+        base_url: Optional provider base URL override.
 
     Returns:
         Dict with: markdown, engine, model
@@ -366,14 +385,26 @@ def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type:
     # For compatibility with older clients, treat it as marker.
     if (conversion_tool or "").strip().lower() == "auto":
         conversion_tool = "marker"
-    logger.info("Converting %s using %s (content_type=%s)", file_path, conversion_tool, content_type)
+    logger.info(
+        "Converting %s using %s (content_type=%s, model=%s)",
+        file_path,
+        conversion_tool,
+        content_type,
+        model or "-",
+    )
 
     try:
         from doc_to_md.registry import convert_path
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"doc_to_md package not available: {exc}") from exc
 
-    output = convert_path(Path(file_path), engine=conversion_tool)  # type: ignore[arg-type]
+    output = convert_path(
+        Path(file_path),
+        engine=conversion_tool,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+    )  # type: ignore[arg-type]
     markdown = (output.markdown or "").strip()
     if not markdown:
         raise RuntimeError("Engine returned empty markdown")
@@ -726,26 +757,6 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
     # manual restart.  DB values never override keys already present in the
     # environment (i.e. .env takes priority over DB on startup).
     #
-    # Tuple layout: (api_key_env_var, base_url_env_var | None)
-    _PROVIDER_STARTUP_ENV_MAP = {
-        "openai":     ("OPENAI_API_KEY",    "OPENAI_BASE_URL"),
-        "mistral":    ("MISTRAL_API_KEY",   "MISTRAL_BASE_URL"),
-        "anthropic":  ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
-        "google":     ("GOOGLE_API_KEY",    "GOOGLE_BASE_URL"),
-        "deepseek":   ("DEEPSEEK_API_KEY",  "DEEPSEEK_BASE_URL"),
-        "zhipuai":    ("ZHIPUAI_API_KEY",   "ZHIPUAI_BASE_URL"),
-        "moonshot":   ("MOONSHOT_API_KEY",  "MOONSHOT_BASE_URL"),
-        "qwen":       ("DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"),
-        "siliconflow":("SILICONFLOW_API_KEY","SILICONFLOW_BASE_URL"),
-        "cohere":     ("COHERE_API_KEY",    "COHERE_BASE_URL"),
-        "kimi":       ("KIMI_API_KEY",      "KIMI_BASE_URL"),
-        "minimax":    ("MINIMAX_API_KEY",   "MINIMAX_BASE_URL"),
-        # Search providers
-        "brave_search":  ("BRAVE_API_KEY",   None),
-        "serpapi":       ("SERPAPI_API_KEY",  None),
-        "serper":        ("SERPER_API_KEY",   None),
-        "tavily":        ("TAVILY_API_KEY",   None),
-    }
     _startup_storage = None
     try:
         from ..services.token_encryption import TokenEncryption as _TE
@@ -753,7 +764,7 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
         _enc = _TE()
         for _p in _startup_storage.list_llm_providers():
             _pname = _p["provider"]
-            _key_env, _url_env = _PROVIDER_STARTUP_ENV_MAP.get(_pname, (None, None))
+            _key_env, _url_env = PROVIDER_STARTUP_ENV_MAP.get(_pname, (None, None))
             if _key_env and not os.getenv(_key_env):  # Don't override .env values
                 try:
                     os.environ[_key_env] = _enc.decrypt(_p["api_key_encrypted"])
@@ -2849,121 +2860,6 @@ sites:
     # AI model configuration
     # Models are now fetched dynamically from LLM provider APIs
     # See ai_actuarial/llm_models.py for implementation
-    AI_SUPPORTED_PROVIDERS = {
-        "openai", "mistral", "siliconflow", "anthropic",
-        "google", "deepseek", "zhipuai", "moonshot", "qwen", "cohere",
-        "kimi", "minimax",
-        "local",
-    }
-
-    # Known LLM providers that can be configured with API keys
-    KNOWN_LLM_PROVIDERS = {
-        "openai": {
-            "display_name": "OpenAI",
-            "default_base_url": "https://api.openai.com/v1",
-            "api_key_hint": "sk-...",
-        },
-        "mistral": {
-            "display_name": "Mistral AI",
-            "default_base_url": "https://api.mistral.ai",
-            "api_key_hint": "...",
-        },
-        "anthropic": {
-            "display_name": "Anthropic",
-            "default_base_url": "https://api.anthropic.com",
-            "api_key_hint": "sk-ant-...",
-        },
-        "google": {
-            "display_name": "Google Gemini",
-            "default_base_url": "https://generativelanguage.googleapis.com",
-            "api_key_hint": "AIza...",
-        },
-        "deepseek": {
-            "display_name": "DeepSeek",
-            "default_base_url": "https://api.deepseek.com/v1",
-            "api_key_hint": "sk-...",
-        },
-        "zhipuai": {
-            "display_name": "智谱AI (ZhipuAI)",
-            "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
-            "api_key_hint": "...",
-        },
-        "moonshot": {
-            "display_name": "Moonshot (Kimi)",
-            "default_base_url": "https://api.moonshot.cn/v1",
-            "api_key_hint": "sk-...",
-        },
-        "qwen": {
-            "display_name": "阿里通义 (Qwen)",
-            "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key_hint": "sk-...",
-        },
-        "siliconflow": {
-            "display_name": "SiliconFlow",
-            "default_base_url": "https://api.siliconflow.cn/v1",
-            "api_key_hint": "sk-...",
-        },
-        "cohere": {
-            "display_name": "Cohere",
-            "default_base_url": "https://api.cohere.com/v1",
-            "api_key_hint": "...",
-        },
-        "kimi": {
-            "display_name": "Kimi (Moonshot v2)",
-            "default_base_url": "https://api.moonshot.cn/v1",
-            "api_key_hint": "sk-...",
-        },
-        "minimax": {
-            "display_name": "MiniMax",
-            "default_base_url": "https://api.minimax.chat/v1",
-            "api_key_hint": "...",
-        },
-        # Search providers
-        "brave_search": {
-            "display_name": "Brave Search",
-            "default_base_url": "",
-            "api_key_hint": "BSA...",
-            "is_search_provider": True,
-        },
-        "serpapi": {
-            "display_name": "Google (SerpAPI)",
-            "default_base_url": "",
-            "api_key_hint": "...",
-            "is_search_provider": True,
-        },
-        "serper": {
-            "display_name": "Google (Serper.dev)",
-            "default_base_url": "",
-            "api_key_hint": "...",
-            "is_search_provider": True,
-        },
-        "tavily": {
-            "display_name": "Tavily",
-            "default_base_url": "",
-            "api_key_hint": "tvly-...",
-            "is_search_provider": True,
-        },
-    }
-
-    # Mapping from provider name to the environment variable that holds its API key
-    _PROVIDER_ENV_VARS = {
-        "openai": "OPENAI_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "google": "GOOGLE_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "zhipuai": "ZHIPUAI_API_KEY",
-        "moonshot": "MOONSHOT_API_KEY",
-        "qwen": "DASHSCOPE_API_KEY",
-        "siliconflow": "SILICONFLOW_API_KEY",
-        "cohere": "COHERE_API_KEY",
-        "kimi": "KIMI_API_KEY",
-        "minimax": "MINIMAX_API_KEY",
-        "brave_search": "BRAVE_API_KEY",
-        "serpapi": "SERPAPI_API_KEY",
-        "serper": "SERPER_API_KEY",
-        "tavily": "TAVILY_API_KEY",
-    }
 
     @app.route("/api/config/llm-providers")
     @require_permissions("config.read")
@@ -3006,14 +2902,15 @@ sites:
                 })
 
             # Add providers configured via environment variables that aren't in DB
-            for provider, env_var in _PROVIDER_ENV_VARS.items():
+            for provider, env_var in PROVIDER_ENV_VARS.items():
                 if provider in db_provider_keys:
                     continue  # Already included from DB
                 api_key = os.getenv(env_var)
                 if api_key:
                     pinfo = KNOWN_LLM_PROVIDERS.get(provider, {})
-                    base_url_var = f"{provider.upper()}_BASE_URL"
-                    base_url = os.getenv(base_url_var) or None
+                    base_url_var = PROVIDER_BASE_URL_ENV_VARS.get(provider)
+                    base_url = os.getenv(base_url_var) if base_url_var else None
+                    base_url = base_url or None
                     result.append({
                         "provider": provider,
                         "display_name": pinfo.get("display_name", provider),
@@ -3054,7 +2951,11 @@ sites:
 
             provider = str(data.get("provider") or "").strip().lower()
             api_key = str(data.get("api_key") or "").strip()
-            base_url = str(data.get("api_base_url") or "").strip() or None
+            base_url = str(
+                data.get("api_base_url")
+                or data.get("base_url")
+                or ""
+            ).strip() or None
             notes = str(data.get("notes") or "").strip() or None
 
             if not provider:
@@ -3075,11 +2976,11 @@ sites:
             )
 
             # Also set env var in-process for immediate backward-compatible use
-            env_var = _PROVIDER_ENV_VARS.get(provider)
+            env_var = PROVIDER_ENV_VARS.get(provider)
             if env_var:
                 os.environ[env_var] = api_key
             if base_url:
-                _, base_url_env_var = _PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+                _, base_url_env_var = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
                 if base_url_env_var:
                     os.environ[base_url_env_var] = base_url
 
@@ -3111,7 +3012,7 @@ sites:
                 return _api_error("Provider not found", status_code=404)
             # Clear the corresponding env vars so the key is no longer usable
             # in the current process after deletion.
-            key_env, url_env = _PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+            key_env, url_env = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
             if key_env:
                 os.environ.pop(key_env, None)
             if url_env:
@@ -4041,9 +3942,9 @@ sites:
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
                 file_urls = data.get("file_urls", []) or []
-                conversion_tool = data.get("conversion_tool", "docling")
-                if (conversion_tool or "").strip().lower() == "auto":
-                    conversion_tool = "docling"
+                conversion_tool = data.get("conversion_tool", "auto")
+                if not str(conversion_tool or "").strip():
+                    conversion_tool = "auto"
                 overwrite_existing = data.get("overwrite_existing", False)
                 skip_existing = bool(data.get("skip_existing", True))
                 scan_start_index = data.get("scan_start_index")
@@ -4122,6 +4023,22 @@ sites:
                 
                 logger.info(f"Starting markdown conversion for {len(file_urls)} files")
                 _append_task_log(task_id, "INFO", f"Markdown conversion started: files={len(file_urls)}, engine={conversion_tool}, overwrite={overwrite_existing}")
+
+                ocr_runtime = resolve_ocr_runtime(
+                    storage=storage,
+                    engine_override=None
+                    if str(conversion_tool or "").strip().lower() == "auto"
+                    else str(conversion_tool or "").strip().lower(),
+                )
+                _append_task_log(
+                    task_id,
+                    "INFO",
+                    (
+                        "Markdown runtime resolved: "
+                        f"engine={ocr_runtime.engine} provider={ocr_runtime.provider} "
+                        f"model={ocr_runtime.model} credentials={ocr_runtime.credential_source}"
+                    ),
+                )
                 
                 converted_count = 0
                 error_count = 0
@@ -4196,20 +4113,34 @@ sites:
                         
                         # Convert file to markdown using doc_to_md engines.
                         try:
-                            _append_task_log(task_id, "INFO", f"Converting: {file_url} (path={local_path}) engine={conversion_tool}")
+                            _append_task_log(
+                                task_id,
+                                "INFO",
+                                (
+                                    f"Converting: {file_url} (path={local_path}) "
+                                    f"engine={ocr_runtime.engine} model={ocr_runtime.model}"
+                                ),
+                            )
                             conversion = convert_file_to_markdown(
                                 local_path,
-                                conversion_tool,
+                                ocr_runtime.engine,
                                 file_info.get("content_type", ""),
+                                model=ocr_runtime.model,
+                                api_key=ocr_runtime.api_key,
+                                base_url=ocr_runtime.base_url,
                             )
                         except Exception as exc:  # noqa: BLE001
                             error_count += 1
-                            errors.append(f"{file_url}: conversion failed ({conversion_tool})")
-                            _append_task_log(task_id, "ERROR", f"Conversion failed: {file_url} engine={conversion_tool} error={exc}")
+                            errors.append(f"{file_url}: conversion failed ({ocr_runtime.engine})")
+                            _append_task_log(
+                                task_id,
+                                "ERROR",
+                                f"Conversion failed: {file_url} engine={ocr_runtime.engine} error={exc}",
+                            )
                             continue
 
                         markdown_content = conversion["markdown"]
-                        used_engine = conversion.get("engine") or conversion_tool
+                        used_engine = conversion.get("engine") or ocr_runtime.engine
 
                         # Save markdown to database
                         success, error = storage.update_file_markdown(

@@ -45,11 +45,11 @@ class RAGRetriever:
             config: Chatbot configuration
         """
         self.storage = storage
-        self.config = config or ChatbotConfig()
+        self.config = config or ChatbotConfig.from_config(storage=storage)
         
         # Initialize RAG components
         self.kb_manager = KnowledgeBaseManager(storage)
-        self.embedding_generator = EmbeddingGenerator()
+        self.embedding_generator = EmbeddingGenerator(storage=self.storage)
         
         # Cache for loaded vector stores
         self._vector_store_cache: Dict[str, VectorStore] = {}

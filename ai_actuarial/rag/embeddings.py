@@ -20,6 +20,7 @@ from typing import List, Optional
 
 from openai import OpenAI, APITimeoutError, RateLimitError, APIError
 
+from ai_actuarial.ai_runtime import is_embedding_provider_supported
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import EmbeddingException
 
@@ -78,25 +79,40 @@ class EmbeddingGenerator:
     Supports multiple providers with automatic fallback and caching.
     """
     
-    def __init__(self, config: Optional[RAGConfig] = None):
+    def __init__(
+        self,
+        config: Optional[RAGConfig] = None,
+        *,
+        storage=None,
+    ):
         """
         Initialize embedding generator.
         
         Args:
             config: RAG configuration (defaults to config-based config)
         """
-        self.config = config or RAGConfig.from_config()
+        self.config = config or RAGConfig.from_config(storage=storage)
         self.cache = EmbeddingCache(f"{self.config.data_dir}/embeddings_cache") if self.config.embedding_cache_enabled else None
-        
-        # Initialize OpenAI client if using OpenAI
-        if self.config.embedding_provider == "openai":
-            if not self.config.openai_api_key:
-                raise EmbeddingException("OpenAI API key required but not provided")
-            
-            self.openai_client = OpenAI(
-                api_key=self.config.openai_api_key,
-                timeout=self.config.openai_timeout
-            )
+
+        self.provider = str(self.config.embedding_provider or "").strip().lower()
+        if not is_embedding_provider_supported(self.provider):
+            raise EmbeddingException(f"Unsupported embedding provider: {self.provider}")
+
+        # Initialize OpenAI-compatible client for remote providers.
+        if self.provider != "local":
+            api_key = self.config.api_key or self.config.openai_api_key
+            if not api_key:
+                raise EmbeddingException(
+                    f"API key required for embedding provider '{self.provider}' but not provided"
+                )
+
+            client_kwargs = {
+                "api_key": api_key,
+                "timeout": self.config.openai_timeout,
+            }
+            if self.config.api_base_url:
+                client_kwargs["base_url"] = self.config.api_base_url
+            self.openai_client = OpenAI(**client_kwargs)
         else:
             self.openai_client = None
         
@@ -135,7 +151,7 @@ class EmbeddingGenerator:
             
             # Generate embeddings for uncached texts
             if uncached_texts:
-                if self.config.embedding_provider == "openai":
+                if self.provider != "local":
                     new_embeddings = self._generate_openai_embeddings(uncached_texts)
                 else:
                     new_embeddings = self._generate_local_embeddings(uncached_texts)
@@ -156,7 +172,7 @@ class EmbeddingGenerator:
             return all_embeddings
         else:
             # No caching
-            if self.config.embedding_provider == "openai":
+            if self.provider != "local":
                 return self._generate_openai_embeddings(texts)
             else:
                 return self._generate_local_embeddings(texts)
@@ -290,8 +306,8 @@ class EmbeddingGenerator:
         Returns:
             Embedding dimension
         """
-        if self.config.embedding_provider == "openai":
-            # OpenAI embedding dimensions
+        if self.provider != "local":
+            # OpenAI-compatible embedding dimensions
             if "text-embedding-3-large" in self.config.embedding_model:
                 return 3072
             elif "text-embedding-3-small" in self.config.embedding_model:

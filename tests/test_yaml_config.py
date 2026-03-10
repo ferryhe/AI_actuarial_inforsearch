@@ -118,6 +118,14 @@ class TestYAMLConfigLoader:
             assert "defaults" in config
             assert "ai_config" in config
             assert config["defaults"]["user_agent"] == "test-agent"
+
+    def test_config_path_environment_override(self):
+        """CONFIG_PATH should be respected by the YAML loader."""
+        with patch.dict(os.environ, {"CONFIG_PATH": str(self.config_path)}, clear=False):
+            invalidate_config_cache()
+            config = load_yaml_config()
+
+        assert config["defaults"]["user_agent"] == "test-agent"
     
     def test_load_ai_config_from_yaml(self):
         """Test loading AI configuration from YAML."""
@@ -213,6 +221,7 @@ class TestYAMLConfigLoader:
         """Test extracting AI config from environment variables."""
         with patch.dict(os.environ, {
             'OPENAI_DEFAULT_MODEL': 'test-model',
+            'CHATBOT_LLM_PROVIDER': 'deepseek',
             'CHATBOT_MODEL': 'test-chatbot',
             'CHATBOT_TEMPERATURE': '0.9',
             'CHATBOT_MAX_TOKENS': '2000',
@@ -220,6 +229,7 @@ class TestYAMLConfigLoader:
             ai_config = _extract_ai_config_from_env()
             
             assert ai_config["catalog"]["model"] == "test-model"
+            assert ai_config["chatbot"]["provider"] == "deepseek"
             assert ai_config["chatbot"]["model"] == "test-chatbot"
             assert ai_config["chatbot"]["temperature"] == 0.9
             assert ai_config["chatbot"]["max_tokens"] == 2000

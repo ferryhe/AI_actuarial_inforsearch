@@ -275,7 +275,10 @@ def register_chat_routes(
             
             # Initialize components
             storage = Storage(db_path)
-            config = chatbot_config.ChatbotConfig(default_mode=mode)
+            config = chatbot_config.ChatbotConfig.from_config(
+                storage=storage,
+                default_mode=mode,
+            )
             
             try:
                 retriever = chatbot_retrieval.RAGRetriever(storage, config)
@@ -547,7 +550,7 @@ def register_chat_routes(
         if request.method == "GET":
             try:
                 storage = Storage(db_path)
-                config = chatbot_config.ChatbotConfig()
+                config = chatbot_config.ChatbotConfig.from_config(storage=storage)
                 
                 try:
                     conv_manager = chatbot_conversation.ConversationManager(storage, config)
@@ -574,7 +577,7 @@ def register_chat_routes(
                 mode = data.get("mode", "expert")
                 
                 storage = Storage(db_path)
-                config = chatbot_config.ChatbotConfig()
+                config = chatbot_config.ChatbotConfig.from_config(storage=storage)
                 
                 try:
                     conv_manager = chatbot_conversation.ConversationManager(storage, config)
@@ -616,7 +619,7 @@ def register_chat_routes(
         
         try:
             storage = Storage(db_path)
-            config = chatbot_config.ChatbotConfig()
+            config = chatbot_config.ChatbotConfig.from_config(storage=storage)
             
             try:
                 conv_manager = chatbot_conversation.ConversationManager(storage, config)
@@ -835,7 +838,11 @@ def register_chat_routes(
                 logger.info(f"Document truncated from {original_length} to {MAX_DOC_LENGTH} chars")
             
             # Initialize LLM client
-            config = chatbot_config.ChatbotConfig()
+            storage = Storage(db_path)
+            try:
+                config = chatbot_config.ChatbotConfig.from_config(storage=storage)
+            finally:
+                storage.close()
             llm_client = chatbot_llm.LLMClient(config)
             
             # Build summarization prompt based on mode (load optional override from config)

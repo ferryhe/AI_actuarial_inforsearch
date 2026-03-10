@@ -41,7 +41,7 @@ class ConversationManager:
             config: Chatbot configuration
         """
         self.storage = storage
-        self.config = config or ChatbotConfig()
+        self.config = config or ChatbotConfig.from_config(storage=storage)
         
         # Initialize database schema
         self._init_schema()

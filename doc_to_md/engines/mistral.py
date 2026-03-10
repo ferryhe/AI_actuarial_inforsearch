@@ -32,13 +32,15 @@ class MistralEngine(Engine):
     def __init__(
         self,
         model: str | None = None,
+        api_key: str | None = None,
         include_images: bool = False,
         extract_footer: bool | None = None,
         extract_header: bool | None = None,
         **_kwargs,
     ) -> None:
         settings = get_settings()
-        if not settings.mistral_api_key:
+        resolved_api_key = api_key or settings.mistral_api_key
+        if not resolved_api_key:
             raise RuntimeError("MISTRAL_API_KEY missing")
 
         try:
@@ -46,7 +48,7 @@ class MistralEngine(Engine):
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("Mistral engine requires `mistralai`. Install via `pip install mistralai`.") from exc
 
-        self.api_key = settings.mistral_api_key
+        self.api_key = resolved_api_key
         self.model = model or settings.mistral_default_model
         self.include_images = include_images
         self.timeout_ms = int(settings.mistral_timeout_seconds * 1000)

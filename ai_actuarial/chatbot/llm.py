@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 
 import openai
 
+from ai_actuarial.ai_runtime import is_chat_provider_supported
 from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.exceptions import LLMException
 from ai_actuarial.chatbot.prompts import build_full_prompt
@@ -29,7 +30,12 @@ class LLMClient:
     - Comprehensive error handling
     """
     
-    def __init__(self, config: Optional[ChatbotConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ChatbotConfig] = None,
+        *,
+        storage=None,
+    ):
         """
         Initialize LLM client.
         
@@ -39,7 +45,7 @@ class LLMClient:
         Raises:
             LLMException: If API key is missing
         """
-        self.config = config or ChatbotConfig()
+        self.config = config or ChatbotConfig.from_config(storage=storage)
         
         # Validate configuration
         try:
@@ -47,16 +53,18 @@ class LLMClient:
         except ValueError as e:
             raise LLMException(f"Invalid configuration: {e}")
         
-        # Initialize OpenAI client
-        if self.config.llm_provider == "openai":
-            self.client = openai.OpenAI(
-                api_key=self.config.api_key,
-                timeout=60.0  # 60 second timeout
-            )
-        else:
+        # Initialize OpenAI-compatible client
+        if not is_chat_provider_supported(self.config.llm_provider):
             raise LLMException(
                 f"Unsupported LLM provider: {self.config.llm_provider}"
             )
+        client_kwargs: dict[str, Any] = {
+            "api_key": self.config.api_key,
+            "timeout": 60.0,
+        }
+        if self.config.base_url:
+            client_kwargs["base_url"] = self.config.base_url
+        self.client = openai.OpenAI(**client_kwargs)
         
         # Rate limiting state
         self._last_request_time = 0.0

@@ -36,9 +36,15 @@ Multi-image batching is not supported; each page must be sent in a separate call
         },
     }
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
         settings = get_settings()
-        if not settings.siliconflow_api_key:
+        resolved_api_key = api_key or settings.siliconflow_api_key
+        if not resolved_api_key:
             raise RuntimeError("SILICONFLOW_API_KEY missing (DeepSeek-OCR via SiliconFlow)")
 
         try:
@@ -47,12 +53,15 @@ Multi-image batching is not supported; each page must be sent in a separate call
             raise RuntimeError("DeepSeek-OCR engine requires `openai`. Install it via `pip install openai`.") from exc
 
         super().__init__(retry_attempts=settings.siliconflow_retry_attempts)
-        self.api_key = settings.siliconflow_api_key
+        self.api_key = resolved_api_key
         self.model = model or settings.siliconflow_default_model
         self.timeout = settings.siliconflow_timeout_seconds
         self.max_tokens = settings.siliconflow_max_input_tokens
         self.chunk_overlap = settings.siliconflow_chunk_overlap_tokens
-        self.client = OpenAI(api_key=self.api_key, base_url=settings.siliconflow_base_url)
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=base_url or settings.siliconflow_base_url,
+        )
 
     def convert(self, path: Path) -> EngineResponse:  # pragma: no cover - network call
         suffix = path.suffix.lower()
