@@ -165,9 +165,11 @@ function extractConfiguredCatalogSelection(
     return types.includes("catalog") || types.includes("chat");
   });
 
+  const matchedModel = compatibleModels.find((m) => m.name === modelName);
+
   const selectedModel =
-    compatibleModels.find((m) => m.name === modelName)?.display_name ||
-    compatibleModels.find((m) => m.name === modelName)?.name ||
+    matchedModel?.display_name ||
+    matchedModel?.name ||
     compatibleModels[0]?.display_name ||
     compatibleModels[0]?.name ||
     modelName;
