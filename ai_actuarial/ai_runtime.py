@@ -428,7 +428,7 @@ def resolve_provider_credentials(
             return db_credentials
 
     api_key_env = get_provider_api_key_env_var(normalized_provider)
-    api_key = str(os.getenv(api_key_env) or "").strip() or None
+    api_key = str(os.getenv(api_key_env) or "").strip() or None if api_key_env else None
     base_url = _get_effective_base_url(normalized_provider)
     if api_key:
         return ProviderCredentials(

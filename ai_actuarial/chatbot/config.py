@@ -94,11 +94,19 @@ class ChatbotConfig:
 
         if not self.api_key:
             env_var = get_provider_api_key_env_var(self.llm_provider)
-            self.api_key = str(os.getenv(env_var) or "").strip() or None
+            self.api_key = (
+                str(os.getenv(env_var) or "").strip() or None
+                if env_var
+                else None
+            )
 
         if not self.base_url:
             base_url_env = get_provider_base_url_env_var(self.llm_provider)
-            self.base_url = str(os.getenv(base_url_env) or "").strip() or None
+            self.base_url = (
+                str(os.getenv(base_url_env) or "").strip() or None
+                if base_url_env
+                else None
+            )
 
         self.model = os.getenv("CHATBOT_MODEL", self.model)
         self.temperature = float(os.getenv("CHATBOT_TEMPERATURE", str(self.temperature)))
@@ -124,8 +132,16 @@ class ChatbotConfig:
             model=os.getenv("CHATBOT_MODEL", "gpt-4"),
             temperature=_safe_float(os.getenv("CHATBOT_TEMPERATURE"), "CHATBOT_TEMPERATURE", 0.7),
             max_tokens=_safe_int(os.getenv("CHATBOT_MAX_TOKENS"), "CHATBOT_MAX_TOKENS", 1000),
-            api_key=str(os.getenv(api_key_env) or "").strip() or None,
-            base_url=str(os.getenv(base_url_env) or "").strip() or None,
+            api_key=(
+                str(os.getenv(api_key_env) or "").strip() or None
+                if api_key_env
+                else None
+            ),
+            base_url=(
+                str(os.getenv(base_url_env) or "").strip() or None
+                if base_url_env
+                else None
+            ),
             _apply_env_defaults=False,
             top_k=_safe_int(os.getenv("CHATBOT_TOP_K"), "CHATBOT_TOP_K", 5),
             similarity_threshold=_safe_float(

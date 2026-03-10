@@ -10,6 +10,7 @@ import unittest
 
 from ai_actuarial.ai_runtime import (
     get_ai_function_section,
+    resolve_provider_credentials,
     resolve_ai_function_runtime,
     resolve_ocr_runtime,
 )
@@ -123,6 +124,16 @@ class TestAiRuntime(unittest.TestCase):
         self.assertEqual(runtime.provider, "local")
         self.assertEqual(runtime.engine, "marker")
         self.assertEqual(runtime.model, "marker")
+
+    def test_resolve_provider_credentials_unknown_provider_does_not_crash(self):
+        """Unknown provider names should return an unconfigured runtime instead of crashing."""
+        credentials = resolve_provider_credentials("unknown-provider", storage=self.storage)
+
+        self.assertEqual(credentials.provider, "unknown-provider")
+        self.assertIsNone(credentials.api_key)
+        self.assertIsNone(credentials.base_url)
+        self.assertFalse(credentials.configured)
+        self.assertEqual(credentials.source, "missing")
 
 
 if __name__ == "__main__":

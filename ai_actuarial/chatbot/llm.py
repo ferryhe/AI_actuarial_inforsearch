@@ -30,7 +30,12 @@ class LLMClient:
     - Comprehensive error handling
     """
     
-    def __init__(self, config: Optional[ChatbotConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ChatbotConfig] = None,
+        *,
+        storage=None,
+    ):
         """
         Initialize LLM client.
         
@@ -40,7 +45,7 @@ class LLMClient:
         Raises:
             LLMException: If API key is missing
         """
-        self.config = config or ChatbotConfig.from_config()
+        self.config = config or ChatbotConfig.from_config(storage=storage)
         
         # Validate configuration
         try:

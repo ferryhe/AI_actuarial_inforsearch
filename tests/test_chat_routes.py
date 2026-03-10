@@ -320,6 +320,34 @@ class TestChatRoutes(unittest.TestCase):
         kwargs = mock_openai_class.call_args.kwargs
         self.assertEqual(kwargs["api_key"], "deepseek-key-123")
         self.assertEqual(kwargs["base_url"], "https://api.deepseek.com/v1")
+
+    @patch('ai_actuarial.chatbot.llm.LLMClient')
+    @patch('ai_actuarial.chatbot.config.ChatbotConfig.from_config')
+    def test_summarize_document_uses_storage_backed_config(self, mock_from_config, mock_llm_class):
+        """Document summarization should resolve config through storage-backed runtime."""
+        mock_config = Mock()
+        mock_config.model = "deepseek-chat"
+        mock_from_config.return_value = mock_config
+
+        mock_llm = Mock()
+        mock_llm.generate.return_value = "Summary result"
+        mock_llm_class.return_value = mock_llm
+
+        response = self.client.post(
+            "/api/chat/summarize-document",
+            headers=self.auth_header,
+            json={
+                "document_content": "# Test\n\nDocument body.",
+                "document_title": "Test Doc",
+                "mode": "summary",
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(mock_from_config.called)
+        _, kwargs = mock_from_config.call_args
+        self.assertIn("storage", kwargs)
+        self.assertIsNotNone(kwargs["storage"])
     
     def test_chat_query_missing_message(self):
         """Test chat query with missing message."""

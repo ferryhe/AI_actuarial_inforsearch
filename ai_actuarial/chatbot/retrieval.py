@@ -45,7 +45,7 @@ class RAGRetriever:
             config: Chatbot configuration
         """
         self.storage = storage
-        self.config = config or ChatbotConfig.from_config()
+        self.config = config or ChatbotConfig.from_config(storage=storage)
         
         # Initialize RAG components
         self.kb_manager = KnowledgeBaseManager(storage)

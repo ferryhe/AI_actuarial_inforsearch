@@ -838,7 +838,11 @@ def register_chat_routes(
                 logger.info(f"Document truncated from {original_length} to {MAX_DOC_LENGTH} chars")
             
             # Initialize LLM client
-            config = chatbot_config.ChatbotConfig.from_config()
+            storage = Storage(db_path)
+            try:
+                config = chatbot_config.ChatbotConfig.from_config(storage=storage)
+            finally:
+                storage.close()
             llm_client = chatbot_llm.LLMClient(config)
             
             # Build summarization prompt based on mode (load optional override from config)

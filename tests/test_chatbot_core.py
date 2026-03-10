@@ -28,6 +28,7 @@ from ai_actuarial.chatbot.exceptions import (
     InvalidKBException,
     InvalidModeException,
 )
+from ai_actuarial.chatbot.llm import LLMClient
 from ai_actuarial.chatbot.prompts import (
     BASE_INSTRUCTIONS,
     MODE_PROMPTS,
@@ -36,6 +37,7 @@ from ai_actuarial.chatbot.prompts import (
     format_user_query,
     get_system_prompt,
 )
+from ai_actuarial.chatbot.retrieval import RAGRetriever
 from ai_actuarial.chatbot.router import QueryRouter
 from ai_actuarial.storage import Storage
 
@@ -100,6 +102,24 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.llm_provider, "deepseek")
         self.assertEqual(config.api_key, "deepseek-key-123")
         self.assertEqual(config.model, "deepseek-chat")
+
+    def test_from_env_local_provider_does_not_require_env_mapping(self):
+        """Local provider should not crash even though it has no API key env mapping."""
+        os.environ["CHATBOT_LLM_PROVIDER"] = "local"
+
+        config = ChatbotConfig.from_env()
+
+        self.assertEqual(config.llm_provider, "local")
+        self.assertIsNone(config.api_key)
+        self.assertIsNone(config.base_url)
+
+    def test_init_unknown_provider_does_not_call_getenv_with_none(self):
+        """Unknown providers should stay unconfigured instead of raising TypeError."""
+        config = ChatbotConfig(llm_provider="unknown-provider")
+
+        self.assertEqual(config.llm_provider, "unknown-provider")
+        self.assertIsNone(config.api_key)
+        self.assertIsNone(config.base_url)
 
     def test_from_yaml_reads_chatbot_provider(self):
         """sites.yaml chatbot.provider should be honored."""
@@ -557,6 +577,17 @@ class TestConversationManager(unittest.TestCase):
         self.assertEqual(stats["total_messages"], 3)
         self.assertEqual(stats["total_tokens"], 75)
 
+    def test_uses_storage_when_loading_default_config(self):
+        """Default config loading should receive storage for DB-backed credentials."""
+        with patch(
+            "ai_actuarial.chatbot.conversation.ChatbotConfig.from_config",
+            return_value=ChatbotConfig(api_key="test-key", _apply_env_defaults=False),
+        ) as mock_from_config:
+            manager = ConversationManager(self.storage, config=None)
+
+        mock_from_config.assert_called_once_with(storage=self.storage)
+        self.assertIsInstance(manager, ConversationManager)
+
 
 class TestQueryRouter(unittest.TestCase):
     """Test QueryRouter KB selection logic."""
@@ -637,7 +668,20 @@ class TestQueryRouter(unittest.TestCase):
         self.assertEqual(analysis["intent"], "explanatory")
         self.assertIn("regulation", analysis["categories"])
         self.assertTrue(analysis["has_question_mark"])
-    
+
+    def test_uses_storage_when_loading_default_config(self):
+        """Default router config loading should receive storage for DB-backed credentials."""
+        with patch(
+            "ai_actuarial.chatbot.router.ChatbotConfig.from_config",
+            return_value=ChatbotConfig(api_key="test-key", _apply_env_defaults=False),
+        ) as mock_from_config, patch(
+            "ai_actuarial.chatbot.router.KnowledgeBaseManager"
+        ):
+            router = QueryRouter(self.storage, config=None)
+
+        mock_from_config.assert_called_once_with(storage=self.storage)
+        self.assertIsInstance(router, QueryRouter)
+
     def test_analyze_query_comparative(self):
         """Test analyzing comparative query."""
         query = "Compare term life and whole life insurance"
@@ -710,6 +754,47 @@ class TestQueryRouter(unittest.TestCase):
         mode = self.router.recommend_mode(analysis)
         
         self.assertEqual(mode, "expert")
+
+
+class TestDefaultStoragePropagation(unittest.TestCase):
+    """Test default config construction for chatbot helper classes."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.temp_dir, "test.db")
+        self.storage = Storage(self.db_path)
+
+    def tearDown(self):
+        self.storage.close()
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_retriever_uses_storage_when_loading_default_config(self):
+        with patch(
+            "ai_actuarial.chatbot.retrieval.ChatbotConfig.from_config",
+            return_value=ChatbotConfig(api_key="test-key", _apply_env_defaults=False),
+        ) as mock_from_config, patch(
+            "ai_actuarial.chatbot.retrieval.KnowledgeBaseManager"
+        ), patch(
+            "ai_actuarial.chatbot.retrieval.EmbeddingGenerator"
+        ):
+            retriever = RAGRetriever(self.storage, config=None)
+
+        mock_from_config.assert_called_once_with(storage=self.storage)
+        self.assertIsInstance(retriever, RAGRetriever)
+
+    def test_llm_client_uses_storage_when_loading_default_config(self):
+        with patch(
+            "ai_actuarial.chatbot.llm.ChatbotConfig.from_config",
+            return_value=ChatbotConfig(api_key="test-key", _apply_env_defaults=False),
+        ) as mock_from_config, patch(
+            "ai_actuarial.chatbot.llm.openai.OpenAI"
+        ):
+            client = LLMClient(config=None, storage=self.storage)
+
+        mock_from_config.assert_called_once_with(storage=self.storage)
+        self.assertIsInstance(client, LLMClient)
 
 
 if __name__ == "__main__":
