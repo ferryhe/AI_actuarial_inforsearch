@@ -55,8 +55,8 @@
         </svg>
       </div>
       <div>
-        <h2 style="margin:0;">Sign In</h2>
-        <div style="opacity:.85; font-size:.9rem;">Access your account</div>
+        <h2 style="margin:0;" data-i18n="el.title">Sign In</h2>
+        <div style="opacity:.85; font-size:.9rem;" data-i18n="el.subtitle">Access your account</div>
       </div>
     </div>
 
@@ -67,19 +67,19 @@
     <form method="POST" action="{{ url_for('email_login', next=next) }}">
       <input type="hidden" name="next" value="{{ next }}">
       <div class="form-group">
-        <label for="email">Email Address</label>
+        <label for="email" data-i18n="el.email">Email Address</label>
         <input id="email" name="email" type="email" class="form-control"
-               required placeholder="you@example.com" autocomplete="email">
+               required data-i18n-placeholder="el.email_ph" placeholder="you@example.com" autocomplete="email">
       </div>
       <div class="form-group" style="margin-top:12px;">
-        <label for="password">Password</label>
+        <label for="password" data-i18n="el.password">Password</label>
         <input id="password" name="password" type="password" class="form-control"
-               required placeholder="Enter password" autocomplete="current-password">
+               required data-i18n-placeholder="el.password_ph" placeholder="Enter password" autocomplete="current-password">
       </div>
       <div style="display:flex; gap:10px; margin-top:1rem; align-items:center;">
-        <button type="submit" class="btn btn-primary">Sign In</button>
-        <a href="{{ url_for('register') }}" class="btn btn-secondary">Create Account</a>
-        <a href="{{ url_for('login') }}" class="btn btn-ghost" style="margin-left:auto; font-size:.85rem;">Token Login</a>
+        <button type="submit" class="btn btn-primary" data-i18n="el.submit">Sign In</button>
+        <a href="{{ url_for('register') }}" class="btn btn-secondary" data-i18n="el.create_account">Create Account</a>
+        <a href="{{ url_for('login') }}" class="btn btn-ghost" style="margin-left:auto; font-size:.85rem;" data-i18n="el.token_login">Token Login</a>
       </div>
     </form>
   </div>

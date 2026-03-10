@@ -69,8 +69,8 @@
         </svg>
       </div>
       <div>
-        <h2 style="margin:0;">Create Account</h2>
-        <div style="opacity:.85; font-size:.9rem;">Register for free access</div>
+        <h2 style="margin:0;" data-i18n="reg.title">Create Account</h2>
+        <div style="opacity:.85; font-size:.9rem;" data-i18n="reg.subtitle">Register for free access</div>
       </div>
     </div>
 
@@ -80,34 +80,34 @@
 
     <form method="POST" action="{{ url_for('register') }}">
       <div class="form-group">
-        <label for="email">Email Address</label>
+        <label for="email" data-i18n="reg.email">Email Address</label>
         <input id="email" name="email" type="email" class="form-control"
-               value="{{ email or '' }}" required placeholder="you@example.com" autocomplete="email">
+               value="{{ email or '' }}" required data-i18n-placeholder="reg.email_ph" placeholder="you@example.com" autocomplete="email">
       </div>
       <div class="form-group" style="margin-top:12px;">
-        <label for="display_name">Display Name (optional)</label>
+        <label for="display_name" data-i18n="reg.display_name">Display Name (optional)</label>
         <input id="display_name" name="display_name" type="text" class="form-control"
-               value="{{ display_name or '' }}" placeholder="Your name">
+               value="{{ display_name or '' }}" data-i18n-placeholder="reg.name_ph" placeholder="Your name">
       </div>
       <div class="form-group" style="margin-top:12px;">
-        <label for="password">Password <span style="color:var(--text-secondary);font-size:.85rem;">(min 8 characters)</span></label>
+        <label for="password"><span data-i18n="reg.password">Password</span> <span style="color:var(--text-secondary);font-size:.85rem;" data-i18n="reg.password_hint">(min 8 characters)</span></label>
         <input id="password" name="password" type="password" class="form-control"
-               required minlength="8" placeholder="Enter password" autocomplete="new-password">
+               required minlength="8" data-i18n-placeholder="reg.password_ph" placeholder="Enter password" autocomplete="new-password">
       </div>
       <div style="display:flex; gap:10px; margin-top:1rem; align-items:center;">
-        <button type="submit" class="btn btn-primary">Create Account</button>
-        <a href="{{ url_for('email_login') }}" class="btn btn-secondary">Sign In</a>
+        <button type="submit" class="btn btn-primary" data-i18n="reg.submit">Create Account</button>
+        <a href="{{ url_for('email_login') }}" class="btn btn-secondary" data-i18n="reg.sign_in">Sign In</a>
       </div>
     </form>
 
     <div class="tier-info">
-      <strong>Free registered account includes:</strong>
+      <strong data-i18n="reg.free_includes">Free registered account includes:</strong>
       <ul style="margin:6px 0 0 0; padding-left:18px;">
-        <li>AI Chat: 5 queries/day</li>
-        <li>Access to Knowledge Base viewer</li>
-        <li>Full database browsing</li>
+        <li data-i18n="reg.free_chat">AI Chat: 5 queries/day</li>
+        <li data-i18n="reg.free_kb">Access to Knowledge Base viewer</li>
+        <li data-i18n="reg.free_db">Full database browsing</li>
       </ul>
-      <a href="{{ url_for('upgrade_page') }}" style="margin-top:6px; display:inline-block;">View upgrade options →</a>
+      <a href="{{ url_for('upgrade_page') }}" style="margin-top:6px; display:inline-block;" data-i18n="reg.view_upgrade">View upgrade options →</a>
     </div>
   </div>
 </div>
