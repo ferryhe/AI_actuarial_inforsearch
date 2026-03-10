@@ -94,16 +94,16 @@ class EmbeddingGenerator:
         self.config = config or RAGConfig.from_config(storage=storage)
         self.cache = EmbeddingCache(f"{self.config.data_dir}/embeddings_cache") if self.config.embedding_cache_enabled else None
 
-        provider = str(self.config.embedding_provider or "").strip().lower()
-        if not is_embedding_provider_supported(provider):
-            raise EmbeddingException(f"Unsupported embedding provider: {provider}")
+        self.provider = str(self.config.embedding_provider or "").strip().lower()
+        if not is_embedding_provider_supported(self.provider):
+            raise EmbeddingException(f"Unsupported embedding provider: {self.provider}")
 
         # Initialize OpenAI-compatible client for remote providers.
-        if provider != "local":
+        if self.provider != "local":
             api_key = self.config.api_key or self.config.openai_api_key
             if not api_key:
                 raise EmbeddingException(
-                    f"API key required for embedding provider '{provider}' but not provided"
+                    f"API key required for embedding provider '{self.provider}' but not provided"
                 )
 
             client_kwargs = {
@@ -151,7 +151,7 @@ class EmbeddingGenerator:
             
             # Generate embeddings for uncached texts
             if uncached_texts:
-                if self.config.embedding_provider != "local":
+                if self.provider != "local":
                     new_embeddings = self._generate_openai_embeddings(uncached_texts)
                 else:
                     new_embeddings = self._generate_local_embeddings(uncached_texts)
@@ -172,7 +172,7 @@ class EmbeddingGenerator:
             return all_embeddings
         else:
             # No caching
-            if self.config.embedding_provider != "local":
+            if self.provider != "local":
                 return self._generate_openai_embeddings(texts)
             else:
                 return self._generate_local_embeddings(texts)
@@ -306,7 +306,7 @@ class EmbeddingGenerator:
         Returns:
             Embedding dimension
         """
-        if self.config.embedding_provider != "local":
+        if self.provider != "local":
             # OpenAI-compatible embedding dimensions
             if "text-embedding-3-large" in self.config.embedding_model:
                 return 3072

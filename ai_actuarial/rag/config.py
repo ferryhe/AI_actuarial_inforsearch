@@ -15,6 +15,7 @@ from ai_actuarial.ai_runtime import (
     get_ai_function_section,
     get_provider_api_key_env_var,
     get_provider_base_url_env_var,
+    get_provider_default_base_url,
     is_embedding_provider_supported,
     resolve_ai_function_runtime,
 )
@@ -60,6 +61,8 @@ class RAGConfig:
         base_url_env = get_provider_base_url_env_var(provider)
         api_key = str(os.getenv(api_key_env) or "").strip() if api_key_env else ""
         api_base_url = str(os.getenv(base_url_env) or "").strip() if base_url_env else ""
+        if not api_base_url:
+            api_base_url = str(get_provider_default_base_url(provider) or "").strip()
         return cls(
             chunk_strategy=os.getenv("RAG_CHUNK_STRATEGY", "semantic_structure"),
             max_chunk_tokens=int(os.getenv("RAG_MAX_CHUNK_TOKENS", "800")),

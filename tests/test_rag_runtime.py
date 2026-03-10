@@ -64,6 +64,16 @@ class TestRagRuntime(unittest.TestCase):
         self.assertEqual(config.api_base_url, "https://custom.siliconflow.test/v1")
         self.assertEqual(config.openai_api_key, "db-siliconflow-key")
 
+    def test_rag_config_from_env_uses_provider_default_base_url(self):
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "siliconflow"
+        os.environ["SILICONFLOW_API_KEY"] = "env-siliconflow-key"
+
+        config = RAGConfig.from_env()
+
+        self.assertEqual(config.embedding_provider, "siliconflow")
+        self.assertEqual(config.api_key, "env-siliconflow-key")
+        self.assertEqual(config.api_base_url, "https://api.siliconflow.cn/v1")
+
     @patch("ai_actuarial.rag.embeddings.OpenAI")
     def test_embedding_generator_uses_openai_compatible_runtime(self, mock_openai):
         config = RAGConfig(
@@ -82,6 +92,27 @@ class TestRagRuntime(unittest.TestCase):
             timeout=45,
         )
         self.assertIsNotNone(generator.openai_client)
+
+    def test_embedding_generator_normalizes_local_provider(self):
+        config = RAGConfig(
+            embedding_provider=" Local ",
+            embedding_model="local-model",
+            embedding_cache_enabled=False,
+        )
+
+        generator = EmbeddingGenerator(config)
+
+        self.assertEqual(generator.provider, "local")
+        self.assertIsNone(generator.openai_client)
+        with patch.object(
+            EmbeddingGenerator,
+            "_generate_local_embeddings",
+            return_value=[[0.1, 0.2, 0.3]],
+        ) as mock_local:
+            result = generator.generate_embeddings(["hello"])
+
+        mock_local.assert_called_once_with(["hello"])
+        self.assertEqual(result, [[0.1, 0.2, 0.3]])
 
 
 if __name__ == "__main__":

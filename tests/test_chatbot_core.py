@@ -102,6 +102,7 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.llm_provider, "deepseek")
         self.assertEqual(config.api_key, "deepseek-key-123")
         self.assertEqual(config.model, "deepseek-chat")
+        self.assertEqual(config.base_url, "https://api.deepseek.com/v1")
 
     def test_from_env_local_provider_does_not_require_env_mapping(self):
         """Local provider should not crash even though it has no API key env mapping."""

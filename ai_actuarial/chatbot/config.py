@@ -11,6 +11,7 @@ from ai_actuarial.ai_runtime import (
     get_ai_function_section,
     get_provider_api_key_env_var,
     get_provider_base_url_env_var,
+    get_provider_default_base_url,
     is_chat_provider_supported,
     resolve_ai_function_runtime,
 )
@@ -107,6 +108,8 @@ class ChatbotConfig:
                 if base_url_env
                 else None
             )
+            if not self.base_url:
+                self.base_url = get_provider_default_base_url(self.llm_provider)
 
         self.model = os.getenv("CHATBOT_MODEL", self.model)
         self.temperature = float(os.getenv("CHATBOT_TEMPERATURE", str(self.temperature)))
@@ -141,7 +144,7 @@ class ChatbotConfig:
                 str(os.getenv(base_url_env) or "").strip() or None
                 if base_url_env
                 else None
-            ),
+            ) or get_provider_default_base_url(provider),
             _apply_env_defaults=False,
             top_k=_safe_int(os.getenv("CHATBOT_TOP_K"), "CHATBOT_TOP_K", 5),
             similarity_threshold=_safe_float(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -134,6 +135,15 @@ def catalog_with_openai(
     resolved_model = model or runtime.model
     resolved_api_key = api_key or runtime.api_key
     resolved_base_url = base_url or runtime.base_url
+    raw_timeout = runtime.raw_config.get("timeout_seconds")
+    try:
+        timeout_seconds = (
+            float(raw_timeout)
+            if raw_timeout not in (None, "")
+            else float(str(os.getenv("OPENAI_TIMEOUT_SECONDS") or "60").strip())
+        )
+    except (TypeError, ValueError):
+        timeout_seconds = 60.0
 
     if not is_catalog_provider_supported(resolved_provider):
         raise RuntimeError(
@@ -232,7 +242,7 @@ def catalog_with_openai(
         ],
         temperature=0.2,
         response_format={"type": "json_object"},
-        timeout=60.0,
+        timeout=timeout_seconds,
     )
 
     content_text = ""
