@@ -19,6 +19,7 @@ import {
   AlertCircle,
   FileDown,
 } from "lucide-react";
+import { buildFileDetailPath, buildFilePreviewPath, getCurrentRelativeLocation } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
@@ -47,9 +48,9 @@ interface FilesResponse {
   offset: number;
 }
 
-interface Category {
+interface CategoryOption {
   name: string;
-  count: number;
+  count?: number | null;
 }
 
 const PAGE_SIZE = 20;
@@ -139,7 +140,7 @@ export default function DatabasePage() {
   const initializedRef = useRef(false);
 
   const [sources, setSources] = useState<string[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
@@ -180,8 +181,25 @@ export default function DatabasePage() {
     apiGet<{ sources: string[] }>("/api/sources")
       .then((d) => setSources(d.sources || []))
       .catch(() => {});
-    apiGet<{ categories: Category[] }>("/api/categories")
-      .then((d) => setCategories(d.categories || []))
+    apiGet<{ categories: Array<string | CategoryOption> }>("/api/categories?mode=used")
+      .then((d) =>
+        setCategories(
+          (d.categories || [])
+            .map((item) => {
+              if (typeof item === "string") {
+                return { name: item };
+              }
+              if (item && typeof item.name === "string" && item.name.trim()) {
+                return {
+                  name: item.name,
+                  count: typeof item.count === "number" ? item.count : null,
+                };
+              }
+              return null;
+            })
+            .filter((item): item is CategoryOption => item !== null)
+        )
+      )
       .catch(() => {});
   }, []);
 
@@ -292,12 +310,11 @@ export default function DatabasePage() {
   }
 
   function navigateToFile(file: FileItem) {
-    const from = encodeURIComponent(window.location.pathname + window.location.search);
-    navigate(`/file-detail?url=${encodeURIComponent(file.url)}&from=${from}`);
+    navigate(buildFileDetailPath(file.url, getCurrentRelativeLocation()));
   }
 
   function navigateToPreview(file: FileItem) {
-    navigate(`/file-preview?file_url=${encodeURIComponent(file.url)}`);
+    navigate(buildFilePreviewPath(file.url, getCurrentRelativeLocation()));
   }
 
   const activeFilterCount = [source, category, includeDeleted ? "y" : ""].filter(Boolean).length;
@@ -400,7 +417,7 @@ export default function DatabasePage() {
               <option value="__uncategorized__">{t("db.uncategorized")}</option>
               {categories.map((c) => (
                 <option key={c.name} value={c.name}>
-                  {c.name} ({c.count})
+                  {c.count != null ? `${c.name} (${c.count})` : c.name}
                 </option>
               ))}
             </select>

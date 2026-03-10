@@ -13,6 +13,7 @@ import {
   ChevronRight,
   ImageIcon,
 } from "lucide-react";
+import { buildFileDetailPath, getReturnPathFromSearch } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
@@ -282,6 +283,7 @@ export default function FilePreview() {
   const searchParams = new URLSearchParams(searchStr);
   const fileUrl = searchParams.get("file_url") || "";
   const initialChunkSetId = searchParams.get("chunk_set_id") || "";
+  const fromParam = getReturnPathFromSearch(searchStr);
 
   const isDesktop = useMediaQuery("(min-width: 1024px)");
 
@@ -313,6 +315,10 @@ export default function FilePreview() {
     fetchPreview(id);
   }
 
+  function goBack() {
+    navigate(fromParam || buildFileDetailPath(fileUrl));
+  }
+
   if (!fileUrl) {
     return (
       <div className="text-center py-16">
@@ -328,7 +334,7 @@ export default function FilePreview() {
         <Monitor className="w-16 h-16 mx-auto text-muted-foreground/40" />
         <h2 className="text-lg font-semibold">{t("fp.desktop_only_title")}</h2>
         <p className="text-sm text-muted-foreground max-w-md mx-auto">{t("fp.desktop_only_desc")}</p>
-        <button onClick={() => navigate(`/file-detail?url=${encodeURIComponent(fileUrl)}`)}
+        <button onClick={goBack}
           className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline mt-4" data-testid="link-back-detail">
           <ArrowLeft className="w-4 h-4" />{t("fp.back_to_detail")}
         </button>
@@ -349,7 +355,7 @@ export default function FilePreview() {
       <div className="space-y-4 py-16 text-center">
         <AlertCircle className="w-12 h-12 mx-auto text-destructive/60" />
         <p className="text-muted-foreground">{error || "Preview unavailable"}</p>
-        <button onClick={() => navigate(`/file-detail?url=${encodeURIComponent(fileUrl)}`)}
+        <button onClick={goBack}
           className="text-sm text-primary hover:underline" data-testid="link-back-error">
           <ArrowLeft className="w-4 h-4 inline mr-1" />{t("fp.back_to_detail")}
         </button>
@@ -360,7 +366,7 @@ export default function FilePreview() {
   return (
     <div className="space-y-3 h-[calc(100vh-80px)]">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
-        <button onClick={() => navigate(`/file-detail?url=${encodeURIComponent(fileUrl)}`)} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back-preview">
+        <button onClick={goBack} className="p-2 rounded-lg hover:bg-muted transition-colors" data-testid="button-back-preview">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-lg font-serif font-bold truncate" data-testid="text-preview-title">

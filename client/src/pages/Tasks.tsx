@@ -1626,6 +1626,7 @@ export default function Tasks() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [logModal, setLogModal] = useState<{ taskId: string; taskName: string; log: string; task?: HistoryTask } | null>(null);
   const [logModalLoading, setLogModalLoading] = useState(false);
+  const logContentRef = useRef<HTMLPreElement | null>(null);
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -1658,6 +1659,12 @@ export default function Tasks() {
 
   // Auto-fetch history on load
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  useEffect(() => {
+    if (!logModalLoading && logModal && logContentRef.current) {
+      logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
+    }
+  }, [logModalLoading, logModal]);
 
   const viewTaskLog = async (taskId: string | undefined, taskName: string | undefined, task?: HistoryTask) => {
     if (!taskId) return;
@@ -2021,7 +2028,7 @@ export default function Tasks() {
                       <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                     </div>
                   ) : (
-                    <pre className="text-xs font-mono whitespace-pre-wrap break-all text-foreground/80 leading-relaxed max-h-64 overflow-y-auto focus:outline-none focus:ring-1 focus:ring-primary/40 rounded" tabIndex={0} role="region" aria-label="application log">
+                    <pre ref={logContentRef} className="text-xs font-mono whitespace-pre-wrap break-all text-foreground/80 leading-relaxed max-h-64 overflow-y-auto focus:outline-none focus:ring-1 focus:ring-primary/40 rounded" tabIndex={0} role="region" aria-label="application log">
                       {logModal.log}
                     </pre>
                   )}

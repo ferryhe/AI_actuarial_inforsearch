@@ -24,6 +24,7 @@ import {
   Clock,
   CheckCircle2,
 } from "lucide-react";
+import { buildFileDetailPath, buildFilePreviewPath, getReturnPathFromSearch, sanitizeReturnPath } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
@@ -196,11 +197,11 @@ export default function FileDetail() {
   const [, navigate] = useLocation();
   const searchString = useSearch();
   const fileUrl = new URLSearchParams(searchString).get("url") || "";
+  const fromParam = getReturnPathFromSearch(searchString);
 
   function goBack() {
     // If navigated from within the app with an explicit "from" param, use it.
-    const fromParam = new URLSearchParams(searchString).get("from");
-    if (fromParam && fromParam.startsWith("/")) {
+    if (fromParam) {
       navigate(fromParam);
       return;
     }
@@ -208,8 +209,12 @@ export default function FileDetail() {
     try {
       const ref = document.referrer;
       if (ref && new URL(ref).origin === window.location.origin) {
-        window.history.back();
-        return;
+        const refUrl = new URL(ref);
+        const refPath = sanitizeReturnPath(`${refUrl.pathname}${refUrl.search}${refUrl.hash}`);
+        if (refPath && !refPath.startsWith("/file-preview")) {
+          navigate(refPath);
+          return;
+        }
       }
     } catch {
       // URL parse failed — fall through to default
@@ -582,7 +587,7 @@ export default function FileDetail() {
           data-testid="button-download">
           <Download className="w-3.5 h-3.5" />{t("fv.download")}
         </button>
-        <button onClick={() => navigate(`/file-preview?file_url=${encodeURIComponent(file.url)}`)} disabled={!canPreview}
+        <button onClick={() => navigate(buildFilePreviewPath(file.url, buildFileDetailPath(file.url, fromParam)))} disabled={!canPreview}
           className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canPreview && disabledBtn)}
           data-testid="button-preview">
           <Eye className="w-3.5 h-3.5" />{t("fv.preview")}
