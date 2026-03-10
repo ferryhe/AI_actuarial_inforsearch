@@ -446,6 +446,9 @@ def _process_single_row(
     *,
     db_path: str,
     provider: str,
+    catalog_model: str | None = None,
+    catalog_api_key: str | None = None,
+    catalog_base_url: str | None = None,
     input_source: str,
     catalog_system_prompt: str | None = None,
     output_language: str = "auto",
@@ -463,7 +466,9 @@ def _process_single_row(
 
     try:
         provider_norm = (provider or "local").strip().lower()
-        if provider_norm not in {"local", "openai"}:
+        from .ai_runtime import is_catalog_provider_supported
+
+        if provider_norm != "local" and not is_catalog_provider_supported(provider_norm):
             raise RuntimeError(f"unsupported catalog provider: {provider}")
 
         source_norm = (input_source or "source").strip().lower()
@@ -510,6 +515,10 @@ def _process_single_row(
                 content=text,
                 custom_system_prompt=catalog_system_prompt,
                 output_language=output_language,
+                provider=provider_norm,
+                model=catalog_model,
+                api_key=catalog_api_key,
+                base_url=catalog_base_url,
             )
             keywords = llm.keywords
             suggested_title = llm.suggested_title
@@ -601,6 +610,32 @@ def run_incremental_catalog(
         dict with stats: {scanned, processed, written, skipped_ai, errors}
     """
     conn = _connect(db_path)
+    provider_norm = (provider or "local").strip().lower()
+    catalog_model: str | None = None
+    catalog_api_key: str | None = None
+    catalog_base_url: str | None = None
+    if provider_norm != "local":
+        from .ai_runtime import is_catalog_provider_supported, resolve_ai_function_runtime
+        from .storage import Storage
+
+        if not is_catalog_provider_supported(provider_norm):
+            conn.close()
+            raise RuntimeError(f"unsupported catalog provider: {provider}")
+
+        runtime_storage = Storage(db_path)
+        try:
+            runtime = resolve_ai_function_runtime(
+                "catalog",
+                storage=runtime_storage,
+                provider_override=provider_norm,
+            )
+        finally:
+            runtime_storage.close()
+
+        provider = runtime.provider
+        catalog_model = runtime.model
+        catalog_api_key = runtime.api_key
+        catalog_base_url = runtime.base_url
     
     # Ensure output directories exist
     out_jsonl.parent.mkdir(parents=True, exist_ok=True)
@@ -689,6 +724,9 @@ def run_incremental_catalog(
                     max_chars,
                     db_path=db_path,
                     provider=provider,
+                    catalog_model=catalog_model,
+                    catalog_api_key=catalog_api_key,
+                    catalog_base_url=catalog_base_url,
                     input_source=input_source,
                     catalog_system_prompt=catalog_system_prompt,
                     output_language=output_language,
@@ -840,6 +878,32 @@ def run_catalog_for_urls(
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
     conn = _connect(db_path)
+    provider_norm = (provider or "local").strip().lower()
+    catalog_model: str | None = None
+    catalog_api_key: str | None = None
+    catalog_base_url: str | None = None
+    if provider_norm != "local":
+        from .ai_runtime import is_catalog_provider_supported, resolve_ai_function_runtime
+        from .storage import Storage
+
+        if not is_catalog_provider_supported(provider_norm):
+            conn.close()
+            raise RuntimeError(f"unsupported catalog provider: {provider}")
+
+        runtime_storage = Storage(db_path)
+        try:
+            runtime = resolve_ai_function_runtime(
+                "catalog",
+                storage=runtime_storage,
+                provider_override=provider_norm,
+            )
+        finally:
+            runtime_storage.close()
+
+        provider = runtime.provider
+        catalog_model = runtime.model
+        catalog_api_key = runtime.api_key
+        catalog_base_url = runtime.base_url
 
     out_jsonl.parent.mkdir(parents=True, exist_ok=True)
     out_md.parent.mkdir(parents=True, exist_ok=True)
@@ -928,6 +992,9 @@ def run_catalog_for_urls(
                 max_chars,
                 db_path=db_path,
                 provider=provider,
+                catalog_model=catalog_model,
+                catalog_api_key=catalog_api_key,
+                catalog_base_url=catalog_base_url,
                 input_source=input_source,
                 catalog_system_prompt=catalog_system_prompt,
                 output_language=output_language,

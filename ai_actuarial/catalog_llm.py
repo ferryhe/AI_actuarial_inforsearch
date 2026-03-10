@@ -6,7 +6,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from config.settings import get_settings
+from ai_actuarial.ai_runtime import (
+    get_provider_api_key_env_var,
+    is_catalog_provider_supported,
+    resolve_ai_function_runtime,
+)
 
 from .catalog import CATEGORY_RULES
 
@@ -91,10 +95,13 @@ def catalog_with_openai(
     content: str,
     custom_system_prompt: str | None = None,
     output_language: str = "auto",
+    provider: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    storage: Any | None = None,
 ) -> LlmCatalogResult:
-    """Use OpenAI Chat Completions to generate summary/keywords/category.
-
-    Requires `OPENAI_API_KEY` in `.env` (read via `config.settings`).
+    """Use an OpenAI-compatible chat completion API for catalog generation.
 
     Args:
         title: Optional existing document title used as a context hint.
@@ -117,18 +124,37 @@ def catalog_with_openai(
           source website name or publication series header.
         - Use specific domain keyphrases for keywords, avoiding generic words like 'report'.
     """
-    settings = get_settings()
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY missing")
+    runtime = resolve_ai_function_runtime(
+        "catalog",
+        storage=storage,
+        provider_override=provider,
+        model_override=model,
+    )
+    resolved_provider = runtime.provider
+    resolved_model = model or runtime.model
+    resolved_api_key = api_key or runtime.api_key
+    resolved_base_url = base_url or runtime.base_url
+
+    if not is_catalog_provider_supported(resolved_provider):
+        raise RuntimeError(
+            f"Catalog provider '{resolved_provider}' is not supported by the runtime"
+        )
+    if not resolved_api_key:
+        env_var = get_provider_api_key_env_var(resolved_provider) or "API_KEY"
+        raise RuntimeError(
+            f"{env_var} missing for catalog provider '{resolved_provider}'"
+        )
 
     try:
         from openai import OpenAI  # type: ignore
     except Exception as exc:  # pragma: no cover
-        raise RuntimeError("OpenAI catalog provider requires `openai` package") from exc
+        raise RuntimeError("Catalog provider requires `openai` package") from exc
 
     categories = sorted({*(CATEGORY_RULES or {}).keys(), "Other"})
-    model = settings.openai_default_model
-    client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+    client_kwargs = {"api_key": resolved_api_key}
+    if resolved_base_url:
+        client_kwargs["base_url"] = resolved_base_url
+    client = OpenAI(**client_kwargs)
 
     safe_title = (title or "").strip()
     safe_content = (content or "").strip()
@@ -199,14 +225,14 @@ def catalog_with_openai(
     )
 
     completion = client.chat.completions.create(
-        model=model,
+        model=resolved_model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
         response_format={"type": "json_object"},
-        timeout=settings.openai_timeout_seconds,
+        timeout=60.0,
     )
 
     content_text = ""
@@ -227,4 +253,10 @@ def catalog_with_openai(
     category = "; ".join(selected[:3])
     suggested_title = str(payload.get("suggested_title") or "").strip() or None
 
-    return LlmCatalogResult(summary=summary, keywords=keywords, category=category, model=model, suggested_title=suggested_title)
+    return LlmCatalogResult(
+        summary=summary,
+        keywords=keywords,
+        category=category,
+        model=resolved_model,
+        suggested_title=suggested_title,
+    )

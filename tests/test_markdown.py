@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -158,6 +159,37 @@ class TestMarkdownStorage(unittest.TestCase):
             
             markdown_data = self.storage.get_file_markdown(self.test_url)
             self.assertEqual(markdown_data['markdown_source'], source)
+
+
+class TestMarkdownConversionRuntime(unittest.TestCase):
+    def test_convert_file_to_markdown_passes_runtime_kwargs(self):
+        from doc_to_md.registry import ConversionOutput
+        from ai_actuarial.web.app import convert_file_to_markdown
+
+        with patch("doc_to_md.registry.convert_path") as mock_convert_path:
+            mock_convert_path.return_value = ConversionOutput(
+                markdown="# Converted",
+                engine="deepseekocr",
+                model="deepseek-ai/DeepSeek-OCR",
+            )
+
+            result = convert_file_to_markdown(
+                "C:/tmp/test.pdf",
+                "deepseekocr",
+                "application/pdf",
+                model="deepseek-ai/DeepSeek-OCR",
+                api_key="runtime-key",
+                base_url="https://custom.siliconflow.test/v1",
+            )
+
+        mock_convert_path.assert_called_once()
+        _, kwargs = mock_convert_path.call_args
+        self.assertEqual(kwargs["engine"], "deepseekocr")
+        self.assertEqual(kwargs["model"], "deepseek-ai/DeepSeek-OCR")
+        self.assertEqual(kwargs["api_key"], "runtime-key")
+        self.assertEqual(kwargs["base_url"], "https://custom.siliconflow.test/v1")
+        self.assertEqual(result["engine"], "deepseekocr")
+        self.assertEqual(result["model"], "deepseek-ai/DeepSeek-OCR")
 
 
 class TestMarkdownAPI(unittest.TestCase):

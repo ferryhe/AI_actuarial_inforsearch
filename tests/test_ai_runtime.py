@@ -11,6 +11,7 @@ import unittest
 from ai_actuarial.ai_runtime import (
     get_ai_function_section,
     resolve_ai_function_runtime,
+    resolve_ocr_runtime,
 )
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
@@ -77,6 +78,51 @@ class TestAiRuntime(unittest.TestCase):
         self.assertEqual(runtime.api_key, "db-deepseek-key")
         self.assertEqual(runtime.base_url, "https://custom.deepseek.test/v1")
         self.assertEqual(runtime.credential_source, "db")
+
+    def test_resolve_ocr_runtime_uses_provider_mapping(self):
+        """OCR runtime should map ai_config provider to engine/model consistently."""
+        yaml_config = {
+            "ai_config": {
+                "ocr": {
+                    "provider": "mistral",
+                    "model": "mistral-ocr-latest",
+                }
+            }
+        }
+        encrypted = TokenEncryption().encrypt("db-mistral-key")
+        self.storage.upsert_llm_provider(
+            provider="mistral",
+            api_key_encrypted=encrypted,
+            base_url="https://api.mistral.ai/v1",
+        )
+
+        runtime = resolve_ocr_runtime(storage=self.storage, yaml_config=yaml_config)
+
+        self.assertEqual(runtime.provider, "mistral")
+        self.assertEqual(runtime.engine, "mistral")
+        self.assertEqual(runtime.model, "mistral-ocr-latest")
+        self.assertEqual(runtime.api_key, "db-mistral-key")
+
+    def test_resolve_ocr_runtime_engine_override_resets_model(self):
+        """Explicit OCR engine selection should not inherit an incompatible YAML model."""
+        yaml_config = {
+            "ai_config": {
+                "ocr": {
+                    "provider": "mistral",
+                    "model": "mistral-ocr-latest",
+                }
+            }
+        }
+
+        runtime = resolve_ocr_runtime(
+            storage=self.storage,
+            yaml_config=yaml_config,
+            engine_override="marker",
+        )
+
+        self.assertEqual(runtime.provider, "local")
+        self.assertEqual(runtime.engine, "marker")
+        self.assertEqual(runtime.model, "marker")
 
 
 if __name__ == "__main__":

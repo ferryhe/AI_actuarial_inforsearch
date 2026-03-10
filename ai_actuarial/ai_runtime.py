@@ -153,11 +153,33 @@ CHAT_OPENAI_COMPATIBLE_PROVIDERS = {
     "minimax",
 }
 
+EMBEDDING_OPENAI_COMPATIBLE_PROVIDERS = {
+    "openai",
+    "siliconflow",
+    "qwen",
+    "zhipuai",
+    "minimax",
+}
+
 DEFAULT_AI_FUNCTION_CONFIG = {
     "catalog": {"provider": "openai", "model": "gpt-4o-mini"},
     "embeddings": {"provider": "openai", "model": "text-embedding-3-large"},
     "chatbot": {"provider": "openai", "model": "gpt-4-turbo"},
     "ocr": {"provider": "local", "model": "docling"},
+}
+
+OCR_ENGINE_PROVIDER_MAP = {
+    "docling": "local",
+    "marker": "local",
+    "local": "local",
+    "mistral": "mistral",
+    "deepseekocr": "siliconflow",
+}
+
+OCR_PROVIDER_ENGINE_MAP = {
+    "local": "docling",
+    "mistral": "mistral",
+    "siliconflow": "deepseekocr",
 }
 
 
@@ -181,6 +203,17 @@ class AIFunctionRuntime:
     credential_source: str = "none"
 
 
+@dataclass(frozen=True)
+class OCRRuntime:
+    engine: str
+    provider: str
+    model: str
+    api_key: str | None
+    base_url: str | None
+    credential_source: str
+    raw_config: dict[str, Any]
+
+
 def get_provider_api_key_env_var(provider: str | None) -> str | None:
     """Return the env var that stores the provider API key."""
     return PROVIDER_ENV_VARS.get(_normalize_provider(provider))
@@ -201,6 +234,17 @@ def get_provider_default_base_url(provider: str | None) -> str | None:
 def is_chat_provider_supported(provider: str | None) -> bool:
     """Return whether the provider is currently supported by the chat runtime."""
     return _normalize_provider(provider) in CHAT_OPENAI_COMPATIBLE_PROVIDERS
+
+
+def is_catalog_provider_supported(provider: str | None) -> bool:
+    """Return whether the provider is currently supported by the catalog runtime."""
+    return _normalize_provider(provider) in CHAT_OPENAI_COMPATIBLE_PROVIDERS
+
+
+def is_embedding_provider_supported(provider: str | None) -> bool:
+    """Return whether the provider is currently supported by the embedding runtime."""
+    normalized = _normalize_provider(provider)
+    return normalized == "local" or normalized in EMBEDDING_OPENAI_COMPATIBLE_PROVIDERS
 
 
 def get_ai_function_section(
@@ -245,9 +289,18 @@ def resolve_ai_function_runtime(
     *,
     storage: Any | None = None,
     yaml_config: Mapping[str, Any] | None = None,
+    provider_override: str | None = None,
+    model_override: str | None = None,
 ) -> AIFunctionRuntime:
     """Resolve effective runtime config for an AI function."""
     section = get_ai_function_section(function_name, yaml_config=yaml_config)
+    if provider_override:
+        section["provider"] = _normalize_provider(
+            provider_override,
+            default=str(section.get("provider") or "openai"),
+        )
+    if model_override:
+        section["model"] = str(model_override).strip()
     provider = _normalize_provider(
         section.get("provider"),
         default=str(DEFAULT_AI_FUNCTION_CONFIG.get(function_name, {}).get("provider") or "openai"),
@@ -279,6 +332,81 @@ def resolve_ai_function_runtime(
         base_url=credentials.base_url,
         credential_source=credentials.source,
     )
+
+
+def resolve_ocr_runtime(
+    *,
+    storage: Any | None = None,
+    yaml_config: Mapping[str, Any] | None = None,
+    engine_override: str | None = None,
+    model_override: str | None = None,
+) -> OCRRuntime:
+    """Resolve OCR runtime including engine/provider/model mapping."""
+    engine = str(engine_override or "").strip().lower()
+    provider_override = OCR_ENGINE_PROVIDER_MAP.get(engine) if engine else None
+    effective_model_override = model_override
+    if effective_model_override is None and engine:
+        if engine in {"docling", "marker"}:
+            effective_model_override = engine
+        elif engine in {"mistral", "deepseekocr"}:
+            effective_model_override = ""
+
+    runtime = resolve_ai_function_runtime(
+        "ocr",
+        storage=storage,
+        yaml_config=yaml_config,
+        provider_override=provider_override,
+        model_override=effective_model_override,
+    )
+
+    resolved_engine = _resolve_ocr_engine(runtime.provider, runtime.model, engine_override=engine_override)
+    resolved_model = _resolve_ocr_model(runtime.provider, runtime.model, resolved_engine)
+    return OCRRuntime(
+        engine=resolved_engine,
+        provider=runtime.provider,
+        model=resolved_model,
+        api_key=runtime.api_key,
+        base_url=runtime.base_url,
+        credential_source=runtime.credential_source,
+        raw_config=runtime.raw_config,
+    )
+
+
+def apply_runtime_environment(runtime: AIFunctionRuntime) -> None:
+    """Project runtime config into process env for legacy settings-based consumers."""
+    provider = runtime.provider
+    if provider != "local":
+        key_env = get_provider_api_key_env_var(provider)
+        base_env = get_provider_base_url_env_var(provider)
+        if key_env and runtime.api_key:
+            os.environ[key_env] = runtime.api_key
+        if base_env and runtime.base_url:
+            os.environ[base_env] = runtime.base_url
+
+    if runtime.function_name == "embeddings":
+        os.environ["RAG_EMBEDDING_PROVIDER"] = provider
+        os.environ["RAG_EMBEDDING_MODEL"] = runtime.model
+
+    _reload_settings_if_available()
+
+
+def apply_ocr_runtime_environment(runtime: OCRRuntime) -> None:
+    """Project OCR runtime config into env/settings for doc_to_md engines."""
+    if runtime.provider != "local":
+        key_env = get_provider_api_key_env_var(runtime.provider)
+        base_env = get_provider_base_url_env_var(runtime.provider)
+        if key_env and runtime.api_key:
+            os.environ[key_env] = runtime.api_key
+        if base_env and runtime.base_url:
+            os.environ[base_env] = runtime.base_url
+
+    os.environ["DEFAULT_ENGINE"] = runtime.engine
+    if runtime.provider == "mistral":
+        os.environ["MISTRAL_DEFAULT_MODEL"] = runtime.model
+    elif runtime.provider == "siliconflow":
+        os.environ["SILICONFLOW_DEFAULT_MODEL"] = runtime.model
+
+    _reload_settings_if_available()
 
 
 def resolve_provider_credentials(
@@ -365,6 +493,45 @@ def _get_effective_base_url(provider: str) -> str | None:
     base_url_env = get_provider_base_url_env_var(provider)
     env_base_url = str(os.getenv(base_url_env) or "").strip() if base_url_env else ""
     return env_base_url or get_provider_default_base_url(provider)
+
+
+def _resolve_ocr_engine(provider: str, model: str, *, engine_override: str | None = None) -> str:
+    if engine_override:
+        normalized_override = str(engine_override).strip().lower()
+        if normalized_override == "auto":
+            return "docling"
+        return normalized_override
+
+    normalized_provider = _normalize_provider(provider, default="local")
+    if normalized_provider == "local":
+        normalized_model = str(model or "").strip().lower()
+        if normalized_model in {"docling", "marker"}:
+            return normalized_model
+        return OCR_PROVIDER_ENGINE_MAP["local"]
+    return OCR_PROVIDER_ENGINE_MAP.get(normalized_provider, OCR_PROVIDER_ENGINE_MAP["local"])
+
+
+def _resolve_ocr_model(provider: str, model: str, engine: str) -> str:
+    normalized_provider = _normalize_provider(provider, default="local")
+    normalized_model = str(model or "").strip()
+    if normalized_model:
+        return normalized_model
+    if normalized_provider == "mistral":
+        return "mistral-ocr-latest"
+    if normalized_provider == "siliconflow":
+        return "deepseek-ai/DeepSeek-OCR"
+    if engine in {"docling", "marker"}:
+        return engine
+    return DEFAULT_AI_FUNCTION_CONFIG["ocr"]["model"]
+
+
+def _reload_settings_if_available() -> None:
+    try:
+        from config.settings import reload_settings
+
+        reload_settings()
+    except Exception:
+        return
 
 
 def _normalize_provider(provider: str | None, *, default: str = "openai") -> str:

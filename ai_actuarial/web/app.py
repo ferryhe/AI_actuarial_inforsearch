@@ -60,6 +60,7 @@ from ..ai_runtime import (
     PROVIDER_BASE_URL_ENV_VARS,
     PROVIDER_ENV_VARS,
     PROVIDER_STARTUP_ENV_MAP,
+    resolve_ocr_runtime,
 )
 logger = logging.getLogger(__name__)
 
@@ -355,13 +356,24 @@ def _permissions_for_group(group_name: str) -> frozenset[str]:
     return _GROUP_PERMISSIONS.get((group_name or "").strip().lower(), frozenset())
 
 
-def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type: str) -> dict[str, str]:
+def convert_file_to_markdown(
+    file_path: str,
+    conversion_tool: str,
+    content_type: str,
+    *,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, str]:
     """Convert a local file to markdown using `doc_to_md` engines.
 
     Args:
         file_path: Local path to the file to convert.
         conversion_tool: Engine name ('marker', 'docling', 'mistral', 'deepseekocr').
         content_type: MIME type (kept for logging/diagnostics).
+        model: Optional model override for OCR/API engines.
+        api_key: Optional provider API key override.
+        base_url: Optional provider base URL override.
 
     Returns:
         Dict with: markdown, engine, model
@@ -373,14 +385,26 @@ def convert_file_to_markdown(file_path: str, conversion_tool: str, content_type:
     # For compatibility with older clients, treat it as marker.
     if (conversion_tool or "").strip().lower() == "auto":
         conversion_tool = "marker"
-    logger.info("Converting %s using %s (content_type=%s)", file_path, conversion_tool, content_type)
+    logger.info(
+        "Converting %s using %s (content_type=%s, model=%s)",
+        file_path,
+        conversion_tool,
+        content_type,
+        model or "-",
+    )
 
     try:
         from doc_to_md.registry import convert_path
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"doc_to_md package not available: {exc}") from exc
 
-    output = convert_path(Path(file_path), engine=conversion_tool)  # type: ignore[arg-type]
+    output = convert_path(
+        Path(file_path),
+        engine=conversion_tool,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+    )  # type: ignore[arg-type]
     markdown = (output.markdown or "").strip()
     if not markdown:
         raise RuntimeError("Engine returned empty markdown")
@@ -3918,9 +3942,9 @@ sites:
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
                 file_urls = data.get("file_urls", []) or []
-                conversion_tool = data.get("conversion_tool", "docling")
-                if (conversion_tool or "").strip().lower() == "auto":
-                    conversion_tool = "docling"
+                conversion_tool = data.get("conversion_tool", "auto")
+                if not str(conversion_tool or "").strip():
+                    conversion_tool = "auto"
                 overwrite_existing = data.get("overwrite_existing", False)
                 skip_existing = bool(data.get("skip_existing", True))
                 scan_start_index = data.get("scan_start_index")
@@ -3999,6 +4023,22 @@ sites:
                 
                 logger.info(f"Starting markdown conversion for {len(file_urls)} files")
                 _append_task_log(task_id, "INFO", f"Markdown conversion started: files={len(file_urls)}, engine={conversion_tool}, overwrite={overwrite_existing}")
+
+                ocr_runtime = resolve_ocr_runtime(
+                    storage=storage,
+                    engine_override=None
+                    if str(conversion_tool or "").strip().lower() == "auto"
+                    else str(conversion_tool or "").strip().lower(),
+                )
+                _append_task_log(
+                    task_id,
+                    "INFO",
+                    (
+                        "Markdown runtime resolved: "
+                        f"engine={ocr_runtime.engine} provider={ocr_runtime.provider} "
+                        f"model={ocr_runtime.model} credentials={ocr_runtime.credential_source}"
+                    ),
+                )
                 
                 converted_count = 0
                 error_count = 0
@@ -4073,20 +4113,34 @@ sites:
                         
                         # Convert file to markdown using doc_to_md engines.
                         try:
-                            _append_task_log(task_id, "INFO", f"Converting: {file_url} (path={local_path}) engine={conversion_tool}")
+                            _append_task_log(
+                                task_id,
+                                "INFO",
+                                (
+                                    f"Converting: {file_url} (path={local_path}) "
+                                    f"engine={ocr_runtime.engine} model={ocr_runtime.model}"
+                                ),
+                            )
                             conversion = convert_file_to_markdown(
                                 local_path,
-                                conversion_tool,
+                                ocr_runtime.engine,
                                 file_info.get("content_type", ""),
+                                model=ocr_runtime.model,
+                                api_key=ocr_runtime.api_key,
+                                base_url=ocr_runtime.base_url,
                             )
                         except Exception as exc:  # noqa: BLE001
                             error_count += 1
-                            errors.append(f"{file_url}: conversion failed ({conversion_tool})")
-                            _append_task_log(task_id, "ERROR", f"Conversion failed: {file_url} engine={conversion_tool} error={exc}")
+                            errors.append(f"{file_url}: conversion failed ({ocr_runtime.engine})")
+                            _append_task_log(
+                                task_id,
+                                "ERROR",
+                                f"Conversion failed: {file_url} engine={ocr_runtime.engine} error={exc}",
+                            )
                             continue
 
                         markdown_content = conversion["markdown"]
-                        used_engine = conversion.get("engine") or conversion_tool
+                        used_engine = conversion.get("engine") or ocr_runtime.engine
 
                         # Save markdown to database
                         success, error = storage.update_file_markdown(

@@ -79,22 +79,43 @@ def convert_path(
     *,
     engine: EngineName = "auto",
     model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
 ) -> ConversionOutput:
     if engine == "auto":
         last_exc: Exception | None = None
         for candidate in _auto_candidates(path):
             try:
-                return convert_path(path, engine=candidate, model=model)
+                return convert_path(
+                    path,
+                    engine=candidate,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                )
             except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
                 last_exc = exc
                 continue
         raise RuntimeError(f"Auto conversion failed for {path.name}") from last_exc
 
     engine_cls = _import_engine(engine)
+    init_kwargs = {}
+    if model is not None:
+        init_kwargs["model"] = model
+    if api_key is not None:
+        init_kwargs["api_key"] = api_key
+    if base_url is not None:
+        init_kwargs["base_url"] = base_url
     try:
-        engine_instance = engine_cls(model=model) if model is not None else engine_cls()
+        engine_instance = engine_cls(**init_kwargs)
     except TypeError:
-        engine_instance = engine_cls()
+        try:
+            if model is not None:
+                engine_instance = engine_cls(model=model)
+            else:
+                engine_instance = engine_cls()
+        except TypeError:
+            engine_instance = engine_cls()
 
     response = engine_instance.convert(path)
     return ConversionOutput(markdown=response.markdown, engine=str(engine_instance.name), model=str(response.model))
