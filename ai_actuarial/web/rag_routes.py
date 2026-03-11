@@ -96,7 +96,9 @@ def register_rag_routes(
             "name": kb.name,
             "description": kb.description,
             "kb_mode": kb.kb_mode,
+            "embedding_provider": getattr(kb, "embedding_provider", "openai"),
             "embedding_model": kb.embedding_model,
+            "embedding_dimension": getattr(kb, "embedding_dimension", None),
             "chunk_size": kb.chunk_size,
             "chunk_overlap": kb.chunk_overlap,
             "index_type": kb.index_type,
@@ -504,7 +506,7 @@ def register_rag_routes(
             def _run(storage):
                 conn = storage._conn
                 cursor = conn.execute("""
-                    SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
+                    SELECT kb_id, name, description, kb_mode, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
                            index_type, created_at, updated_at, file_count, chunk_count
                     FROM rag_knowledge_bases
                     ORDER BY created_at DESC
@@ -514,9 +516,11 @@ def register_rag_routes(
                     kb = KnowledgeBase(
                         kb_id=row[0], name=row[1], description=row[2],
                         kb_mode=row[3] or "category",
-                        embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
-                        index_type=row[7], created_at=row[8], updated_at=row[9],
-                        file_count=row[10], chunk_count=row[11]
+                        embedding_provider=row[4] or "openai",
+                        embedding_model=row[5], embedding_dimension=row[6],
+                        chunk_size=row[7], chunk_overlap=row[8],
+                        index_type=row[9], created_at=row[10], updated_at=row[11],
+                        file_count=row[12], chunk_count=row[13]
                     )
                     if kb_mode and kb.kb_mode != kb_mode:
                         continue
@@ -562,12 +566,13 @@ def register_rag_routes(
             def _run(kb_manager, _storage):
                 if kb_manager.get_kb(kb_id):
                     return _api_error(f"Knowledge base '{kb_id}' already exists", status_code=409)
+                runtime_embedding = kb_manager.get_current_embedding_metadata()
                 kb_manager.create_kb(
                     kb_id=kb_id,
                     name=name,
                     description=_norm(data.get("description")),
                     kb_mode=kb_mode,
-                    embedding_model=_norm(data.get("embedding_model") or "text-embedding-3-large"),
+                    embedding_model=runtime_embedding["model"],
                     chunk_size=chunk_size,
                     chunk_overlap=chunk_overlap,
                 )

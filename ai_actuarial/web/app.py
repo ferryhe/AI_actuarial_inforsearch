@@ -3104,6 +3104,7 @@ sites:
 
             config_data = _load_yaml(_get_sites_config_path(), default={})
             config_data.setdefault("ai_config", {})
+            previous_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
             
             # Update each AI function configuration with validation
             for function in ["catalog", "embeddings", "chatbot", "ocr"]:
@@ -3195,7 +3196,41 @@ sites:
                     logger.error(f"Failed to invalidate config cache: {cache_err}")
                     raise
             
-            return jsonify({"success": True})
+            current_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
+            embeddings_changed = (
+                str(previous_embeddings.get("provider") or "").strip().lower()
+                != str(current_embeddings.get("provider") or "").strip().lower()
+                or str(previous_embeddings.get("model") or "").strip()
+                != str(current_embeddings.get("model") or "").strip()
+            )
+            response_payload: dict[str, Any] = {"success": True}
+            if embeddings_changed:
+                affected_kb_ids: list[str] = []
+                try:
+                    storage = Storage(db_path)
+                    try:
+                        rows = storage._conn.execute(
+                            """
+                            SELECT DISTINCT kb_id
+                            FROM rag_knowledge_bases
+                            WHERE COALESCE(file_count, 0) > 0
+                               OR COALESCE(chunk_count, 0) > 0
+                            """
+                        ).fetchall()
+                        affected_kb_ids = [str(row[0]) for row in rows if row and row[0]]
+                    finally:
+                        storage.close()
+                except Exception:
+                    logger.warning("Failed to enumerate KBs affected by embeddings config change", exc_info=True)
+                response_payload.update(
+                    {
+                        "rebuild_required": True,
+                        "affected_kb_count": len(affected_kb_ids),
+                        "affected_kb_ids": affected_kb_ids,
+                        "message": "Embeddings configuration changed. Rebuild all existing knowledge base indexes.",
+                    }
+                )
+            return jsonify(response_payload)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
@@ -4549,6 +4584,19 @@ sites:
                     if message:
                         _append_task_log(task_id, "INFO", message)
 
+                current_embedding = kb_manager.sync_kb_embedding_metadata(kb_id)
+                kb = kb_manager.get_kb(kb_id)
+                if kb:
+                    _append_task_log(
+                        task_id,
+                        "INFO",
+                        (
+                            "Using embeddings "
+                            f"{current_embedding['provider']}/{current_embedding['model']} "
+                            f"(dim={current_embedding['dimension']}) for KB {kb_id}"
+                        ),
+                    )
+
                 pipeline = IndexingPipeline(
                     kb_manager,
                     progress_callback=rag_progress,
@@ -4566,7 +4614,9 @@ sites:
                         index_path = str(Path(kb_manager.config.data_dir) / kb_id / "index.faiss")
                         storage.create_kb_index_version(
                             kb_id=kb_id,
+                            embedding_provider=kb.embedding_provider,
                             embedding_model=kb.embedding_model,
+                            embedding_dimension=kb.embedding_dimension,
                             index_type=kb.index_type,
                             chunk_count=int(stats.get("total_chunks", 0) or 0),
                             status="ready",

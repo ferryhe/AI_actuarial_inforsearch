@@ -176,7 +176,9 @@ class KBIndexVersion(Base):
     
     index_version_id = Column(Text, primary_key=True)
     kb_id = Column(Text, nullable=False)
+    embedding_provider = Column(Text, nullable=False, default="openai")
     embedding_model = Column(Text, nullable=False)
+    embedding_dimension = Column(Integer)
     index_type = Column(Text, nullable=False)
     status = Column(Text, nullable=False)
     artifact_path = Column(Text)

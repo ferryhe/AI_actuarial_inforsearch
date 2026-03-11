@@ -82,6 +82,10 @@ class IndexingPipeline:
         kb = self.kb_manager.get_kb(kb_id)
         if not kb:
             raise RAGException(f"Knowledge base '{kb_id}' not found")
+        self.kb_manager.sync_kb_embedding_metadata(kb_id)
+        kb = self.kb_manager.get_kb(kb_id)
+        if not kb:
+            raise RAGException(f"Knowledge base '{kb_id}' not found")
 
         stats = {
             'total_files': len(file_urls),

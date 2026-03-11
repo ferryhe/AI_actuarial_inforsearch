@@ -83,7 +83,10 @@ class TestChatbotIntegration(unittest.TestCase):
         
         # Now we can create retriever - KBmanager and Embeddings won't actually initialize
         self.retriever = RAGRetriever(self.storage, self.config)
-        
+        self.retriever.embedding_generator.provider = "openai"
+        self.retriever.embedding_generator.config.embedding_model = "text-embedding-3-small"
+        self.retriever.embedding_generator.get_embedding_dimension.return_value = 1536
+
         # Mock the kb_manager instance methods we need
         from ai_actuarial.rag.knowledge_base import KnowledgeBase
         self.mock_kb1 = KnowledgeBase(
