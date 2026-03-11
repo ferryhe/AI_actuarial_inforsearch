@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Iterable
 import hashlib
 
+from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
+
 
 def _is_internal_category_label(category: str) -> bool:
     value = str(category or "").strip()
@@ -429,7 +431,9 @@ class Storage:
             CREATE TABLE IF NOT EXISTS kb_index_versions (
                 index_version_id TEXT PRIMARY KEY,
                 kb_id TEXT NOT NULL,
+                embedding_provider TEXT NOT NULL DEFAULT 'openai',
                 embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
                 index_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 artifact_path TEXT,
@@ -486,6 +490,40 @@ class Storage:
             ON kb_index_versions(kb_id)
             """
         )
+        self._ensure_columns(
+            "kb_index_versions",
+            {
+                "embedding_provider": "TEXT NOT NULL DEFAULT 'openai'",
+                "embedding_dimension": "INTEGER",
+            },
+        )
+        rows = self._conn.execute(
+            """
+            SELECT index_version_id, embedding_provider, embedding_model, embedding_dimension
+            FROM kb_index_versions
+            """
+        ).fetchall()
+        for row in rows:
+            index_version_id, provider, model, dimension = row
+            resolved_provider = (
+                str(provider or "").strip().lower()
+                or infer_embedding_provider(model, fallback="openai")
+                or "openai"
+            )
+            resolved_dimension = (
+                int(dimension)
+                if dimension not in (None, "")
+                else infer_embedding_dimension(model)
+            )
+            if resolved_provider != str(provider or "").strip().lower() or resolved_dimension != dimension:
+                self._conn.execute(
+                    """
+                    UPDATE kb_index_versions
+                    SET embedding_provider = ?, embedding_dimension = ?
+                    WHERE index_version_id = ?
+                    """,
+                    (resolved_provider, resolved_dimension, index_version_id),
+                )
         self._ensure_columns(
             "kb_chunk_bindings",
             {
@@ -2343,12 +2381,26 @@ class Storage:
                 b.kb_id,
                 COUNT(DISTINCT b.chunk_set_id) AS chunk_set_count,
                 COALESCE((
+                    SELECT iv.embedding_provider
+                    FROM kb_index_versions iv
+                    WHERE iv.kb_id = b.kb_id
+                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
+                    LIMIT 1
+                ), '') AS embedding_provider,
+                COALESCE((
                     SELECT iv.embedding_model
                     FROM kb_index_versions iv
                     WHERE iv.kb_id = b.kb_id
                     ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
                     LIMIT 1
                 ), '') AS embedding_model,
+                (
+                    SELECT iv.embedding_dimension
+                    FROM kb_index_versions iv
+                    WHERE iv.kb_id = b.kb_id
+                    ORDER BY COALESCE(iv.built_at, iv.created_at) DESC
+                    LIMIT 1
+                ) AS embedding_dimension,
                 (
                     SELECT COALESCE(iv.built_at, iv.created_at)
                     FROM kb_index_versions iv
@@ -2376,9 +2428,11 @@ class Storage:
                 {
                     "kb_id": row[0],
                     "chunk_set_count": row[1] or 0,
-                    "embedding_model": row[2] or "",
-                    "indexed_at": row[3],
-                    "indexed_chunk_count": row[4] or 0,
+                    "embedding_provider": row[2] or "",
+                    "embedding_model": row[3] or "",
+                    "embedding_dimension": row[4],
+                    "indexed_at": row[5],
+                    "indexed_chunk_count": row[6] or 0,
                 }
             )
         return out
@@ -2400,7 +2454,7 @@ class Storage:
         )
         latest = self._conn.execute(
             """
-            SELECT embedding_model, index_type, status, chunk_count, built_at, created_at
+            SELECT embedding_provider, embedding_model, embedding_dimension, index_type, status, chunk_count, built_at, created_at
             FROM kb_index_versions
             WHERE kb_id = ?
             ORDER BY COALESCE(built_at, created_at) DESC
@@ -2450,7 +2504,7 @@ class Storage:
             or 0
         )
         has_index = bool(latest)
-        latest_index_time = (latest[4] or latest[5]) if latest else None
+        latest_index_time = (latest[6] or latest[7]) if latest else None
         needs_reindex = bool(file_count > 0 and (not has_index or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)))
         return {
             "kb_id": kb_id,
@@ -2466,11 +2520,13 @@ class Storage:
             "new_chunk_versions_available": outdated_binding_count > 0,
             "needs_reindex": needs_reindex,
             "latest_index": {
-                "embedding_model": latest[0],
-                "index_type": latest[1],
-                "status": latest[2],
-                "chunk_count": latest[3] or 0,
-                "built_at": latest[4] or latest[5],
+                "embedding_provider": latest[0] or infer_embedding_provider(latest[1], fallback="openai") or "openai",
+                "embedding_model": latest[1],
+                "embedding_dimension": latest[2] if latest[2] not in (None, "") else infer_embedding_dimension(latest[1]),
+                "index_type": latest[3],
+                "status": latest[4],
+                "chunk_count": latest[5] or 0,
+                "built_at": latest[6] or latest[7],
             }
             if latest
             else None,
@@ -2537,6 +2593,8 @@ class Storage:
         embedding_model: str,
         index_type: str,
         chunk_count: int,
+        embedding_provider: str = "openai",
+        embedding_dimension: int | None = None,
         status: str = "ready",
         artifact_path: str = "",
         chunk_ids: list[str] | None = None,
@@ -2565,15 +2623,17 @@ class Storage:
             self._conn.execute(
                 """
                 INSERT INTO kb_index_versions (
-                    index_version_id, kb_id, embedding_model, index_type, status,
+                    index_version_id, kb_id, embedding_provider, embedding_model, embedding_dimension, index_type, status,
                     artifact_path, chunk_count, built_at, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     index_version_id,
                     kb_id,
+                    str(embedding_provider or "openai").strip().lower() or "openai",
                     embedding_model,
+                    embedding_dimension,
                     index_type,
                     status,
                     artifact_path,
@@ -2594,7 +2654,9 @@ class Storage:
         return {
             "index_version_id": index_version_id,
             "kb_id": kb_id,
+            "embedding_provider": str(embedding_provider or "openai").strip().lower() or "openai",
             "embedding_model": embedding_model,
+            "embedding_dimension": embedding_dimension,
             "index_type": index_type,
             "status": status,
             "artifact_path": artifact_path,

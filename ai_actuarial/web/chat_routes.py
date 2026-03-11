@@ -526,6 +526,38 @@ def register_chat_routes(
             finally:
                 storage.close()
         
+        except chatbot_exceptions.EmbeddingConfigurationMismatchException as e:
+            logger.warning(
+                "Chat query blocked by embedding mismatch for KB %s: current=%s/%s/%s index=%s/%s/%s",
+                e.kb_id,
+                e.current_provider,
+                e.current_model,
+                e.current_dimension,
+                e.index_provider,
+                e.index_model,
+                e.index_dimension,
+            )
+            return jsonify(
+                {
+                    "success": False,
+                    "code": "KB_EMBEDDING_MISMATCH",
+                    "error": "知识库索引与当前 embedding 配置不兼容，请先重建索引。",
+                    "data": {
+                        "kb_id": e.kb_id,
+                        "current_embedding": {
+                            "provider": e.current_provider,
+                            "model": e.current_model,
+                            "dimension": e.current_dimension,
+                        },
+                        "index_embedding": {
+                            "provider": e.index_provider,
+                            "model": e.index_model,
+                            "dimension": e.index_dimension,
+                        },
+                        "needs_reindex": e.needs_reindex,
+                    },
+                }
+            ), 409
         except Exception as e:
             logger.exception("Error processing chat query")
             return _api_error(
@@ -986,17 +1018,66 @@ def register_chat_routes(
             try:
                 kb_manager = rag_knowledge_base.KnowledgeBaseManager(storage)
                 kbs = kb_manager.list_kbs()
+                current_embedding = kb_manager.get_current_embedding_metadata()
                 
                 # Format for frontend
-                kb_list = [{
-                    "kb_id": kb.kb_id,
-                    "name": kb.name,
-                    "description": kb.description,
-                    "file_count": kb.file_count,
-                    "chunk_count": kb.chunk_count
-                } for kb in kbs]
+                kb_list = []
+                for kb in kbs:
+                    composition = storage.get_kb_composition_status(kb.kb_id)
+                    latest_index = composition.get("latest_index") if isinstance(composition, dict) else None
+                    index_provider = kb.embedding_provider
+                    index_model = kb.embedding_model
+                    index_dimension = kb.embedding_dimension
+                    index_status = ""
+                    index_built_at = None
+                    if isinstance(latest_index, dict):
+                        index_provider = latest_index.get("embedding_provider") or index_provider
+                        index_model = latest_index.get("embedding_model") or index_model
+                        index_dimension = latest_index.get("embedding_dimension")
+                        index_status = latest_index.get("status") or ""
+                        index_built_at = latest_index.get("built_at")
+
+                    embedding_compatible = True
+                    if index_provider and current_embedding.get("provider"):
+                        embedding_compatible = (
+                            str(index_provider).strip().lower()
+                            == str(current_embedding["provider"]).strip().lower()
+                        )
+                    if embedding_compatible and index_model and current_embedding.get("model"):
+                        embedding_compatible = (
+                            str(index_model).strip() == str(current_embedding["model"]).strip()
+                        )
+                    if (
+                        embedding_compatible
+                        and index_dimension not in (None, "")
+                        and current_embedding.get("dimension") not in (None, "")
+                    ):
+                        embedding_compatible = int(index_dimension) == int(current_embedding["dimension"])
+
+                    kb_list.append({
+                        "kb_id": kb.kb_id,
+                        "name": kb.name,
+                        "description": kb.description,
+                        "file_count": kb.file_count,
+                        "chunk_count": kb.chunk_count,
+                        "embedding_provider": kb.embedding_provider,
+                        "embedding_model": kb.embedding_model,
+                        "embedding_dimension": kb.embedding_dimension,
+                        "index_embedding_provider": index_provider,
+                        "index_embedding_model": index_model,
+                        "index_embedding_dimension": index_dimension,
+                        "index_status": index_status,
+                        "index_built_at": index_built_at,
+                        "needs_reindex": bool(composition.get("needs_reindex")) or not embedding_compatible,
+                        "embedding_compatible": embedding_compatible,
+                    })
                 
-                return _api_success({"knowledge_bases": kb_list})
+                return _api_success(
+                    {
+                        "knowledge_bases": kb_list,
+                        "current_embeddings": current_embedding,
+                    }
+                )
                 
             finally:
                 storage.close()

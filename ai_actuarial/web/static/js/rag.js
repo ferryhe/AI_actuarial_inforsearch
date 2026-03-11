@@ -917,47 +917,27 @@
             const sel = document.getElementById('rag-create-embedding-model');
             if (!sel) return;
             try {
-                const [modelsPayload, providersPayload] = await Promise.all([
-                    fetch('/api/config/ai-models').then(r => { if (!r.ok) throw new Error(`ai-models: ${r.status}`); return r.json(); }),
-                    fetch('/api/config/llm-providers').then(r => { if (!r.ok) throw new Error(`llm-providers: ${r.status}`); return r.json(); }),
-                ]);
-                const configured = new Set(['local']);
-                (providersPayload.providers || []).forEach(p => configured.add(p.provider));
-
-                const available = modelsPayload.available || {};
-                const currentEmbedModel = modelsPayload.current?.embeddings?.model || '';
-                // Restrict to the active embeddings provider so the model list
-                // matches what the indexing pipeline will actually use.
-                const activeEmbedProvider = modelsPayload.current?.embeddings?.provider || '';
-
-                const embeddingModels = [];
-                Object.keys(available).forEach(provider => {
-                    if (!configured.has(provider)) return;
-                    // When an active embeddings provider is known, only show its models.
-                    if (activeEmbedProvider && provider !== activeEmbedProvider) return;
-                    (available[provider] || []).forEach(m => {
-                        if ((m.types || []).includes('embeddings')) {
-                            embeddingModels.push({ value: m.name, label: m.display_name || m.name });
-                        }
-                    });
-                });
-
-                if (embeddingModels.length === 0) {
-                    embeddingModels.push({ value: 'text-embedding-3-large', label: 'text-embedding-3-large' });
-                }
-
+                const modelsPayload = await fetch('/api/config/ai-models').then(r => { if (!r.ok) throw new Error(`ai-models: ${r.status}`); return r.json(); });
+                const currentEmbedProvider = modelsPayload.current?.embeddings?.provider || 'openai';
+                const currentEmbedModel = modelsPayload.current?.embeddings?.model || 'text-embedding-3-large';
+                const embeddingModels = [
+                    {
+                        value: currentEmbedModel,
+                        label: `${currentEmbedProvider} / ${currentEmbedModel}`,
+                    },
+                ];
                 sel.innerHTML = '';
                 embeddingModels.forEach(m => {
                     const opt = document.createElement('option');
                     opt.value = m.value;
                     opt.textContent = m.label;
-                    if (m.value === currentEmbedModel) opt.selected = true;
+                    opt.selected = true;
                     sel.appendChild(opt);
                 });
             } catch (err) {
                 console.error('Failed to load embedding models:', err);
                 // Always replace the placeholder so the UI is not stuck.
-                sel.innerHTML = '<option value="text-embedding-3-large">text-embedding-3-large</option><option value="text-embedding-3-small">text-embedding-3-small</option>';
+                sel.innerHTML = '<option value="text-embedding-3-large">openai / text-embedding-3-large</option>';
             }
         };
 

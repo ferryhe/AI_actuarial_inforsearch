@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import KnowledgeBaseException
 from ai_actuarial.rag.semantic_chunking import SemanticChunker
@@ -38,7 +39,9 @@ class KnowledgeBase:
         name: str,
         description: str = "",
         kb_mode: str = "category",  # "category" (auto-sync) or "manual" (explicit selection)
+        embedding_provider: str = "openai",
         embedding_model: str = "text-embedding-3-large",
+        embedding_dimension: Optional[int] = None,
         chunk_size: int = 800,
         chunk_overlap: int = 100,
         index_type: str = "Flat",
@@ -52,7 +55,9 @@ class KnowledgeBase:
         self.name = name
         self.description = description
         self.kb_mode = kb_mode
+        self.embedding_provider = str(embedding_provider or "openai").strip().lower() or "openai"
         self.embedding_model = embedding_model
+        self.embedding_dimension = int(embedding_dimension) if embedding_dimension not in (None, "") else None
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.index_type = index_type
@@ -73,7 +78,9 @@ class KnowledgeBase:
             'name': self.name,
             'description': self.description,
             'kb_mode': self.kb_mode,
+            'embedding_provider': self.embedding_provider,
             'embedding_model': self.embedding_model,
+            'embedding_dimension': self.embedding_dimension,
             'chunk_size': self.chunk_size,
             'chunk_overlap': self.chunk_overlap,
             'index_type': self.index_type,
@@ -152,7 +159,9 @@ class KnowledgeBaseManager:
                 name TEXT NOT NULL,
                 description TEXT,
                 kb_mode TEXT DEFAULT 'category',
+                embedding_provider TEXT DEFAULT 'openai',
                 embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
                 chunk_size INTEGER NOT NULL,
                 chunk_overlap INTEGER NOT NULL,
                 index_type TEXT NOT NULL,
@@ -169,7 +178,9 @@ class KnowledgeBaseManager:
             {
                 "description": "TEXT DEFAULT ''",
                 "kb_mode": "TEXT DEFAULT 'category'",
+                "embedding_provider": "TEXT NOT NULL DEFAULT 'openai'",
                 "embedding_model": "TEXT NOT NULL DEFAULT 'text-embedding-3-large'",
+                "embedding_dimension": "INTEGER",
                 "chunk_size": "INTEGER NOT NULL DEFAULT 800",
                 "chunk_overlap": "INTEGER NOT NULL DEFAULT 100",
                 "index_type": "TEXT NOT NULL DEFAULT 'Flat'",
@@ -202,6 +213,34 @@ class KnowledgeBaseManager:
                 "indexed_at": "TEXT",
             },
         )
+
+        rows = conn.execute(
+            """
+            SELECT kb_id, embedding_provider, embedding_model, embedding_dimension
+            FROM rag_knowledge_bases
+            """
+        ).fetchall()
+        for row in rows:
+            kb_id, provider, model, dimension = row
+            resolved_provider = (
+                str(provider or "").strip().lower()
+                or infer_embedding_provider(model, fallback=self.config.embedding_provider)
+                or "openai"
+            )
+            resolved_dimension = (
+                int(dimension)
+                if dimension not in (None, "")
+                else infer_embedding_dimension(model)
+            )
+            if resolved_provider != str(provider or "").strip().lower() or resolved_dimension != dimension:
+                conn.execute(
+                    """
+                    UPDATE rag_knowledge_bases
+                    SET embedding_provider = ?, embedding_dimension = ?
+                    WHERE kb_id = ?
+                    """,
+                    (resolved_provider, resolved_dimension, kb_id),
+                )
 
         # rag_chunks table (for debugging and granular tracking)
         conn.execute("""
@@ -301,14 +340,18 @@ class KnowledgeBaseManager:
         existing = self.get_kb(kb_id)
         if existing:
             raise KnowledgeBaseException(f"Knowledge base '{kb_id}' already exists")
-        
+
+        current_embedding = self.get_current_embedding_metadata()
+
         # Create KB object with defaults from config
         kb = KnowledgeBase(
             kb_id=kb_id,
             name=name,
             description=description,
             kb_mode=kb_mode,
-            embedding_model=embedding_model or self.config.embedding_model,
+            embedding_provider=current_embedding["provider"],
+            embedding_model=current_embedding["model"],
+            embedding_dimension=current_embedding["dimension"],
             chunk_size=chunk_size or self.config.max_chunk_tokens,
             chunk_overlap=chunk_overlap or 100,
             index_type=index_type or self.config.index_type
@@ -322,12 +365,12 @@ class KnowledgeBaseManager:
         conn = self.storage._conn
         conn.execute("""
             INSERT INTO rag_knowledge_bases 
-            (kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap, 
+            (kb_id, name, description, kb_mode, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
              index_type, created_at, updated_at, file_count, chunk_count,
              index_path, metadata_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            kb.kb_id, kb.name, kb.description, kb.kb_mode, kb.embedding_model,
+            kb.kb_id, kb.name, kb.description, kb.kb_mode, kb.embedding_provider, kb.embedding_model, kb.embedding_dimension,
             kb.chunk_size, kb.chunk_overlap, kb.index_type,
             kb.created_at, kb.updated_at, kb.file_count, kb.chunk_count,
             str(kb_dir / "index.faiss"),
@@ -341,7 +384,7 @@ class KnowledgeBaseManager:
         """Get knowledge base by ID."""
         conn = self.storage._conn
         cursor = conn.execute("""
-            SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
+            SELECT kb_id, name, description, kb_mode, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             WHERE kb_id = ?
@@ -354,16 +397,19 @@ class KnowledgeBaseManager:
         return KnowledgeBase(
             kb_id=row[0], name=row[1], description=row[2],
             kb_mode=row[3] or "category",  # Default to "category" for existing KBs
-            embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
-            index_type=row[7], created_at=row[8], updated_at=row[9],
-            file_count=row[10], chunk_count=row[11]
+            embedding_provider=row[4] or infer_embedding_provider(row[5], fallback=self.config.embedding_provider) or "openai",
+            embedding_model=row[5],
+            embedding_dimension=row[6] if row[6] not in (None, "") else infer_embedding_dimension(row[5]),
+            chunk_size=row[7], chunk_overlap=row[8],
+            index_type=row[9], created_at=row[10], updated_at=row[11],
+            file_count=row[12], chunk_count=row[13]
         )
     
     def list_kbs(self) -> List[KnowledgeBase]:
         """List all knowledge bases."""
         conn = self.storage._conn
         cursor = conn.execute("""
-            SELECT kb_id, name, description, kb_mode, embedding_model, chunk_size, chunk_overlap,
+            SELECT kb_id, name, description, kb_mode, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
@@ -374,9 +420,12 @@ class KnowledgeBaseManager:
             kbs.append(KnowledgeBase(
                 kb_id=row[0], name=row[1], description=row[2],
                 kb_mode=row[3] or "category",  # Default to "category" for existing KBs
-                embedding_model=row[4], chunk_size=row[5], chunk_overlap=row[6],
-                index_type=row[7], created_at=row[8], updated_at=row[9],
-                file_count=row[10], chunk_count=row[11]
+                embedding_provider=row[4] or infer_embedding_provider(row[5], fallback=self.config.embedding_provider) or "openai",
+                embedding_model=row[5],
+                embedding_dimension=row[6] if row[6] not in (None, "") else infer_embedding_dimension(row[5]),
+                chunk_size=row[7], chunk_overlap=row[8],
+                index_type=row[9], created_at=row[10], updated_at=row[11],
+                file_count=row[12], chunk_count=row[13]
             ))
         
         return kbs
@@ -419,6 +468,44 @@ class KnowledgeBaseManager:
         conn.commit()
         
         return True
+
+    def get_current_embedding_metadata(self) -> Dict[str, Any]:
+        """Return the runtime embedding metadata that new indexes should use."""
+        provider = str(self.config.embedding_provider or "openai").strip().lower() or "openai"
+        model = str(self.config.embedding_model or "text-embedding-3-large").strip() or "text-embedding-3-large"
+        dimension = infer_embedding_dimension(model)
+        if self.embedding_generator is not None:
+            provider = str(self.embedding_generator.provider or provider).strip().lower() or provider
+            try:
+                dimension = self.embedding_generator.get_embedding_dimension()
+            except Exception:
+                logger.warning("Failed to determine embedding dimension from generator; using inferred value", exc_info=True)
+        return {
+            "provider": provider,
+            "model": model,
+            "dimension": dimension,
+        }
+
+    def sync_kb_embedding_metadata(self, kb_id: str) -> Dict[str, Any]:
+        """Persist the currently configured embedding runtime onto a KB row."""
+        metadata = self.get_current_embedding_metadata()
+        timestamp = KnowledgeBase._get_timestamp()
+        self.storage._conn.execute(
+            """
+            UPDATE rag_knowledge_bases
+            SET embedding_provider = ?, embedding_model = ?, embedding_dimension = ?, updated_at = ?
+            WHERE kb_id = ?
+            """,
+            (
+                metadata["provider"],
+                metadata["model"],
+                metadata["dimension"],
+                timestamp,
+                kb_id,
+            ),
+        )
+        self.storage._conn.commit()
+        return metadata
     
     def delete_kb(self, kb_id: str) -> bool:
         """
@@ -632,7 +719,9 @@ class KnowledgeBaseManager:
             'total_chunks': kb.chunk_count,
             'created_at': kb.created_at,
             'updated_at': kb.updated_at,
+            'embedding_provider': kb.embedding_provider,
             'embedding_model': kb.embedding_model,
+            'embedding_dimension': kb.embedding_dimension,
             'chunk_size': kb.chunk_size,
             'index_type': kb.index_type
         }

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 import numpy as np
 
+from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
 from ai_actuarial.rag.vector_store import VectorStore
@@ -19,6 +20,7 @@ from ai_actuarial.chatbot.exceptions import (
     RetrievalException,
     InvalidKBException,
     NoResultsException,
+    EmbeddingConfigurationMismatchException,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,6 +55,14 @@ class RAGRetriever:
         
         # Cache for loaded vector stores
         self._vector_store_cache: Dict[str, VectorStore] = {}
+
+    def get_current_embedding_metadata(self) -> Dict[str, Any]:
+        """Return the current query embedding runtime used by chat retrieval."""
+        return {
+            "provider": str(self.embedding_generator.provider or "openai").strip().lower() or "openai",
+            "model": str(self.embedding_generator.config.embedding_model or "text-embedding-3-large").strip() or "text-embedding-3-large",
+            "dimension": self.embedding_generator.get_embedding_dimension(),
+        }
     
     def retrieve(
         self,
@@ -101,6 +111,13 @@ class RAGRetriever:
                 if not kb:
                     raise InvalidKBException(f"Knowledge base '{kb_id}' not found")
             
+            current_embedding = self.get_current_embedding_metadata()
+            for kb_id in kb_ids:
+                kb = self.kb_manager.get_kb(kb_id)
+                if not kb:
+                    raise InvalidKBException(f"Knowledge base '{kb_id}' not found")
+                self._ensure_kb_embedding_compatibility(kb, current_embedding)
+
             # Generate query embedding
             logger.info(f"Generating embedding for query: {query[:100]}...")
             query_embedding = self.embedding_generator.generate_single(query)
@@ -124,7 +141,7 @@ class RAGRetriever:
             logger.info(f"Retrieved {len(results)} chunks from {len(kb_ids)} KB(s)")
             return results
             
-        except (InvalidKBException, NoResultsException):
+        except (InvalidKBException, NoResultsException, EmbeddingConfigurationMismatchException):
             raise
         except Exception as e:
             logger.error(f"Retrieval failed: {e}")
@@ -403,11 +420,18 @@ class RAGRetriever:
             )
         
         # Load vector store
-        # Get embedding dimension from model
-        dimension = self._get_embedding_dimension(kb.embedding_model)
-        
+        composition = self.storage.get_kb_composition_status(kb_id)
+        latest_index = composition.get("latest_index") if isinstance(composition, dict) else None
+        dimension = None
+        if isinstance(latest_index, dict):
+            dimension = latest_index.get("embedding_dimension")
+        if dimension in (None, ""):
+            dimension = getattr(kb, "embedding_dimension", None) or infer_embedding_dimension(kb.embedding_model)
+        if dimension in (None, ""):
+            raise RetrievalException(f"Unable to determine index dimension for KB '{kb_id}'")
+
         vector_store = VectorStore(
-            dimension=dimension,
+            dimension=int(dimension),
             index_path=str(index_path)
         )
         
@@ -416,17 +440,57 @@ class RAGRetriever:
         
         return vector_store
     
-    def _get_embedding_dimension(self, model: str) -> int:
-        """Get embedding dimension for a model."""
-        # Common embedding dimensions
-        dimensions = {
-            'text-embedding-3-large': 3072,
-            'text-embedding-3-small': 1536,
-            'text-embedding-ada-002': 1536,
-            'all-MiniLM-L6-v2': 384,
-        }
-        
-        return dimensions.get(model, 1536)  # Default to 1536
+    def _ensure_kb_embedding_compatibility(
+        self,
+        kb,
+        current_embedding: Dict[str, Any],
+    ) -> None:
+        """Fail fast when a KB index was built with a different embedding runtime."""
+        composition = self.storage.get_kb_composition_status(kb.kb_id)
+        latest_index = composition.get("latest_index") if isinstance(composition, dict) else None
+
+        index_provider = None
+        index_model = None
+        index_dimension = None
+        if isinstance(latest_index, dict):
+            index_provider = latest_index.get("embedding_provider")
+            index_model = latest_index.get("embedding_model")
+            index_dimension = latest_index.get("embedding_dimension")
+
+        if not index_provider:
+            index_provider = getattr(kb, "embedding_provider", None) or infer_embedding_provider(
+                kb.embedding_model,
+                fallback=current_embedding.get("provider"),
+            )
+        if not index_model:
+            index_model = kb.embedding_model
+        if index_dimension in (None, ""):
+            index_dimension = getattr(kb, "embedding_dimension", None) or infer_embedding_dimension(index_model)
+
+        current_provider = str(current_embedding.get("provider") or "").strip().lower()
+        current_model = str(current_embedding.get("model") or "").strip()
+        current_dimension = current_embedding.get("dimension")
+
+        mismatch = False
+        if index_provider and current_provider and str(index_provider).strip().lower() != current_provider:
+            mismatch = True
+        if index_model and current_model and str(index_model).strip() != current_model:
+            mismatch = True
+        if index_dimension not in (None, "") and current_dimension not in (None, ""):
+            mismatch = mismatch or int(index_dimension) != int(current_dimension)
+
+        if mismatch:
+            raise EmbeddingConfigurationMismatchException(
+                "Knowledge base index is incompatible with the current embedding configuration. Rebuild the KB index before querying it.",
+                kb_id=kb.kb_id,
+                current_provider=current_provider,
+                current_model=current_model,
+                current_dimension=int(current_dimension) if current_dimension not in (None, "") else None,
+                index_provider=str(index_provider).strip().lower() if index_provider else None,
+                index_model=str(index_model).strip() if index_model else None,
+                index_dimension=int(index_dimension) if index_dimension not in (None, "") else None,
+                needs_reindex=True,
+            )
     
     def generate_citations(
         self,

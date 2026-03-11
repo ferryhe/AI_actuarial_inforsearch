@@ -24,7 +24,10 @@ if "schedule" not in sys.modules:
     sys.modules["schedule"] = types.ModuleType("schedule")
 
 from ai_actuarial.web.app import FLASK_AVAILABLE, create_app
-from ai_actuarial.chatbot.exceptions import NoResultsException
+from ai_actuarial.chatbot.exceptions import (
+    EmbeddingConfigurationMismatchException,
+    NoResultsException,
+)
 
 
 class TestChatRoutes(unittest.TestCase):
@@ -190,6 +193,13 @@ class TestChatRoutes(unittest.TestCase):
         self.assertIn("description", kb1)
         self.assertIn("file_count", kb1)
         self.assertIn("chunk_count", kb1)
+        self.assertIn("embedding_provider", kb1)
+        self.assertIn("embedding_model", kb1)
+        self.assertIn("embedding_dimension", kb1)
+        self.assertIn("index_embedding_provider", kb1)
+        self.assertIn("index_embedding_model", kb1)
+        self.assertIn("index_embedding_dimension", kb1)
+        self.assertIn("current_embeddings", data["data"])
     
     def test_get_knowledge_bases_no_auth(self):
         """Test knowledge bases endpoint requires authentication."""
@@ -648,6 +658,42 @@ class TestChatRoutes(unittest.TestCase):
         data = json.loads(response.data)
         self.assertFalse(data["success"])
         self.assertIn("error", data)
+
+    @patch('ai_actuarial.chatbot.retrieval.RAGRetriever')
+    @patch('ai_actuarial.chatbot.llm.LLMClient')
+    def test_chat_query_embedding_mismatch_returns_409(self, mock_llm_class, mock_retriever_class):
+        """Embedding mismatch should become a business error instead of a 500."""
+        mock_retriever = Mock()
+        mock_retriever.retrieve.side_effect = EmbeddingConfigurationMismatchException(
+            "Knowledge base index is incompatible with the current embedding configuration.",
+            kb_id="test_kb1",
+            current_provider="openai",
+            current_model="text-embedding-3-large",
+            current_dimension=3072,
+            index_provider="qwen",
+            index_model="text-embedding-v3",
+            index_dimension=1024,
+            needs_reindex=True,
+        )
+        mock_retriever_class.return_value = mock_retriever
+        mock_llm = Mock()
+        mock_llm_class.return_value = mock_llm
+
+        response = self.client.post(
+            "/api/chat/query",
+            headers=self.auth_header,
+            json={
+                "message": "Test query",
+                "kb_ids": ["test_kb1"]
+            }
+        )
+
+        self.assertEqual(response.status_code, 409)
+        data = json.loads(response.data)
+        self.assertFalse(data["success"])
+        self.assertEqual(data["code"], "KB_EMBEDDING_MISMATCH")
+        self.assertEqual(data["data"]["kb_id"], "test_kb1")
+        self.assertTrue(data["data"]["needs_reindex"])
 
     @patch('ai_actuarial.chatbot.retrieval.RAGRetriever.retrieve')
     @patch('ai_actuarial.chatbot.llm.LLMClient.generate_response')

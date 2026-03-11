@@ -167,6 +167,7 @@
         </div>
         <div>
           <label for="ai-embeddings-model" data-i18n="stg.embed_model">Embeddings Model</label>
+          <p class="field-help">Changing embeddings requires rebuilding all existing KB indexes.</p>
           <select id="ai-embeddings-model" class="module-field" data-module="ai_models">
             <!-- Populated dynamically -->
           </select>
@@ -1283,6 +1284,17 @@ async function saveAiModelsConfig() {
       },
     };
 
+    const currentEmbeddings = aiModelsData?.current?.embeddings || {};
+    const embeddingsChanged =
+      String(currentEmbeddings.provider || '').trim().toLowerCase() !== String(config.embeddings.provider || '').trim().toLowerCase() ||
+      String(currentEmbeddings.model || '').trim() !== String(config.embeddings.model || '').trim();
+    if (embeddingsChanged) {
+      const confirmed = window.confirm(
+        'Changing embeddings requires rebuilding all existing KB indexes. Continue saving this change?'
+      );
+      if (!confirmed) return;
+    }
+
     const token = window.AUTH_TOKEN || '';
     const resp = await fetch('/api/config/ai-models', {
       method: 'POST',
@@ -1295,7 +1307,11 @@ async function saveAiModelsConfig() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Save failed');
 
-    notifySuccess('AI models configuration saved');
+    if (data.rebuild_required) {
+      notifySuccess(`AI models configuration saved. Rebuild required for ${Number(data.affected_kb_count || 0)} KB(s).`);
+    } else {
+      notifySuccess('AI models configuration saved');
+    }
     await loadAiModelsConfig();
   } catch (err) {
     notifyError('Failed to save: ' + (err.message || String(err)));
