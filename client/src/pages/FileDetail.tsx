@@ -132,27 +132,28 @@ function contentTypeBadgeColor(ct: string): string {
   return "bg-gray-500/10 text-gray-600 dark:text-gray-400";
 }
 
-function mapMarkdownSourceLabel(source?: string): string {
+function mapMarkdownSourceLabel(source: string | undefined, t: (key: string) => string): string {
   const raw = String(source || "").trim();
-  if (!raw) return "-";
-  if (raw.toLowerCase() === "manual") return "Manual";
-  if (raw.toLowerCase() === "original") return "Original";
-  if (raw.toLowerCase().startsWith("converted_")) {
+  if (!raw) return t("fv.markdownSource.none");
+  const lower = raw.toLowerCase();
+  if (lower === "manual") return t("fv.markdownSource.manual");
+  if (lower === "original") return t("fv.markdownSource.original");
+  if (lower.startsWith("converted_")) {
     const engine = raw.slice("converted_".length).toLowerCase();
-    const engineLabel = {
-      docling: "Docling",
-      marker: "Marker",
-      mistral: "Mistral OCR",
-      deepseekocr: "DeepSeek OCR",
-      local: "Local",
-      auto: "Auto",
-    }[engine] || engine;
-    return `Converted via ${engineLabel}`;
+    const engineLabel = ({
+      docling: t("fv.markdownSource.engine.docling"),
+      marker: t("fv.markdownSource.engine.marker"),
+      mistral: t("fv.markdownSource.engine.mistral"),
+      deepseekocr: t("fv.markdownSource.engine.deepseekocr"),
+      local: t("fv.markdownSource.engine.local"),
+      auto: t("fv.markdownSource.engine.auto"),
+    } as Record<string, string>)[engine] || engine;
+    return t("fv.markdownSource.convertedVia").replace("{engine}", engineLabel);
   }
   return raw;
 }
 
-function getCatalogStatusInfo(file: FileData): { label: string; cls: string } {
+function getCatalogStatusInfo(file: FileData, t: (key: string) => string): { label: string; cls: string } {
   const status = String(file.catalog_status || "").trim().toLowerCase();
   const hasCatalogData = Boolean(
     String(file.summary || "").trim() ||
@@ -161,18 +162,18 @@ function getCatalogStatusInfo(file: FileData): { label: string; cls: string } {
   );
 
   if (status === "deleted") {
-    return { label: "Deleted", cls: "text-slate-600 bg-slate-500/10" };
+    return { label: t("fv.catalogStatus.deleted"), cls: "text-slate-600 bg-slate-500/10" };
   }
   if (status === "error") {
-    return { label: "Error", cls: "text-red-600 bg-red-500/10" };
+    return { label: t("fv.catalogStatus.error"), cls: "text-red-600 bg-red-500/10" };
   }
   if (status === "skipped") {
-    return { label: "Skipped", cls: "text-amber-700 bg-amber-500/10" };
+    return { label: t("fv.catalogStatus.skipped"), cls: "text-amber-700 bg-amber-500/10" };
   }
   if (status === "ok" || hasCatalogData) {
-    return { label: "Ready", cls: "text-emerald-700 bg-emerald-500/10" };
+    return { label: t("fv.catalogStatus.ready"), cls: "text-emerald-700 bg-emerald-500/10" };
   }
-  return { label: "Pending", cls: "text-muted-foreground bg-muted" };
+  return { label: t("fv.catalogStatus.pending"), cls: "text-muted-foreground bg-muted" };
 }
 
 function useTaskPoller(onComplete: () => void, intervalMs = 2000, maxMs = 30000) {
@@ -611,7 +612,7 @@ export default function FileDetail() {
   const hasMarkdown = !!(markdown?.markdown_content);
   const isDeleted = !!file.deleted_at;
   const hasLocalFile = !!file.local_path && !isDeleted;
-  const catalogStatus = getCatalogStatusInfo(file);
+  const catalogStatus = getCatalogStatusInfo(file, t);
   const effectiveMarkdownSource = markdown?.markdown_source || file.markdown_source || "";
   const effectiveMarkdownUpdatedAt = markdown?.markdown_updated_at || file.markdown_updated_at || "";
 
@@ -873,7 +874,7 @@ export default function FileDetail() {
         </div>
         {(effectiveMarkdownSource || effectiveMarkdownUpdatedAt) && (
           <div className="px-4 py-2 border-b border-border bg-background/60 text-[11px] text-muted-foreground flex flex-wrap items-center gap-2">
-            {effectiveMarkdownSource && <span>{mapMarkdownSourceLabel(effectiveMarkdownSource)}</span>}
+            {effectiveMarkdownSource && <span>{mapMarkdownSourceLabel(effectiveMarkdownSource, t)}</span>}
             {effectiveMarkdownUpdatedAt && <span>{t("fv.last_updated")}: {formatDate(effectiveMarkdownUpdatedAt)}</span>}
           </div>
         )}
@@ -929,7 +930,7 @@ export default function FileDetail() {
                 {markdown?.markdown_updated_at && (
                   <span className="text-[11px] text-muted-foreground ml-auto">
                     {t("fv.last_updated")}: {formatDate(markdown.markdown_updated_at)}
-                    {markdown.markdown_source && ` (${mapMarkdownSourceLabel(markdown.markdown_source)})`}
+                    {markdown.markdown_source && ` (${mapMarkdownSourceLabel(markdown.markdown_source, t)})`}
                   </span>
                 )}
               </div>

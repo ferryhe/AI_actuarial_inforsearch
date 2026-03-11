@@ -128,13 +128,82 @@ interface CachedMetaEntry {
 
 const FILES_CACHE_TTL_MS = 2 * 60 * 1000;
 const META_CACHE_TTL_MS = 5 * 60 * 1000;
-const fileListCache = new Map<string, CachedFilesEntry>();
-let databaseMetaCache: CachedMetaEntry | null = null;
-const databaseScrollCache = new Map<string, number>();
+const MAX_FILES_CACHE_ENTRIES = 100;
+const MAX_SCROLL_CACHE_ENTRIES = 200;
 
 function isFresh(timestamp: number, ttlMs: number): boolean {
   return Date.now() - timestamp < ttlMs;
 }
+
+class FilesCache {
+  private map = new Map<string, CachedFilesEntry>();
+
+  get(key: string): CachedFilesEntry | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (!isFresh(entry.timestamp, FILES_CACHE_TTL_MS)) {
+      this.map.delete(key);
+      return undefined;
+    }
+    return entry;
+  }
+
+  set(key: string, value: CachedFilesEntry): void {
+    this.pruneStale();
+    this.map.set(key, value);
+    this.enforceSizeLimit();
+  }
+
+  delete(key: string): void {
+    this.map.delete(key);
+  }
+
+  clear(): void {
+    this.map.clear();
+  }
+
+  private pruneStale(): void {
+    const now = Date.now();
+    for (const [k, entry] of this.map) {
+      if (now - entry.timestamp >= FILES_CACHE_TTL_MS) {
+        this.map.delete(k);
+      }
+    }
+  }
+
+  private enforceSizeLimit(): void {
+    while (this.map.size > MAX_FILES_CACHE_ENTRIES) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+}
+
+class ScrollCache {
+  private map = new Map<string, number>();
+
+  get(key: string): number | undefined {
+    return this.map.get(key);
+  }
+
+  set(key: string, value: number): void {
+    this.map.set(key, value);
+    this.enforceSizeLimit();
+  }
+
+  private enforceSizeLimit(): void {
+    while (this.map.size > MAX_SCROLL_CACHE_ENTRIES) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+}
+
+const fileListCache = new FilesCache();
+let databaseMetaCache: CachedMetaEntry | null = null;
+const databaseScrollCache = new ScrollCache();
 
 function buildFilesParams(state: DatabaseQueryState): URLSearchParams {
   const params = new URLSearchParams({
@@ -165,12 +234,7 @@ function buildDatabaseLocation(state: DatabaseQueryState): string {
 
 function getCachedFiles(key: string): FilesResponse | null {
   const entry = fileListCache.get(key);
-  if (!entry) return null;
-  if (!isFresh(entry.timestamp, FILES_CACHE_TTL_MS)) {
-    fileListCache.delete(key);
-    return null;
-  }
-  return entry.data;
+  return entry ? entry.data : null;
 }
 
 function setCachedFiles(key: string, data: FilesResponse): void {
