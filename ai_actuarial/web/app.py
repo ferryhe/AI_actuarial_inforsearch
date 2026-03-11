@@ -3918,6 +3918,7 @@ sites:
                         catalog_system_prompt=_catalog_system_prompt,
                         output_language=output_language,
                         progress_callback=progress_callback,
+                        stop_check=stop_check,
                     )
                 else:
                     stats = run_incremental_catalog(
@@ -3936,6 +3937,7 @@ sites:
                         catalog_system_prompt=_catalog_system_prompt,
                         output_language=output_language,
                         progress_callback=progress_callback,
+                        stop_check=stop_check,
                     )
                 
                 # Mock result for catalog
@@ -3952,7 +3954,14 @@ sites:
                         self.items_skipped = self.catalog_skipped
                 
                 result = CatalogResult(True)
-                progress_callback(100, 100, f"Cataloging complete. Processed {stats.get('processed')} items.")
+                if stats.get("stopped"):
+                    progress_callback(
+                        stats.get("processed", 0) + stats.get("skipped_ai", 0) + stats.get("errors", 0),
+                        max(stats.get("scanned", 0), 1),
+                        f"Cataloging stopped. Processed {stats.get('processed')} items.",
+                    )
+                else:
+                    progress_callback(100, 100, f"Cataloging complete. Processed {stats.get('processed')} items.")
 
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
@@ -4540,20 +4549,31 @@ sites:
                     if message:
                         _append_task_log(task_id, "INFO", message)
 
-                pipeline = IndexingPipeline(kb_manager, progress_callback=rag_progress)
+                pipeline = IndexingPipeline(
+                    kb_manager,
+                    progress_callback=rag_progress,
+                    stop_check=stop_check,
+                )
                 stats = pipeline.index_files(kb_id=kb_id, file_urls=file_urls, force_reindex=force_reindex)
-                try:
-                    index_path = str(Path(kb_manager.config.data_dir) / kb_id / "index.faiss")
-                    storage.create_kb_index_version(
-                        kb_id=kb_id,
-                        embedding_model=kb.embedding_model,
-                        index_type=kb.index_type,
-                        chunk_count=int(stats.get("total_chunks", 0) or 0),
-                        status="ready",
-                        artifact_path=index_path,
+                if stats.get("stopped"):
+                    _append_task_log(
+                        task_id,
+                        "WARNING",
+                        f"{task_label} stopped before completion; skipped recording KB index version",
                     )
-                except Exception as exc:  # noqa: BLE001
-                    _append_task_log(task_id, "WARNING", f"Failed recording KB index version: {exc}")
+                else:
+                    try:
+                        index_path = str(Path(kb_manager.config.data_dir) / kb_id / "index.faiss")
+                        storage.create_kb_index_version(
+                            kb_id=kb_id,
+                            embedding_model=kb.embedding_model,
+                            index_type=kb.index_type,
+                            chunk_count=int(stats.get("total_chunks", 0) or 0),
+                            status="ready",
+                            artifact_path=index_path,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        _append_task_log(task_id, "WARNING", f"Failed recording KB index version: {exc}")
 
                 class RagIndexResult:
                     def __init__(self, payload: dict[str, Any]):
@@ -4879,6 +4899,7 @@ sites:
         with _task_lock:
             if task_id in _active_tasks:
                 _active_tasks[task_id]["stop_requested"] = True
+                _active_tasks[task_id]["current_activity"] = "Stop requested"
                 logger.info(f"Stop requested for task {task_id}")
                 return jsonify({"success": True, "message": "Stop signal sent"})
             return jsonify({"error": "Task not found or not active"}), 404

@@ -41,7 +41,8 @@ class IndexingPipeline:
     def __init__(
         self,
         kb_manager: KnowledgeBaseManager,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        stop_check: Optional[Callable[[], bool]] = None,
     ):
         """
         Initialize indexing pipeline.
@@ -55,6 +56,7 @@ class IndexingPipeline:
         self.storage = kb_manager.storage
         self.config = kb_manager.config
         self.progress_callback = progress_callback
+        self.stop_check = stop_check
         
         # Components
         self.chunker = kb_manager.chunker
@@ -80,8 +82,27 @@ class IndexingPipeline:
         kb = self.kb_manager.get_kb(kb_id)
         if not kb:
             raise RAGException(f"Knowledge base '{kb_id}' not found")
+
+        stats = {
+            'total_files': len(file_urls),
+            'indexed_files': 0,
+            'skipped_files': 0,
+            'error_files': 0,
+            'total_chunks': 0,
+            'errors': [],
+            'stopped': False,
+        }
         
         self._log_progress(f"Starting indexing for KB '{kb.name}'", 0, len(file_urls))
+
+        if self.stop_check and self.stop_check():
+            stats['stopped'] = True
+            self._log_progress(
+                f"Stop requested for KB '{kb.name}' before indexing started",
+                0,
+                len(file_urls),
+            )
+            return stats
         
         # Load or create vector store
         kb_dir = Path(self.config.data_dir) / kb_id
@@ -93,6 +114,14 @@ class IndexingPipeline:
         # If force_reindex is requested, ensure any existing index file is removed
         # so that the VectorStore starts from a clean state instead of appending.
         if force_reindex and index_path.exists():
+            if self.stop_check and self.stop_check():
+                stats['stopped'] = True
+                self._log_progress(
+                    f"Stop requested for KB '{kb.name}' before resetting index",
+                    0,
+                    len(file_urls),
+                )
+                return stats
             index_path.unlink()
         
         vector_store = VectorStore(
@@ -101,17 +130,15 @@ class IndexingPipeline:
             index_path=str(index_path)
         )
         
-        # Process files
-        stats = {
-            'total_files': len(file_urls),
-            'indexed_files': 0,
-            'skipped_files': 0,
-            'error_files': 0,
-            'total_chunks': 0,
-            'errors': []
-        }
-        
         for i, file_url in enumerate(file_urls):
+            if self.stop_check and self.stop_check():
+                stats['stopped'] = True
+                self._log_progress(
+                    f"Stop requested for KB '{kb.name}'",
+                    i,
+                    len(file_urls),
+                )
+                break
             try:
                 self._log_progress(f"Indexing file {i+1}/{len(file_urls)}", i+1, len(file_urls))
                 
@@ -140,6 +167,14 @@ class IndexingPipeline:
                     'file_url': file_url,
                     'error': str(e)
                 })
+
+        if (
+            stats['stopped']
+            and stats['indexed_files'] == 0
+            and stats['skipped_files'] == 0
+            and stats['error_files'] == 0
+        ):
+            return stats
         
         # Save vector store
         try:
@@ -152,8 +187,18 @@ class IndexingPipeline:
         # Update KB statistics
         self._update_kb_stats(kb_id)
         
-        self._log_progress(f"Indexing complete: {stats['indexed_files']} files indexed", 
-                          len(file_urls), len(file_urls))
+        if stats['stopped']:
+            self._log_progress(
+                f"Indexing stopped: {stats['indexed_files']} files indexed",
+                stats['indexed_files'] + stats['skipped_files'] + stats['error_files'],
+                len(file_urls),
+            )
+        else:
+            self._log_progress(
+                f"Indexing complete: {stats['indexed_files']} files indexed",
+                len(file_urls),
+                len(file_urls),
+            )
         
         return stats
     

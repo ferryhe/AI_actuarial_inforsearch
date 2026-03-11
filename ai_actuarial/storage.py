@@ -55,6 +55,7 @@ class Storage:
         self.db_path = db_path
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
+        self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._tx_depth = 0
         self._init_schema()
@@ -1930,6 +1931,46 @@ class Storage:
             "config_json": row[8],
             "created_at": row[9],
             "updated_at": row[10],
+        }
+
+    def delete_chunk_profile(self, profile_id: str) -> dict[str, Any] | None:
+        existing = self.get_chunk_profile(profile_id)
+        if not existing:
+            return None
+
+        chunk_set_count = int(
+            self._conn.execute(
+                "SELECT COUNT(*) FROM file_chunk_sets WHERE profile_id = ?",
+                (profile_id,),
+            ).fetchone()[0]
+        )
+        binding_count = int(
+            self._conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM kb_chunk_bindings
+                WHERE chunk_set_id IN (
+                    SELECT chunk_set_id
+                    FROM file_chunk_sets
+                    WHERE profile_id = ?
+                )
+                """,
+                (profile_id,),
+            ).fetchone()[0]
+        )
+
+        self._conn.execute(
+            "DELETE FROM chunk_profiles WHERE profile_id = ?",
+            (profile_id,),
+        )
+        self._maybe_commit()
+
+        return {
+            "profile_id": profile_id,
+            "name": existing["name"],
+            "deleted": True,
+            "deleted_chunk_sets": chunk_set_count,
+            "deleted_bindings": binding_count,
         }
 
     def get_or_create_file_chunk_set(

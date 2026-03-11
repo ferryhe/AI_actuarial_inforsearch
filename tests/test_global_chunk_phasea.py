@@ -192,6 +192,54 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
         self.assertEqual(status_data["data"]["file_count"], 1)
         self.assertGreaterEqual(status_data["data"]["chunk_set_count"], 1)
 
+    def test_chunk_profile_delete_endpoint_removes_profile(self):
+        profile_resp = self.client.post(
+            "/api/chunk/profiles",
+            headers=self.auth_header,
+            json={
+                "name": "Delete Me",
+                "chunk_size": 256,
+                "chunk_overlap": 32,
+                "splitter": "semantic",
+                "tokenizer": "cl100k_base",
+                "version": "v1",
+            },
+        )
+        if profile_resp.status_code == 503:
+            self.skipTest("RAG functionality not available")
+        self.assertEqual(profile_resp.status_code, 201)
+        profile_id = profile_resp.get_json()["data"]["profile_id"]
+
+        encoded_file_url = quote(self.file_url, safe="")
+        gen_resp = self.client.post(
+            f"/api/files/{encoded_file_url}/chunk-sets/generate",
+            headers=self.auth_header,
+            json={"profile_id": profile_id, "overwrite_same_profile": True},
+        )
+        self.assertIn(gen_resp.status_code, [200, 201])
+
+        delete_resp = self.client.delete(
+            f"/api/chunk/profiles/{profile_id}",
+            headers=self.auth_header,
+        )
+        self.assertEqual(delete_resp.status_code, 200)
+        delete_data = delete_resp.get_json()
+        self.assertTrue(delete_data["success"])
+        self.assertEqual(delete_data["data"]["profile_id"], profile_id)
+        self.assertTrue(delete_data["data"]["deleted"])
+
+        list_resp = self.client.get("/api/chunk/profiles", headers=self.auth_header)
+        self.assertEqual(list_resp.status_code, 200)
+        profiles = list_resp.get_json()["data"]["profiles"]
+        self.assertFalse(any(item["profile_id"] == profile_id for item in profiles))
+
+        chunk_sets_resp = self.client.get(
+            f"/api/files/{encoded_file_url}/chunk-sets",
+            headers=self.auth_header,
+        )
+        self.assertEqual(chunk_sets_resp.status_code, 200)
+        self.assertEqual(chunk_sets_resp.get_json()["data"]["count"], 0)
+
     def test_follow_latest_binding_auto_sync_on_new_chunk(self):
         profile_resp = self.client.post(
             "/api/chunk/profiles",
