@@ -181,6 +181,27 @@ def register_rag_routes(
             logger.exception("Error creating chunk profile")
             return _api_error("Internal server error", status_code=500, detail=str(exc))
 
+    @app.route("/api/chunk/profiles/<profile_id>", methods=["DELETE"])
+    @require_permissions("config.write")
+    def api_chunk_profiles_delete(profile_id: str):
+        if (r := _check_config_write_auth()) is not None:
+            return r
+        try:
+            normalized_profile_id = _norm(profile_id)
+            if not normalized_profile_id:
+                return _api_error("profile_id is required", status_code=400)
+
+            def _run(storage):
+                deleted = storage.delete_chunk_profile(normalized_profile_id)
+                if not deleted:
+                    return _api_error("chunk profile not found", status_code=404)
+                return _api_success(deleted)
+
+            return _with_storage(_run)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error deleting chunk profile %s", profile_id)
+            return _api_error("Internal server error", status_code=500, detail=str(exc))
+
     @app.route("/api/files/<path:file_url>/chunk-sets", methods=["GET"])
     @require_permissions("files.read")
     def api_file_chunk_sets(file_url: str):

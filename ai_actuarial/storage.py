@@ -1932,6 +1932,46 @@ class Storage:
             "updated_at": row[10],
         }
 
+    def delete_chunk_profile(self, profile_id: str) -> dict[str, Any] | None:
+        existing = self.get_chunk_profile(profile_id)
+        if not existing:
+            return None
+
+        chunk_set_count = int(
+            self._conn.execute(
+                "SELECT COUNT(*) FROM file_chunk_sets WHERE profile_id = ?",
+                (profile_id,),
+            ).fetchone()[0]
+        )
+        binding_count = int(
+            self._conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM kb_chunk_bindings
+                WHERE chunk_set_id IN (
+                    SELECT chunk_set_id
+                    FROM file_chunk_sets
+                    WHERE profile_id = ?
+                )
+                """,
+                (profile_id,),
+            ).fetchone()[0]
+        )
+
+        self._conn.execute(
+            "DELETE FROM chunk_profiles WHERE profile_id = ?",
+            (profile_id,),
+        )
+        self._maybe_commit()
+
+        return {
+            "profile_id": profile_id,
+            "name": existing["name"],
+            "deleted": True,
+            "deleted_chunk_sets": chunk_set_count,
+            "deleted_bindings": binding_count,
+        }
+
     def get_or_create_file_chunk_set(
         self,
         *,

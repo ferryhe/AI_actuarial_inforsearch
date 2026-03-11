@@ -41,7 +41,8 @@ class IndexingPipeline:
     def __init__(
         self,
         kb_manager: KnowledgeBaseManager,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None
+        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        stop_check: Optional[Callable[[], bool]] = None,
     ):
         """
         Initialize indexing pipeline.
@@ -55,6 +56,7 @@ class IndexingPipeline:
         self.storage = kb_manager.storage
         self.config = kb_manager.config
         self.progress_callback = progress_callback
+        self.stop_check = stop_check
         
         # Components
         self.chunker = kb_manager.chunker
@@ -108,10 +110,19 @@ class IndexingPipeline:
             'skipped_files': 0,
             'error_files': 0,
             'total_chunks': 0,
-            'errors': []
+            'errors': [],
+            'stopped': False,
         }
         
         for i, file_url in enumerate(file_urls):
+            if self.stop_check and self.stop_check():
+                stats['stopped'] = True
+                self._log_progress(
+                    f"Stop requested for KB '{kb.name}'",
+                    i,
+                    len(file_urls),
+                )
+                break
             try:
                 self._log_progress(f"Indexing file {i+1}/{len(file_urls)}", i+1, len(file_urls))
                 
@@ -152,8 +163,18 @@ class IndexingPipeline:
         # Update KB statistics
         self._update_kb_stats(kb_id)
         
-        self._log_progress(f"Indexing complete: {stats['indexed_files']} files indexed", 
-                          len(file_urls), len(file_urls))
+        if stats['stopped']:
+            self._log_progress(
+                f"Indexing stopped: {stats['indexed_files']} files indexed",
+                stats['indexed_files'] + stats['skipped_files'] + stats['error_files'],
+                len(file_urls),
+            )
+        else:
+            self._log_progress(
+                f"Indexing complete: {stats['indexed_files']} files indexed",
+                len(file_urls),
+                len(file_urls),
+            )
         
         return stats
     

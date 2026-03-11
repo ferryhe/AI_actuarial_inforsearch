@@ -589,6 +589,7 @@ def run_incremental_catalog(
     catalog_system_prompt: str | None = None,
     output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    stop_check: Optional[Callable[[], bool]] = None,
 ) -> dict:
     """Run incremental catalog processing.
     
@@ -651,6 +652,7 @@ def run_incremental_catalog(
         "errors": 0,
         "missing_files": 0,
         "error_samples": [],
+        "stopped": False,
     }
     
     seen_urls = set()
@@ -674,6 +676,11 @@ def run_incremental_catalog(
 
     remaining_offset = max(0, int(candidate_offset or 0))
     while True:
+        if stop_check and stop_check():
+            logger.info("Catalog stop requested before next batch")
+            stats["stopped"] = True
+            break
+
         # Check global limit
         if limit > 0 and stats["processed"] >= limit:
             logger.info(f"Reached limit of {limit} items")
@@ -717,9 +724,16 @@ def run_incremental_catalog(
         for r in row_dicts:
             seen_urls.add(r["url"])
         
+        stop_requested = False
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_url = {
-                executor.submit(
+            future_to_url = {}
+            for r in row_dicts:
+                if stop_check and stop_check():
+                    logger.info("Catalog stop requested before submitting more items")
+                    stats["stopped"] = True
+                    stop_requested = True
+                    break
+                future = executor.submit(
                     _process_single_row,
                     r,
                     ai_only,
@@ -732,14 +746,21 @@ def run_incremental_catalog(
                     input_source=input_source,
                     catalog_system_prompt=catalog_system_prompt,
                     output_language=output_language,
-                ): r["url"]
-                for r in row_dicts
-            }
+                )
+                future_to_url[future] = r["url"]
             
             # We will batch writes at the end of the batch processing to keep DB logic simple
             # Or writing as they complete? Batch write is safer for transaction.
             
             for future in as_completed(future_to_url):
+                if stop_check and stop_check():
+                    logger.info("Catalog stop requested while workers are running")
+                    stats["stopped"] = True
+                    stop_requested = True
+                    for pending in future_to_url:
+                        if not pending.done():
+                            pending.cancel()
+                    break
                 try:
                     r_data, item, status, suggested_title = future.result()
                     processed_at = datetime.now(timezone.utc).isoformat()
@@ -830,6 +851,8 @@ def run_incremental_catalog(
                     stats["errors"] += 1
                     if len(stats["error_samples"]) < 20:
                         stats["error_samples"].append(str(e))
+        if stop_requested:
+            break
         
         # Append outputs incrementally
         if batch_items:
@@ -851,6 +874,16 @@ def run_incremental_catalog(
     )
     if progress_callback:
         completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
+        if stats["stopped"]:
+            progress_callback(
+                completed,
+                max(total_candidates, completed, 1),
+                (
+                    f"Catalog stopped: processed={stats['processed']} "
+                    f"skipped={stats['skipped_ai']} errors={stats['errors']}"
+                ),
+            )
+            return stats
         progress_callback(
             max(total_candidates, completed, 1),
             max(total_candidates, completed, 1),
@@ -877,6 +910,7 @@ def run_catalog_for_urls(
     catalog_system_prompt: str | None = None,
     output_language: str = "auto",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    stop_check: Optional[Callable[[], bool]] = None,
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
     conn = _connect(db_path)
@@ -918,6 +952,7 @@ def run_catalog_for_urls(
         "errors": 0,
         "missing_files": 0,
         "error_samples": [],
+        "stopped": False,
     }
 
     urls = [u for u in (file_urls or []) if isinstance(u, str) and u.strip()]
@@ -988,9 +1023,16 @@ def run_catalog_for_urls(
     batch_items: list[CatalogItem] = []
     batch_jsonl: list[dict] = []
 
+    stop_requested = False
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_url = {
-            executor.submit(
+        future_to_url = {}
+        for r in candidates:
+            if stop_check and stop_check():
+                logger.info("Catalog stop requested before submitting more explicit file URLs")
+                stats["stopped"] = True
+                stop_requested = True
+                break
+            future = executor.submit(
                 _process_single_row,
                 r,
                 ai_only,
@@ -1003,10 +1045,17 @@ def run_catalog_for_urls(
                 input_source=input_source,
                 catalog_system_prompt=catalog_system_prompt,
                 output_language=output_language,
-            ): r["url"]
-            for r in candidates
-        }
+            )
+            future_to_url[future] = r["url"]
         for future in as_completed(future_to_url):
+            if stop_check and stop_check():
+                logger.info("Catalog stop requested while explicit file URL workers are running")
+                stats["stopped"] = True
+                stop_requested = True
+                for pending in future_to_url:
+                    if not pending.done():
+                        pending.cancel()
+                break
             url = future_to_url[future]
             try:
                 r_data, item, status, suggested_title = future.result()
@@ -1065,6 +1114,8 @@ def run_catalog_for_urls(
                 stats["errors"] += 1
                 if len(stats["error_samples"]) < 20:
                     stats["error_samples"].append(str(e))
+    if stop_requested:
+        logger.info("Catalog processing stopped for explicit file URL run")
 
     if batch_items:
         _append_jsonl(out_jsonl, batch_jsonl)
@@ -1074,6 +1125,16 @@ def run_catalog_for_urls(
     conn.close()
     if progress_callback:
         completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
+        if stats["stopped"]:
+            progress_callback(
+                completed,
+                max(len(candidates), completed, 1),
+                (
+                    f"Catalog stopped: processed={stats['processed']} "
+                    f"skipped={stats['skipped_ai']} errors={stats['errors']}"
+                ),
+            )
+            return stats
         progress_callback(
             max(len(candidates), completed, 1),
             max(len(candidates), completed, 1),
