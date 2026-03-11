@@ -206,6 +206,7 @@ def _fetch_candidates(
             OR c.file_sha256 IS NULL
             OR c.file_sha256 != f.sha256
             OR c.catalog_version != ?
+            OR TRIM(IFNULL(c.summary, '')) = ''
             {status_cond}
         )
         """
@@ -276,6 +277,7 @@ def _count_candidates(
             OR c.file_sha256 IS NULL
             OR c.file_sha256 != f.sha256
             OR c.catalog_version != ?
+            OR TRIM(IFNULL(c.summary, '')) = ''
             {status_cond}
         )
         """
@@ -561,7 +563,7 @@ def _process_single_row(
             local_path=local_path,
             keywords=[],
             summary="",
-            category="(error)",
+            category="",
         )
         # Using status to pass exception string
         return (row_data, item, f"error:{str(e)}", None)
@@ -938,7 +940,8 @@ def run_catalog_for_urls(
             c.file_url AS c_url,
             c.file_sha256 AS c_sha256,
             c.catalog_version AS c_version,
-            c.status AS c_status
+            c.status AS c_status,
+            c.summary AS c_summary
         FROM files f
         LEFT JOIN catalog_items c ON c.file_url = f.url
         WHERE f.url IN ({placeholders})
@@ -965,12 +968,14 @@ def run_catalog_for_urls(
         c_sha = (r.get("c_sha256") or "").strip()
         c_ver = (r.get("c_version") or "").strip()
         c_status = (r.get("c_status") or "").strip()
+        c_summary = (r.get("c_summary") or "").strip()
         f_sha = (r.get("sha256") or "").strip()
         return (
             (c_url is None)
             or (not c_sha)
             or (c_sha != f_sha)
             or (c_ver != catalog_version)
+            or (not c_summary)
             or (retry_errors and c_status == "error")
         )
 
