@@ -19,7 +19,7 @@ import {
   AlertCircle,
   FileDown,
 } from "lucide-react";
-import { buildFileDetailPath, buildFilePreviewPath, getCurrentRelativeLocation } from "@/lib/navigation";
+import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
@@ -105,6 +105,176 @@ function formatSize(bytes: number | null | undefined): string {
 type SortField = "title" | "source_site" | "content_type" | "last_seen" | "bytes";
 type SortDir = "asc" | "desc";
 
+interface DatabaseQueryState {
+  offset: number;
+  query: string;
+  source: string;
+  category: string;
+  includeDeleted: boolean;
+  orderBy: SortField;
+  orderDir: SortDir;
+}
+
+interface CachedFilesEntry {
+  data: FilesResponse;
+  timestamp: number;
+}
+
+interface CachedMetaEntry {
+  sources: string[];
+  categories: CategoryOption[];
+  timestamp: number;
+}
+
+const FILES_CACHE_TTL_MS = 2 * 60 * 1000;
+const META_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_FILES_CACHE_ENTRIES = 100;
+const MAX_SCROLL_CACHE_ENTRIES = 200;
+
+function isFresh(timestamp: number, ttlMs: number): boolean {
+  return Date.now() - timestamp < ttlMs;
+}
+
+class FilesCache {
+  private map = new Map<string, CachedFilesEntry>();
+
+  get(key: string): CachedFilesEntry | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (!isFresh(entry.timestamp, FILES_CACHE_TTL_MS)) {
+      this.map.delete(key);
+      return undefined;
+    }
+    return entry;
+  }
+
+  set(key: string, value: CachedFilesEntry): void {
+    this.pruneStale();
+    this.map.set(key, value);
+    this.enforceSizeLimit();
+  }
+
+  delete(key: string): void {
+    this.map.delete(key);
+  }
+
+  clear(): void {
+    this.map.clear();
+  }
+
+  private pruneStale(): void {
+    const now = Date.now();
+    for (const [k, entry] of this.map) {
+      if (now - entry.timestamp >= FILES_CACHE_TTL_MS) {
+        this.map.delete(k);
+      }
+    }
+  }
+
+  private enforceSizeLimit(): void {
+    while (this.map.size > MAX_FILES_CACHE_ENTRIES) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+}
+
+class ScrollCache {
+  private map = new Map<string, number>();
+
+  get(key: string): number | undefined {
+    return this.map.get(key);
+  }
+
+  set(key: string, value: number): void {
+    this.map.set(key, value);
+    this.enforceSizeLimit();
+  }
+
+  private enforceSizeLimit(): void {
+    while (this.map.size > MAX_SCROLL_CACHE_ENTRIES) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+  }
+}
+
+const fileListCache = new FilesCache();
+let databaseMetaCache: CachedMetaEntry | null = null;
+const databaseScrollCache = new ScrollCache();
+
+function buildFilesParams(state: DatabaseQueryState): URLSearchParams {
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(state.offset),
+    order_by: state.orderBy,
+    order_dir: state.orderDir,
+  });
+  if (state.query) params.set("query", state.query);
+  if (state.source) params.set("source", state.source);
+  if (state.category) params.set("category", state.category);
+  if (state.includeDeleted) params.set("include_deleted", "true");
+  return params;
+}
+
+function buildDatabaseLocation(state: DatabaseQueryState): string {
+  const page = Math.floor(state.offset / PAGE_SIZE) + 1;
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("order_by", state.orderBy);
+  params.set("order_dir", state.orderDir);
+  if (state.query) params.set("query", state.query);
+  if (state.source) params.set("source", state.source);
+  if (state.category) params.set("category", state.category);
+  if (state.includeDeleted) params.set("include_deleted", "true");
+  return `/database?${params.toString()}`;
+}
+
+function getCachedFiles(key: string): FilesResponse | null {
+  const entry = fileListCache.get(key);
+  return entry ? entry.data : null;
+}
+
+function setCachedFiles(key: string, data: FilesResponse): void {
+  fileListCache.set(key, { data, timestamp: Date.now() });
+}
+
+function getCachedMeta(): CachedMetaEntry | null {
+  if (!databaseMetaCache) return null;
+  if (!isFresh(databaseMetaCache.timestamp, META_CACHE_TTL_MS)) {
+    return null;
+  }
+  return databaseMetaCache;
+}
+
+function setCachedMeta(sources: string[], categories: CategoryOption[]): void {
+  databaseMetaCache = {
+    sources,
+    categories,
+    timestamp: Date.now(),
+  };
+}
+
+function normalizeCategories(items: Array<string | CategoryOption> | undefined): CategoryOption[] {
+  return (items || [])
+    .map((item) => {
+      if (typeof item === "string") {
+        const name = item.trim();
+        return name ? { name } : null;
+      }
+      if (item && typeof item.name === "string" && item.name.trim()) {
+        return {
+          name: item.name.trim(),
+          count: typeof item.count === "number" ? item.count : null,
+        };
+      }
+      return null;
+    })
+    .filter((item): item is CategoryOption => item !== null);
+}
+
 export default function DatabasePage() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
@@ -117,30 +287,49 @@ export default function DatabasePage() {
   const VALID_SORT_FIELDS: SortField[] = ["title", "source_site", "content_type", "last_seen", "bytes"];
   const rawOrderBy = initialParams.get("order_by") || "";
   const rawOrderDir = initialParams.get("order_dir") || "";
-
-  const [files, setFiles] = useState<FileItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [offset, setOffset] = useState(() => {
+  const initialOffset = (() => {
     const page = Math.max(1, parseInt(initialParams.get("page") || "1", 10));
     return (page - 1) * PAGE_SIZE;
-  });
+  })();
+  const initialQuery = initialParams.get("query") || "";
+  const initialSource = initialParams.get("source") || "";
+  const initialCategory = initialParams.get("category") || "";
+  const initialIncludeDeleted = initialParams.get("include_deleted") === "true";
+  const initialOrderBy =
+    VALID_SORT_FIELDS.includes(rawOrderBy as SortField) ? (rawOrderBy as SortField) : "last_seen";
+  const initialOrderDir: SortDir = rawOrderDir === "asc" ? "asc" : "desc";
+  const initialRequestKey = buildFilesParams({
+    offset: initialOffset,
+    query: initialQuery,
+    source: initialSource,
+    category: initialCategory,
+    includeDeleted: initialIncludeDeleted,
+    orderBy: initialOrderBy,
+    orderDir: initialOrderDir,
+  }).toString();
+  const initialCachedFiles = getCachedFiles(initialRequestKey);
+  const initialCachedMeta = getCachedMeta();
 
-  const [query, setQuery] = useState(initialParams.get("query") || "");
-  const [debouncedQuery, setDebouncedQuery] = useState(initialParams.get("query") || "");
-  const [source, setSource] = useState(initialParams.get("source") || "");
-  const [category, setCategory] = useState(initialParams.get("category") || "");
-  const [includeDeleted, setIncludeDeleted] = useState(initialParams.get("include_deleted") === "true");
-  const [orderBy, setOrderBy] = useState<SortField>(
-    VALID_SORT_FIELDS.includes(rawOrderBy as SortField) ? (rawOrderBy as SortField) : "last_seen"
-  );
-  const [orderDir, setOrderDir] = useState<SortDir>(rawOrderDir === "asc" ? "asc" : "desc");
+  const [files, setFiles] = useState<FileItem[]>(initialCachedFiles?.files || []);
+  const [total, setTotal] = useState(initialCachedFiles?.total ?? 0);
+  const [loading, setLoading] = useState(!initialCachedFiles);
+  const [offset, setOffset] = useState(initialOffset);
+
+  const [query, setQuery] = useState(initialQuery);
+  const [debouncedQuery, setDebouncedQuery] = useState(initialQuery);
+  const [source, setSource] = useState(initialSource);
+  const [category, setCategory] = useState(initialCategory);
+  const [includeDeleted, setIncludeDeleted] = useState(initialIncludeDeleted);
+  const [orderBy, setOrderBy] = useState<SortField>(initialOrderBy);
+  const [orderDir, setOrderDir] = useState<SortDir>(initialOrderDir);
 
   // Track whether state was initialized from URL (avoid double-reset of offset)
   const initializedRef = useRef(false);
+  const fetchSeqRef = useRef(0);
+  const scrollRestoreAttemptedRef = useRef(false);
 
-  const [sources, setSources] = useState<string[]>([]);
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [sources, setSources] = useState<string[]>(initialCachedMeta?.sources || []);
+  const [categories, setCategories] = useState<CategoryOption[]>(initialCachedMeta?.categories || []);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
@@ -163,78 +352,145 @@ export default function DatabasePage() {
     setOffset(0);
   }, [debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
 
+  const requestState: DatabaseQueryState = {
+    offset,
+    query: debouncedQuery,
+    source,
+    category,
+    includeDeleted,
+    orderBy,
+    orderDir,
+  };
+  const requestKey = buildFilesParams(requestState).toString();
+  const locationKey = buildDatabaseLocation(requestState);
+
   // Persist current state to URL so back-navigation restores filters/page
   useEffect(() => {
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const params = new URLSearchParams();
-    params.set("page", String(page));
-    params.set("order_by", orderBy);
-    params.set("order_dir", orderDir);
-    if (debouncedQuery) params.set("query", debouncedQuery);
-    if (source) params.set("source", source);
-    if (category) params.set("category", category);
-    if (includeDeleted) params.set("include_deleted", "true");
-    window.history.replaceState(null, "", `/database?${params.toString()}`);
-  }, [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
+    window.history.replaceState(null, "", locationKey);
+  }, [locationKey]);
 
   useEffect(() => {
-    apiGet<{ sources: string[] }>("/api/sources")
-      .then((d) => setSources(d.sources || []))
+    const cachedMeta = getCachedMeta();
+    if (cachedMeta) {
+      setSources(cachedMeta.sources);
+      setCategories(cachedMeta.categories);
+      return;
+    }
+
+    let cancelled = false;
+    Promise.allSettled([
+      apiGet<{ sources: string[] }>("/api/sources"),
+      apiGet<{ categories: Array<string | CategoryOption> }>("/api/categories?mode=used"),
+    ])
+      .then(([sourcesResult, categoriesResult]) => {
+        if (cancelled) return;
+        const nextSources =
+          sourcesResult.status === "fulfilled" ? sourcesResult.value.sources || [] : [];
+        const nextCategories =
+          categoriesResult.status === "fulfilled"
+            ? normalizeCategories(categoriesResult.value.categories)
+            : [];
+        setSources(nextSources);
+        setCategories(nextCategories);
+        setCachedMeta(nextSources, nextCategories);
+      })
       .catch(() => {});
-    apiGet<{ categories: Array<string | CategoryOption> }>("/api/categories?mode=used")
-      .then((d) =>
-        setCategories(
-          (d.categories || [])
-            .map((item) => {
-              if (typeof item === "string") {
-                return { name: item };
-              }
-              if (item && typeof item.name === "string" && item.name.trim()) {
-                return {
-                  name: item.name,
-                  count: typeof item.count === "number" ? item.count : null,
-                };
-              }
-              return null;
-            })
-            .filter((item): item is CategoryOption => item !== null)
-        )
-      )
-      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const fetchFiles = useCallback(() => {
-    setLoading(true);
-    const params = new URLSearchParams({
-      limit: String(PAGE_SIZE),
-      offset: String(offset),
-      order_by: orderBy,
-      order_dir: orderDir,
-    });
-    if (debouncedQuery) params.set("query", debouncedQuery);
-    if (source) params.set("source", source);
-    if (category) params.set("category", category);
-    if (includeDeleted) params.set("include_deleted", "true");
+  const fetchFiles = useCallback(
+    async ({ targetOffset = offset, forceNetwork = false }: { targetOffset?: number; forceNetwork?: boolean } = {}) => {
+      const targetState: DatabaseQueryState = {
+        offset: targetOffset,
+        query: debouncedQuery,
+        source,
+        category,
+        includeDeleted,
+        orderBy,
+        orderDir,
+      };
+      const targetKey = buildFilesParams(targetState).toString();
+      const cached = forceNetwork ? null : getCachedFiles(targetKey);
+      const isCurrentRequest = targetOffset === offset;
 
-    apiGet<FilesResponse>(`/api/files?${params}`)
-      .then((data) => {
-        setFiles(data.files || []);
-        setTotal(data.total ?? 0);
-      })
-      .catch(() => {
-        setFiles([]);
-        setTotal(0);
-      })
-      .finally(() => setLoading(false));
-  }, [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
+      if (isCurrentRequest) {
+        if (cached) {
+          setFiles(cached.files || []);
+          setTotal(cached.total ?? 0);
+          setLoading(false);
+        } else {
+          setLoading(true);
+        }
+      } else if (cached) {
+        return cached;
+      }
+
+      const requestId = isCurrentRequest ? ++fetchSeqRef.current : fetchSeqRef.current;
+
+      try {
+        const data = await apiGet<FilesResponse>(`/api/files?${targetKey}`);
+        setCachedFiles(targetKey, data);
+
+        if (isCurrentRequest && requestId === fetchSeqRef.current) {
+          setFiles(data.files || []);
+          setTotal(data.total ?? 0);
+        }
+
+        return data;
+      } catch {
+        if (isCurrentRequest && requestId === fetchSeqRef.current && !cached) {
+          setFiles([]);
+          setTotal(0);
+        }
+        return null;
+      } finally {
+        if (isCurrentRequest && requestId === fetchSeqRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]
+  );
 
   useEffect(() => {
-    fetchFiles();
-  }, [fetchFiles]);
+    void fetchFiles();
+  }, [fetchFiles, requestKey]);
+
+  useEffect(() => {
+    if (loading || total <= 0) return;
+    const prevOffset = offset - PAGE_SIZE;
+    const nextOffset = offset + PAGE_SIZE;
+    if (prevOffset >= 0) {
+      void fetchFiles({ targetOffset: prevOffset });
+    }
+    if (nextOffset < total) {
+      void fetchFiles({ targetOffset: nextOffset });
+    }
+  }, [fetchFiles, loading, offset, total]);
+
+  useEffect(() => {
+    return () => {
+      databaseScrollCache.set(locationKey, window.scrollY);
+    };
+  }, [locationKey]);
+
+  useEffect(() => {
+    if (loading || scrollRestoreAttemptedRef.current) return;
+    scrollRestoreAttemptedRef.current = true;
+    const savedY = databaseScrollCache.get(locationKey);
+    if (savedY == null) return;
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: savedY, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, locationKey]);
 
   useEffect(() => {
     setSelectedUrls(new Set());
-  }, [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]);
+  }, [requestKey]);
 
   const toggleSelect = (url: string) => {
     setSelectedUrls((prev) => {
@@ -280,7 +536,8 @@ export default function DatabasePage() {
       setBulkDeleting(false);
       setShowBulkDelete(false);
       setSelectedUrls(new Set());
-      fetchFiles();
+      fileListCache.clear();
+      void fetchFiles({ forceNetwork: true });
     }
   };
 
@@ -310,11 +567,13 @@ export default function DatabasePage() {
   }
 
   function navigateToFile(file: FileItem) {
-    navigate(buildFileDetailPath(file.url, getCurrentRelativeLocation()));
+    databaseScrollCache.set(locationKey, window.scrollY);
+    navigate(buildFileDetailPath(file.url, locationKey));
   }
 
   function navigateToPreview(file: FileItem) {
-    navigate(buildFilePreviewPath(file.url, getCurrentRelativeLocation()));
+    databaseScrollCache.set(locationKey, window.scrollY);
+    navigate(buildFilePreviewPath(file.url, locationKey));
   }
 
   const activeFilterCount = [source, category, includeDeleted ? "y" : ""].filter(Boolean).length;

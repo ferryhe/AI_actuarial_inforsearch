@@ -22,7 +22,7 @@ import unittest
 from pathlib import Path
 
 from ai_actuarial.storage import Storage
-from ai_actuarial.catalog_incremental import _connect, _upsert_catalog_row
+from ai_actuarial.catalog_incremental import _connect, _count_candidates, _upsert_catalog_row
 from ai_actuarial.crawler import Crawler
 from ai_actuarial.catalog import CatalogItem
 
@@ -343,14 +343,39 @@ class TestStorageAbstraction(unittest.TestCase):
                 "sha256": "hash1",
                 "keywords": ["test"],
                 "summary": "Test summary",
-                "category": "TestCategory",
+                "category": "TestCategory; Pricing",
             },
             pipeline_version="v1",
             status="ok",
         )
+
+        self.storage.insert_file(
+            url="http://test.com/file2.pdf",
+            sha256="hash2",
+            title="File 2",
+            source_site="test.com",
+            source_page_url="http://test.com",
+            original_filename="file2.pdf",
+            local_path="/tmp/file2.pdf",
+            bytes=2048,
+            content_type="application/pdf",
+        )
+        self.storage.upsert_catalog_item(
+            item={
+                "url": "http://test.com/file2.pdf",
+                "sha256": "hash2",
+                "keywords": [],
+                "summary": "",
+                "category": "(error)",
+            },
+            pipeline_version="v1",
+            status="error",
+        )
         
         categories = self.storage.get_unique_categories()
         self.assertIn("TestCategory", categories)
+        self.assertIn("Pricing", categories)
+        self.assertNotIn("(error)", categories)
     
     def test_query_files_with_catalog(self):
         """Test query_files_with_catalog method."""
@@ -390,6 +415,41 @@ class TestStorageAbstraction(unittest.TestCase):
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0]["title"], "Test Document")
         self.assertEqual(files[0]["category"], "TestCategory")
+
+    def test_query_files_with_catalog_uncategorized_includes_summaryless_rows(self):
+        """Incomplete catalog rows should be surfaced by the uncategorized filter."""
+        self.storage.insert_file(
+            url="http://test.com/file2.pdf",
+            sha256="hash2",
+            title="Needs Catalog",
+            source_site="test.com",
+            source_page_url="http://test.com",
+            original_filename="file2.pdf",
+            local_path="/tmp/file2.pdf",
+            bytes=2048,
+            content_type="application/pdf",
+        )
+
+        self.storage.upsert_catalog_item(
+            item={
+                "url": "http://test.com/file2.pdf",
+                "sha256": "hash2",
+                "keywords": [],
+                "summary": "",
+                "category": "(error)",
+            },
+            pipeline_version="v1",
+            status="error",
+        )
+
+        files, total = self.storage.query_files_with_catalog(
+            category="__uncategorized__",
+            limit=10,
+            offset=0,
+        )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(files[0]["title"], "Needs Catalog")
 
 
 class TestSQLInjectionProtection(unittest.TestCase):
@@ -435,6 +495,71 @@ class TestSQLInjectionProtection(unittest.TestCase):
         # Verify table still exists by using abstraction method
         count = self.storage.get_file_count(require_local=False)
         self.assertEqual(count, 1)
+
+
+class TestCatalogCandidateSelection(unittest.TestCase):
+    """Test candidate detection for incomplete catalog rows."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = os.path.join(self.temp_dir, "test.db")
+        storage = Storage(self.db_path)
+        try:
+            storage.insert_file(
+                url="http://test.com/file1.pdf",
+                sha256="hash1",
+                title="Candidate Document",
+                source_site="test.com",
+                source_page_url="http://test.com",
+                original_filename="file1.pdf",
+                local_path="/tmp/file1.pdf",
+                bytes=1024,
+                content_type="application/pdf",
+            )
+        finally:
+            storage.close()
+
+    def tearDown(self):
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def test_empty_summary_is_treated_as_catalog_candidate(self):
+        conn = _connect(self.db_path)
+        try:
+            conn.execute(
+                """
+                INSERT INTO catalog_items (
+                    file_url, file_sha256, sha256, catalog_version, pipeline_version,
+                    summary, category, status, processed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "http://test.com/file1.pdf",
+                    "hash1",
+                    "hash1",
+                    "v1",
+                    "v1",
+                    "",
+                    "AI",
+                    "ok",
+                    "2026-03-11T00:00:00Z",
+                ),
+            )
+            conn.commit()
+
+            count = _count_candidates(
+                conn,
+                site_filter=None,
+                catalog_version="v1",
+                retry_errors=False,
+                skip_existing=True,
+            )
+
+            self.assertEqual(count, 1)
+        finally:
+            conn.close()
 
 
 class TestConcurrentSQLiteWrites(unittest.TestCase):

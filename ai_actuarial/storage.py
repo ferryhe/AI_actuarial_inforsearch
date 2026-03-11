@@ -11,6 +11,22 @@ from typing import Any, Iterable
 import hashlib
 
 
+def _is_internal_category_label(category: str) -> bool:
+    value = str(category or "").strip()
+    return value.startswith("(") and value.endswith(")")
+
+
+def _split_visible_categories(raw_category: str | None) -> list[str]:
+    raw = str(raw_category or "").strip()
+    if not raw:
+        return []
+    return [
+        part
+        for part in (segment.strip() for segment in raw.split(";"))
+        if part and not _is_internal_category_label(part)
+    ]
+
+
 class Storage:
     # Allowlist for schema/migration helpers that interpolate table names into PRAGMA.
     _SCHEMA_TABLES = frozenset(
@@ -1310,10 +1326,7 @@ class Storage:
         """)
         categories: set[str] = set()
         for row in cur.fetchall():
-            raw = row[0] or ""
-            # Support semicolon-separated multi-categories: "AI; Risk; Pricing"
-            parts = [p.strip() for p in raw.split(";") if p.strip()]
-            for part in parts:
+            for part in _split_visible_categories(row[0]):
                 categories.add(part)
         return sorted(categories, key=lambda x: x.lower())
     
@@ -1378,7 +1391,14 @@ class Storage:
         if category:
             join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
             if category == '__uncategorized__':
-                filters.append("(c.category IS NULL OR c.category = '')")
+                filters.append(
+                    "("
+                    "c.file_url IS NULL "
+                    "OR TRIM(IFNULL(c.category, '')) = '' "
+                    "OR TRIM(IFNULL(c.summary, '')) = '' "
+                    "OR (TRIM(IFNULL(c.category, '')) != '' AND TRIM(IFNULL(c.category, '')) LIKE '(%)')"
+                    ")"
+                )
             else:
                 # Precise matching for semicolon-separated categories
                 # Category format: "AI; Risk & Capital; Pricing"

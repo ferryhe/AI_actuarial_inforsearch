@@ -45,8 +45,15 @@ interface FileData {
   category?: string;
   summary?: string;
   keywords?: string[];
+  catalog_status?: string;
+  catalog_version?: string;
   catalog_model?: string;
+  catalog_processed_at?: string;
   catalog_updated_at?: string;
+  markdown_source?: string;
+  markdown_updated_at?: string;
+  rag_chunk_count?: number;
+  rag_indexed_at?: string;
   deleted_at?: string;
   sha256?: string;
 }
@@ -86,7 +93,7 @@ interface CategoriesConfig {
   categories: Record<string, unknown>;
 }
 
-type TaskStatus = "idle" | "submitted" | "polling" | "completed" | "timeout";
+type TaskStatus = "idle" | "submitted" | "polling" | "completed" | "failed" | "stopped" | "timeout";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -125,6 +132,50 @@ function contentTypeBadgeColor(ct: string): string {
   return "bg-gray-500/10 text-gray-600 dark:text-gray-400";
 }
 
+function mapMarkdownSourceLabel(source: string | undefined, t: (key: string) => string): string {
+  const raw = String(source || "").trim();
+  if (!raw) return t("fv.markdownSource.none");
+  const lower = raw.toLowerCase();
+  if (lower === "manual") return t("fv.markdownSource.manual");
+  if (lower === "original") return t("fv.markdownSource.original");
+  if (lower.startsWith("converted_")) {
+    const engine = raw.slice("converted_".length).toLowerCase();
+    const engineLabel = ({
+      docling: t("fv.markdownSource.engine.docling"),
+      marker: t("fv.markdownSource.engine.marker"),
+      mistral: t("fv.markdownSource.engine.mistral"),
+      deepseekocr: t("fv.markdownSource.engine.deepseekocr"),
+      local: t("fv.markdownSource.engine.local"),
+      auto: t("fv.markdownSource.engine.auto"),
+    } as Record<string, string>)[engine] || engine;
+    return t("fv.markdownSource.convertedVia").replace("{engine}", engineLabel);
+  }
+  return raw;
+}
+
+function getCatalogStatusInfo(file: FileData, t: (key: string) => string): { label: string; cls: string } {
+  const status = String(file.catalog_status || "").trim().toLowerCase();
+  const hasCatalogData = Boolean(
+    String(file.summary || "").trim() ||
+    String(file.category || "").trim() ||
+    (file.keywords || []).length
+  );
+
+  if (status === "deleted") {
+    return { label: t("fv.catalogStatus.deleted"), cls: "text-slate-600 bg-slate-500/10" };
+  }
+  if (status === "error") {
+    return { label: t("fv.catalogStatus.error"), cls: "text-red-600 bg-red-500/10" };
+  }
+  if (status === "skipped") {
+    return { label: t("fv.catalogStatus.skipped"), cls: "text-amber-700 bg-amber-500/10" };
+  }
+  if (status === "ok" || hasCatalogData) {
+    return { label: t("fv.catalogStatus.ready"), cls: "text-emerald-700 bg-emerald-500/10" };
+  }
+  return { label: t("fv.catalogStatus.pending"), cls: "text-muted-foreground bg-muted" };
+}
+
 function useTaskPoller(onComplete: () => void, intervalMs = 2000, maxMs = 30000) {
   const [status, setStatus] = useState<TaskStatus>("idle");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -140,32 +191,61 @@ function useTaskPoller(onComplete: () => void, intervalMs = 2000, maxMs = 30000)
   const start = useCallback((jobId?: string) => {
     cleanup();
     jobIdRef.current = jobId || null;
-    setStatus("polling");
-    timerRef.current = setInterval(async () => {
+    setStatus("submitted");
+
+    const finish = (nextStatus: Exclude<TaskStatus, "idle" | "submitted" | "polling">) => {
+      cleanup();
+      setStatus(nextStatus);
+      onComplete();
+      setTimeout(() => setStatus("idle"), nextStatus === "timeout" ? 5000 : 3000);
+    };
+
+    const checkTask = async () => {
       try {
         const res = await apiGet<{ tasks?: Array<{ id?: string; status?: string }> }>("/api/tasks/active");
         const tasks = res.tasks || [];
-        const myTask = jobIdRef.current
-          ? tasks.find((t) => t.id === jobIdRef.current)
-          : null;
-        if (jobIdRef.current && !myTask) {
-          cleanup();
-          setStatus("completed");
-          onComplete();
-          setTimeout(() => setStatus("idle"), 3000);
-        } else if (!jobIdRef.current && tasks.length === 0) {
-          cleanup();
-          setStatus("completed");
-          onComplete();
-          setTimeout(() => setStatus("idle"), 3000);
+        if (jobIdRef.current) {
+          const myTask = tasks.find((t) => t.id === jobIdRef.current);
+          if (myTask) {
+            setStatus("polling");
+            return;
+          }
+          try {
+            const history = await apiGet<{ tasks?: Array<{ id?: string; status?: string }> }>("/api/tasks/history?limit=200");
+            const historyTask = (history.tasks || []).find((t) => t.id === jobIdRef.current);
+            const backendStatus = String(historyTask?.status || "").trim().toLowerCase();
+            if (backendStatus === "completed") {
+              finish("completed");
+              return;
+            }
+            if (backendStatus === "failed" || backendStatus === "error") {
+              finish("failed");
+              return;
+            }
+            if (backendStatus === "stopped") {
+              finish("stopped");
+              return;
+            }
+          } catch {
+            // Fall back to completed when history lookup fails.
+          }
+          finish("completed");
+          return;
         }
-      } catch { /* keep polling */ }
-    }, intervalMs);
+        if (tasks.length > 0) {
+          setStatus("polling");
+          return;
+        }
+        finish("completed");
+      } catch {
+        setStatus((prev) => (prev === "submitted" ? "polling" : prev));
+      }
+    };
+
+    void checkTask();
+    timerRef.current = setInterval(() => { void checkTask(); }, intervalMs);
     timeoutRef.current = setTimeout(() => {
-      cleanup();
-      setStatus("timeout");
-      onComplete();
-      setTimeout(() => setStatus("idle"), 5000);
+      finish("timeout");
     }, maxMs);
   }, [cleanup, onComplete, intervalMs, maxMs]);
 
@@ -182,6 +262,8 @@ function TaskStatusBadge({ status, t }: { status: TaskStatus; t: (k: string) => 
     submitted: { icon: <Loader2 className="w-3 h-3 animate-spin" />, text: t("fv.task_submitted"), cls: "text-blue-600 bg-blue-500/10" },
     polling: { icon: <Clock className="w-3 h-3 animate-pulse" />, text: t("fv.task_running"), cls: "text-amber-600 bg-amber-500/10" },
     completed: { icon: <CheckCircle2 className="w-3 h-3" />, text: t("fv.task_completed"), cls: "text-emerald-600 bg-emerald-500/10" },
+    failed: { icon: <AlertCircle className="w-3 h-3" />, text: t("fv.task_failed"), cls: "text-red-600 bg-red-500/10" },
+    stopped: { icon: <X className="w-3 h-3" />, text: t("fv.task_stopped"), cls: "text-slate-600 bg-slate-500/10" },
     timeout: { icon: <Clock className="w-3 h-3" />, text: t("fv.task_timeout"), cls: "text-orange-600 bg-orange-500/10" },
   }[status];
   if (!config) return null;
@@ -293,6 +375,11 @@ export default function FileDetail() {
     try {
       const res = await apiGet<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(fileUrl)}/markdown`);
       setMarkdown(res.markdown || null);
+      setFile((current) => current ? {
+        ...current,
+        markdown_source: res.markdown?.markdown_source,
+        markdown_updated_at: res.markdown?.markdown_updated_at,
+      } : current);
       if (res.markdown?.markdown_content) setMdEditContent(res.markdown.markdown_content);
     } catch { setMarkdown(null); }
   }, [fileUrl]);
@@ -309,7 +396,9 @@ export default function FileDetail() {
   const catalogPoller = useTaskPoller(fetchFile);
 
   const anyTaskRunning = converting || catalogSubmitting || chunkSubmitting ||
+    conversionPoller.status === "submitted" ||
     conversionPoller.status === "polling" ||
+    catalogPoller.status === "submitted" ||
     catalogPoller.status === "polling";
   const mdEditMode = mdTab === "edit";
 
@@ -406,7 +495,7 @@ export default function FileDetail() {
         type: "markdown_conversion",
         name: `MD Convert: ${file.title || file.original_filename}`,
         file_urls: [file.url],
-        engine: convertEngine,
+        conversion_tool: convertEngine,
         overwrite_existing: convertOverwrite,
       });
       setMdTab("view");
@@ -486,7 +575,7 @@ export default function FileDetail() {
     setDeleting(true);
     try {
       await apiPost("/api/files/delete", { url: file.url, confirm: "DELETE" });
-      navigate("/database");
+      navigate(fromParam || "/database");
     } catch { setDeleting(false); }
   }
 
@@ -521,17 +610,22 @@ export default function FileDetail() {
   const selectedCategories = (editing ? editCategory : file.category || "").split(";").map((c) => c.trim()).filter(Boolean);
   const keywords = editing ? editKeywords.split(",").map((k) => k.trim()).filter(Boolean) : file.keywords || [];
   const hasMarkdown = !!(markdown?.markdown_content);
+  const isDeleted = !!file.deleted_at;
+  const hasLocalFile = !!file.local_path && !isDeleted;
+  const catalogStatus = getCatalogStatusInfo(file, t);
+  const effectiveMarkdownSource = markdown?.markdown_source || file.markdown_source || "";
+  const effectiveMarkdownUpdatedAt = markdown?.markdown_updated_at || file.markdown_updated_at || "";
 
   const disabledBtn = "opacity-40 pointer-events-none cursor-not-allowed";
 
   const canEdit = !anyTaskRunning && !mdEditMode;
-  const canCatalog = !anyTaskRunning && !editing && !mdEditMode;
-  const canDownload = true;
-  const canPreview = true;
-  const canDelete = !anyTaskRunning;
-  const canModifyChunk = !anyTaskRunning && !editing && !mdEditMode;
+  const canCatalog = !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
+  const canDownload = hasLocalFile;
+  const canPreview = hasLocalFile;
+  const canDelete = !isDeleted && !anyTaskRunning;
+  const canModifyChunk = hasMarkdown && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
   const canSwitchMdEdit = !editing && !anyTaskRunning;
-  const canConvert = !editing && !anyTaskRunning;
+  const canConvert = hasLocalFile && !editing && !anyTaskRunning;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -654,6 +748,9 @@ export default function FileDetail() {
         <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
           <Tag className="w-4 h-4 text-primary" />
           <h3 className="text-sm font-semibold">{t("fv.catalog_info")}</h3>
+          <span className={cn("ml-auto inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium", catalogStatus.cls)}>
+            {catalogStatus.label}
+          </span>
         </div>
         <div className="p-4 space-y-4">
           <div>
@@ -775,6 +872,12 @@ export default function FileDetail() {
             )}
           </div>
         </div>
+        {(effectiveMarkdownSource || effectiveMarkdownUpdatedAt) && (
+          <div className="px-4 py-2 border-b border-border bg-background/60 text-[11px] text-muted-foreground flex flex-wrap items-center gap-2">
+            {effectiveMarkdownSource && <span>{mapMarkdownSourceLabel(effectiveMarkdownSource, t)}</span>}
+            {effectiveMarkdownUpdatedAt && <span>{t("fv.last_updated")}: {formatDate(effectiveMarkdownUpdatedAt)}</span>}
+          </div>
+        )}
         <div className="p-4">
           {mdLoading ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />{t("fv.loading")}</div>
@@ -827,7 +930,7 @@ export default function FileDetail() {
                 {markdown?.markdown_updated_at && (
                   <span className="text-[11px] text-muted-foreground ml-auto">
                     {t("fv.last_updated")}: {formatDate(markdown.markdown_updated_at)}
-                    {markdown.markdown_source && ` (${markdown.markdown_source})`}
+                    {markdown.markdown_source && ` (${mapMarkdownSourceLabel(markdown.markdown_source, t)})`}
                   </span>
                 )}
               </div>

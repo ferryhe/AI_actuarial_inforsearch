@@ -3304,6 +3304,23 @@ sites:
                 return f"Error: {e}", 500
             return "Error viewing file", 500
     
+    def _catalog_candidate_predicate(
+        *,
+        file_alias: str = "f",
+        catalog_alias: str = "c",
+        include_retry_flag: bool = False,
+    ) -> str:
+        conditions = [
+            f"{catalog_alias}.file_url IS NULL",
+            f"IFNULL(IFNULL({catalog_alias}.file_sha256, {catalog_alias}.sha256), '') = ''",
+            f"IFNULL({catalog_alias}.file_sha256, {catalog_alias}.sha256) != {file_alias}.sha256",
+            f"IFNULL(IFNULL({catalog_alias}.catalog_version, {catalog_alias}.pipeline_version), '') != ?",
+            f"TRIM(IFNULL({catalog_alias}.summary, '')) = ''",
+        ]
+        if include_retry_flag:
+            conditions.append(f"(? = 1 AND {catalog_alias}.status = 'error')")
+        return "(" + " OR ".join(conditions) + ")"
+
     def execute_collection_task(task_id, collection_type, data):
         """Background task execution logic."""
         logger.info(f"Starting background task {task_id} type={collection_type}")
@@ -3777,6 +3794,11 @@ sites:
                 # Map a "start index" in the newest-first local file list into a candidate offset.
                 candidate_offset = 0
                 catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
+                catalog_candidate_predicate = _catalog_candidate_predicate(
+                    file_alias="f",
+                    catalog_alias="c",
+                    include_retry_flag=True,
+                )
                 if scope_mode == "category" and category_filter and not file_urls:
                     category_clause, category_params = _category_where_sql(category_filter, alias="c")
                     candidate_sql = f"""
@@ -3789,14 +3811,8 @@ sites:
                     """
                     candidate_params: list[Any] = list(category_params)
                     if skip_existing:
-                        candidate_sql += """
-                          AND (
-                            c.file_url IS NULL
-                            OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
-                            OR IFNULL(c.file_sha256, c.sha256) != f.sha256
-                            OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version), '') != ?
-                            OR (? = 1 AND c.status = 'error')
-                          )
+                        candidate_sql += f"""
+                          AND {catalog_candidate_predicate}
                         """
                         candidate_params.extend([catalog_version, 1 if retry_errors else 0])
                     candidate_sql += " ORDER BY f.id DESC LIMIT ?"
@@ -3817,16 +3833,12 @@ sites:
                 elif start_index > 1:
                     try:
                         row = storage._conn.execute(
-                            """
+                            f"""
                             WITH ordered AS (
                                 SELECT
                                     ROW_NUMBER() OVER (ORDER BY f.id DESC) AS rn,
                                     CASE
-                                        WHEN c.file_url IS NULL
-                                          OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
-                                          OR IFNULL(c.file_sha256, c.sha256) != f.sha256
-                                          OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version), '') != ?
-                                          OR (? = 1 AND c.status = 'error')
+                                        WHEN {catalog_candidate_predicate}
                                         THEN 1 ELSE 0
                                     END AS is_candidate
                                 FROM files f
@@ -3849,7 +3861,8 @@ sites:
                                    IFNULL(c.file_sha256, c.sha256) AS c_sha,
                                    IFNULL(c.catalog_version, c.pipeline_version) AS c_ver,
                                    c.status,
-                                   c.file_url
+                                   c.file_url,
+                                   c.summary
                             FROM files f
                             LEFT JOIN catalog_items c ON c.file_url = f.url
                             WHERE f.local_path IS NOT NULL AND f.local_path != ''
@@ -3864,12 +3877,14 @@ sites:
                             c_sha = r[1] or ""
                             c_ver = r[2] or ""
                             c_status = r[3] or ""
+                            c_summary = (r[5] or "").strip()
                             f_sha = r[0] or ""
                             is_candidate = (
                                 (c_url is None)
                                 or (not c_sha)
                                 or (c_sha != f_sha)
                                 or (c_ver != catalog_version)
+                                or (not c_summary)
                                 or (retry_errors and c_status == "error")
                             )
                             if is_candidate:
@@ -3942,7 +3957,7 @@ sites:
             elif collection_type == "markdown_conversion":
                 # Markdown conversion task
                 file_urls = data.get("file_urls", []) or []
-                conversion_tool = data.get("conversion_tool", "auto")
+                conversion_tool = data.get("conversion_tool") or data.get("engine") or "auto"
                 if not str(conversion_tool or "").strip():
                     conversion_tool = "auto"
                 overwrite_existing = data.get("overwrite_existing", False)
@@ -5124,15 +5139,10 @@ sites:
             category_filter = str(request.args.get("category") or "").strip()
             catalog_version = f"{BASE_CATALOG_VERSION}:{provider}:{input_source}"
             # Candidate definition (aligned with catalog_incremental behavior, but using legacy columns too).
-            candidates_where = """
+            candidates_where = f"""
                 f.local_path IS NOT NULL AND f.local_path != ''
                 AND f.deleted_at IS NULL
-                AND (
-                    c.file_url IS NULL
-                    OR IFNULL(IFNULL(c.file_sha256, c.sha256), '') = ''
-                    OR IFNULL(c.file_sha256, c.sha256) != f.sha256
-                    OR IFNULL(IFNULL(c.catalog_version, c.pipeline_version),'') != ?
-                )
+                AND {_catalog_candidate_predicate(file_alias="f", catalog_alias="c")}
             """
             candidate_params: list[Any] = [catalog_version]
             if category_filter:
@@ -5177,7 +5187,8 @@ sites:
                              c.file_url AS c_url,
                              f.sha256 AS f_sha,
                              IFNULL(c.file_sha256, c.sha256) AS c_sha,
-                             IFNULL(c.catalog_version, c.pipeline_version) AS c_ver
+                             IFNULL(c.catalog_version, c.pipeline_version) AS c_ver,
+                             c.summary AS c_summary
                          FROM files f
                          LEFT JOIN catalog_items c ON c.file_url = f.url
                          WHERE f.local_path IS NOT NULL AND f.local_path != ''
@@ -5190,6 +5201,7 @@ sites:
                         OR IFNULL(c_sha,'') = ''
                         OR c_sha != f_sha
                         OR IFNULL(c_ver,'') != ?
+                        OR TRIM(IFNULL(c_summary, '')) = ''
                         ORDER BY rn
                         LIMIT 1
                         """,
