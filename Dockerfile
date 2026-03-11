@@ -19,10 +19,24 @@ RUN apt-get update && apt-get install -y \
     # For Tesseract OCR
     tesseract-ocr \
     libtesseract-dev \
+    libtesseract5 \
     # For other ML libraries
     libomp-dev \
+    # For easyocr
+    libgl1-mesa-glx \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
+
+# Install docling OCR dependencies
+RUN pip install --no-cache-dir \
+    easyocr \
+    onnxruntime \
+    torch \
+    torchvision \
+    --index-url https://download.pytorch.org/whl/cpu
 
 # Copy requirements first for better caching
 COPY requirements.txt .
