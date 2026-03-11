@@ -55,6 +55,7 @@ class Storage:
         self.db_path = db_path
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
+        self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._tx_depth = 0
         self._init_schema()

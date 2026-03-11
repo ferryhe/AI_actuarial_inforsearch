@@ -210,6 +210,14 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
         self.assertEqual(profile_resp.status_code, 201)
         profile_id = profile_resp.get_json()["data"]["profile_id"]
 
+        encoded_file_url = quote(self.file_url, safe="")
+        gen_resp = self.client.post(
+            f"/api/files/{encoded_file_url}/chunk-sets/generate",
+            headers=self.auth_header,
+            json={"profile_id": profile_id, "overwrite_same_profile": True},
+        )
+        self.assertIn(gen_resp.status_code, [200, 201])
+
         delete_resp = self.client.delete(
             f"/api/chunk/profiles/{profile_id}",
             headers=self.auth_header,
@@ -224,6 +232,13 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
         self.assertEqual(list_resp.status_code, 200)
         profiles = list_resp.get_json()["data"]["profiles"]
         self.assertFalse(any(item["profile_id"] == profile_id for item in profiles))
+
+        chunk_sets_resp = self.client.get(
+            f"/api/files/{encoded_file_url}/chunk-sets",
+            headers=self.auth_header,
+        )
+        self.assertEqual(chunk_sets_resp.status_code, 200)
+        self.assertEqual(chunk_sets_resp.get_json()["data"]["count"], 0)
 
     def test_follow_latest_binding_auto_sync_on_new_chunk(self):
         profile_resp = self.client.post(

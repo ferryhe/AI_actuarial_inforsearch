@@ -725,13 +725,18 @@ def run_incremental_catalog(
             seen_urls.add(r["url"])
         
         stop_requested = False
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        shutdown_without_wait = False
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
             future_to_url = {}
             for r in row_dicts:
                 if stop_check and stop_check():
                     logger.info("Catalog stop requested before submitting more items")
                     stats["stopped"] = True
                     stop_requested = True
+                    if future_to_url:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        shutdown_without_wait = True
                     break
                 future = executor.submit(
                     _process_single_row,
@@ -757,9 +762,8 @@ def run_incremental_catalog(
                     logger.info("Catalog stop requested while workers are running")
                     stats["stopped"] = True
                     stop_requested = True
-                    for pending in future_to_url:
-                        if not pending.done():
-                            pending.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    shutdown_without_wait = True
                     break
                 try:
                     r_data, item, status, suggested_title = future.result()
@@ -851,14 +855,17 @@ def run_incremental_catalog(
                     stats["errors"] += 1
                     if len(stats["error_samples"]) < 20:
                         stats["error_samples"].append(str(e))
-        if stop_requested:
-            break
+        finally:
+            if not shutdown_without_wait:
+                executor.shutdown(wait=True)
         
         # Append outputs incrementally
         if batch_items:
             _append_jsonl(out_jsonl, batch_jsonl)
             write_catalog_md(out_md, batch_items, append=out_md.exists())
             stats["written"] += len(batch_items)
+        if stop_requested:
+            break
             
         logger.info(
             "Batch done: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
@@ -1024,13 +1031,18 @@ def run_catalog_for_urls(
     batch_jsonl: list[dict] = []
 
     stop_requested = False
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    shutdown_without_wait = False
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    try:
         future_to_url = {}
         for r in candidates:
             if stop_check and stop_check():
                 logger.info("Catalog stop requested before submitting more explicit file URLs")
                 stats["stopped"] = True
                 stop_requested = True
+                if future_to_url:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    shutdown_without_wait = True
                 break
             future = executor.submit(
                 _process_single_row,
@@ -1052,9 +1064,8 @@ def run_catalog_for_urls(
                 logger.info("Catalog stop requested while explicit file URL workers are running")
                 stats["stopped"] = True
                 stop_requested = True
-                for pending in future_to_url:
-                    if not pending.done():
-                        pending.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                shutdown_without_wait = True
                 break
             url = future_to_url[future]
             try:
@@ -1114,6 +1125,9 @@ def run_catalog_for_urls(
                 stats["errors"] += 1
                 if len(stats["error_samples"]) < 20:
                     stats["error_samples"].append(str(e))
+    finally:
+        if not shutdown_without_wait:
+            executor.shutdown(wait=True)
     if stop_requested:
         logger.info("Catalog processing stopped for explicit file URL run")
 
