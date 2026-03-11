@@ -341,7 +341,9 @@ class StorageV2RAGMixin:
             ).order_by(func.coalesce(KBIndexVersion.built_at, KBIndexVersion.created_at).desc()).first()
             
             out.append({"kb_id": kb_id, "chunk_set_count": chunk_set_count or 0,
+                       "embedding_provider": latest_idx.embedding_provider if latest_idx else "",
                        "embedding_model": latest_idx.embedding_model if latest_idx else "",
+                       "embedding_dimension": latest_idx.embedding_dimension if latest_idx else None,
                        "indexed_at": (latest_idx.built_at or latest_idx.created_at) if latest_idx else None,
                        "indexed_chunk_count": latest_idx.chunk_count if latest_idx else 0})
         return out
@@ -377,7 +379,9 @@ class StorageV2RAGMixin:
                "binding_mode_counts": {"follow_latest": follow_latest_count, "pin": pin_count},
                "outdated_binding_count": 0, "new_chunk_versions_available": False,
                "needs_reindex": needs_reindex,
-               "latest_index": {"embedding_model": latest.embedding_model if latest else None,
+               "latest_index": {"embedding_provider": latest.embedding_provider if latest else None,
+                              "embedding_model": latest.embedding_model if latest else None,
+                              "embedding_dimension": latest.embedding_dimension if latest else None,
                               "index_type": latest.index_type if latest else None,
                               "status": latest.status if latest else None,
                               "chunk_count": latest.chunk_count if latest else 0,
@@ -431,7 +435,7 @@ class StorageV2RAGMixin:
         return out
 
     def create_kb_index_version(self, *, kb_id: str, embedding_model: str, index_type: str,
-                              chunk_count: int, status: str = "ready", artifact_path: str = "",
+                              chunk_count: int, embedding_provider: str = "openai", embedding_dimension: int = None, status: str = "ready", artifact_path: str = "",
                               chunk_ids: list = None, built_at: str = None) -> dict:
         now = self._utcnow_iso()
         index_version_id = f"idxv_{uuid.uuid4().hex}"
@@ -446,7 +450,7 @@ class StorageV2RAGMixin:
                 self._session.query(KBIndexVersion).filter(KBIndexVersion.kb_id == kb_id).delete()
 
             index_version = KBIndexVersion(index_version_id=index_version_id, kb_id=kb_id,
-                                          embedding_model=embedding_model, index_type=index_type,
+                                          embedding_provider=embedding_provider, embedding_model=embedding_model, embedding_dimension=embedding_dimension, index_type=index_type,
                                           status=status, artifact_path=artifact_path,
                                           chunk_count=int(chunk_count), built_at=built_time, created_at=now)
             self._session.add(index_version)
@@ -455,7 +459,8 @@ class StorageV2RAGMixin:
                 for chunk_id in chunk_ids:
                     self._session.add(KBIndexItem(index_version_id=index_version_id, chunk_id=chunk_id))
         
-        return {"index_version_id": index_version_id, "kb_id": kb_id, "embedding_model": embedding_model,
+        return {"index_version_id": index_version_id, "kb_id": kb_id, "embedding_provider": embedding_provider,
+               "embedding_model": embedding_model, "embedding_dimension": embedding_dimension,
                "index_type": index_type, "status": status, "artifact_path": artifact_path,
                "chunk_count": int(chunk_count), "built_at": built_time, "created_at": now}
 

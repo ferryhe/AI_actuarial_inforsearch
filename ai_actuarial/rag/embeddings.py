@@ -20,7 +20,7 @@ from typing import List, Optional
 
 from openai import OpenAI, APITimeoutError, RateLimitError, APIError
 
-from ai_actuarial.ai_runtime import is_embedding_provider_supported
+from ai_actuarial.ai_runtime import infer_embedding_dimension, is_embedding_provider_supported
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import EmbeddingException
 
@@ -308,16 +308,12 @@ class EmbeddingGenerator:
         """
         if self.provider != "local":
             # OpenAI-compatible embedding dimensions
-            if "text-embedding-3-large" in self.config.embedding_model:
-                return 3072
-            elif "text-embedding-3-small" in self.config.embedding_model:
-                return 1536
-            elif "ada-002" in self.config.embedding_model:
-                return 1536
-            else:
-                # Unknown model, generate test embedding to determine dimension
-                test_emb = self.generate_embeddings(["test"])
-                return len(test_emb[0]) if test_emb else 1536
+            inferred = infer_embedding_dimension(self.config.embedding_model)
+            if inferred is not None:
+                return inferred
+            # Unknown model, generate test embedding to determine dimension
+            test_emb = self.generate_embeddings(["test"])
+            return len(test_emb[0]) if test_emb else 1536
         else:
             # Local model - generate test embedding
             test_emb = self.generate_embeddings(["test"])

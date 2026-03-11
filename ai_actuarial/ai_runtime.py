@@ -168,6 +168,34 @@ DEFAULT_AI_FUNCTION_CONFIG = {
     "ocr": {"provider": "local", "model": "docling"},
 }
 
+KNOWN_EMBEDDING_MODEL_DIMENSIONS = {
+    "text-embedding-3-large": 3072,
+    "text-embedding-3-small": 1536,
+    "text-embedding-ada-002": 1536,
+    "text-embedding-v3": 1024,
+    "text-embedding-004": 768,
+    "embed-multilingual-v3.0": 1024,
+    "all-MiniLM-L6-v2": 384,
+    "BAAI/bge-m3": 1024,
+    "BAAI/bge-large-zh-v1.5": 1024,
+    "sentence-transformers": 768,
+}
+
+KNOWN_EMBEDDING_MODEL_PROVIDERS = {
+    "text-embedding-3-large": "openai",
+    "text-embedding-3-small": "openai",
+    "text-embedding-ada-002": "openai",
+    "text-embedding-v3": "qwen",
+    "text-embedding-004": "google",
+    "embedding-3": "minimax",
+    "embo-01": "zhipuai",
+    "embed-multilingual-v3.0": "cohere",
+    "all-MiniLM-L6-v2": "local",
+    "BAAI/bge-m3": "local",
+    "BAAI/bge-large-zh-v1.5": "local",
+    "sentence-transformers": "local",
+}
+
 OCR_ENGINE_PROVIDER_MAP = {
     "docling": "local",
     "marker": "local",
@@ -537,3 +565,39 @@ def _reload_settings_if_available() -> None:
 def _normalize_provider(provider: str | None, *, default: str = "openai") -> str:
     normalized = str(provider or "").strip().lower()
     return normalized or default
+
+
+def infer_embedding_dimension(model: str | None) -> int | None:
+    """Infer embedding dimension for a known model identifier."""
+    normalized = str(model or "").strip()
+    if not normalized:
+        return None
+    if normalized in KNOWN_EMBEDDING_MODEL_DIMENSIONS:
+        return int(KNOWN_EMBEDDING_MODEL_DIMENSIONS[normalized])
+    lowered = normalized.lower()
+    if lowered.startswith("text-embedding-3-large"):
+        return 3072
+    if lowered.startswith("text-embedding-3-small") or "ada-002" in lowered:
+        return 1536
+    return None
+
+
+def infer_embedding_provider(
+    model: str | None,
+    *,
+    fallback: str | None = None,
+) -> str | None:
+    """Infer provider from an embedding model name when legacy rows lack it."""
+    normalized = str(model or "").strip()
+    if not normalized:
+        normalized_fallback = str(fallback or "").strip().lower()
+        return normalized_fallback or None
+    if normalized in KNOWN_EMBEDDING_MODEL_PROVIDERS:
+        return KNOWN_EMBEDDING_MODEL_PROVIDERS[normalized]
+    lowered = normalized.lower()
+    if lowered.startswith("text-embedding-3") or "ada-002" in lowered:
+        return "openai"
+    if normalized.startswith("BAAI/") or normalized == "sentence-transformers":
+        return "local"
+    normalized_fallback = str(fallback or "").strip().lower()
+    return normalized_fallback or None

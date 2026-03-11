@@ -353,6 +353,27 @@
         border-color: var(--primary-color);
     }
 
+    .chat-kb-info {
+        min-width: 260px;
+        max-width: 360px;
+        padding: 0.7rem 0.85rem;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: rgba(148, 163, 184, 0.08);
+        font-size: var(--text-sm);
+        line-height: 1.45;
+        color: var(--text-secondary);
+    }
+
+    .chat-kb-info strong {
+        color: var(--text-primary);
+    }
+
+    .chat-kb-info-warning {
+        border-color: rgba(220, 38, 38, 0.28);
+        background: rgba(220, 38, 38, 0.08);
+    }
+
     .chat-messages {
         flex: 1;
         overflow-y: auto;
@@ -691,6 +712,12 @@
             min-width: 0;
         }
 
+        .chat-kb-info {
+            min-width: 0;
+            max-width: none;
+            width: 100%;
+        }
+
         .chat-control-group {
             width: 100%;
             min-width: 0;
@@ -824,6 +851,7 @@
                         </select>
                     </div>
                 </div>
+                <div class="chat-kb-info" id="kb-embedding-info">Loading KB embedding status...</div>
             </div>
         </div>
         
@@ -865,6 +893,7 @@
     let currentConversationId = null;
     let conversations = [];
     let knowledgeBases = [];
+    let currentEmbeddingRuntime = null;
     let isLoading = false;
     let availableDocuments = [];
     let filteredDocuments = [];
@@ -879,6 +908,7 @@
     const modeSelector = document.getElementById('mode-selector');
     const chatTitle = document.getElementById('chat-title');
     const chatSubtitle = document.getElementById('chat-subtitle');
+    const kbEmbeddingInfo = document.getElementById('kb-embedding-info');
     
     // Document Explorer elements
     const docExplorer = document.getElementById('doc-explorer');
@@ -923,6 +953,7 @@
         
         // New conversation
         newConvBtn.addEventListener('click', startNewConversation);
+        kbSelector.addEventListener('change', updateKbEmbeddingInfo);
         
         // Document Explorer events
         docLoadBtn.addEventListener('click', loadAvailableDocuments);
@@ -956,7 +987,9 @@
             
             if (result.success && result.data.knowledge_bases) {
                 knowledgeBases = result.data.knowledge_bases;
+                currentEmbeddingRuntime = result.data.current_embeddings || null;
                 populateKBSelector();
+                updateKbEmbeddingInfo();
             }
         } catch (error) {
             console.error('Error loading knowledge bases:', error);
@@ -986,6 +1019,53 @@
             option.textContent = `${kb.name} (${kb.chunk_count} chunks)`;
             kbSelector.appendChild(option);
         });
+    }
+
+    function formatEmbeddingLabel(provider, model, dimension) {
+        const providerLabel = String(provider || '-').trim() || '-';
+        const modelLabel = String(model || '-').trim() || '-';
+        const dimLabel = dimension === null || dimension === undefined || dimension === '' ? '-' : dimension;
+        return `${providerLabel} / ${modelLabel} / dim ${dimLabel}`;
+    }
+
+    function updateKbEmbeddingInfo() {
+        if (!kbEmbeddingInfo) return;
+        const currentLabel = currentEmbeddingRuntime
+            ? formatEmbeddingLabel(
+                currentEmbeddingRuntime.provider,
+                currentEmbeddingRuntime.model,
+                currentEmbeddingRuntime.dimension,
+            )
+            : '-';
+        const selected = kbSelector?.value || 'auto';
+        if (selected === 'auto' || selected === 'all') {
+            kbEmbeddingInfo.classList.remove('chat-kb-info-warning');
+            kbEmbeddingInfo.innerHTML =
+                `<strong>Current embeddings</strong>: ${escapeHtml(currentLabel)}<br>` +
+                `<strong>KB selection</strong>: ${escapeHtml(selected === 'auto' ? 'Auto' : 'All')}`;
+            return;
+        }
+
+        const kb = knowledgeBases.find(item => item.kb_id === selected);
+        if (!kb) {
+            kbEmbeddingInfo.classList.remove('chat-kb-info-warning');
+            kbEmbeddingInfo.innerHTML = `<strong>Current embeddings</strong>: ${escapeHtml(currentLabel)}`;
+            return;
+        }
+
+        const indexLabel = formatEmbeddingLabel(
+            kb.index_embedding_provider,
+            kb.index_embedding_model,
+            kb.index_embedding_dimension,
+        );
+        const statusLabel = kb.needs_reindex || !kb.embedding_compatible
+            ? 'Rebuild required'
+            : (kb.index_status || 'ready');
+        kbEmbeddingInfo.classList.toggle('chat-kb-info-warning', !!(kb.needs_reindex || !kb.embedding_compatible));
+        kbEmbeddingInfo.innerHTML =
+            `<strong>Current embeddings</strong>: ${escapeHtml(currentLabel)}<br>` +
+            `<strong>KB index</strong>: ${escapeHtml(indexLabel)}<br>` +
+            `<strong>Status</strong>: ${escapeHtml(statusLabel)}`;
     }
     
     async function loadConversations() {
@@ -1170,7 +1250,18 @@
                 // Reload conversation list to update counts
                 await loadConversations();
             } else {
-                showError(result.error || 'Failed to get response');
+                if (result.code === 'KB_EMBEDDING_MISMATCH' && result.data) {
+                    const indexEmbedding = result.data.index_embedding || {};
+                    const currentEmbedding = result.data.current_embedding || {};
+                    showError(
+                        `KB ${result.data.kb_id || ''} needs reindex: ` +
+                        `${formatEmbeddingLabel(indexEmbedding.provider, indexEmbedding.model, indexEmbedding.dimension)} ` +
+                        `-> ${formatEmbeddingLabel(currentEmbedding.provider, currentEmbedding.model, currentEmbedding.dimension)}`
+                    );
+                    await loadKnowledgeBases();
+                } else {
+                    showError(result.error || 'Failed to get response');
+                }
             }
         } catch (error) {
             console.error('Error sending message:', error);
