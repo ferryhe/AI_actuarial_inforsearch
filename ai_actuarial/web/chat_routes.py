@@ -1,4 +1,4 @@
-﻿"""Chat API routes for AI chatbot interface."""
+"""Chat API routes for AI chatbot interface."""
 
 from __future__ import annotations
 
