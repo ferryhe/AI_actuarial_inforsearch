@@ -734,6 +734,11 @@ select:hover {
     color: #991b1b;
 }
 
+.status-partial, .status-warning, .status-stopped {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
 .status-pending {
     background-color: #fef3c7;
     color: #92400e;

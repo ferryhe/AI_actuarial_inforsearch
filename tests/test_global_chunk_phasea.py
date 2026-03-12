@@ -192,6 +192,60 @@ class TestGlobalChunkPhaseA(unittest.TestCase):
         self.assertEqual(status_data["data"]["file_count"], 1)
         self.assertGreaterEqual(status_data["data"]["chunk_set_count"], 1)
 
+    def test_composition_status_falls_back_to_legacy_index_records(self):
+        kb_id = "kb_legacy_index_status"
+        create_kb_resp = self.client.post(
+            "/api/rag/knowledge-bases",
+            headers=self.auth_header,
+            json={
+                "kb_id": kb_id,
+                "name": "Legacy Index KB",
+                "kb_mode": "manual",
+            },
+        )
+        if create_kb_resp.status_code == 503:
+            self.skipTest("RAG functionality not available")
+        self.assertEqual(create_kb_resp.status_code, 201)
+
+        add_file_resp = self.client.post(
+            f"/api/rag/knowledge-bases/{kb_id}/files",
+            headers=self.auth_header,
+            json={"file_urls": [self.file_url]},
+        )
+        self.assertEqual(add_file_resp.status_code, 200)
+
+        indexed_at = datetime.now(timezone.utc).isoformat()
+        self.storage._conn.execute(
+            """
+            UPDATE rag_kb_files
+            SET indexed_at = ?, chunk_count = ?
+            WHERE kb_id = ? AND file_url = ?
+            """,
+            (indexed_at, 4, kb_id, self.file_url),
+        )
+        self.storage._conn.execute(
+            """
+            UPDATE rag_knowledge_bases
+            SET chunk_count = ?, updated_at = ?
+            WHERE kb_id = ?
+            """,
+            (4, indexed_at, kb_id),
+        )
+        self.storage._conn.commit()
+
+        status_resp = self.client.get(
+            f"/api/rag/knowledge-bases/{kb_id}/composition/status",
+            headers=self.auth_header,
+        )
+        self.assertEqual(status_resp.status_code, 200)
+        payload = status_resp.get_json()["data"]
+        self.assertTrue(payload["has_index"])
+        self.assertFalse(payload["needs_reindex"])
+        self.assertEqual(payload["file_count"], 1)
+        self.assertEqual(payload["indexed_file_count"], 1)
+        self.assertEqual(payload["pending_file_count"], 0)
+        self.assertEqual(payload["latest_index"]["source"], "legacy")
+
     def test_chunk_profile_delete_endpoint_removes_profile(self):
         profile_resp = self.client.post(
             "/api/chunk/profiles",

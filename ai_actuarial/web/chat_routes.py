@@ -261,6 +261,27 @@ def register_chat_routes(
             document_content = data.get("document_content", "").strip()
             document_filename = data.get("document_filename", "document").strip()
             document_file_url = data.get("document_file_url", "").strip()
+            document_sources = []
+            raw_document_sources = data.get("document_sources")
+            if isinstance(raw_document_sources, list):
+                for idx, item in enumerate(raw_document_sources, start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    source_content = str(item.get("content", "")).strip()
+                    if not source_content:
+                        continue
+                    source_filename = (
+                        str(item.get("filename") or item.get("title") or f"document_{idx}").strip()
+                        or f"document_{idx}"
+                    )
+                    source_file_url = str(item.get("file_url", "")).strip()
+                    document_sources.append(
+                        {
+                            "content": source_content,
+                            "filename": source_filename,
+                            "file_url": source_file_url,
+                        }
+                    )
             
             # Validate mode
             valid_modes = ["expert", "summary", "tutorial", "comparison"]
@@ -325,27 +346,48 @@ def register_chat_routes(
                 
                 # If document content is provided, use it instead of RAG retrieval
                 if document_content:
-                    # Truncate document if too long (max ~15K characters, ~4K tokens)
+                    # Truncate each document if too long (max ~15K characters, ~4K tokens).
                     MAX_DOC_LENGTH = 15000
-                    truncated = False
-                    if len(document_content) > MAX_DOC_LENGTH:
-                        document_content = document_content[:MAX_DOC_LENGTH]
-                        truncated = True
-                    
-                    # Create a special chunk with the full document content
-                    chunks = [{
-                        "content": document_content,
-                        "metadata": {
-                            "filename": document_filename,
-                            "file_url": document_file_url,
-                            "kb_id": "document_explanation",
-                            "kb_name": "Full Document",
-                            "chunk_id": "full_document",
-                            "similarity_score": 1.0,
-                            "is_full_document": True,
-                            "truncated": truncated
-                        }
-                    }]
+                    chunks = []
+                    if document_sources:
+                        for idx, source in enumerate(document_sources, start=1):
+                            source_content = source["content"]
+                            truncated = False
+                            if len(source_content) > MAX_DOC_LENGTH:
+                                source_content = source_content[:MAX_DOC_LENGTH]
+                                truncated = True
+                            chunks.append({
+                                "content": source_content,
+                                "metadata": {
+                                    "filename": source["filename"],
+                                    "file_url": source["file_url"],
+                                    "kb_id": "document_explanation",
+                                    "kb_name": "Full Document",
+                                    "chunk_id": f"full_document_{idx}",
+                                    "similarity_score": 1.0,
+                                    "is_full_document": True,
+                                    "truncated": truncated,
+                                }
+                            })
+                    else:
+                        truncated = False
+                        if len(document_content) > MAX_DOC_LENGTH:
+                            document_content = document_content[:MAX_DOC_LENGTH]
+                            truncated = True
+
+                        chunks = [{
+                            "content": document_content,
+                            "metadata": {
+                                "filename": document_filename,
+                                "file_url": document_file_url,
+                                "kb_id": "document_explanation",
+                                "kb_name": "Full Document",
+                                "chunk_id": "full_document",
+                                "similarity_score": 1.0,
+                                "is_full_document": True,
+                                "truncated": truncated
+                            }
+                        }]
                     no_results = False
                     used_threshold = 1.0
                 else:
@@ -450,6 +492,10 @@ def register_chat_routes(
                     filename = metadata.get("filename", "unknown")
                     score = float(metadata.get("similarity_score", 0.0) or 0.0)
                     links = _build_file_links(metadata.get("file_url", ""))
+                    chunk_text = str(chunk.get("content", "") or "").strip()
+                    quote_text = chunk_text[:280].rstrip()
+                    if chunk_text and len(chunk_text) > 280:
+                        quote_text += "..."
 
                     retrieved_blocks.append({
                         "filename": filename,
@@ -461,12 +507,14 @@ def register_chat_routes(
                         "source_url": links["source_url"],
                         "file_detail_url": links["file_detail_url"],
                         "file_preview_url": links["file_preview_url"],
+                        "quote": quote_text,
                     })
                     
                     # Avoid duplicate citations
-                    if filename in seen_files:
+                    citation_key = links["source_url"] or filename
+                    if citation_key in seen_files:
                         continue
-                    seen_files.add(filename)
+                    seen_files.add(citation_key)
                     
                     citations.append({
                         "filename": filename,
@@ -479,6 +527,7 @@ def register_chat_routes(
                         "file_url": links["file_detail_url"],
                         "file_detail_url": links["file_detail_url"],
                         "file_preview_url": links["file_preview_url"],
+                        "quote": quote_text,
                     })
                 
                 # Add assistant message
@@ -541,7 +590,7 @@ def register_chat_routes(
                 {
                     "success": False,
                     "code": "KB_EMBEDDING_MISMATCH",
-                    "error": "知识库索引与当前 embedding 配置不兼容，请先重建索引。",
+                    "error": "Knowledge base index is incompatible with the current embedding configuration. Rebuild the index first.",
                     "data": {
                         "kb_id": e.kb_id,
                         "current_embedding": {
@@ -776,10 +825,19 @@ def register_chat_routes(
                 for row in rows:
                     file_url, filename, title, category, keywords_str = row
                     
-                    # Parse keywords (stored as comma-separated string)
+                    # Parse keywords from either JSON arrays or legacy comma-separated strings.
                     keywords = []
                     if keywords_str:
-                        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+                        raw_keywords = str(keywords_str).strip()
+                        if raw_keywords.startswith("["):
+                            try:
+                                parsed_keywords = json.loads(raw_keywords)
+                            except json.JSONDecodeError:
+                                parsed_keywords = []
+                            if isinstance(parsed_keywords, list):
+                                keywords = [str(k).strip() for k in parsed_keywords if str(k).strip()]
+                        if not keywords:
+                            keywords = [k.strip() for k in raw_keywords.split(",") if k.strip()]
                     
                     documents.append({
                         "file_url": file_url or "",

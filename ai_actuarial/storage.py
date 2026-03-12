@@ -2438,7 +2438,7 @@ class Storage:
         return out
 
     def get_kb_composition_status(self, kb_id: str) -> dict[str, Any]:
-        file_count = int(
+        binding_file_count = int(
             self._conn.execute(
                 "SELECT COUNT(DISTINCT file_url) FROM kb_chunk_bindings WHERE kb_id = ?",
                 (kb_id,),
@@ -2503,12 +2503,109 @@ class Storage:
             ).fetchone()[0]
             or 0
         )
+        kb_row = self._conn.execute(
+            """
+            SELECT embedding_provider, embedding_model, embedding_dimension, chunk_count, updated_at
+            FROM rag_knowledge_bases
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()
+        kb_provider = ""
+        kb_model = ""
+        kb_dimension = None
+        kb_chunk_count = 0
+        kb_updated_at = None
+        if kb_row:
+            kb_provider = kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
+            kb_model = kb_row[1] or ""
+            kb_dimension = kb_row[2] if kb_row[2] not in (None, "") else infer_embedding_dimension(kb_row[1])
+            kb_chunk_count = int((kb_row[3] or 0) or 0)
+            kb_updated_at = kb_row[4]
+
+        kb_file_count_row = self._conn.execute(
+            "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
+            (kb_id,),
+        ).fetchone()
+        kb_file_count = int((kb_file_count_row[0] if kb_file_count_row else 0) or 0)
+
+        indexed_stats = self._conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN indexed_at IS NOT NULL AND indexed_at != '' THEN 1 ELSE 0 END),
+                MAX(indexed_at)
+            FROM rag_kb_files
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()
+        indexed_file_count = int((indexed_stats[0] or 0) if indexed_stats else 0)
+        legacy_index_time = indexed_stats[1] if indexed_stats else None
+
+        pending_file_count_row = self._conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM rag_kb_files kf
+            LEFT JOIN catalog_items c ON c.file_url = kf.file_url
+            WHERE kf.kb_id = ?
+              AND (
+                kf.indexed_at IS NULL
+                OR kf.indexed_at = ''
+                OR (
+                    c.markdown_updated_at IS NOT NULL
+                    AND c.markdown_updated_at > kf.indexed_at
+                )
+              )
+            """,
+            (kb_id,),
+        ).fetchone()
+        pending_file_count = int((pending_file_count_row[0] if pending_file_count_row else 0) or 0)
+
         has_index = bool(latest)
         latest_index_time = (latest[6] or latest[7]) if latest else None
-        needs_reindex = bool(file_count > 0 and (not has_index or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)))
+        if not has_index and (indexed_file_count > 0 or kb_chunk_count > 0):
+            has_index = True
+            latest_index_time = legacy_index_time or kb_updated_at
+
+        effective_file_count = max(binding_file_count, kb_file_count)
+        needs_reindex = bool(
+            effective_file_count > 0
+            and (
+                pending_file_count > 0
+                or outdated_binding_count > 0
+                or not has_index
+                or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)
+            )
+        )
+        latest_index_payload = None
+        if latest:
+            latest_index_payload = {
+                "embedding_provider": latest[0] or infer_embedding_provider(latest[1], fallback="openai") or "openai",
+                "embedding_model": latest[1],
+                "embedding_dimension": latest[2] if latest[2] not in (None, "") else infer_embedding_dimension(latest[1]),
+                "index_type": latest[3],
+                "status": latest[4],
+                "chunk_count": latest[5] or 0,
+                "built_at": latest[6] or latest[7],
+            }
+        elif has_index:
+            latest_index_payload = {
+                "embedding_provider": kb_provider or "openai",
+                "embedding_model": kb_model,
+                "embedding_dimension": kb_dimension,
+                "index_type": "Flat",
+                "status": "ready",
+                "chunk_count": kb_chunk_count,
+                "built_at": latest_index_time,
+                "source": "legacy",
+            }
         return {
             "kb_id": kb_id,
-            "file_count": file_count,
+            "file_count": effective_file_count,
+            "binding_file_count": binding_file_count,
+            "kb_file_count": kb_file_count,
+            "indexed_file_count": indexed_file_count,
+            "pending_file_count": pending_file_count,
             "chunk_set_count": chunk_set_count,
             "has_index": has_index,
             "latest_binding_at": latest_binding_at,
@@ -2519,17 +2616,7 @@ class Storage:
             "outdated_binding_count": outdated_binding_count,
             "new_chunk_versions_available": outdated_binding_count > 0,
             "needs_reindex": needs_reindex,
-            "latest_index": {
-                "embedding_provider": latest[0] or infer_embedding_provider(latest[1], fallback="openai") or "openai",
-                "embedding_model": latest[1],
-                "embedding_dimension": latest[2] if latest[2] not in (None, "") else infer_embedding_dimension(latest[1]),
-                "index_type": latest[3],
-                "status": latest[4],
-                "chunk_count": latest[5] or 0,
-                "built_at": latest[6] or latest[7],
-            }
-            if latest
-            else None,
+            "latest_index": latest_index_payload,
         }
 
     def list_kb_chunk_bindings(self, kb_id: str) -> list[dict[str, Any]]:

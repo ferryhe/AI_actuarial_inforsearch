@@ -2020,6 +2020,9 @@ function loadActiveTasks() {
                                     if (status === 'failed' || status === 'error') {
                                         message = `Task failed: ${completedTask.name}`;
                                         type = 'error';
+                                    } else if (status === 'partial' || status === 'warning') {
+                                        message = `Task completed with warnings: ${completedTask.name}`;
+                                        type = 'warning';
                                     } else if (status === 'stopped') {
                                         message = `Task stopped: ${completedTask.name}`;
                                         type = 'warning';
@@ -2040,6 +2043,65 @@ function loadActiveTasks() {
             previouslyActiveTaskIds = currentTaskIds;
         })
         .catch(console.error);
+}
+
+function translateTaskMetric(metric, fallback) {
+    if (!metric || typeof metric !== 'object') return fallback;
+    const key = String(metric.label_key || '').trim();
+    if (key && window.I18n) {
+        const translated = window.I18n.t(key);
+        if (translated && translated !== key) return translated;
+    }
+    return metric.label || fallback;
+}
+
+function getTaskDisplaySummary(task) {
+    if (task && task.display_summary) {
+        return task.display_summary;
+    }
+    const errorCount = task && Array.isArray(task.errors) ? task.errors.length : 0;
+    if (task && task.type === 'catalog') {
+        return {
+            primary: { label: 'Scanned', value: task.catalog_scanned ?? task.items_processed ?? 0 },
+            secondary: [
+                { label: 'Categorized', value: task.catalog_ok ?? task.items_downloaded ?? 0 },
+                { label: 'Skipped', value: task.catalog_skipped ?? task.items_skipped ?? 0 },
+                { label: 'Errors', value: task.catalog_errors ?? errorCount },
+            ],
+        };
+    }
+    return {
+        primary: { label: 'Processed', value: task ? (task.items_processed || 0) : 0 },
+        secondary: [
+            { label: 'Completed', value: task ? (task.items_downloaded || 0) : 0 },
+            { label: 'Skipped', value: task ? (task.items_skipped || 0) : 0 },
+            { label: 'Errors', value: errorCount },
+        ],
+    };
+}
+
+function renderTaskItemsCell(task) {
+    const summary = getTaskDisplaySummary(task);
+    const primary = summary.primary || { label: 'Processed', value: 0 };
+    const secondary = Array.isArray(summary.secondary) ? summary.secondary : [];
+    const primaryLabel = translateTaskMetric(primary, 'Processed');
+    const secondaryText = secondary
+        .map((metric) => `${escapeHtml(translateTaskMetric(metric, 'Value'))}: ${Number(metric.value || 0)}`)
+        .join(' / ');
+    return `
+        ${escapeHtml(primaryLabel)}: ${Number(primary.value || 0)}
+        ${secondaryText ? `<br><small>${secondaryText}</small>` : ''}
+    `;
+}
+
+function renderTaskStatsList(task) {
+    const summary = getTaskDisplaySummary(task);
+    const primary = summary.primary || { label: 'Processed', value: 0 };
+    const secondary = Array.isArray(summary.secondary) ? summary.secondary : [];
+    return [
+        `<li><strong>${escapeHtml(translateTaskMetric(primary, 'Processed'))}</strong> ${Number(primary.value || 0)}</li>`,
+        ...secondary.map((metric) => `<li><strong>${escapeHtml(translateTaskMetric(metric, 'Value'))}</strong> ${Number(metric.value || 0)}</li>`),
+    ].join('');
 }
 
 function loadTaskHistory() {
@@ -2068,27 +2130,8 @@ function loadTaskHistory() {
                             <tr>
                                 <td>${escapeHtml(task.name)}</td>
                                 <td>${task.type}</td>
-                                <td><span class="status-badge status-${task.status}">${task.status}</span></td>
-                                <td>
-                                    ${task.type === 'catalog'
-                                        ? `
-                                            ${_tn('tasks.hist_scanned', task.catalog_scanned ?? task.items_processed ?? 0)}
-                                            <br><small>
-                                                ${_tn('tasks.hist_categorized', task.catalog_ok ?? task.items_downloaded ?? 0)} /
-                                                ${_tn('tasks.hist_skipped', task.catalog_skipped ?? task.items_skipped ?? 0)} /
-                                                ${_tn('tasks.hist_failed', task.catalog_errors ?? (task.errors ? task.errors.length : 0))}
-                                            </small>
-                                          `
-                                        : `
-                                            ${_tn('tasks.hist_processed', task.items_processed || 0)}
-                                            <br><small>
-                                                ${_tn('tasks.hist_new', task.items_downloaded || 0)} /
-                                                ${_tn('tasks.hist_skip', task.items_skipped || 0)} /
-                                                ${_tn('tasks.hist_err', task.errors ? task.errors.length : 0)}
-                                            </small>
-                                          `
-                                    }
-                                </td>
+                                <td><span class="status-badge status-${escapeHtml(task.status || 'unknown')}">${escapeHtml(task.status || 'unknown')}</span></td>
+                                <td>${renderTaskItemsCell(task)}</td>
                                 <td>${formatDate(task.started_at)}</td>
                                 <td>
                                     <button onclick='showLog(${JSON.stringify(task)})' class="btn-small">${_t('tasks.hist_view_log', 'View Log')}</button>
@@ -2104,21 +2147,8 @@ function loadTaskHistory() {
 }
 
 function showLog(task) {
-    const _t = k => window.I18n ? window.I18n.t(k) : k;
-    const isCatalog = task.type === 'catalog';
-    const mainStats = isCatalog
-        ? `
-            <li><strong>${_t('tasks.log_scanned')}</strong> ${task.catalog_scanned ?? task.items_processed ?? 0}</li>
-            <li><strong>${_t('tasks.log_ok')}</strong> ${task.catalog_ok ?? task.items_downloaded ?? 0}</li>
-            <li><strong>${_t('tasks.log_skipped')}</strong> ${task.catalog_skipped ?? task.items_skipped ?? 0}</li>
-            <li><strong>${_t('tasks.log_failed_lbl')}</strong> ${task.catalog_errors ?? (task.errors ? task.errors.length : 0)}</li>
-          `
-        : `
-            <li><strong>${_t('tasks.log_items_processed')}</strong> ${task.items_processed || 0}</li>
-            <li><strong>${_t('tasks.log_new_updated')}</strong> ${task.items_downloaded || 0}</li>
-            <li><strong>${_t('tasks.log_skipped')}</strong> ${task.items_skipped || 0}</li>
-            <li><strong>${_t('tasks.log_errors_lbl')}</strong> ${task.errors ? task.errors.length : 0}</li>
-          `;
+    const _t = (k, fb) => window.I18n ? window.I18n.t(k) : (fb || k);
+    const mainStats = renderTaskStatsList(task);
 
     const content = `
         <div style="padding: 10px;">

@@ -113,6 +113,13 @@
         return `Profile: ${profile.name || profile.profile_id} | model=${model} | size=${profile.chunk_size} | overlap=${profile.chunk_overlap} | ${profile.splitter}/${profile.tokenizer}`;
     }
 
+    function formatEmbeddingSummary(provider, model, dimension) {
+        const providerLabel = String(provider || '-').trim() || '-';
+        const modelLabel = String(model || '-').trim() || '-';
+        const dimLabel = dimension === null || dimension === undefined || dimension === '' ? '-' : dimension;
+        return `${providerLabel} / ${modelLabel} / dim ${dimLabel}`;
+    }
+
     function getWriteHeaders() {
         const headers = { 'Content-Type': 'application/json' };
         const token =
@@ -1162,6 +1169,7 @@
         const hasIndex = !!composition.has_index;
         const latestIndex = composition.latest_index || null;
         const latestIndexBuiltAt = latestIndex ? formatDate(latestIndex.built_at || latestIndex.created_at || '') : '-';
+        state.detailPendingFiles = Math.max(Number(state.detailPendingFiles || 0), Number(composition.pending_file_count || 0));
 
         syncSummaryEl.textContent = window.I18n
             ? window.I18n.t('rag.index_status')
@@ -1214,14 +1222,21 @@
         document.getElementById('rag-detail-description').textContent = kb.description || '';
         document.getElementById('rag-meta-kb-id').textContent = kb.kb_id || '-';
         document.getElementById('rag-meta-mode').textContent = getKbModeBadge(kb.kb_mode);
-        document.getElementById('rag-meta-embedding').textContent = kb.embedding_model || '-';
+        document.getElementById('rag-meta-embedding').textContent = formatEmbeddingSummary(
+            kb.embedding_provider,
+            kb.embedding_model,
+            kb.embedding_dimension,
+        );
         document.getElementById('rag-meta-chunk-profile').textContent = state.detailProfileSummary || '-';
         document.getElementById('rag-meta-chunk-size').textContent = kb.chunk_size || '-';
         document.getElementById('rag-meta-chunk-overlap').textContent = kb.chunk_overlap || '-';
         document.getElementById('rag-meta-updated').textContent = formatDate(kb.updated_at);
 
         const stats = kb.stats || {};
-        const pendingFiles = Number(stats.pending_files ?? 0);
+        const pendingFiles = Math.max(
+            Number(stats.pending_files ?? 0),
+            Number(state.detailComposition?.pending_file_count ?? 0),
+        );
         state.detailPendingFiles = pendingFiles;
         document.getElementById('rag-stat-total-files').textContent = stats.total_files ?? kb.file_count ?? 0;
         document.getElementById('rag-stat-indexed-files').textContent = stats.indexed_files ?? 0;
