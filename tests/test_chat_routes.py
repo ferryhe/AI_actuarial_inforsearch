@@ -207,7 +207,56 @@ class TestChatRoutes(unittest.TestCase):
         
         # Should return 401 or 403
         self.assertIn(response.status_code, [401, 403])
-    
+
+    def test_get_available_documents_lists_markdown_files(self):
+        """Document explorer should list only files with markdown content."""
+        from ai_actuarial.storage import Storage
+
+        storage = Storage(self.db_path)
+        try:
+            file_url = "https://example.com/doc-1.pdf"
+            storage.insert_file(
+                url=file_url,
+                sha256="chat-doc-1",
+                title="Doc One",
+                source_site="example.com",
+                source_page_url="https://example.com/page",
+                original_filename="doc-1.pdf",
+                local_path="/tmp/doc-1.pdf",
+                bytes=1024,
+                content_type="application/pdf",
+            )
+            storage.update_file_markdown(
+                file_url,
+                "# Heading\n\nDocument body.",
+                "manual",
+            )
+            storage.upsert_catalog_item(
+                {
+                    "url": file_url,
+                    "sha256": "chat-doc-1",
+                    "category": "General",
+                    "summary": "Summary",
+                    "keywords": ["solvency", "capital"],
+                }
+            )
+        finally:
+            storage.close()
+
+        response = self.client.get(
+            "/api/chat/available-documents",
+            headers=self.auth_header,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        documents = payload["data"]["documents"]
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0]["file_url"], file_url)
+        self.assertEqual(documents[0]["category"], "General")
+        self.assertIn("solvency", documents[0]["keywords"])
+
     @patch('ai_actuarial.chatbot.retrieval.RAGRetriever')
     @patch('ai_actuarial.chatbot.llm.LLMClient')
     def test_chat_query_success(self, mock_llm_class, mock_retriever_class):
@@ -265,6 +314,47 @@ class TestChatRoutes(unittest.TestCase):
         self.assertIn("Solvency II", result["response"])
         self.assertEqual(len(result["citations"]), 1)
         self.assertEqual(result["citations"][0]["filename"], "regulation.pdf")
+
+    @patch('ai_actuarial.chatbot.llm.LLMClient')
+    def test_chat_query_document_sources_return_per_file_citations(self, mock_llm_class):
+        """Document explain mode should keep one citation per selected document."""
+        mock_llm = Mock()
+        mock_llm.generate_response.return_value = "Comparison response."
+        mock_llm_class.return_value = mock_llm
+
+        response = self.client.post(
+            "/api/chat/query",
+            headers=self.auth_header,
+            json={
+                "message": "Compare these documents",
+                "mode": "comparison",
+                "document_content": "Combined content",
+                "document_filename": "Comparison",
+                "document_sources": [
+                    {
+                        "file_url": "https://example.com/doc-a.pdf",
+                        "filename": "doc-a.pdf",
+                        "content": "# Doc A\n\nAlpha text.",
+                    },
+                    {
+                        "file_url": "https://example.com/doc-b.pdf",
+                        "filename": "doc-b.pdf",
+                        "content": "# Doc B\n\nBeta text.",
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        data = payload["data"]
+        self.assertEqual(len(data["citations"]), 2)
+        self.assertEqual(len(data["retrieved_blocks"]), 2)
+        filenames = {item["filename"] for item in data["citations"]}
+        self.assertEqual(filenames, {"doc-a.pdf", "doc-b.pdf"})
+        self.assertTrue(all(item.get("quote") for item in data["citations"]))
+        self.assertTrue(all(item.get("file_detail_url") for item in data["citations"]))
 
     @patch('ai_actuarial.chatbot.retrieval.RAGRetriever')
     @patch('openai.OpenAI')

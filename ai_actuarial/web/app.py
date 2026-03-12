@@ -3978,7 +3978,7 @@ sites:
                 # Mock result for catalog
                 class CatalogResult:
                     def __init__(self, s):
-                        self.success = s
+                        self.success = s and stats.get("errors", 0) == 0
                         self.errors = stats.get('error_samples', [])
                         self.catalog_scanned = stats.get('scanned', 0)
                         self.catalog_ok = stats.get('processed', 0)
@@ -4226,7 +4226,7 @@ sites:
                 # Create result object
                 class MarkdownConversionResult:
                     def __init__(self):
-                        self.success = True
+                        self.success = error_count == 0
                         self.items_found = len(file_urls)
                         self.items_downloaded = converted_count
                         self.items_skipped = skipped_count
@@ -4500,7 +4500,7 @@ sites:
 
                 class ChunkGenerationResult:
                     def __init__(self):
-                        self.success = True
+                        self.success = len(errors) == 0
                         self.items_found = total_files
                         self.items_downloaded = processed_count
                         self.items_skipped = reused_count + no_markdown_count
@@ -4658,8 +4658,9 @@ sites:
             with _task_lock:
                 if task_id in _active_tasks:
                     task_data = _active_tasks.pop(task_id)
+                    final_status = _derive_task_final_status(task_data, result)
                     task_data.update({
-                        "status": "completed" if result and result.success else "failed",
+                        "status": final_status,
                         "completed_at": completed_at,
                         "progress": 100,
                         "current_activity": "Finished",
@@ -4667,17 +4668,15 @@ sites:
                         "items_downloaded": result.items_downloaded if result else 0,
                         "items_skipped": getattr(result, "items_skipped", 0),
                         "errors": result.errors if result else [],
+                        "error_count": len(result.errors) if result and isinstance(getattr(result, "errors", None), list) else 0,
                         "catalog_scanned": getattr(result, "catalog_scanned", None),
                         "catalog_ok": getattr(result, "catalog_ok", None),
                         "catalog_skipped": getattr(result, "catalog_skipped", None),
                         "catalog_errors": getattr(result, "catalog_errors", None),
                         "rag_total_chunks": getattr(result, "rag_total_chunks", None),
                         "rag_error_files": getattr(result, "rag_error_files", None),
+                        "rag_auto_synced_bindings": getattr(result, "rag_auto_synced_bindings", None),
                     })
-                    # Check if stopped
-                    if task_data.get("stop_requested"):
-                         task_data["status"] = "stopped"
-                         
                     _task_history.append(task_data)
                     _append_history_to_disk(task_data)
                     
@@ -4691,7 +4690,8 @@ sites:
                         "status": "error",
                         "completed_at": datetime.now().isoformat(),
                         "progress": 100,
-                        "errors": ["Task failed"]
+                        "errors": ["Task failed"],
+                        "error_count": 1,
                     })
                     _task_history.append(task_data)
                     _append_history_to_disk(task_data)
@@ -4818,13 +4818,13 @@ sites:
         """Get active and history task rows for one KB's indexing jobs."""
         with _task_lock:
             active = [
-                dict(task)
+                _serialize_task_for_api(dict(task))
                 for task in _active_tasks.values()
                 if task.get("type") in {"rag_indexing", "kb_index_build"}
                 and task.get("kb_id") == kb_id
             ]
             history = [
-                dict(task)
+                _serialize_task_for_api(dict(task))
                 for task in _task_history
                 if task.get("type") in {"rag_indexing", "kb_index_build"}
                 and task.get("kb_id") == kb_id
@@ -4942,6 +4942,147 @@ sites:
         except Exception as e:
             logger.error(f"Failed to save task history: {e}")
 
+    def _task_int(value: Any, default: int = 0) -> int:
+        try:
+            if value in (None, ""):
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _task_error_count(task_data: dict[str, Any]) -> int:
+        explicit = task_data.get("error_count")
+        if explicit not in (None, ""):
+            return _task_int(explicit, 0)
+        errors = task_data.get("errors")
+        if isinstance(errors, list):
+            return len(errors)
+        return 0
+
+    def _task_metric(label_key: str, label: str, value: Any) -> dict[str, Any]:
+        return {
+            "label_key": label_key,
+            "label": label,
+            "value": _task_int(value, 0),
+        }
+
+    def _build_task_display_summary(task_data: dict[str, Any]) -> dict[str, Any]:
+        task_type = str(task_data.get("type") or "").strip().lower()
+        items_processed = _task_int(task_data.get("items_processed"))
+        items_downloaded = _task_int(task_data.get("items_downloaded"))
+        items_skipped = _task_int(task_data.get("items_skipped"))
+        error_count = _task_error_count(task_data)
+
+        if task_type == "catalog":
+            primary = _task_metric(
+                "tasks.metric_scanned",
+                "Scanned",
+                task_data.get("catalog_scanned", items_processed),
+            )
+            secondary = [
+                _task_metric(
+                    "tasks.metric_categorized",
+                    "Categorized",
+                    task_data.get("catalog_ok", items_downloaded),
+                ),
+                _task_metric(
+                    "tasks.metric_skipped",
+                    "Skipped",
+                    task_data.get("catalog_skipped", items_skipped),
+                ),
+                _task_metric(
+                    "tasks.metric_errors",
+                    "Errors",
+                    task_data.get("catalog_errors", error_count),
+                ),
+            ]
+        elif task_type == "markdown_conversion":
+            primary = _task_metric("tasks.metric_converted", "Converted", items_downloaded)
+            secondary = [
+                _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
+                _task_metric("tasks.metric_errors", "Errors", error_count),
+            ]
+        elif task_type == "chunk_generation":
+            primary = _task_metric("tasks.metric_chunked_files", "Chunked Files", items_downloaded)
+            secondary = [
+                _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
+                _task_metric("tasks.metric_errors", "Errors", error_count),
+            ]
+            auto_synced = task_data.get("rag_auto_synced_bindings")
+            if auto_synced not in (None, ""):
+                secondary.append(
+                    _task_metric(
+                        "tasks.metric_auto_synced",
+                        "Auto-Synced",
+                        auto_synced,
+                    )
+                )
+        elif task_type in {"rag_indexing", "kb_index_build"}:
+            primary = _task_metric("tasks.metric_indexed_files", "Indexed Files", items_downloaded)
+            secondary = [
+                _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
+                _task_metric(
+                    "tasks.metric_error_files",
+                    "Error Files",
+                    task_data.get("rag_error_files", error_count),
+                ),
+                _task_metric(
+                    "tasks.metric_chunks",
+                    "Chunks",
+                    task_data.get("rag_total_chunks", 0),
+                ),
+            ]
+        elif task_type == "search":
+            primary = _task_metric("tasks.metric_found", "Found", items_processed)
+            secondary = [
+                _task_metric("tasks.metric_downloaded", "Downloaded", items_downloaded),
+                _task_metric("tasks.metric_errors", "Errors", error_count),
+            ]
+        elif task_type in {"url", "file", "scheduled", "adhoc", "quick_check"}:
+            primary = _task_metric("tasks.metric_found", "Found", items_processed)
+            secondary = [
+                _task_metric("tasks.metric_downloaded", "Downloaded", items_downloaded),
+                _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
+                _task_metric("tasks.metric_errors", "Errors", error_count),
+            ]
+        else:
+            primary = _task_metric("tasks.metric_processed", "Processed", items_processed)
+            secondary = [
+                _task_metric("tasks.metric_completed", "Completed", items_downloaded),
+                _task_metric("tasks.metric_skipped", "Skipped", items_skipped),
+                _task_metric("tasks.metric_errors", "Errors", error_count),
+            ]
+
+        return {
+            "primary": primary,
+            "secondary": secondary,
+            "error_count": error_count,
+        }
+
+    def _derive_task_final_status(task_data: dict[str, Any], result: Any) -> str:
+        if task_data.get("stop_requested"):
+            return "stopped"
+        if result is None:
+            return "error"
+
+        items_downloaded = _task_int(getattr(result, "items_downloaded", 0))
+        items_skipped = _task_int(getattr(result, "items_skipped", 0))
+        errors = getattr(result, "errors", None)
+        error_count = len(errors) if isinstance(errors, list) else 0
+        success = bool(getattr(result, "success", True))
+
+        if success:
+            return "completed"
+        if error_count and (items_downloaded > 0 or items_skipped > 0):
+            return "partial"
+        return "failed"
+
+    def _serialize_task_for_api(task_data: dict[str, Any]) -> dict[str, Any]:
+        row = dict(task_data)
+        row["error_count"] = _task_error_count(row)
+        row["display_summary"] = _build_task_display_summary(row)
+        return row
+
     @app.route("/api/tasks/stop/<task_id>", methods=["POST"])
     @require_permissions("tasks.stop")
     def api_tasks_stop(task_id):
@@ -4959,7 +5100,7 @@ sites:
     def api_tasks_active():
         """Get active tasks."""
         with _task_lock:
-            tasks = list(_active_tasks.values())
+            tasks = [_serialize_task_for_api(task) for task in _active_tasks.values()]
         return jsonify({"tasks": tasks})
     
     @app.route("/api/tasks/history")
@@ -4969,7 +5110,10 @@ sites:
         limit = _parse_int_clamped(request.args.get("limit", 10), default=10, min_value=1, max_value=200)
         with _task_lock:
             # Sort by started_at desc
-            tasks = sorted(_task_history, key=lambda x: x.get('started_at', ''), reverse=True)[:limit]
+            tasks = [
+                _serialize_task_for_api(task)
+                for task in sorted(_task_history, key=lambda x: x.get('started_at', ''), reverse=True)[:limit]
+            ]
         return jsonify({"tasks": tasks})
 
     @app.route("/api/markdown_conversion/stats")

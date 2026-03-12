@@ -498,6 +498,19 @@
         background: var(--primary-800);
     }
 
+    .chat-citation-item {
+        margin-bottom: 0.5rem;
+    }
+
+    .chat-citation-quote {
+        margin-top: 0.3rem;
+        padding-left: 0.6rem;
+        border-left: 2px solid var(--border-color);
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        white-space: pre-wrap;
+    }
+
     .chat-retrieved-blocks {
         margin-top: 0.75rem;
     }
@@ -928,6 +941,7 @@
         loadConversations();
         // Load category filter on init
         populateCategoryFilter();
+        loadAvailableDocuments();
         setupEventListeners();
         autoResizeTextarea();
         
@@ -1210,11 +1224,15 @@
                 requestBody.document_content = window.explainDocumentContent;
                 requestBody.document_filename = window.explainDocumentFilename || 'document';
                 requestBody.document_file_url = window.explainDocumentFileUrl || '';
+                if (Array.isArray(window.explainDocumentSources) && window.explainDocumentSources.length) {
+                    requestBody.document_sources = window.explainDocumentSources;
+                }
                 
                 // Clear the temporary storage
                 delete window.explainDocumentContent;
                 delete window.explainDocumentFilename;
                 delete window.explainDocumentFileUrl;
+                delete window.explainDocumentSources;
             }
             
             const response = await fetch('/api/chat/query', {
@@ -1311,10 +1329,12 @@
                     const basename = extractBasename(rawFilename);
                     const label = escapeHtml(basename);
                     const title = escapeHtml(rawFilename); // Full path in tooltip
+                    const quote = escapeHtml(String(citation.quote || '').trim());
+                    const quoteHtml = quote ? `<div class="chat-citation-quote">${quote}</div>` : '';
                     if (!href) {
-                        return `<span class="chat-citation" title="${title}">${label}</span>`;
+                        return `<div class="chat-citation-item"><span class="chat-citation" title="${title}">${label}</span>${quoteHtml}</div>`;
                     }
-                    return `<a href="${escapeHtml(href)}" class="chat-citation" target="_blank" rel="noopener noreferrer" title="${title}">${label}</a>`;
+                    return `<div class="chat-citation-item"><a href="${escapeHtml(href)}" class="chat-citation" target="_blank" rel="noopener noreferrer" title="${title}">${label}</a>${quoteHtml}</div>`;
                 }).join('')}
             </div>
         ` : '';
@@ -1753,7 +1773,13 @@
                 // Store combined content for the API
                 window.explainDocumentContent = combinedContent;
                 window.explainDocumentFilename = `Comparison of ${documentContents.length} documents`;
-                window.explainDocumentFileUrl = documentContents.map(d => d.url).join('|');
+                window.explainDocumentFileUrl = '';
+                window.explainDocumentSources = documentContents.map((doc) => ({
+                    file_url: doc.url,
+                    filename: doc.filename,
+                    title: doc.title,
+                    content: doc.content,
+                }));
                 
                 // Set input and send
                 chatInput.value = prompt;
@@ -1766,6 +1792,12 @@
                 window.explainDocumentContent = doc.content;
                 window.explainDocumentFilename = doc.filename;
                 window.explainDocumentFileUrl = doc.url;
+                window.explainDocumentSources = [{
+                    file_url: doc.url,
+                    filename: doc.filename,
+                    title: doc.title,
+                    content: doc.content,
+                }];
                 
                 // Set input and send
                 chatInput.value = prompt;

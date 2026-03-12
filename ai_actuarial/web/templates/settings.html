@@ -464,7 +464,7 @@ function historyReload() {
                   <td>${escapeHtml(t.name || '')}</td>
                   <td>${escapeHtml(t.type || '')}</td>
                   <td><span class="status-badge status-${escapeHtml(t.status || 'unknown')}">${escapeHtml(t.status || 'unknown')}</span></td>
-                  <td>${t.items_processed || 0}</td>
+                  <td>${historySummaryText(t)}</td>
                   <td>${formatDate(t.started_at)}</td>
                   <td><button class="btn-small" onclick='historyShowLog(${JSON.stringify(t).replace(/'/g, "&#39;")})'>${_t('tasks.hist_view_log')}</button></td>
                 </tr>
@@ -479,16 +479,45 @@ function historyReload() {
     });
 }
 
+function historyMetricLabel(metric, fallback) {
+  if (!metric || typeof metric !== 'object') return fallback;
+  const key = String(metric.label_key || '').trim();
+  if (key && window.I18n) {
+    const translated = window.I18n.t(key);
+    if (translated && translated !== key) return translated;
+  }
+  return metric.label || fallback;
+}
+
+function historyTaskSummary(task) {
+  if (task && task.display_summary) return task.display_summary;
+  return {
+    primary: { label: 'Processed', value: task.items_processed || 0 },
+    secondary: [
+      { label: 'Completed', value: task.items_downloaded || 0 },
+      { label: 'Skipped', value: task.items_skipped || 0 },
+      { label: 'Errors', value: task.error_count || ((task.errors || []).length) },
+    ],
+  };
+}
+
+function historySummaryText(task) {
+  const summary = historyTaskSummary(task);
+  const primary = summary.primary || { label: 'Processed', value: 0 };
+  return `${historyMetricLabel(primary, 'Processed')}: ${Number(primary.value || 0)}`;
+}
+
 function historyShowLog(task) {
   const body = document.getElementById('settings-history-log-body');
   if (!body) return;
   const _t = k => window.I18n ? window.I18n.t(k) : k;
-  const mainStats = `
-    <li><strong>${_t('stg.log_items_processed')}</strong> ${task.items_processed || 0}</li>
-    <li><strong>${_t('stg.log_new_updated')}</strong> ${task.items_downloaded || 0}</li>
-    <li><strong>${_t('stg.log_skipped')}</strong> ${task.items_skipped || 0}</li>
-    <li><strong>${_t('stg.log_errors')}</strong> ${task.errors ? task.errors.length : 0}</li>
-  `;
+  const summary = historyTaskSummary(task);
+  const mainStats = [
+    `<li><strong>${escapeHtml(historyMetricLabel(summary.primary, 'Processed'))}</strong> ${Number(summary.primary?.value || 0)}</li>`,
+    ...(Array.isArray(summary.secondary) ? summary.secondary : []).map((metric) =>
+      `<li><strong>${escapeHtml(historyMetricLabel(metric, 'Value'))}</strong> ${Number(metric.value || 0)}</li>`
+    ),
+  ].join('');
   body.innerHTML = `
     <div style="padding: 10px;">
       <h4>${_t('stg.task_log_title')} ${escapeHtml(task.name || '')}</h4>
