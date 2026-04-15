@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useLocation } from "wouter";
-import { apiGet, apiPost, ApiError } from "@/lib/api";
+import { apiGet, ApiError } from "@/lib/api";
 
 export interface AuthUser {
   id: number | null;
@@ -36,43 +36,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      // Fetch require_auth flag alongside user identity
-      const [meRes, authRes] = await Promise.allSettled([
-        apiGet<{ success: boolean; user: AuthUser }>("/api/user/me"),
-        apiGet<{ require_auth: boolean }>("/api/auth/me"),
-      ]);
-      setUser(meRes.status === "fulfilled" ? (meRes.value.user ?? null) : null);
-      // Derive requireAuth:
-      // - if /api/auth/me succeeds, use its require_auth flag
-      // - if it fails with status 401, the backend has auth enabled but the user
-      //   is unauthenticated — treat that as requireAuth=true so the guard activates
-      // - otherwise, default to false (open access) when the endpoint is unavailable
-      let requireAuthFlag = false;
-      if (authRes.status === "fulfilled") {
-        requireAuthFlag = Boolean(authRes.value.require_auth);
-      } else {
-        const reason: unknown = authRes.reason;
-        if (reason instanceof ApiError && reason.status === 401) {
-          requireAuthFlag = true;
-        }
-      }
-      setRequireAuth(requireAuthFlag);
-    } catch {
+      await apiGet<{ total_files: number }>("/api/stats");
       setUser(null);
       setRequireAuth(false);
+    } catch (reason: unknown) {
+      setUser(null);
+      if (reason instanceof ApiError && reason.status === 401) {
+        setRequireAuth(true);
+      } else {
+        setRequireAuth(false);
+      }
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await apiPost("/logout");
-    } catch {
-      // ignore errors – clear local state regardless
-    }
     setUser(null);
-    navigate("/login");
+    navigate("/");
   }, [navigate]);
 
   useEffect(() => {

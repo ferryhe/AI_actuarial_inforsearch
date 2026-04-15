@@ -1,27 +1,25 @@
-import { Switch, Route, Redirect } from "wouter";
+import { Switch, Route } from "wouter";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Database from "@/pages/Database";
-import Chat from "@/pages/Chat";
-import Tasks from "@/pages/Tasks";
-import Knowledge from "@/pages/Knowledge";
-import KBDetail from "@/pages/KBDetail";
-import Settings from "@/pages/Settings";
-import Logs from "@/pages/Logs";
-import FileDetail from "@/pages/FileDetail";
-import FilePreview from "@/pages/FilePreview";
-import Users from "@/pages/Users";
-import Profile from "@/pages/Profile";
-import Login from "@/pages/Login";
-import Register from "@/pages/Register";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import FeatureUnavailable from "@/pages/FeatureUnavailable";
+import NativeFileDetail from "@/pages/NativeFileDetail";
+import NativeLogs from "@/pages/NativeLogs";
+import NativeSettings from "@/pages/NativeSettings";
+import NativeTasks from "@/pages/NativeTasks";
 
 /** Redirects to /login when require_auth is enabled and the user is not signed in. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isLoading, isLoggedIn, requireAuth } = useAuth();
   if (isLoading) return null;
   if (requireAuth && !isLoggedIn) {
-    return <Redirect to="/login" />;
+    return (
+      <FeatureUnavailable
+        title="Authentication is required"
+        description="This environment requires authentication, but the FastAPI-native shell does not expose legacy sign-in flows. Please disable auth for native QA or finish the native auth migration first."
+      />
+    );
   }
   return <>{children}</>;
 }
@@ -29,27 +27,50 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function Router() {
   return (
     <Switch>
-      {/* Auth pages — rendered without the main Layout */}
-      <Route path="/login" component={Login} />
-      <Route path="/register" component={Register} />
+      <Route path="/login">
+        <FeatureUnavailable
+          title="Sign in is not available in FastAPI-native mode"
+          description="This React shell only exposes flows that are implemented natively in FastAPI."
+        />
+      </Route>
+      <Route path="/register">
+        <FeatureUnavailable
+          title="Registration is not available in FastAPI-native mode"
+          description="This React shell only exposes flows that are implemented natively in FastAPI."
+        />
+      </Route>
 
-      {/* All other pages use the main Layout */}
       <Route>
         <RequireAuth>
           <Layout>
             <Switch>
               <Route path="/" component={Dashboard} />
               <Route path="/database" component={Database} />
-              <Route path="/file-detail" component={FileDetail} />
-              <Route path="/file-preview" component={FilePreview} />
-              <Route path="/chat" component={Chat} />
-              <Route path="/tasks" component={Tasks} />
-              <Route path="/logs" component={Logs} />
-              <Route path="/knowledge/:kbId" component={KBDetail} />
-              <Route path="/knowledge" component={Knowledge} />
-              <Route path="/settings" component={Settings} />
-              <Route path="/users" component={Users} />
-              <Route path="/profile" component={Profile} />
+              <Route path="/file-detail" component={NativeFileDetail} />
+              <Route path="/file-preview">
+                <FeatureUnavailable
+                  title="Preview is not available in FastAPI-native mode"
+                  description="The preview flow still depends on legacy APIs, so it is hidden until the FastAPI implementation lands."
+                />
+              </Route>
+              <Route path="/chat">
+                <FeatureUnavailable title="Chat is not available in FastAPI-native mode" description="The chat workflow still depends on legacy APIs and is intentionally hidden from the native shell." />
+              </Route>
+              <Route path="/tasks" component={NativeTasks} />
+              <Route path="/logs" component={NativeLogs} />
+              <Route path="/knowledge/:kbId">
+                <FeatureUnavailable title="Knowledge Bases are not available in FastAPI-native mode" description="Knowledge base management still depends on legacy APIs and is intentionally hidden from the native shell." />
+              </Route>
+              <Route path="/knowledge">
+                <FeatureUnavailable title="Knowledge Bases are not available in FastAPI-native mode" description="Knowledge base management still depends on legacy APIs and is intentionally hidden from the native shell." />
+              </Route>
+              <Route path="/settings" component={NativeSettings} />
+              <Route path="/users">
+                <FeatureUnavailable title="User management is not available in FastAPI-native mode" description="User management still depends on legacy APIs and is intentionally hidden from the native shell." />
+              </Route>
+              <Route path="/profile">
+                <FeatureUnavailable title="Profile is not available in FastAPI-native mode" description="Profile management still depends on legacy APIs and is intentionally hidden from the native shell." />
+              </Route>
               <Route>
                 <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
                   404

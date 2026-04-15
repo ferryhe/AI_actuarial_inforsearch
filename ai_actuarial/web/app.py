@@ -180,6 +180,9 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
         "chat.view",
         "chat.query",
         "chat.conversations",
+        "tasks.view",
+        "config.read",
+        "logs.task.read",
     }
 )
 

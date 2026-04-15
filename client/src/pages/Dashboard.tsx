@@ -7,9 +7,6 @@ import {
   Building2,
   Activity,
   Search,
-  ListTodo,
-  BookOpen,
-  MessageSquare,
   ArrowRight,
   FileIcon,
   Inbox,
@@ -166,9 +163,6 @@ export default function Dashboard() {
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_db"), desc: t("dashboard.browse_db_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-    { icon: ListTodo, title: t("dashboard.task_center"), desc: t("dashboard.task_center_desc"), href: "/tasks", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    { icon: BookOpen, title: t("dashboard.knowledge_bases"), desc: t("dashboard.knowledge_bases_desc"), href: "/knowledge", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
-    { icon: MessageSquare, title: t("dashboard.chat"), desc: t("dashboard.chat_desc"), href: "/chat", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   ];
 
   return (

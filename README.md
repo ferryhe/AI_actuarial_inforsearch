@@ -22,7 +22,14 @@ AI Actuarial Info Search is a system for discovering, downloading, and catalogin
 - **Flask 界面**：服务端渲染，页面由 Python 直接生成，首屏加载快，无需额外启动前端服务。
 - **React 界面**：现代 SPA，JS bundle 初次加载后切换页面极快，用户体验更好，是长期维护的主界面。
 
-两套界面都 **需要保留**，React 界面调用 Flask 的 `/api/*` REST 接口来获取和操作数据。
+两套界面都 **需要保留**。但从 API 架构上，当前已经明确：
+- **FastAPI 是 `/api/*` 的唯一长期权威入口**
+- Flask 中现存的 `/api/*` 路由只作为迁移期兼容层保留
+- React 前端应逐步依赖原生 FastAPI 路由，而不是继续扩展 Flask API
+
+相关说明见：
+- `docs/ARCHITECTURE.md`
+- `docs/API_MIGRATION_STATUS.md`
 
 ---
 

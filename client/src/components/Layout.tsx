@@ -3,26 +3,19 @@ import { motion } from "framer-motion";
 import {
   LayoutDashboard,
   Database,
-  MessageSquare,
-  ListTodo,
   BookOpen,
-  Settings,
   Sun,
   Moon,
-  Languages,
   Menu,
   X,
-  Users,
+  ListTodo,
   ScrollText,
-  UserCircle,
-  LogOut,
-  LogIn,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
 import { useI18n } from "@/hooks/use-i18n";
 import { useState, createContext, useContext } from "react";
-import { useAuth } from "@/context/AuthContext";
 
 const I18nContext = createContext<ReturnType<typeof useI18n>>({
   lang: "en",
@@ -37,20 +30,14 @@ export function useTranslation() {
 const navItems = [
   { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
   { path: "/database", icon: Database, labelKey: "nav.database" },
-  { path: "/chat", icon: MessageSquare, labelKey: "nav.chat" },
   { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks" },
   { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },
-  { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge" },
-  { path: "/users", icon: Users, labelKey: "nav.users", adminOnly: true },
-  { path: "/profile", icon: UserCircle, labelKey: "nav.profile" },
   { path: "/settings", icon: Settings, labelKey: "nav.settings" },
 ];
 
 function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { t } = useTranslation();
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
 
   return (
     <aside
@@ -83,8 +70,7 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
       </div>
 
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ path, icon: Icon, labelKey, adminOnly }) => {
-          if (adminOnly && !isAdmin) return null;
+        {navItems.map(({ path, icon: Icon, labelKey }) => {
           const active = location === path || (path !== "/" && location.startsWith(path));
           return (
             <Link key={path} href={path}>
@@ -112,7 +98,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const i18n = useI18n();
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, isLoggedIn, logout } = useAuth();
 
   return (
     <I18nContext.Provider value={i18n}>
@@ -144,7 +129,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex-1" />
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
+              <span className="hidden md:inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-[11px] font-medium text-primary">
+                FastAPI-native mode
+              </span>
               <button
                 onClick={i18n.toggleLang}
                 className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold transition-colors"
@@ -161,38 +149,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               >
                 {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
-              {isLoggedIn ? (
-                <>
-                  <Link href="/profile">
-                    <span
-                      className="hidden sm:flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                      title={user?.email ?? ""}
-                      data-testid="user-display-name"
-                    >
-                      <UserCircle className="w-4 h-4 shrink-0" />
-                      <span className="max-w-[120px] truncate">{user?.display_name || user?.email}</span>
-                    </span>
-                  </Link>
-                  <button
-                    onClick={logout}
-                    className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                    data-testid="logout-btn"
-                    title="Sign out"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
-                </>
-              ) : (
-                <Link href="/login">
-                  <span
-                    className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                    data-testid="login-link"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    <span className="hidden sm:inline">Sign in</span>
-                  </span>
-                </Link>
-              )}
             </div>
           </header>
 
