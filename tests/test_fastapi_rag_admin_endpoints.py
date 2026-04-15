@@ -303,6 +303,15 @@ def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) 
     assert categories_after_remove.status_code == 200, categories_after_remove.text
     assert "AI" not in categories_after_remove.json()["categories"]
 
+    replace_categories = client.post(
+        "/api/rag/knowledge-bases/kb-detail-test/categories",
+        json={"categories": ["Risk"], "action": "replace"},
+    )
+    assert replace_categories.status_code == 200, replace_categories.text
+    categories_after_replace = client.get("/api/rag/knowledge-bases/kb-detail-test/categories")
+    assert categories_after_replace.status_code == 200, categories_after_replace.text
+    assert categories_after_replace.json()["categories"] == ["Risk"]
+
     index = client.post(
         "/api/rag/knowledge-bases/kb-detail-test/index",
         json={"file_urls": [alpha_url]},
