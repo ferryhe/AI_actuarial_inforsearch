@@ -168,8 +168,10 @@ _PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# When REQUIRE_AUTH=false, we run the app in a "guest-enabled" mode:
-# only a minimal read-only allowlist is available without a token.
+# When REQUIRE_AUTH=*** we run the app in a "guest-enabled" QA mode:
+# selected task/config actions remain available without a token so the FastAPI-native
+# shell can be exercised end-to-end in local validation environments. Do not enable
+# this mode for production-facing deployments.
 _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
         "stats.read",
@@ -181,7 +183,10 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
         "chat.query",
         "chat.conversations",
         "tasks.view",
+        "tasks.run",
+        "tasks.stop",
         "config.read",
+        "schedule.write",
         "logs.task.read",
     }
 )
@@ -6132,6 +6137,19 @@ sites:
         
         # Run in background thread to avoid blocking startup
         threading.Thread(target=init_models, daemon=True).start()
+
+    def _set_site_config(new_config: dict[str, Any]) -> None:
+        nonlocal site_config
+        site_config = dict(new_config or {})
+
+    app.extensions.setdefault("fastapi_bridge", {})
+    app.extensions["fastapi_bridge"].update(
+        {
+            "start_background_task": _start_background_task,
+            "init_scheduler": init_scheduler,
+            "set_site_config": _set_site_config,
+        }
+    )
 
     return app
 
