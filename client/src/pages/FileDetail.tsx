@@ -331,8 +331,6 @@ export default function FileDetail() {
   const [showChunkModal, setShowChunkModal] = useState(false);
   const [chunkOverwrite, setChunkOverwrite] = useState(false);
   const [chunkSubmitting, setChunkSubmitting] = useState(false);
-  const [inlineChunkSize, setInlineChunkSize] = useState(800);
-  const [inlineChunkOverlap, setInlineChunkOverlap] = useState(100);
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -510,8 +508,10 @@ export default function FileDetail() {
     setChunkSubmitting(true);
     const body: Record<string, unknown> = {
       overwrite_same_profile: chunkOverwrite,
-      chunk_size: inlineChunkSize,
-      chunk_overlap: inlineChunkOverlap,
+      chunk_size: 800,
+      chunk_overlap: 100,
+      splitter: "semantic",
+      tokenizer: "cl100k_base",
     };
     try {
       await apiPost(`/api/files/${encodeURIComponent(file.url)}/chunk-sets/generate`, body);
@@ -1025,20 +1025,6 @@ export default function FileDetail() {
             <div className="space-y-3">
               <div className="px-3 py-2 rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
                 {t("fv.chunk_modal_migration_notice")}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.inline_chunk_size")}</label>
-                  <input type="number" value={inlineChunkSize} onChange={(e) => setInlineChunkSize(Number(e.target.value))}
-                    min={64} max={8192}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-inline-chunk-size" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("fv.inline_chunk_overlap")}</label>
-                  <input type="number" value={inlineChunkOverlap} onChange={(e) => setInlineChunkOverlap(Number(e.target.value))}
-                    min={0} max={2048}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" data-testid="input-inline-chunk-overlap" />
-                </div>
               </div>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
