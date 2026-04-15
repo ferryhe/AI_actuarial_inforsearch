@@ -294,6 +294,15 @@ def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) 
     )
     assert set_categories.status_code == 200, set_categories.text
 
+    remove_categories = client.post(
+        "/api/rag/knowledge-bases/kb-detail-test/categories",
+        json={"categories": ["AI"], "action": "remove"},
+    )
+    assert remove_categories.status_code == 200, remove_categories.text
+    categories_after_remove = client.get("/api/rag/knowledge-bases/kb-detail-test/categories")
+    assert categories_after_remove.status_code == 200, categories_after_remove.text
+    assert "AI" not in categories_after_remove.json()["categories"]
+
     index = client.post(
         "/api/rag/knowledge-bases/kb-detail-test/index",
         json={"file_urls": [alpha_url]},

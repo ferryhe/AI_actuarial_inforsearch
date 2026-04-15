@@ -238,6 +238,18 @@ export default function KBDetail() {
     }
   };
 
+  const handleRemoveCategory = async (cat: string) => {
+    try {
+      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/categories`, {
+        categories: [cat],
+        action: "remove",
+      });
+      await loadCategories();
+    } catch (err) {
+      console.error("Failed to remove category:", err);
+    }
+  };
+
   const handleBuildIndex = async (force: boolean) => {
     setIndexing(true);
     try {
@@ -634,6 +646,13 @@ export default function KBDetail() {
                   {cat.file_count != null && (
                     <span className="text-[10px] text-primary/60">({cat.file_count})</span>
                   )}
+                  <button
+                    onClick={() => handleRemoveCategory(cat.name)}
+                    className="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all"
+                    data-testid={`button-remove-category-${cat.name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </span>
               ))
             )}

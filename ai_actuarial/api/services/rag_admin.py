@@ -519,14 +519,41 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
     categories = _list(payload.get("categories"), "categories")
     if not categories:
         raise RagAdminError("categories must be a non-empty list")
+    action = _norm(payload.get("action") or "add").lower()
+    if action not in {"add", "remove", "replace"}:
+        raise RagAdminError("action must be one of: add, remove, replace")
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         if not manager.get_kb(kid):
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         before_n = int(manager.get_kb_stats(kid).get("total_files", 0))
+        manager._ensure_category_mapping_table()
+        conn = storage._conn
+        timestamp = _KnowledgeBase._get_timestamp()
+
+        if action == "add":
+            manager.link_kb_to_categories(kid, categories)
+            after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
+            return {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n)}
+
+        if action == "remove":
+            placeholders = ",".join(["?" for _ in categories])
+            deleted = conn.execute(
+                f"DELETE FROM rag_kb_category_mappings WHERE kb_id = ? AND category IN ({placeholders})",
+                [kid, *categories],
+            ).rowcount
+            conn.execute(
+                "UPDATE rag_knowledge_bases SET updated_at = ? WHERE kb_id = ?",
+                (timestamp, kid),
+            )
+            conn.commit()
+            return {"kb_id": kid, "action": action, "removed_count": int(deleted), "categories": manager.get_kb_categories(kid)}
+
+        conn.execute("DELETE FROM rag_kb_category_mappings WHERE kb_id = ?", (kid,))
+        conn.commit()
         manager.link_kb_to_categories(kid, categories)
         after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
-        return {"kb_id": kid, "linked_count": len(categories), "files_added": max(0, after_n - before_n)}
+        return {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n), "categories": manager.get_kb_categories(kid)}
     finally:
         storage.close()
 
