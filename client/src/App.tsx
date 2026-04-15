@@ -4,7 +4,8 @@ import Dashboard from "@/pages/Dashboard";
 import Database from "@/pages/Database";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import FeatureUnavailable from "@/pages/FeatureUnavailable";
-import NativeFileDetail from "@/pages/NativeFileDetail";
+import FileDetail from "@/pages/FileDetail";
+import FilePreview from "@/pages/FilePreview";
 import NativeLogs from "@/pages/NativeLogs";
 import NativeSettings from "@/pages/NativeSettings";
 import Tasks from "@/pages/Tasks";
@@ -46,13 +47,8 @@ function Router() {
             <Switch>
               <Route path="/" component={Dashboard} />
               <Route path="/database" component={Database} />
-              <Route path="/file-detail" component={NativeFileDetail} />
-              <Route path="/file-preview">
-                <FeatureUnavailable
-                  title="Preview is not available in FastAPI-native mode"
-                  description="The preview flow still depends on legacy APIs, so it is hidden until the FastAPI implementation lands."
-                />
-              </Route>
+              <Route path="/file-detail" component={FileDetail} />
+              <Route path="/file-preview" component={FilePreview} />
               <Route path="/chat">
                 <FeatureUnavailable title="Chat is not available in FastAPI-native mode" description="The chat workflow still depends on legacy APIs and is intentionally hidden from the native shell." />
               </Route>

@@ -13,11 +13,18 @@ import {
   Filter,
   X,
   Trash2,
+  Download,
+  Eye,
+  Square,
+  CheckSquare,
+  FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
-import { buildFileDetailPath } from "@/lib/navigation";
+import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
+import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 
 interface FileItem {
   url: string;
@@ -322,6 +329,10 @@ export default function DatabasePage() {
   const [sources, setSources] = useState<string[]>(initialCachedMeta?.sources || []);
   const [categories, setCategories] = useState<CategoryOption[]>(initialCachedMeta?.categories || []);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 300);
@@ -473,6 +484,10 @@ export default function DatabasePage() {
     return () => window.cancelAnimationFrame(frame);
   }, [loading, locationKey]);
 
+  useEffect(() => {
+    setSelectedUrls((current) => current.filter((url) => files.some((file) => file.url === url && !file.deleted_at)));
+  }, [files]);
+
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
@@ -496,7 +511,76 @@ export default function DatabasePage() {
     navigate(buildFileDetailPath(file.url, locationKey));
   }
 
+  function navigateToPreview(file: FileItem) {
+    databaseScrollCache.set(locationKey, window.scrollY);
+    navigate(buildFilePreviewPath(file.url, locationKey));
+  }
+
+  function toggleSelected(url: string) {
+    setSelectedUrls((current) => (current.includes(url) ? current.filter((item) => item !== url) : [...current, url]));
+  }
+
+  function toggleSelectAllVisible() {
+    const visibleUrls = files.filter((file) => !file.deleted_at).map((file) => file.url);
+    if (visibleUrls.length === 0) return;
+    setSelectedUrls((current) => {
+      const allSelected = visibleUrls.every((url) => current.includes(url));
+      if (allSelected) {
+        return current.filter((url) => !visibleUrls.includes(url));
+      }
+      return Array.from(new Set([...current, ...visibleUrls]));
+    });
+  }
+
+  function downloadFile(file: FileItem) {
+    const a = document.createElement("a");
+    a.href = `/api/download?url=${encodeURIComponent(file.url)}`;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function exportCsv() {
+    const a = document.createElement("a");
+    a.href = "/api/export?format=csv";
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function refreshCurrentPage() {
+    await fetchFiles({ forceNetwork: true });
+  }
+
+  async function confirmBulkDelete() {
+    if (selectedUrls.length === 0) {
+      setShowBulkDeleteModal(false);
+      return;
+    }
+    setBulkDeleting(true);
+    setBulkDeleteProgress({ current: 0, total: selectedUrls.length });
+    try {
+      for (let i = 0; i < selectedUrls.length; i += 1) {
+        const url = selectedUrls[i];
+        await apiPost("/api/files/delete", { url, confirm: "DELETE" });
+        setBulkDeleteProgress({ current: i + 1, total: selectedUrls.length });
+      }
+      setSelectedUrls([]);
+      setShowBulkDeleteModal(false);
+      await refreshCurrentPage();
+    } finally {
+      setBulkDeleting(false);
+      setBulkDeleteProgress(null);
+    }
+  }
+
   const activeFilterCount = [source, category, includeDeleted ? "y" : ""].filter(Boolean).length;
+  const selectableVisibleUrls = files.filter((file) => !file.deleted_at).map((file) => file.url);
+  const allVisibleSelected = selectableVisibleUrls.length > 0 && selectableVisibleUrls.every((url) => selectedUrls.includes(url));
 
   return (
     <div className="space-y-6">
@@ -508,10 +592,49 @@ export default function DatabasePage() {
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">{t("db.subtitle")}</p>
         </div>
-        <span className="shrink-0 rounded-full border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
-          FastAPI-native read-only view
-        </span>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button
+            onClick={exportCsv}
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+            data-testid="button-export-csv"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            {t("db.export_csv")}
+          </button>
+          <span className="shrink-0 rounded-full border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
+            {t("db.fastapi_file_actions")}
+          </span>
+        </div>
       </motion.div>
+
+      {(files.length > 0 || selectedUrls.length > 0) && (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="button"
+            onClick={toggleSelectAllVisible}
+            className="inline-flex items-center gap-2 text-sm font-medium text-foreground hover:text-primary transition-colors"
+            data-testid="button-select-all-visible"
+          >
+            {allVisibleSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+            {t("db.select_all")}
+          </button>
+          <div className="flex items-center gap-2 sm:justify-end">
+            <span className="text-sm text-muted-foreground" data-testid="text-selected-count">
+              {selectedUrls.length} {t("db.selected_count")}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowBulkDeleteModal(true)}
+              disabled={selectedUrls.length === 0 || bulkDeleting}
+              className="inline-flex items-center gap-2 rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              data-testid="button-bulk-delete"
+            >
+              {bulkDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {t("db.bulk_delete")}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
@@ -659,7 +782,15 @@ export default function DatabasePage() {
         </motion.div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="hidden lg:grid grid-cols-[1fr_110px_120px_50px_70px_90px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <div className="hidden lg:grid grid-cols-[36px_1fr_110px_120px_50px_70px_90px_140px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            <button
+              type="button"
+              onClick={toggleSelectAllVisible}
+              className="flex items-center justify-center hover:text-foreground transition-colors"
+              data-testid="checkbox-select-all-header"
+            >
+              {allVisibleSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4 opacity-70" />}
+            </button>
             <button onClick={() => handleSort("title")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-title">
               {t("table.title")} <SortIcon field="title" />
             </button>
@@ -674,12 +805,13 @@ export default function DatabasePage() {
             <button onClick={() => handleSort("last_seen")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-last_seen">
               {t("table.date")} <SortIcon field="last_seen" />
             </button>
+            <span>{t("table.actions")}</span>
           </div>
 
           {files.map((file, i) => {
-            const rowNum = offset + i + 1;
             const hasMd = !!file.markdown_content || !!file.markdown_source;
             const isDeleted = !!file.deleted_at;
+            const isSelected = selectedUrls.includes(file.url);
 
             return (
               <motion.div
@@ -689,12 +821,27 @@ export default function DatabasePage() {
                 initial="hidden"
                 animate="visible"
                 className={cn(
-                  "grid lg:grid-cols-[1fr_110px_120px_50px_70px_90px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
+                  "grid lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_140px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
                   isDeleted && "opacity-50"
                 )}
                 onClick={() => navigateToFile(file)}
                 data-testid={`file-row-${i}`}
               >
+                <div className="hidden lg:flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isDeleted) return;
+                      toggleSelected(file.url);
+                    }}
+                    disabled={isDeleted}
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                    data-testid={`checkbox-select-${i}`}
+                  >
+                    {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                  </button>
+                </div>
 
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 min-w-0">
@@ -749,12 +896,78 @@ export default function DatabasePage() {
                   {formatDate(file.last_seen)}
                 </span>
 
+                <div className="hidden lg:flex items-center gap-1.5 justify-end">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigateToPreview(file);
+                    }}
+                    className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    data-testid={`button-preview-${i}`}
+                    title={t("db.preview")}
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadFile(file);
+                    }}
+                    className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    data-testid={`button-download-${i}`}
+                    title={t("db.download")}
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                </div>
+
                 <div className="flex items-center gap-2 sm:hidden mt-1">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isDeleted) return;
+                      toggleSelected(file.url);
+                    }}
+                    disabled={isDeleted}
+                    className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                    data-testid={`checkbox-select-mobile-${i}`}
+                  >
+                    {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                  </button>
                   <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
                     {contentTypeLabel(file.content_type)}
                   </span>
                   <span className="text-xs text-muted-foreground">{formatDate(file.last_seen)}</span>
                   <span className="text-xs text-muted-foreground">{formatSize(file.bytes)}</span>
+                </div>
+                <div className="flex items-center gap-2 sm:hidden mt-2 pl-6">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigateToPreview(file);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    data-testid={`button-preview-mobile-${i}`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    {t("db.preview")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadFile(file);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    data-testid={`button-download-mobile-${i}`}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    {t("db.download")}
+                  </button>
                 </div>
               </motion.div>
             );
@@ -789,6 +1002,23 @@ export default function DatabasePage() {
           </button>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        open={showBulkDeleteModal}
+        onClose={() => {
+          if (!bulkDeleting) {
+            setShowBulkDeleteModal(false);
+            setBulkDeleteProgress(null);
+          }
+        }}
+        onConfirm={confirmBulkDelete}
+        loading={bulkDeleting}
+        message={bulkDeleteProgress
+          ? t("db.bulk_delete_progress")
+              .replace("{current}", String(bulkDeleteProgress.current))
+              .replace("{total}", String(bulkDeleteProgress.total))
+          : t("common.confirm_delete_msg")}
+      />
     </div>
   );
 }
