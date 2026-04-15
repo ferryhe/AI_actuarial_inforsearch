@@ -8,6 +8,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import PlainTextResponse
 
+from .route_inventory import (
+    collect_fastapi_api_paths,
+    collect_fastapi_route_signatures,
+    summarize_legacy_api_routes,
+)
 from .routers.meta import router as meta_router
 from .routers.migration import router as migration_router
 from .routers.read import router as read_router
@@ -24,12 +29,7 @@ def _parse_cors_origins() -> list[str]:
 
 
 def _native_paths(app: FastAPI) -> list[str]:
-    paths: set[str] = set()
-    for route in app.router.routes:
-        path = getattr(route, "path", None)
-        if isinstance(path, str) and path.startswith("/api"):
-            paths.add(path)
-    return sorted(paths)
+    return collect_fastapi_api_paths(app)
 
 
 def _resolve_db_path() -> str:
@@ -68,6 +68,14 @@ def create_app() -> FastAPI:
     app.state.require_auth = os.getenv("REQUIRE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
     app.state.active_tasks_ref = {}
     app.state.task_lock = None
+    app.state.native_route_signatures = collect_fastapi_route_signatures(app)
+
+    app.state.legacy_route_inventory = []
+    app.state.legacy_api_paths = []
+    app.state.legacy_api_route_count = 0
+    app.state.legacy_api_sample_paths = []
+    app.state.legacy_api_signatures = []
+    app.state.legacy_non_api_route_count = 0
 
     try:
         from ai_actuarial.web.app import (
@@ -77,12 +85,19 @@ def create_app() -> FastAPI:
         )
 
         legacy_app = create_legacy_flask_app()
+        legacy_summary = summarize_legacy_api_routes(legacy_app)
         app.mount("/", WSGIMiddleware(legacy_app))
         app.state.legacy_mount_enabled = True
         app.state.legacy_flask_app = legacy_app
         app.state.require_auth = bool(legacy_app.config.get("REQUIRE_AUTH", False))
         app.state.active_tasks_ref = _active_tasks
         app.state.task_lock = _task_lock
+        app.state.legacy_route_inventory = legacy_summary["legacy_route_inventory"]
+        app.state.legacy_api_paths = legacy_summary["legacy_api_paths"]
+        app.state.legacy_api_route_count = legacy_summary["legacy_api_route_count"]
+        app.state.legacy_api_sample_paths = legacy_summary["legacy_api_sample_paths"]
+        app.state.legacy_api_signatures = legacy_summary["legacy_api_signatures"]
+        app.state.legacy_non_api_route_count = legacy_summary["legacy_non_api_route_count"]
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to mount legacy Flask app into FastAPI gateway")
         app.state.legacy_mount_error = str(exc)
