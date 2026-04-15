@@ -1011,7 +1011,9 @@ export default function DatabasePage() {
             setBulkDeleteProgress(null);
           }
         }}
-        onConfirm={confirmBulkDelete}
+        onConfirm={() => {
+          void confirmBulkDelete();
+        }}
         loading={bulkDeleting}
         message={bulkDeleteProgress
           ? t("db.bulk_delete_progress")

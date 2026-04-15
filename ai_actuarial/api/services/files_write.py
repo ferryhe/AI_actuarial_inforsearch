@@ -8,8 +8,9 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ai_actuarial.rag.exceptions import ChunkingException
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import _get_default_catalog_provider, _get_sites_config_path, _load_yaml
+from ai_actuarial.web.app import _get_sites_config_path, _load_yaml, _parse_int_clamped
 
 
 class FileWriteError(Exception):
@@ -262,8 +263,10 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
         raise FileWriteError("Invalid JSON body")
     profile_id = str(payload.get("profile_id") or "").strip()
     overwrite_same_profile = bool(payload.get("overwrite_same_profile", False))
-    chunk_size = int(payload.get("chunk_size") or 800)
-    chunk_overlap = int(payload.get("chunk_overlap") or 100)
+    chunk_size = _parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
+    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
+    if chunk_overlap >= chunk_size:
+        chunk_overlap = max(0, chunk_size - 1)
     splitter = str(payload.get("splitter") or "semantic").strip()
     tokenizer = str(payload.get("tokenizer") or "cl100k_base").strip()
     version = str(payload.get("version") or "v1").strip()
@@ -351,6 +354,8 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
             "auto_synced_kb_bindings": sync_res.get("synced_bindings", 0),
             "auto_synced_kb_ids": sync_res.get("affected_kb_ids", []),
         }
+    except ChunkingException as exc:
+        raise FileWriteError(str(exc), status_code=400) from exc
     except ValueError as exc:
         raise FileWriteError(str(exc)) from exc
     finally:

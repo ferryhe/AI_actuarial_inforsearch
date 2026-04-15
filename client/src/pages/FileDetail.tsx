@@ -1024,7 +1024,7 @@ export default function FileDetail() {
           <div className="space-y-4">
             <div className="space-y-3">
               <div className="px-3 py-2 rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
-                Chunk profiles and KB binding return in the dedicated RAG admin migration PR. This PR keeps single-file chunk generation fully FastAPI-native with inline size/overlap settings and a fixed native chunking pipeline.
+                {t("fv.chunk_modal_migration_notice")}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
