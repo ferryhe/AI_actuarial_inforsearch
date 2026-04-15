@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
@@ -57,3 +60,48 @@ def test_fastapi_migration_inventory_exposes_native_and_legacy_routes_when_enabl
     assert "/api/stats" in body["legacy_api_paths"]
     assert "GET /api/stats" in body["native_overrides_legacy_signatures"]
     assert body["legacy_api_route_count"] >= len(body["legacy_api_paths"])
+
+
+def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "sites.yaml"
+    categories_path = tmp_path / "categories.yaml"
+    db_path = tmp_path / "index.db"
+    config_path.write_text(
+        "paths:\n  db: {}\n  download_dir: {}\n  updates_dir: {}\nsites: []\nscheduled_tasks: []\n".format(
+            db_path,
+            tmp_path / "files",
+            tmp_path / "updates",
+        ),
+        encoding="utf-8",
+    )
+    categories_path.write_text("categories: {}\n", encoding="utf-8")
+    history_dir = tmp_path / "data"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    (history_dir / "job_history.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "task-history-from-disk",
+                "name": "Loaded History",
+                "type": "markdown_conversion",
+                "status": "completed",
+                "started_at": "2026-04-15T12:43:39.212434",
+                "completed_at": "2026-04-15T12:43:40.097561",
+                "items_processed": 1,
+                "items_total": 1,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
+    monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-entrypoint-test-secret")
+
+    client = TestClient(create_app())
+    response = client.get("/api/tasks/history?limit=5")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert any(task.get("id") == "task-history-from-disk" for task in body["tasks"])

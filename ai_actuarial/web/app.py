@@ -181,7 +181,10 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
         "chat.query",
         "chat.conversations",
         "tasks.view",
+        "tasks.run",
+        "tasks.stop",
         "config.read",
+        "schedule.write",
         "logs.task.read",
     }
 )
@@ -6132,6 +6135,19 @@ sites:
         
         # Run in background thread to avoid blocking startup
         threading.Thread(target=init_models, daemon=True).start()
+
+    def _set_site_config(new_config: dict[str, Any]) -> None:
+        nonlocal site_config
+        site_config = dict(new_config or {})
+
+    app.extensions.setdefault("fastapi_bridge", {})
+    app.extensions["fastapi_bridge"].update(
+        {
+            "start_background_task": _start_background_task,
+            "init_scheduler": init_scheduler,
+            "set_site_config": _set_site_config,
+        }
+    )
 
     return app
 

@@ -14,7 +14,6 @@ import {
   BookOpen,
   FileText,
   Layers,
-  Database,
   Link2,
   X,
   ArrowLeft,
@@ -64,11 +63,6 @@ interface SiteConfig {
   exclude_prefixes?: string[];
   schedule_interval?: string;
   content_selector?: string;
-}
-
-interface KBItem {
-  kb_id: string;
-  name: string;
 }
 
 interface ScheduledTask {
@@ -160,7 +154,6 @@ const taskTypes = [
   { type: "catalog", apiType: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   { type: "markdown", apiType: "markdown_conversion", icon: FileText, color: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
   { type: "chunk", apiType: "chunk_generation", icon: Layers, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
-  { type: "rag_index", apiType: "rag_indexing", icon: Database, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
 ];
 
 function FormField({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
@@ -1424,9 +1417,6 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
   const [tokenizer, setTokenizer] = useState("cl100k_base");
   const [profileName, setProfileName] = useState("");
   const [overwriteSameProfile, setOverwriteSameProfile] = useState(false);
-  const [kbId, setKbId] = useState("");
-  const [kbs, setKbs] = useState<KBItem[]>([]);
-  const [kbLoadError, setKbLoadError] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
@@ -1441,15 +1431,6 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
   }, []);
 
   useEffect(() => { loadStats(); }, [loadStats]);
-  useEffect(() => {
-    apiGet<Record<string, unknown>>("/api/rag/knowledge-bases")
-      .then((res) => {
-        const d = res.data;
-        const raw: Array<Record<string, string>> = Array.isArray(d) ? d : Array.isArray((d as Record<string, unknown>)?.knowledge_bases) ? (d as Record<string, unknown>).knowledge_bases as Array<Record<string, string>> : [];
-        setKbs(raw.map((kb) => ({ kb_id: kb.kb_id || kb.id || "", name: kb.name || kb.kb_id || kb.id || "" })));
-        setKbLoadError(false);
-      }).catch(() => { setKbs([]); setKbLoadError(true); });
-  }, []);
 
   useEffect(() => {
     if (stats && !startIndex) {
@@ -1523,18 +1504,8 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
           </FormField>
         </div>
       </div>
-      <div className="border-t border-border pt-3 mt-1">
-        <p className="text-xs font-medium text-muted-foreground mb-3">{t("tasks.form.kb_binding")}</p>
-        <FormField label={t("tasks.form.bind_to_kb")} hint={t("tasks.form.bind_hint")}>
-          {kbLoadError ? (
-            <div className="px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/5 text-xs text-amber-700 dark:text-amber-400">
-              {t("tasks.form.kb_load_error")}
-            </div>
-          ) : (
-            <SelectField value={kbId} onChange={setKbId} testId="select-chunk-kb"
-              options={[{ value: "", label: t("tasks.form.no_binding") }, ...kbs.map((kb) => ({ value: kb.kb_id, label: kb.name }))]} />
-          )}
-        </FormField>
+      <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        Knowledge base binding will return in the dedicated FastAPI RAG migration PR. Current PR2 keeps chunk generation fully FastAPI-native.
       </div>
       <CheckboxField checked={overwriteSameProfile} onChange={setOverwriteSameProfile}
         label={t("tasks.form.overwrite_same_profile")} testId="checkbox-overwrite-profile" />
@@ -1544,52 +1515,7 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
           scan_start_index: startIndex ? parseInt(startIndex) : undefined,
           chunk_size: parseInt(chunkSize) || 800, chunk_overlap: parseInt(chunkOverlap) || 100,
           splitter, tokenizer, profile_name: profileName || undefined,
-          overwrite_same_profile: overwriteSameProfile, kb_id: kbId || undefined })} />
-    </div>
-  );
-}
-
-function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
-  const { t } = useTranslation();
-  const [kbId, setKbId] = useState("");
-  const [kbs, setKbs] = useState<KBItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [forceReindex, setForceReindex] = useState(false);
-  const [incremental, setIncremental] = useState(true);
-
-  useEffect(() => {
-    apiGet<Record<string, unknown>>("/api/rag/knowledge-bases")
-      .then((res) => {
-        const d = res.data;
-        const raw: Array<Record<string, string>> = Array.isArray(d) ? d : Array.isArray((d as Record<string, unknown>)?.knowledge_bases) ? (d as Record<string, unknown>).knowledge_bases as Array<Record<string, string>> : [];
-        setKbs(raw.map((kb) => ({ kb_id: kb.kb_id || kb.id || "", name: kb.name || kb.kb_id || kb.id || "" })));
-      }).catch(() => setKbs([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">{t("tasks.form.rag_desc")}</p>
-      <FormField label={t("tasks.form.knowledge_base")}>
-        {loading ? (
-          <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />{t("tasks.form.loading_kbs")}</div>
-        ) : kbs.length === 0 ? (
-          <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><AlertCircle className="w-4 h-4" />{t("tasks.form.no_kbs")}</div>
-        ) : (
-          <SelectField value={kbId} onChange={setKbId} testId="select-kb"
-            options={[{ value: "", label: t("tasks.form.select_kb") }, ...kbs.map((kb) => ({ value: kb.kb_id, label: kb.name }))]} />
-        )}
-      </FormField>
-      <div className="flex flex-wrap gap-x-5 gap-y-2">
-        <CheckboxField checked={incremental} onChange={(v) => { setIncremental(v); if (v) setForceReindex(false); }}
-          label={t("tasks.form.incremental")} testId="checkbox-incremental" />
-        <CheckboxField checked={forceReindex} onChange={(v) => { setForceReindex(v); if (v) setIncremental(false); }}
-          label={t("tasks.form.force_reindex")} testId="checkbox-force-reindex" />
-      </div>
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !kbId}
-        onClick={() => { if (!kbId) return;
-          onSubmit({ type: "rag_indexing", name: `RAG Index: ${kbId}`, kb_id: kbId, force_reindex: forceReindex, incremental });
-        }} />
+          overwrite_same_profile: overwriteSameProfile })} />
     </div>
   );
 }
@@ -1713,7 +1639,6 @@ export default function Tasks() {
       case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "rag_index": return <RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />;
       default: return null;
     }
   }

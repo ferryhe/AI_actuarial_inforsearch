@@ -163,6 +163,7 @@ export default function Dashboard() {
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_db"), desc: t("dashboard.browse_db_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+    { icon: Activity, title: "Task Center", desc: "Run crawls, imports, conversions, and monitor job execution.", href: "/tasks", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   ];
 
   return (

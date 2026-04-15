@@ -7,7 +7,7 @@ import FeatureUnavailable from "@/pages/FeatureUnavailable";
 import NativeFileDetail from "@/pages/NativeFileDetail";
 import NativeLogs from "@/pages/NativeLogs";
 import NativeSettings from "@/pages/NativeSettings";
-import NativeTasks from "@/pages/NativeTasks";
+import Tasks from "@/pages/Tasks";
 
 /** Redirects to /login when require_auth is enabled and the user is not signed in. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -56,7 +56,7 @@ function Router() {
               <Route path="/chat">
                 <FeatureUnavailable title="Chat is not available in FastAPI-native mode" description="The chat workflow still depends on legacy APIs and is intentionally hidden from the native shell." />
               </Route>
-              <Route path="/tasks" component={NativeTasks} />
+              <Route path="/tasks" component={Tasks} />
               <Route path="/logs" component={NativeLogs} />
               <Route path="/knowledge/:kbId">
                 <FeatureUnavailable title="Knowledge Bases are not available in FastAPI-native mode" description="Knowledge base management still depends on legacy APIs and is intentionally hidden from the native shell." />
