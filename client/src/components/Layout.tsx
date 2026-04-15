@@ -8,6 +8,9 @@ import {
   Moon,
   Menu,
   X,
+  ListTodo,
+  ScrollText,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
@@ -27,6 +30,9 @@ export function useTranslation() {
 const navItems = [
   { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
   { path: "/database", icon: Database, labelKey: "nav.database" },
+  { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks" },
+  { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },
+  { path: "/settings", icon: Settings, labelKey: "nav.settings" },
 ];
 
 function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => void }) {

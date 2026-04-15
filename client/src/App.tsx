@@ -5,6 +5,9 @@ import Database from "@/pages/Database";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import FeatureUnavailable from "@/pages/FeatureUnavailable";
 import NativeFileDetail from "@/pages/NativeFileDetail";
+import NativeLogs from "@/pages/NativeLogs";
+import NativeSettings from "@/pages/NativeSettings";
+import NativeTasks from "@/pages/NativeTasks";
 
 /** Redirects to /login when require_auth is enabled and the user is not signed in. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -53,21 +56,15 @@ function Router() {
               <Route path="/chat">
                 <FeatureUnavailable title="Chat is not available in FastAPI-native mode" description="The chat workflow still depends on legacy APIs and is intentionally hidden from the native shell." />
               </Route>
-              <Route path="/tasks">
-                <FeatureUnavailable title="Tasks are not available in FastAPI-native mode" description="Task management still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
-              <Route path="/logs">
-                <FeatureUnavailable title="Logs are not available in FastAPI-native mode" description="Log browsing still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
+              <Route path="/tasks" component={NativeTasks} />
+              <Route path="/logs" component={NativeLogs} />
               <Route path="/knowledge/:kbId">
                 <FeatureUnavailable title="Knowledge Bases are not available in FastAPI-native mode" description="Knowledge base management still depends on legacy APIs and is intentionally hidden from the native shell." />
               </Route>
               <Route path="/knowledge">
                 <FeatureUnavailable title="Knowledge Bases are not available in FastAPI-native mode" description="Knowledge base management still depends on legacy APIs and is intentionally hidden from the native shell." />
               </Route>
-              <Route path="/settings">
-                <FeatureUnavailable title="Settings are not available in FastAPI-native mode" description="Settings management still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
+              <Route path="/settings" component={NativeSettings} />
               <Route path="/users">
                 <FeatureUnavailable title="User management is not available in FastAPI-native mode" description="User management still depends on legacy APIs and is intentionally hidden from the native shell." />
               </Route>
