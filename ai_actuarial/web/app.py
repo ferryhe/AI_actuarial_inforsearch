@@ -186,6 +186,7 @@ _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
         "tasks.run",
         "tasks.stop",
         "config.read",
+        "config.write",
         "schedule.write",
         "catalog.write",
         "markdown.write",
