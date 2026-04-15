@@ -1,9 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useLocation, useSearch } from "wouter";
 import {
   Search,
-  Download,
   FileIcon,
   Inbox,
   ChevronLeft,
@@ -13,17 +12,12 @@ import {
   ArrowDown,
   Filter,
   X,
-  Eye,
   Trash2,
-  Loader2,
-  AlertCircle,
-  FileDown,
 } from "lucide-react";
 import { buildFileDetailPath } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
-import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface FileItem {
   url: string;
@@ -329,12 +323,6 @@ export default function DatabasePage() {
   const [categories, setCategories] = useState<CategoryOption[]>(initialCachedMeta?.categories || []);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
-  const [showBulkDelete, setShowBulkDelete] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
-  const [bulkError, setBulkError] = useState<string | null>(null);
-
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 300);
     return () => clearTimeout(timer);
@@ -485,58 +473,6 @@ export default function DatabasePage() {
     return () => window.cancelAnimationFrame(frame);
   }, [loading, locationKey]);
 
-  useEffect(() => {
-    setSelectedUrls(new Set());
-  }, [requestKey]);
-
-  const toggleSelect = (url: string) => {
-    setSelectedUrls((prev) => {
-      const next = new Set(prev);
-      if (next.has(url)) next.delete(url);
-      else next.add(url);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedUrls.size === files.length) {
-      setSelectedUrls(new Set());
-    } else {
-      setSelectedUrls(new Set(files.map((f) => f.url)));
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    const urls = Array.from(selectedUrls);
-    setBulkDeleting(true);
-    setBulkProgress({ current: 0, total: urls.length });
-    setBulkError(null);
-    try {
-      for (let i = 0; i < urls.length; i++) {
-        setBulkProgress({ current: i + 1, total: urls.length });
-        const res = await apiPost<{ success?: boolean; error?: string }>("/api/files/delete", { url: urls[i], confirm: "DELETE" });
-        if (res.error) {
-          if (res.error.toLowerCase().includes("disabled") || res.error.toLowerCase().includes("not enabled")) {
-            setBulkError(t("db.deletion_disabled"));
-            break;
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const msg = String((err as { message?: string })?.message || "");
-      if (msg.includes("403") || msg.toLowerCase().includes("disabled") || msg.toLowerCase().includes("forbidden")) {
-        setBulkError(t("db.deletion_disabled"));
-      } else {
-        setBulkError(msg);
-      }
-    } finally {
-      setBulkDeleting(false);
-      setShowBulkDelete(false);
-      setSelectedUrls(new Set());
-      fileListCache.clear();
-      void fetchFiles({ forceNetwork: true });
-    }
-  };
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
@@ -555,22 +491,9 @@ export default function DatabasePage() {
     return orderDir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
   }
 
-  function handleDownload(file: FileItem) {
-    window.open(`/api/download?url=${encodeURIComponent(file.url)}`, "_blank");
-  }
-
-  function handleExport(format: "csv" | "json" = "csv") {
-    window.open(`/api/export?format=${format}`, "_blank");
-  }
-
   function navigateToFile(file: FileItem) {
     databaseScrollCache.set(locationKey, window.scrollY);
     navigate(buildFileDetailPath(file.url, locationKey));
-  }
-
-  function navigateToPreview(file: FileItem) {
-    databaseScrollCache.set(locationKey, window.scrollY);
-    navigate(buildFilePreviewPath(file.url, locationKey));
   }
 
   const activeFilterCount = [source, category, includeDeleted ? "y" : ""].filter(Boolean).length;

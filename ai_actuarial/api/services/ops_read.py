@@ -81,8 +81,7 @@ def get_search_engines() -> dict[str, list[dict[str, object]]]:
 
 def get_config_sites() -> dict[str, object]:
     config_path = _get_sites_config_path()
-    with open(config_path, "r", encoding="utf-8") as f:
-        current_config = _load_yaml(config_path, default={})
+    current_config = _load_yaml(config_path, default={})
     sites = []
     site_defaults = current_config.get("defaults", {})
     for site in current_config.get("sites", []):

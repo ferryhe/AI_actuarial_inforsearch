@@ -71,7 +71,11 @@ def api_tasks_history(
 ) -> dict[str, object]:
     limit = parse_task_history_limit(request.query_params.get("limit"))
     task_history_ref = getattr(request.app.state, "task_history_ref", []) or []
-    return list_task_history(task_history_ref, limit)
+    task_lock = getattr(request.app.state, "task_lock", None)
+    if task_lock is None:
+        return list_task_history(task_history_ref, limit)
+    with task_lock:
+        return list_task_history(task_history_ref, limit)
 
 
 @router.get("/tasks/log/{task_id}")
