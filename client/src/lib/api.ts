@@ -9,13 +9,38 @@ export class ApiError extends Error {
   }
 }
 
+function getStoredAuthToken(): string {
+  if (typeof window === "undefined") return "";
+  return window.sessionStorage.getItem("api_write_auth_token") || window.localStorage.getItem("api_write_auth_token") || "";
+}
+
+export function setStoredAuthToken(token: string, persist = false): void {
+  if (typeof window === "undefined") return;
+  const normalized = token.trim();
+  if (!normalized) {
+    window.sessionStorage.removeItem("api_write_auth_token");
+    if (persist) window.localStorage.removeItem("api_write_auth_token");
+    return;
+  }
+  window.sessionStorage.setItem("api_write_auth_token", normalized);
+  if (persist) {
+    window.localStorage.setItem("api_write_auth_token", normalized);
+  }
+}
+
 async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promise<T> {
+  const authToken = getStoredAuthToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string> | undefined),
+  };
+  if (authToken && !headers["X-Auth-Token"]) {
+    headers["X-Auth-Token"] = authToken;
+  }
+
   const res = await fetch(url, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    headers,
   });
 
   if (!res.ok) {

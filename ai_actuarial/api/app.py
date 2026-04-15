@@ -13,6 +13,7 @@ from .route_inventory import (
     collect_fastapi_route_signatures,
     summarize_legacy_api_routes,
 )
+from .routers.files_write import router as files_write_router
 from .routers.meta import router as meta_router
 from .routers.migration import router as migration_router
 from .routers.ops_read import router as ops_read_router
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(read_router, prefix="/api", tags=["read"])
     app.include_router(ops_read_router, prefix="/api", tags=["ops-read"])
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])
+    app.include_router(files_write_router, prefix="/api", tags=["files-write"])
 
     app.state.legacy_backend = "flask"
     app.state.legacy_mount_enabled = False
