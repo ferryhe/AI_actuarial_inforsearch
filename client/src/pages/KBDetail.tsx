@@ -47,6 +47,10 @@ interface KBStats {
   chunk_count?: number;
   pending_count?: number;
   indexed_count?: number;
+  total_files?: number;
+  total_chunks?: number;
+  pending_files?: number;
+  indexed_files?: number;
 }
 
 interface KBFile {
@@ -57,10 +61,16 @@ interface KBFile {
   binding_mode?: string;
   chunk_count?: number;
   profile_name?: string;
+  chunk_profile?: string;
   status?: string;
 }
 
 interface KBCategory {
+  name: string;
+  file_count?: number;
+}
+
+interface UnmappedCategory {
   name: string;
   file_count?: number;
 }
@@ -116,15 +126,21 @@ export default function KBDetail() {
   const [bindableFiles, setBindableFiles] = useState<SelectableFile[]>([]);
   const [bindLoading, setBindLoading] = useState(false);
   const [selectedBindFiles, setSelectedBindFiles] = useState<string[]>([]);
-  const [bindingMode, setBindingMode] = useState<"pin" | "follow_latest">("follow_latest");
   const [bindSubmitting, setBindSubmitting] = useState(false);
 
   const loadMeta = useCallback(async () => {
     if (!kbId) return;
     try {
-      const res = await apiGet<KBMeta | { data: KBMeta }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`);
-      const m = (res as { data: KBMeta }).data || (res as KBMeta);
+      const res = await apiGet<{ knowledge_base?: (KBMeta & { stats?: KBStats; categories?: string[] }) }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`);
+      const m = res.knowledge_base;
+      if (!m) {
+        setMeta(null);
+        return;
+      }
       setMeta(m);
+      if (m.stats) {
+        setStats(m.stats);
+      }
       setEditName(m.name || "");
       setEditDesc(m.description || "");
     } catch {
@@ -135,8 +151,8 @@ export default function KBDetail() {
   const loadStats = useCallback(async () => {
     if (!kbId) return;
     try {
-      const res = await apiGet<KBStats | { data: KBStats }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/stats`);
-      setStats((res as { data: KBStats }).data || (res as KBStats));
+      const res = await apiGet<KBStats>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/stats`);
+      setStats(res);
     } catch {
       setStats(null);
     }
@@ -155,14 +171,17 @@ export default function KBDetail() {
   const loadCategories = useCallback(async () => {
     if (!kbId) return;
     try {
-      const res = await apiGet<{ categories?: KBCategory[]; data?: { categories?: KBCategory[] } }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/categories`);
-      setCategories(res.data?.categories || res.categories || []);
+      const res = await apiGet<{ categories?: Array<string | KBCategory> }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/categories`);
+      const normalized = (res.categories || []).map((item) =>
+        typeof item === "string" ? { name: item } : { name: item.name, file_count: item.file_count }
+      );
+      setCategories(normalized);
     } catch {
       setCategories([]);
     }
     try {
-      const res2 = await apiGet<{ categories?: string[]; data?: { categories?: string[] } }>("/api/rag/categories/unmapped");
-      setUnmappedCategories(res2.data?.categories || res2.categories || []);
+      const res2 = await apiGet<{ unmapped_categories?: UnmappedCategory[] }>("/api/rag/categories/unmapped");
+      setUnmappedCategories((res2.unmapped_categories || []).map((item) => item.name).filter(Boolean));
     } catch {
       setUnmappedCategories([]);
     }
@@ -219,18 +238,6 @@ export default function KBDetail() {
     }
   };
 
-  const handleRemoveCategory = async (cat: string) => {
-    try {
-      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/categories`, {
-        categories: [cat],
-        action: "remove",
-      });
-      await loadCategories();
-    } catch (err) {
-      console.error("Failed to remove category:", err);
-    }
-  };
-
   const handleBuildIndex = async (force: boolean) => {
     setIndexing(true);
     try {
@@ -248,11 +255,19 @@ export default function KBDetail() {
     setBindLoading(true);
     try {
       const params = new URLSearchParams();
-      if (query) params.set("q", query);
+      if (query) params.set("query", query);
+      params.set("kb_id", kbId);
       params.set("limit", "50");
       const url = `/api/rag/files/selectable?${params.toString()}`;
-      const res = await apiGet<{ files?: SelectableFile[]; data?: { files?: SelectableFile[] } }>(url);
-      setBindableFiles(res.data?.files || res.files || []);
+      const res = await apiGet<{ files?: Array<SelectableFile & { url?: string }> }>(url);
+      setBindableFiles(
+        (res.files || []).map((file) => ({
+          file_url: file.file_url || file.url || "",
+          title: file.title,
+          category: file.category,
+          source_site: file.source_site,
+        })).filter((file) => file.file_url)
+      );
     } catch {
       setBindableFiles([]);
     } finally {
@@ -264,7 +279,6 @@ export default function KBDetail() {
     setShowBindDialog(true);
     setBindSearch("");
     setSelectedBindFiles([]);
-    setBindingMode("follow_latest");
     handleSearchBindable();
   };
 
@@ -278,15 +292,14 @@ export default function KBDetail() {
     if (selectedBindFiles.length === 0) return;
     setBindSubmitting(true);
     try {
-      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/bindings`, {
+      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`, {
         file_urls: selectedBindFiles,
-        binding_mode: bindingMode,
       });
       setShowBindDialog(false);
       setSelectedBindFiles([]);
       await Promise.all([loadFiles(), loadStats()]);
     } catch (err) {
-      console.error("Failed to bind files:", err);
+      console.error("Failed to add files to KB:", err);
     } finally {
       setBindSubmitting(false);
     }
@@ -295,8 +308,8 @@ export default function KBDetail() {
   const loadPendingFiles = async () => {
     setLoadingPending(true);
     try {
-      const res = await apiGet<{ files?: KBFile[]; data?: { files?: KBFile[] } }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files/pending`);
-      setPendingFiles(res.data?.files || res.files || []);
+      const res = await apiGet<{ pending_files?: KBFile[] }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files/pending`);
+      setPendingFiles(res.pending_files || []);
       setShowPendingFiles(true);
     } catch (err) {
       console.error("Failed to load pending files:", err);
@@ -343,7 +356,7 @@ export default function KBDetail() {
     );
   });
 
-  const pendingCount = stats?.pending_count ?? 0;
+  const pendingCount = stats?.pending_count ?? stats?.pending_files ?? 0;
 
   return (
     <div className="space-y-6">
@@ -435,9 +448,9 @@ export default function KBDetail() {
         className="grid grid-cols-2 sm:grid-cols-4 gap-3"
       >
         {[
-          { label: t("kb.stat_files"), value: stats?.file_count ?? meta.file_count ?? 0, icon: FileText, color: "text-blue-500" },
-          { label: t("kb.stat_chunks"), value: stats?.chunk_count ?? meta.chunk_count ?? 0, icon: Layers, color: "text-violet-500" },
-          { label: t("kb.stat_indexed"), value: stats?.indexed_count ?? 0, icon: CheckCircle2, color: "text-emerald-500" },
+          { label: t("kb.stat_files"), value: stats?.file_count ?? stats?.total_files ?? meta.file_count ?? 0, icon: FileText, color: "text-blue-500" },
+          { label: t("kb.stat_chunks"), value: stats?.chunk_count ?? stats?.total_chunks ?? meta.chunk_count ?? 0, icon: Layers, color: "text-violet-500" },
+          { label: t("kb.stat_indexed"), value: stats?.indexed_count ?? stats?.indexed_files ?? 0, icon: CheckCircle2, color: "text-emerald-500" },
           { label: t("kb.stat_pending"), value: pendingCount, icon: Clock, color: pendingCount > 0 ? "text-amber-500" : "text-muted-foreground" },
         ].map((s, i) => (
           <div key={i} className="rounded-xl border border-border bg-card p-4" data-testid={`stat-card-${i}`}>
@@ -621,13 +634,6 @@ export default function KBDetail() {
                   {cat.file_count != null && (
                     <span className="text-[10px] text-primary/60">({cat.file_count})</span>
                   )}
-                  <button
-                    onClick={() => handleRemoveCategory(cat.name)}
-                    className="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all"
-                    data-testid={`button-remove-category-${cat.name}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
                 </span>
               ))
             )}
@@ -698,8 +704,8 @@ export default function KBDetail() {
                           {file.category}
                         </span>
                       )}
-                      {file.profile_name && (
-                        <span className="font-mono">{file.profile_name}</span>
+                      {(file.profile_name || file.chunk_profile) && (
+                        <span className="font-mono">{file.profile_name || file.chunk_profile}</span>
                       )}
                       {file.chunk_count != null && (
                         <span>{file.chunk_count} chunks</span>
@@ -776,34 +782,6 @@ export default function KBDetail() {
                 >
                   {bindLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
                 </button>
-              </div>
-
-              <div className="flex items-center gap-4 mt-3">
-                <span className="text-xs text-muted-foreground">{t("kb.binding_mode")}:</span>
-                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                  <input
-                    type="radio"
-                    name="bindingMode"
-                    value="follow_latest"
-                    checked={bindingMode === "follow_latest"}
-                    onChange={() => setBindingMode("follow_latest")}
-                    className="accent-primary"
-                    data-testid="radio-bind-follow-latest"
-                  />
-                  {t("kb.follow_latest")}
-                </label>
-                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                  <input
-                    type="radio"
-                    name="bindingMode"
-                    value="pin"
-                    checked={bindingMode === "pin"}
-                    onChange={() => setBindingMode("pin")}
-                    className="accent-primary"
-                    data-testid="radio-bind-pin"
-                  />
-                  {t("kb.pinned")}
-                </label>
               </div>
             </div>
 

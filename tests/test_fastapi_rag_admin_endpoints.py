@@ -134,6 +134,7 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/rag/knowledge-bases/{kb_id}" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/stats" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files" in body["native_paths"]
+    assert "/api/rag/knowledge-bases/{kb_id}/files/{file_url:path}" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/categories" in body["native_paths"]
     assert "/api/rag/categories/unmapped" in body["native_paths"]
     assert "/api/rag/files/selectable" in body["native_paths"]
@@ -202,6 +203,42 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
 
     delete_kb = client.delete("/api/rag/knowledge-bases/kb-pr4-test")
     assert delete_kb.status_code == 200, delete_kb.text
+
+
+
+def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-files-test",
+            "name": "KB Files Test",
+            "kb_mode": "manual",
+            "chunk_size": 300,
+            "chunk_overlap": 50,
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    add_files = client.post(
+        "/api/rag/knowledge-bases/kb-files-test/files",
+        json={"file_urls": [alpha_url]},
+    )
+    assert add_files.status_code == 200, add_files.text
+    assert add_files.json()["added_count"] == 1
+
+    files_after_add = client.get("/api/rag/knowledge-bases/kb-files-test/files")
+    assert files_after_add.status_code == 200, files_after_add.text
+    assert any(item["file_url"] == alpha_url for item in files_after_add.json()["files"])
+
+    remove_file = client.delete(f"/api/rag/knowledge-bases/kb-files-test/files/{alpha_url}")
+    assert remove_file.status_code == 200, remove_file.text
+
+    files_after_remove = client.get("/api/rag/knowledge-bases/kb-files-test/files")
+    assert files_after_remove.status_code == 200, files_after_remove.text
+    assert not any(item["file_url"] == alpha_url for item in files_after_remove.json()["files"])
 
 
 

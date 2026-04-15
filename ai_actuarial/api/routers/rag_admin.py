@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from ..deps import AuthContext, require_permissions
 from ..services.rag_admin import (
     RagAdminError,
+    add_knowledge_base_files,
     bind_chunk_sets,
     cleanup_chunk_sets,
     create_chunk_profile,
@@ -22,6 +23,7 @@ from ..services.rag_admin import (
     list_knowledge_base_files,
     list_knowledge_bases,
     list_selectable_files,
+    remove_knowledge_base_file,
     set_knowledge_base_categories,
     update_knowledge_base,
 )
@@ -173,6 +175,32 @@ def api_list_knowledge_base_files(
 ):
     try:
         return list_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, query=request.query_params)
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
+@router.post("/rag/knowledge-bases/{kb_id}/files")
+def api_add_knowledge_base_files(
+    kb_id: str,
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        return add_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers))
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
+@router.delete("/rag/knowledge-bases/{kb_id}/files/{file_url:path}")
+def api_remove_knowledge_base_file(
+    kb_id: str,
+    file_url: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        return remove_knowledge_base_file(db_path=_db_path(request), kb_id=kb_id, file_url=file_url, headers=dict(request.headers))
     except RagAdminError as exc:
         return _error_response(exc)
 

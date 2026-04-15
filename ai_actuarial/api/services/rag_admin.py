@@ -368,6 +368,51 @@ def list_knowledge_base_files(*, db_path: str, kb_id: str, query: Mapping[str, A
 
 
 
+def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
+    _require_config_write_token(headers)
+    kid = _kb_id(kb_id)
+    if not isinstance(payload, dict):
+        raise RagAdminError("Invalid JSON body")
+    file_urls = _list(payload.get("file_urls"), "file_urls")
+    if not file_urls:
+        raise RagAdminError("file_urls must be a non-empty list")
+
+    _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    try:
+        if not manager.get_kb(kid):
+            raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        result = manager.add_files_to_kb(kid, file_urls)
+        return {
+            "kb_id": kid,
+            "added_count": int(result.get("added_count") or 0),
+            "skipped_count": int(result.get("skipped_count") or 0),
+            "total_files": int(result.get("total_files") or 0),
+        }
+    finally:
+        storage.close()
+
+
+
+def remove_knowledge_base_file(*, db_path: str, kb_id: str, file_url: str, headers: Mapping[str, str]) -> dict[str, Any]:
+    _require_config_write_token(headers)
+    kid = _kb_id(kb_id)
+    normalized_file_url = _norm(file_url)
+    if not normalized_file_url:
+        raise RagAdminError("file_url is required")
+
+    _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    try:
+        if not manager.get_kb(kid):
+            raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        removed = manager.remove_files_from_kb(kid, [normalized_file_url])
+        if removed <= 0:
+            raise RagAdminError("File not found in knowledge base", status_code=404)
+        return {"kb_id": kid, "removed_count": int(removed), "file_url": normalized_file_url}
+    finally:
+        storage.close()
+
+
+
 def get_unmapped_categories(*, db_path: str) -> dict[str, Any]:
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:

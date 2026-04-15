@@ -7,6 +7,7 @@ import {
   Building2,
   Activity,
   Search,
+  BookOpen,
   ArrowRight,
   FileIcon,
   Inbox,
@@ -164,6 +165,7 @@ export default function Dashboard() {
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_db"), desc: t("dashboard.browse_db_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
     { icon: Activity, title: t("dashboard.task_center"), desc: t("dashboard.task_center_desc"), href: "/tasks", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    { icon: BookOpen, title: t("knowledge.title"), desc: t("knowledge.subtitle"), href: "/knowledge", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
   ];
 
   return (

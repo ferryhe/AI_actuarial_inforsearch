@@ -134,8 +134,8 @@ export default function Knowledge() {
       apiGet<Record<string, unknown>>("/api/config/ai-models").catch(() => null),
     ])
       .then(([kbResp, profileResp, aiResp]) => {
-        const kbRaw = kbResp?.data;
-        const kbList: KnowledgeBase[] = Array.isArray(kbRaw) ? kbRaw : [];
+        const kbPayload = kbResp as { knowledge_bases?: KnowledgeBase[]; data?: { knowledge_bases?: KnowledgeBase[] } } | null;
+        const kbList: KnowledgeBase[] = kbPayload?.knowledge_bases || kbPayload?.data?.knowledge_bases || [];
         setKbs(kbList);
 
         const profRaw = profileResp?.data;
