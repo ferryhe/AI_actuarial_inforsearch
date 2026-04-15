@@ -283,7 +283,7 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
     assert any(entry["name"] == "sample.pdf" for entry in browse_body["entries"])
 
     denied_response = client.get("/api/utils/browse-folder", params={"path": str(Path("/").resolve())})
-    assert denied_response.status_code in {200, 403}
+    assert denied_response.status_code == 403, denied_response.text
 
     catalog_stats = client.get("/api/catalog/stats")
     assert catalog_stats.status_code == 200, catalog_stats.text

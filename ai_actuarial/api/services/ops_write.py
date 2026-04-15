@@ -598,8 +598,10 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState) -> dict[str, 
         _reject_request("No URLs provided", collection_type=collection_type, data=data, bridge=bridge)
     if collection_type == "file":
         directory_path = str(data.get("directory_path") or "").strip()
-        if not directory_path or not os.path.exists(directory_path):
+        normalized_directory_path = os.path.abspath(directory_path) if directory_path else ""
+        if not normalized_directory_path or not os.path.isdir(normalized_directory_path):
             _reject_request("Invalid directory path", collection_type=collection_type, data=data, bridge=bridge)
+        data["directory_path"] = normalized_directory_path
     if collection_type == "catalog":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
@@ -640,7 +642,11 @@ def browse_folder(path: str | None = None) -> dict[str, Any]:
 
     target = str(path or "").strip() or allowed_root
     target = os.path.abspath(target)
-    if not target.startswith(allowed_root):
+    try:
+        target_within_root = os.path.commonpath([allowed_root, target]) == allowed_root
+    except ValueError:
+        target_within_root = False
+    if not target_within_root:
         raise OpsWriteError("Access denied: path outside allowed directory", status_code=403)
     if not os.path.isdir(target):
         raise OpsWriteError("Not a valid directory")
@@ -662,7 +668,11 @@ def browse_folder(path: str | None = None) -> dict[str, Any]:
         raise OpsWriteError("Permission denied", status_code=403) from exc
 
     parent = os.path.dirname(target)
-    has_parent = parent != target and parent.startswith(allowed_root)
+    try:
+        parent_within_root = os.path.commonpath([allowed_root, parent]) == allowed_root
+    except ValueError:
+        parent_within_root = False
+    has_parent = parent != target and parent_within_root
     return {"path": target, "parent": parent if has_parent else None, "entries": entries}
 
 

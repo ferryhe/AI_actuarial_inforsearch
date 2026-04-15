@@ -168,8 +168,10 @@ _PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# When REQUIRE_AUTH=false, we run the app in a "guest-enabled" mode:
-# only a minimal read-only allowlist is available without a token.
+# When REQUIRE_AUTH=*** we run the app in a "guest-enabled" QA mode:
+# selected task/config actions remain available without a token so the FastAPI-native
+# shell can be exercised end-to-end in local validation environments. Do not enable
+# this mode for production-facing deployments.
 _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
         "stats.read",

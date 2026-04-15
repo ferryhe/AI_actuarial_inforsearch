@@ -1505,7 +1505,7 @@ function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unkn
         </div>
       </div>
       <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Knowledge base binding will return in the dedicated FastAPI RAG migration PR. Current PR2 keeps chunk generation fully FastAPI-native.
+        {t("tasks.form.chunk_kb_binding_notice")}
       </div>
       <CheckboxField checked={overwriteSameProfile} onChange={setOverwriteSameProfile}
         label={t("tasks.form.overwrite_same_profile")} testId="checkbox-overwrite-profile" />
