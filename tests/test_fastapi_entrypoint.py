@@ -69,9 +69,11 @@ def test_unported_legacy_api_fallback_is_blocked_by_default() -> None:
     client = TestClient(create_app())
 
     response = client.get("/api/logs/global")
+    head_response = client.head("/api/logs/global")
 
     assert response.status_code == 410
     assert "Legacy Flask /api fallback is disabled" in response.json()["detail"]
+    assert head_response.status_code == 410
 
 
 def test_legacy_api_fallback_can_be_reenabled_for_debugging(monkeypatch) -> None:

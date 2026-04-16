@@ -36,7 +36,7 @@ async def api_migration_status(request: Request) -> dict[str, object]:
         "legacy_api_fallback_allowed": bool(getattr(app.state, "legacy_api_fallback_allowed", False)),
         "migration_inventory_enabled": inventory_enabled,
         "notes": [
-            "FastAPI is the only long-term API authority for /api routes.",
+            "FastAPI is the current product API authority for /api routes.",
             "Legacy Flask /api fallback is blocked by default; enable FASTAPI_ALLOW_LEGACY_API_FALLBACK=1 only for historical debugging.",
             "No new product API endpoints should be added to Flask during the migration.",
         ],

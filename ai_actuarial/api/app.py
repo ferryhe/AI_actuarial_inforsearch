@@ -115,7 +115,7 @@ def create_app() -> FastAPI:
 
         @app.api_route(
             "/api/{legacy_api_path:path}",
-            methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            methods=["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
             include_in_schema=False,
         )
         async def block_legacy_api_fallback(legacy_api_path: str) -> None:

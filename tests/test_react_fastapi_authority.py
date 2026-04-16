@@ -30,6 +30,10 @@ PRODUCT_SOURCE_FILES = [
 _API_WRAPPER_PATTERN = re.compile(r'(apiGet|apiPost|apiPut|apiPatch|apiDelete)\(\s*(["\'`])(/api/[^"\'`]+)\2')
 _FETCH_PATTERN = re.compile(r'fetch\(\s*(["\'`])(/api/[^"\'`]+)\1(\s*,\s*\{(?P<options>.*?)\})?', re.S)
 _HREF_PATTERN = re.compile(r'(?P<target>[A-Za-z0-9_\.]+)\.href\s*=\s*(["\'`])(?P<url>/api/[^"\'`]+)\2')
+_JSX_API_ATTR_PATTERN = re.compile(
+    r'(?P<attr>href|src|action|formAction)\s*=\s*(?:\{\s*)?(["\'`])(?P<url>/api/[^"\'`]+)\2',
+    re.S,
+)
 _METHOD_BY_WRAPPER = {
     "apiGet": "GET",
     "apiPost": "POST",
@@ -60,6 +64,9 @@ def _collect_product_api_references() -> list[tuple[str, str, str]]:
             references.add((path.relative_to(ROOT).as_posix(), method, _canonicalize_client_path(url)))
 
         for match in _HREF_PATTERN.finditer(source):
+            references.add((path.relative_to(ROOT).as_posix(), "GET", _canonicalize_client_path(match.group("url"))))
+
+        for match in _JSX_API_ATTR_PATTERN.finditer(source):
             references.add((path.relative_to(ROOT).as_posix(), "GET", _canonicalize_client_path(match.group("url"))))
 
     return sorted(references)
