@@ -44,7 +44,7 @@ def api_list_conversations(
         return _error_response(exc)
 
 
-@router.post("/chat/conversations")
+@router.post("/chat/conversations", status_code=201)
 def api_create_conversation(
     payload: dict[str, object],
     request: Request,
@@ -54,7 +54,7 @@ def api_create_conversation(
     try:
         result, session_update = create_conversation(db_path=_db_path(request), request=request, auth=auth, payload=payload)
         apply_session_update(response, request, session_update)
-        return JSONResponse(status_code=201, content=result, headers=dict(response.headers))
+        return result
     except ChatApiError as exc:
         return _error_response(exc)
 

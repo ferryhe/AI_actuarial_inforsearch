@@ -372,3 +372,117 @@ def test_fastapi_chat_query_flow_works_with_native_service_contract(tmp_path: Pa
     assert "Solvency II" in payload["response"]
     assert payload["metadata"]["model"] == "fake-chat-model"
     assert payload["citations"][0]["filename"] == "solvency.pdf"
+
+
+
+def test_fastapi_chat_query_maps_llm_exceptions_to_api_error(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    import ai_actuarial.api.services.chat as chat_service
+
+    class FakeConversationManager:
+        def __init__(self, storage, config):
+            self.storage = storage
+            chat_service._ensure_conversation_schema(storage)
+
+        def create_conversation(self, user_id: str, kb_id: str | None = None, mode: str = "expert", metadata=None):
+            conversation_id = "conv_llm_error"
+            now = "2026-04-16T00:00:00+00:00"
+            self.storage._conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            self.storage._conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            self.storage._conn.execute(
+                "INSERT INTO conversations (conversation_id, user_id, title, kb_id, mode, created_at, updated_at, message_count, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, user_id, "LLM Error", kb_id, mode, now, now, 0, json.dumps(metadata) if metadata else None),
+            )
+            self.storage._conn.commit()
+            return conversation_id
+
+        def get_conversation(self, conversation_id: str):
+            return {"conversation_id": conversation_id, "user_id": "guest:test", "title": "LLM Error", "kb_id": None, "mode": "expert", "created_at": "now", "updated_at": "now", "message_count": 0, "metadata": None}
+
+        def add_message(self, conversation_id: str, role: str, content: str, citations=None, metadata=None):
+            return f"msg_{role}"
+
+        def get_context(self, conversation_id: str):
+            return []
+
+    class FakeRetriever:
+        def __init__(self, storage, config):
+            pass
+
+        def retrieve(self, query, kb_ids):
+            return [{"content": "chunk", "metadata": {"filename": "a.pdf", "kb_id": "chat-kb-a", "kb_name": "Chat KB A", "similarity_score": 0.9, "chunk_id": "chunk-1", "file_url": "https://alpha.example/doc-a.pdf"}}]
+
+    class FakeLLMException(Exception):
+        pass
+
+    class FakeLLMClient:
+        def __init__(self, config, storage=None):
+            pass
+
+        def generate_response(self, query, chunks, mode, conversation_history):
+            raise FakeLLMException("provider down")
+
+    class FakeConfigModule:
+        class ChatbotConfig:
+            @staticmethod
+            def from_config(storage=None, default_mode="expert"):
+                return SimpleNamespace(available_modes=["expert", "summary", "tutorial", "comparison"], similarity_threshold=0.35, model="fake-chat-model", default_mode=default_mode)
+
+    class FakeConversationModule:
+        ConversationManager = FakeConversationManager
+
+    class FakeRetrievalModule:
+        RAGRetriever = FakeRetriever
+
+    class FakeLLMModule:
+        LLMClient = FakeLLMClient
+
+    class FakeRouterModule:
+        QueryRouter = lambda *args, **kwargs: None
+
+    class FakeConversationException(Exception):
+        pass
+
+    class FakeExceptionsModule:
+        class NoResultsException(Exception):
+            pass
+
+        class EmbeddingConfigurationMismatchException(Exception):
+            pass
+
+        LLMException = FakeLLMException
+        ConversationException = FakeConversationException
+        RetrievalException = Exception
+
+    monkeypatch.setattr(
+        chat_service,
+        "_full_chat_modules",
+        lambda: {
+            "config": FakeConfigModule,
+            "conversation": FakeConversationModule,
+            "exceptions": FakeExceptionsModule,
+            "retrieval": FakeRetrievalModule,
+            "llm": FakeLLMModule,
+            "router": FakeRouterModule,
+        },
+    )
+    monkeypatch.setattr(chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None))
+
+    response = client.post("/api/chat/query", json={"message": "What is Solvency II?", "kb_ids": ["chat-kb-a"], "mode": "expert"})
+    assert response.status_code == 502, response.text
+    assert response.json()["error"] == "LLM generation failed"
+
+
+
+def test_apply_session_update_is_noop_without_legacy_flask_app() -> None:
+    import ai_actuarial.api.services.chat as chat_service
+
+    response = SimpleNamespace(cookies=[])
+    def set_cookie(**kwargs):
+        response.cookies.append(kwargs)
+    response.set_cookie = set_cookie
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(legacy_flask_app=None)))
+    chat_service.apply_session_update(response, request, chat_service.SessionUpdate({"guest_chat_user_id": "guest:test"}))
+    assert response.cookies == []

@@ -180,7 +180,10 @@ def _resolve_chat_user(request, auth: AuthContext) -> tuple[str, SessionUpdate |
 def apply_session_update(response, request, session_update: SessionUpdate | None) -> None:
     if not session_update:
         return
-    legacy_app = _legacy_app(request)
+    legacy_app = getattr(request.app.state, "legacy_flask_app", None)
+    if legacy_app is None:
+        logger.debug("Skipping chat session update because legacy Flask app is unavailable")
+        return
     serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
     if serializer is None:
         return
@@ -668,5 +671,22 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 },
             },
         }, session_update
+    except ChatApiError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        conversation_exc = getattr(exceptions, "ConversationException", None)
+        llm_exc = getattr(exceptions, "LLMException", None)
+        retrieval_exc = getattr(exceptions, "RetrievalException", None)
+        expose_detail = os.getenv("EXPOSE_ERROR_DETAILS") == "1"
+        if conversation_exc and isinstance(exc, conversation_exc):
+            detail = f": {exc}" if expose_detail else ""
+            raise ChatApiError(f"Conversation error{detail}", status_code=400) from exc
+        if llm_exc and isinstance(exc, llm_exc):
+            detail = f": {exc}" if expose_detail else ""
+            raise ChatApiError(f"LLM generation failed{detail}", status_code=502) from exc
+        if retrieval_exc and isinstance(exc, retrieval_exc):
+            detail = f": {exc}" if expose_detail else ""
+            raise ChatApiError(f"Retrieval failed{detail}", status_code=502) from exc
+        raise
     finally:
         storage.close()
