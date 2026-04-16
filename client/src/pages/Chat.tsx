@@ -36,10 +36,27 @@ interface Citation {
   filename?: string;
   title?: string;
   content?: string;
+  quote?: string;
   score?: number;
   similarity_score?: number;
   kb_name?: string;
   file_url?: string;
+  file_detail_url?: string;
+  file_preview_url?: string;
+}
+
+interface RetrievedBlock {
+  filename?: string;
+  kb_id?: string;
+  kb_name?: string;
+  chunk_id?: string;
+  similarity_score?: number;
+  content?: string;
+  quote?: string;
+  source_url?: string;
+  file_url?: string;
+  file_detail_url?: string;
+  file_preview_url?: string;
 }
 
 interface Message {
@@ -48,7 +65,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> & { retrieved_blocks?: RetrievedBlock[] | string };
 }
 
 interface KnowledgeBase {
@@ -93,10 +110,13 @@ function TypingIndicator() {
 function CitationCard({ citation, index }: { citation: Citation; index: number }) {
   const title = citation.title || citation.filename || citation.source || "Source";
   const score = citation.similarity_score || citation.score;
+  const snippet = citation.content || citation.quote;
+  const detailHref = citation.file_detail_url || citation.file_url;
+  const previewHref = citation.file_preview_url;
 
   return (
     <div
-      className="inline-flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs max-w-xs hover:border-primary/30 transition-colors cursor-default"
+      className="inline-flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs max-w-sm hover:border-primary/30 transition-colors"
       data-testid={`citation-${index}`}
     >
       <FileText className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" strokeWidth={1.8} />
@@ -110,16 +130,125 @@ function CitationCard({ citation, index }: { citation: Citation; index: number }
             {(score * 100).toFixed(0)}%
           </p>
         )}
-        {citation.content && (
-          <p className="text-muted-foreground line-clamp-2 mt-0.5">{citation.content}</p>
+        {snippet && (
+          <p className="text-muted-foreground line-clamp-3 mt-1 whitespace-pre-wrap">{snippet}</p>
+        )}
+        {(detailHref || previewHref) && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {detailHref && (
+              <a
+                href={detailHref}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                文件详情
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+            {previewHref && (
+              <a
+                href={previewHref}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                预览
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
         )}
       </div>
     </div>
   );
 }
 
+function normalizeRetrievedBlocks(value: unknown): RetrievedBlock[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is RetrievedBlock => Boolean(item && typeof item === "object"));
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is RetrievedBlock => Boolean(item && typeof item === "object"))
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
+  if (blocks.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className="w-full mt-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+        Retrieved blocks ({blocks.length})
+      </summary>
+      <div className="mt-3 space-y-3">
+        {blocks.map((block, index) => {
+          const score = Number(block.similarity_score);
+          const scoreText = Number.isFinite(score) ? score.toFixed(3) : "-";
+          const filename = block.filename || "unknown";
+          const kbName = block.kb_name || block.kb_id || "Unknown KB";
+          const detailHref = block.file_detail_url || block.file_url;
+          const previewHref = block.file_preview_url;
+          const blockContent = block.content || block.quote || "(empty chunk)";
+
+          return (
+            <div key={`${block.chunk_id || filename}-${index}`} className="rounded-md border border-border/60 bg-background/80 p-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <strong className="text-foreground">{filename}</strong>
+                <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">KB: {kbName}</span>
+                <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">Chunk: {block.chunk_id || "n/a"}</span>
+                <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">Score: {scoreText}</span>
+                {(detailHref || previewHref) && (
+                  <span className="flex flex-wrap items-center gap-2 ml-auto">
+                    {detailHref && (
+                      <a
+                        href={detailHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        文件详情
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                    {previewHref && (
+                      <a
+                        href={previewHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        预览
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </span>
+                )}
+              </div>
+              <pre className="mt-3 whitespace-pre-wrap break-words rounded-md bg-muted/60 p-3 text-xs leading-relaxed text-muted-foreground overflow-x-auto">
+                {blockContent}
+              </pre>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 function MessageBubble({ message, index }: { message: Message; index: number }) {
   const isUser = message.role === "user";
+  const retrievedBlocks = normalizeRetrievedBlocks(message.metadata?.retrieved_blocks);
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -156,6 +285,7 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
             ))}
           </div>
         )}
+        {!isUser && <RetrievedBlocks blocks={retrievedBlocks} />}
       </div>
     </motion.div>
   );
@@ -342,6 +472,9 @@ export default function Chat() {
       const responseText =
         res.data?.response || res.response || t("chat.no_response");
       const citations = res.data?.citations || res.citations || [];
+      const retrievedBlocks = normalizeRetrievedBlocks(
+        res.data?.retrieved_blocks ?? res.data?.metadata?.retrieved_blocks
+      );
 
       if (res.data?.conversation_id && !activeConvId) {
         setActiveConvId(res.data.conversation_id);
@@ -352,6 +485,10 @@ export default function Chat() {
         role: "assistant",
         content: responseText,
         citations,
+        metadata: {
+          ...(res.data?.metadata || {}),
+          retrieved_blocks: retrievedBlocks,
+        },
       };
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err: unknown) {
