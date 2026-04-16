@@ -13,6 +13,7 @@ from .route_inventory import (
     collect_fastapi_route_signatures,
     summarize_legacy_api_routes,
 )
+from .routers.chat import router as chat_router
 from .routers.files_write import router as files_write_router
 from .routers.meta import router as meta_router
 from .routers.rag_admin import router as rag_admin_router
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])
     app.include_router(files_write_router, prefix="/api", tags=["files-write"])
     app.include_router(rag_admin_router, prefix="/api", tags=["rag-admin"])
+    app.include_router(chat_router, prefix="/api", tags=["chat"])
 
     app.state.legacy_backend = "flask"
     app.state.legacy_mount_enabled = False
