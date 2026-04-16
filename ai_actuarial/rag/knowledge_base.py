@@ -352,8 +352,8 @@ class KnowledgeBaseManager:
             embedding_provider=current_embedding["provider"],
             embedding_model=current_embedding["model"],
             embedding_dimension=current_embedding["dimension"],
-            chunk_size=chunk_size or self.config.max_chunk_tokens,
-            chunk_overlap=chunk_overlap or 100,
+            chunk_size=chunk_size if chunk_size is not None else self.config.max_chunk_tokens,
+            chunk_overlap=chunk_overlap if chunk_overlap is not None else 100,
             index_type=index_type or self.config.index_type
         )
         

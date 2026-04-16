@@ -31,6 +31,7 @@ const navItems = [
   { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
   { path: "/database", icon: Database, labelKey: "nav.database" },
   { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks" },
+  { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge" },
   { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },
   { path: "/settings", icon: Settings, labelKey: "nav.settings" },
 ];

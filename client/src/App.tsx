@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import FeatureUnavailable from "@/pages/FeatureUnavailable";
 import FileDetail from "@/pages/FileDetail";
 import FilePreview from "@/pages/FilePreview";
+import KBDetail from "@/pages/KBDetail";
+import Knowledge from "@/pages/Knowledge";
 import NativeLogs from "@/pages/NativeLogs";
 import NativeSettings from "@/pages/NativeSettings";
 import Tasks from "@/pages/Tasks";
@@ -54,12 +56,8 @@ function Router() {
               </Route>
               <Route path="/tasks" component={Tasks} />
               <Route path="/logs" component={NativeLogs} />
-              <Route path="/knowledge/:kbId">
-                <FeatureUnavailable title="Knowledge Bases are not available in FastAPI-native mode" description="Knowledge base management still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
-              <Route path="/knowledge">
-                <FeatureUnavailable title="Knowledge Bases are not available in FastAPI-native mode" description="Knowledge base management still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
+              <Route path="/knowledge/:kbId" component={KBDetail} />
+              <Route path="/knowledge" component={Knowledge} />
               <Route path="/settings" component={NativeSettings} />
               <Route path="/users">
                 <FeatureUnavailable title="User management is not available in FastAPI-native mode" description="User management still depends on legacy APIs and is intentionally hidden from the native shell." />
