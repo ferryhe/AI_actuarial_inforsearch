@@ -9,6 +9,7 @@ from ..services.auth import (
     _apply_session_mutation,
     auth_me,
     create_auth_token,
+    ensure_session_mutation_available,
     list_auth_tokens,
     list_users,
     login_user,
@@ -41,6 +42,7 @@ def api_auth_me(request: Request):
 @router.post("/auth/register", status_code=201)
 def api_auth_register(payload: dict[str, object], request: Request, response: Response):
     try:
+        ensure_session_mutation_available(request)
         result, mutation = register_user(request=request, payload=payload)
         _apply_session_mutation(response, request, mutation)
         return result
@@ -51,6 +53,7 @@ def api_auth_register(payload: dict[str, object], request: Request, response: Re
 @router.post("/auth/login")
 def api_auth_login(payload: dict[str, object], request: Request, response: Response):
     try:
+        ensure_session_mutation_available(request)
         result, mutation = login_user(request=request, payload=payload)
         _apply_session_mutation(response, request, mutation)
         return result

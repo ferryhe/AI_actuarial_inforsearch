@@ -222,6 +222,63 @@ def test_fastapi_auth_session_persists_without_legacy_flask_app(tmp_path: Path, 
     assert client.get("/api/auth/me").json()["data"]["authenticated"] is False
 
 
+
+def test_fastapi_auth_no_flask_runtime_register_login_logout_roundtrip(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.legacy_flask_app = None
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "runtime@example.com",
+            "password": "password123",
+            "display_name": "Runtime User",
+        },
+    )
+    assert register.status_code == 201, register.text
+    assert client.get("/api/auth/me").json()["data"]["authenticated"] is True
+
+    logout = client.post("/api/auth/logout")
+    assert logout.status_code == 200, logout.text
+    assert client.get("/api/auth/me").json()["data"]["authenticated"] is False
+
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "runtime@example.com", "password": "password123"},
+    )
+    assert login.status_code == 200, login.text
+    auth_me = client.get("/api/auth/me")
+    assert auth_me.status_code == 200, auth_me.text
+    assert auth_me.json()["data"]["authenticated"] is True
+    assert auth_me.json()["data"]["user"]["email"] == "runtime@example.com"
+
+
+
+def test_fastapi_auth_register_and_login_fail_closed_without_legacy_flask_app_and_session_secret(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.legacy_flask_app = None
+    app.state.fastapi_session_secret = ""
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "nosecret@example.com",
+            "password": "***",
+            "display_name": "No Secret",
+        },
+    )
+    assert register.status_code == 503, register.text
+    assert register.json()["error"] == "FastAPI session secret is not configured"
+
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "user@example.com", "password": "***"},
+    )
+    assert login.status_code == 503, login.text
+    assert login.json()["error"] == "FastAPI session secret is not configured"
+
+
+
 def test_fastapi_admin_user_and_token_management_surfaces_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     headers = {"Authorization": f"Bearer {seed['admin_token']}"}

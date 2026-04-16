@@ -11,7 +11,6 @@
     "POST /api/admin/users/<int:target_user_id>/active",
     "POST /api/chat/summarize-document",
     "POST /api/config/ai-models",
-    "POST /api/config/backend-settings",
     "POST /api/config/categories",
     "POST /api/config/llm-providers",
     "POST /api/config/schedule",

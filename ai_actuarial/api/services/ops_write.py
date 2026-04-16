@@ -9,13 +9,14 @@ from typing import Any
 
 import yaml
 
-from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import (
-    _append_task_log,
-    _get_default_catalog_provider,
-    _get_sites_config_path,
-    _load_yaml,
+from ai_actuarial.shared_runtime import (
+    append_task_log,
+    get_default_catalog_provider,
+    get_sites_config_path,
+    load_yaml,
+    serialize_backend_settings,
 )
+from ai_actuarial.storage import Storage
 
 _VALID_SCHEDULED_TASK_TYPES = [
     "scheduled",
@@ -105,17 +106,26 @@ class BridgeState:
         self.task_history_ref = getattr(app_state, "task_history_ref", []) or []
         self.task_lock = getattr(app_state, "task_lock", None)
         self.schedule_ref = getattr(app_state, "schedule_ref", None)
-        self.start_background_task = getattr(app_state, "legacy_start_background_task", None)
-        self.init_scheduler = getattr(app_state, "legacy_init_scheduler", None)
-        self.set_site_config = getattr(app_state, "legacy_set_site_config", None)
+        self.start_background_task = (
+            getattr(app_state, "legacy_start_background_task", None)
+            or getattr(app_state, "start_background_task", None)
+        )
+        self.init_scheduler = (
+            getattr(app_state, "legacy_init_scheduler", None)
+            or getattr(app_state, "init_scheduler", None)
+        )
+        self.set_site_config = (
+            getattr(app_state, "legacy_set_site_config", None)
+            or getattr(app_state, "set_site_config", None)
+        )
 
 
 def _load_config_data() -> dict[str, Any]:
-    return _load_yaml(_get_sites_config_path(), default={})
+    return load_yaml(get_sites_config_path(), default={})
 
 
 def _write_config_data(config_data: dict[str, Any]) -> None:
-    config_path = _get_sites_config_path()
+    config_path = get_sites_config_path()
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
 
@@ -138,6 +148,35 @@ def _split_csv_or_list(value: Any) -> list[str]:
     return []
 
 
+def _normalize_list(value: Any, *, field_name: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = value.replace("\r\n", "\n").replace(",", "\n").split("\n")
+        return [part.strip() for part in parts if part.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    raise OpsWriteError(f"{field_name} must be a list or string")
+
+
+def _coerce_bool_setting(value: Any, *, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    raise OpsWriteError(f"Invalid value for {field_name}; expected boolean (true/false).")
+
+
+def _coerce_required_dict(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise OpsWriteError("Invalid JSON body")
+    return dict(payload)
+
+
 def _coerce_optional_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
@@ -145,7 +184,7 @@ def _coerce_optional_int(value: Any) -> int | None:
 
 
 def _backups_dir() -> Path:
-    return Path(_get_sites_config_path()).resolve().parent / "backups"
+    return Path(get_sites_config_path()).resolve().parent / "backups"
 
 
 def _ensure_backup_dir() -> Path:
@@ -168,7 +207,7 @@ def _backup_config(label: str = "") -> str:
     suffix = f"_{label}" if label else ""
     backup_name = f"sites_{ts}{suffix}.yaml"
     backup_path = backups_dir / backup_name
-    config_path = Path(_get_sites_config_path())
+    config_path = Path(get_sites_config_path())
     if config_path.exists():
         backup_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
     return backup_name
@@ -432,11 +471,83 @@ def restore_backup(filename: str, *, bridge: BridgeState | None = None) -> dict[
 
 
 def delete_backup(filename: str) -> dict[str, Any]:
-    backup_path = _validate_backup_filename(filename)
-    if not backup_path.exists():
-        raise OpsWriteError("Backup file not found", status_code=404)
-    backup_path.unlink()
+    target = _validate_backup_filename(filename)
+    if not target.exists():
+        raise OpsWriteError("Backup not found", status_code=404)
+    target.unlink()
     return {"success": True}
+
+
+def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    config_data = _load_config_data()
+    config_data.setdefault("defaults", {})
+    config_data.setdefault("paths", {})
+    config_data.setdefault("search", {})
+
+    defaults_in = payload.get("defaults")
+    if isinstance(defaults_in, dict):
+        defaults = config_data["defaults"]
+        if "max_pages" in defaults_in:
+            defaults["max_pages"] = int(defaults_in.get("max_pages") or 0)
+        if "max_depth" in defaults_in:
+            defaults["max_depth"] = int(defaults_in.get("max_depth") or 0)
+        if "delay_seconds" in defaults_in:
+            defaults["delay_seconds"] = float(defaults_in.get("delay_seconds") or 0)
+        if "file_exts" in defaults_in:
+            defaults["file_exts"] = _normalize_list(defaults_in.get("file_exts"), field_name="defaults.file_exts")
+        if "keywords" in defaults_in:
+            defaults["keywords"] = _normalize_list(defaults_in.get("keywords"), field_name="defaults.keywords")
+        if "exclude_keywords" in defaults_in:
+            defaults["exclude_keywords"] = _normalize_list(
+                defaults_in.get("exclude_keywords"), field_name="defaults.exclude_keywords"
+            )
+        if "exclude_prefixes" in defaults_in:
+            defaults["exclude_prefixes"] = _normalize_list(
+                defaults_in.get("exclude_prefixes"), field_name="defaults.exclude_prefixes"
+            )
+        if "schedule_interval" in defaults_in:
+            defaults["schedule_interval"] = str(defaults_in.get("schedule_interval", "")).strip()
+
+    paths_in = payload.get("paths")
+    if isinstance(paths_in, dict):
+        paths = config_data["paths"]
+        for key in ["download_dir", "updates_dir", "last_run_new"]:
+            if key in paths_in:
+                paths[key] = str(paths_in.get(key, "")).strip()
+
+    search_in = payload.get("search")
+    if isinstance(search_in, dict):
+        search = config_data["search"]
+        if "enabled" in search_in:
+            search["enabled"] = bool(search_in.get("enabled"))
+        if "max_results" in search_in:
+            search["max_results"] = int(search_in.get("max_results") or 0)
+        if "delay_seconds" in search_in:
+            search["delay_seconds"] = float(search_in.get("delay_seconds") or 0)
+        if "languages" in search_in:
+            search["languages"] = _normalize_list(search_in.get("languages"), field_name="search.languages")
+        if "country" in search_in:
+            search["country"] = str(search_in.get("country", "")).strip()
+        if "exclude_keywords" in search_in:
+            search["exclude_keywords"] = _normalize_list(
+                search_in.get("exclude_keywords"), field_name="search.exclude_keywords"
+            )
+        if "queries" in search_in:
+            search["queries"] = _normalize_list(search_in.get("queries"), field_name="search.queries")
+
+    system_in = payload.get("system")
+    if isinstance(system_in, dict):
+        config_data.setdefault("system", {})
+        system_cfg = config_data["system"]
+        if "file_deletion_enabled" in system_in:
+            system_cfg["file_deletion_enabled"] = _coerce_bool_setting(
+                system_in.get("file_deletion_enabled"), field_name="system.file_deletion_enabled"
+            )
+
+    _write_config_data(config_data)
+    _notify_site_config_updated(bridge, config_data)
+    return {"success": True, **serialize_backend_settings(config_data)}
 
 
 def add_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:
@@ -561,7 +672,7 @@ def _record_rejected_task(reason: str, *, collection_type: str, data: dict[str, 
     task_name = str(data.get("name") or f"{collection_type} (rejected)")
     stamp = datetime.now().isoformat()
     log_file = str(Path("data/task_logs") / f"{task_id}.log")
-    _append_task_log(task_id, "ERROR", f"Rejected request: {reason}")
+    append_task_log(task_id, "ERROR", f"Rejected request: {reason}")
     task_data = {
         "id": task_id,
         "name": task_name,
@@ -718,7 +829,7 @@ def get_catalog_stats(*, db_path: str, provider: str | None = None, input_source
 
         from ai_actuarial.catalog import CATALOG_VERSION as base_catalog_version
 
-        selected_provider = str(provider or _get_default_catalog_provider()).strip().lower()
+        selected_provider = str(provider or get_default_catalog_provider()).strip().lower()
         selected_input_source = str(input_source or "source").strip().lower()
         category_filter = str(category or "").strip()
         catalog_version = f"{base_catalog_version}:{selected_provider}:{selected_input_source}"

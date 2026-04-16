@@ -7,13 +7,13 @@ from typing import Any
 from fastapi import HTTPException, Request
 from itsdangerous import BadSignature, URLSafeSerializer
 
-from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import (
-    _PERMISSIONS,
-    _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED,
-    _hash_token,
-    _permissions_for_group,
+from ai_actuarial.shared_auth import (
+    PERMISSIONS,
+    PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED,
+    hash_token,
+    permissions_for_group,
 )
+from ai_actuarial.storage import Storage
 
 
 _ANONYMOUS_PERMISSIONS: frozenset[str] = frozenset(
@@ -141,12 +141,12 @@ def _load_auth_context(request: Request) -> AuthContext:
         if not token:
             presented = _extract_presented_token(request)
             if presented:
-                token = storage.get_auth_token_by_hash(_hash_token(presented))
+                token = storage.get_auth_token_by_hash(hash_token(presented))
     finally:
         storage.close()
 
     token = _validate_token_record(token)
-    permissions = _permissions_for_group((token or {}).get("group_name", ""))
+    permissions = permissions_for_group((token or {}).get("group_name", ""))
     context = AuthContext(token=token, permissions=permissions)
     request.state.auth_context = context
     return context
@@ -158,12 +158,12 @@ def get_auth_context(request: Request) -> AuthContext:
 
 def public_permissions_for_request(request: Request) -> frozenset[str]:
     require_auth = bool(getattr(request.app.state, "require_auth", False))
-    return _ANONYMOUS_PERMISSIONS if require_auth else _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
+    return _ANONYMOUS_PERMISSIONS if require_auth else PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
 
 
 def require_permissions(*required: str):
     for permission in required:
-        if permission not in _PERMISSIONS:
+        if permission not in PERMISSIONS:
             raise ValueError(f"Unknown permission: {permission}")
 
     def dependency(request: Request) -> AuthContext:

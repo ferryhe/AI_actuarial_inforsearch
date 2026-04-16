@@ -361,5 +361,6 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
     finally:
         app.state.legacy_start_background_task = original_bridge
 
-    assert index.status_code == 503, index.text
-    assert index.json()["error"] == "Task bridge is unavailable"
+    assert index.status_code == 202, index.text
+    assert index.json()["kb_id"] == "kb-zero-overlap"
+    assert str(index.json()["job_id"]).startswith("task_")

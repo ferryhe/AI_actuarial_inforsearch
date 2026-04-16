@@ -11,16 +11,16 @@ from ai_actuarial.ai_runtime import (
     PROVIDER_ENV_VARS,
 )
 from ai_actuarial.services.token_encryption import TokenEncryption
-from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import (
-    _get_categories_config_path,
-    _get_sites_config_path,
-    _load_yaml,
-    _parse_int_clamped,
-    _serialize_backend_settings,
-    _tail_text_file,
-    _task_log_path,
+from ai_actuarial.shared_runtime import (
+    get_categories_config_path,
+    get_sites_config_path,
+    load_yaml,
+    parse_int_clamped,
+    serialize_backend_settings,
+    tail_text_file,
+    task_log_path,
 )
+from ai_actuarial.storage import Storage
 
 _SEARCH_ENGINE_ENV_VARS = {
     "brave": "BRAVE_API_KEY",
@@ -38,8 +38,8 @@ _SEARCH_ENGINE_DISPLAY = {
 
 
 def get_config_categories() -> dict[str, object]:
-    config_data = _load_yaml(
-        _get_categories_config_path(),
+    config_data = load_yaml(
+        get_categories_config_path(),
         default={"categories": {}, "ai_filter_keywords": [], "ai_keywords": []},
     )
     categories = config_data.get("categories") or {}
@@ -55,8 +55,8 @@ def get_config_categories() -> dict[str, object]:
 
 
 def get_backend_settings() -> dict[str, Any]:
-    config_data = _load_yaml(_get_sites_config_path(), default={})
-    settings = _serialize_backend_settings(config_data)
+    config_data = load_yaml(get_sites_config_path(), default={})
+    settings = serialize_backend_settings(config_data)
     runtime = settings.get("runtime")
     if isinstance(runtime, dict):
         if "config_path" in runtime:
@@ -80,8 +80,8 @@ def get_search_engines() -> dict[str, list[dict[str, object]]]:
 
 
 def get_config_sites() -> dict[str, object]:
-    config_path = _get_sites_config_path()
-    current_config = _load_yaml(config_path, default={})
+    config_path = get_sites_config_path()
+    current_config = load_yaml(config_path, default={})
     sites = []
     site_defaults = current_config.get("defaults", {})
     for site in current_config.get("sites", []):
@@ -126,8 +126,8 @@ def get_schedule_status(schedule_ref: Any) -> dict[str, object]:
 
 
 def get_scheduled_tasks() -> dict[str, list[dict[str, Any]]]:
-    config_path = _get_sites_config_path()
-    config_data = _load_yaml(config_path, default={})
+    config_path = get_sites_config_path()
+    config_data = load_yaml(config_path, default={})
     tasks = config_data.get("scheduled_tasks") or []
     return {"tasks": tasks if isinstance(tasks, list) else []}
 
@@ -217,8 +217,8 @@ def get_task_log(task_id: str, tail: int) -> dict[str, Any]:
     safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", task_id or "")
     if not safe_id:
         raise ValueError("Invalid task id")
-    path = _task_log_path(safe_id)
-    content = _tail_text_file(path, max_lines=tail)
+    path = task_log_path(safe_id)
+    content = tail_text_file(path, max_lines=tail)
     if not content:
         return {"success": True, "log": "", "log_file": str(path)}
     return {"success": True, "log": content, "log_file": str(path)}
@@ -278,7 +278,7 @@ def get_llm_providers(*, db_path: str) -> dict[str, object]:
 
 
 def get_ai_models() -> dict[str, object]:
-    config_data = _load_yaml(_get_sites_config_path(), default={})
+    config_data = load_yaml(get_sites_config_path(), default={})
     ai_config = config_data.get("ai_config") or {}
     chatbot_cfg = ai_config.get("chatbot", {})
     chatbot_prompts = chatbot_cfg.get("prompts", {})
@@ -313,8 +313,8 @@ def get_ai_models() -> dict[str, object]:
 
 
 def parse_task_history_limit(raw_value: str | None) -> int:
-    return _parse_int_clamped(raw_value or 10, default=10, min_value=1, max_value=200)
+    return parse_int_clamped(raw_value or 10, default=10, min_value=1, max_value=200)
 
 
 def parse_task_log_tail(raw_value: str | None) -> int:
-    return _parse_int_clamped(raw_value or 400, default=400, min_value=1, max_value=5000)
+    return parse_int_clamped(raw_value or 400, default=400, min_value=1, max_value=5000)

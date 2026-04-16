@@ -24,8 +24,8 @@ site config
 - **Flask template UI** (`ai_actuarial/web/app.py`) — legacy server-rendered UI retained for compatibility
 
 ### Backend surfaces
-- **FastAPI gateway** (`ai_actuarial/api/`) — the **only long-term and current product API authority** for `/api/*`
-- **Flask web app** (`ai_actuarial/web/`) — mounted only for legacy HTML pages and a shrinking set of historical API handlers kept for temporary debugging/reference
+- **FastAPI gateway** (`ai_actuarial/api/`) — the **only long-term and current product API authority** for `/api/*`, and able to start independently of `ai_actuarial.web`
+- **Flask web app** (`ai_actuarial/web/`) — optional legacy HTML/runtime compatibility layer; mounted only when present for historical pages and debugging/reference
 
 ## Architectural rule
 
@@ -38,7 +38,8 @@ That means:
 2. Flask `/api/*` routes are temporary historical surfaces only
 3. Routed React product paths must depend only on native FastAPI routes
 4. Unmatched `/api/*` requests should be blocked by the FastAPI authority guard unless debugging explicitly enables fallback
-5. Flask should continue to serve legacy HTML pages until they are retired
+5. FastAPI native `/api/*` must remain startup-safe even if `ai_actuarial.web` is unavailable
+6. Flask should continue to serve legacy HTML pages only when that optional layer is installed and intentionally used
 
 ## Runtime composition today
 

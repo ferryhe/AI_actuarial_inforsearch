@@ -4,8 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import _get_categories_config_path, _load_yaml, _parse_int_clamped
 
 FILE_LIST_FIELDS: tuple[str, ...] = (
     "url",
@@ -49,8 +49,8 @@ class FileListQuery:
 
 def parse_file_list_query(raw_query: Mapping[str, str | None]) -> FileListQuery:
     return FileListQuery(
-        limit=_parse_int_clamped(raw_query.get("limit", 20), default=20, min_value=1, max_value=1000),
-        offset=_parse_int_clamped(raw_query.get("offset", 0), default=0, min_value=0, max_value=1_000_000),
+        limit=parse_int_clamped(raw_query.get("limit", 20), default=20, min_value=1, max_value=1000),
+        offset=parse_int_clamped(raw_query.get("offset", 0), default=0, min_value=0, max_value=1_000_000),
         order_by=str(raw_query.get("order_by", "last_seen") or "last_seen"),
         order_dir=str(raw_query.get("order_dir", "desc") or "desc"),
         query=str(raw_query.get("query", "") or ""),
@@ -95,9 +95,9 @@ def list_categories(*, db_path: str, mode: str = "") -> dict[str, list[str]]:
             storage.close()
         return {"categories": categories}
 
-    category_config_path = _get_categories_config_path()
+    category_config_path = get_categories_config_path()
     if os.path.exists(category_config_path):
-        cat_config = _load_yaml(category_config_path, default={})
+        cat_config = load_yaml(category_config_path, default={})
         configured = cat_config.get("categories") or {}
         if isinstance(configured, dict):
             return {"categories": list(configured.keys())}
