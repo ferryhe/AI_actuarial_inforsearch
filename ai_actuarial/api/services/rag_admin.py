@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import time
 from typing import Any, Mapping
 
 from ai_actuarial.storage import Storage
@@ -103,8 +102,8 @@ def create_chunk_profile(*, db_path: str, payload: dict[str, Any], headers: Mapp
     name = _norm(payload.get("name"))
     if not name:
         raise RagAdminError("name is required")
-    chunk_size = _parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
-    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
+    chunk_size = _parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
+    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
     splitter = _norm(payload.get("splitter") or "semantic")
     tokenizer = _norm(payload.get("tokenizer") or "cl100k_base")
     version = _norm(payload.get("version") or "v1")
@@ -194,8 +193,8 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
     kb_mode = _norm(payload.get("kb_mode") or "manual").lower()
     if kb_mode not in {"manual", "category"}:
         raise RagAdminError("kb_mode must be 'category' or 'manual'")
-    chunk_size = _parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
-    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
+    chunk_size = _parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
+    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
     categories = _list(payload.get("categories"), "categories")
     file_urls = _list(payload.get("file_urls"), "file_urls")
     if kb_mode == "category" and not categories:
@@ -697,22 +696,22 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
                 raise RagAdminError("No markdown files to index (all candidates missing markdown)")
 
         start_background_task = getattr(bridge_state, "legacy_start_background_task", None)
-        if start_background_task is not None:
-            task_id = start_background_task(
-                "rag_indexing",
-                {
-                    "type": "rag_indexing",
-                    "kb_id": kid,
-                    "file_urls": files_to_index,
-                    "force_reindex": force_reindex,
-                    "incremental": incremental,
-                    "name": f"RAG Indexing: {kb.name}",
-                },
-                task_name=f"RAG Indexing: {kb.name}",
-                extra_fields={"kb_id": kid, "kb_name": kb.name, "rag_file_count": len(files_to_index)},
-            )
-        else:
-            task_id = f"rag_index_{kid}_{int(time.time())}"
+        if start_background_task is None:
+            raise RagAdminError("Task bridge is unavailable", status_code=503)
+
+        task_id = start_background_task(
+            "rag_indexing",
+            {
+                "type": "rag_indexing",
+                "kb_id": kid,
+                "file_urls": files_to_index,
+                "force_reindex": force_reindex,
+                "incremental": incremental,
+                "name": f"RAG Indexing: {kb.name}",
+            },
+            task_name=f"RAG Indexing: {kb.name}",
+            extra_fields={"kb_id": kid, "kb_name": kb.name, "rag_file_count": len(files_to_index)},
+        )
 
         return {
             "job_id": task_id,

@@ -320,3 +320,46 @@ def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) 
 
     cleanup = client.post("/api/chunk-sets/cleanup", json={"dry_run": True})
     assert cleanup.status_code == 200, cleanup.text
+
+
+def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge(tmp_path: Path, monkeypatch) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+
+    create_profile = client.post(
+        "/api/chunk/profiles",
+        json={
+            "name": "zero-overlap-profile",
+            "chunk_size": 256,
+            "chunk_overlap": 0,
+        },
+    )
+    assert create_profile.status_code == 201, create_profile.text
+    assert create_profile.json()["profile"]["chunk_overlap"] == 0
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-zero-overlap",
+            "name": "KB Zero Overlap",
+            "kb_mode": "manual",
+            "chunk_size": 256,
+            "chunk_overlap": 0,
+            "file_urls": [alpha_url],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    assert create_kb.json()["knowledge_base"]["chunk_overlap"] == 0
+
+    original_bridge = getattr(app.state, "legacy_start_background_task", None)
+    app.state.legacy_start_background_task = None
+    try:
+        index = client.post(
+            "/api/rag/knowledge-bases/kb-zero-overlap/index",
+            json={"force_reindex": True},
+        )
+    finally:
+        app.state.legacy_start_background_task = original_bridge
+
+    assert index.status_code == 503, index.text
+    assert index.json()["error"] == "Task bridge is unavailable"

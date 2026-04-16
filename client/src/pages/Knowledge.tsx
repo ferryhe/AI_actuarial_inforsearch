@@ -138,12 +138,15 @@ export default function Knowledge() {
         const kbList: KnowledgeBase[] = kbPayload?.knowledge_bases || kbPayload?.data?.knowledge_bases || [];
         setKbs(kbList);
 
-        const profRaw = profileResp?.data;
-        const pList: ChunkProfile[] = Array.isArray(profRaw)
-          ? profRaw
-          : Array.isArray((profRaw as Record<string, unknown>)?.profiles)
-            ? (profRaw as Record<string, unknown>).profiles as ChunkProfile[]
-            : [];
+        const profilePayload = profileResp as { profiles?: ChunkProfile[]; data?: ChunkProfile[] | { profiles?: ChunkProfile[] } } | null;
+        const legacyProfiles = profilePayload?.data;
+        const pList: ChunkProfile[] = Array.isArray(profilePayload?.profiles)
+          ? profilePayload.profiles
+          : Array.isArray(legacyProfiles)
+            ? legacyProfiles
+            : Array.isArray((legacyProfiles as Record<string, unknown> | undefined)?.profiles)
+              ? ((legacyProfiles as Record<string, unknown>).profiles as ChunkProfile[])
+              : [];
         setProfiles(pList);
 
         if (aiResp) {
