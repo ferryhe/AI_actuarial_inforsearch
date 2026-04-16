@@ -4,7 +4,7 @@ import logging
 import os
 
 from a2wsgi import WSGIMiddleware
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import PlainTextResponse
 
@@ -45,6 +45,10 @@ def _resolve_db_path() -> str:
     db_path = (config_data.get("paths") or {}).get("db", "data/index.db")
     db_path = str(db_path or "data/index.db")
     return os.path.abspath(db_path) if not os.path.isabs(db_path) else db_path
+
+
+def _legacy_api_fallback_allowed() -> bool:
+    return os.getenv("FASTAPI_ALLOW_LEGACY_API_FALLBACK", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def create_app() -> FastAPI:
@@ -100,12 +104,34 @@ def create_app() -> FastAPI:
     app.state.legacy_api_sample_paths = []
     app.state.legacy_api_signatures = []
     app.state.legacy_non_api_route_count = 0
+    app.state.legacy_flask_only_signatures = []
+    app.state.legacy_flask_only_route_count = 0
+    app.state.legacy_flask_only_sample_signatures = []
+    app.state.native_override_signatures = []
+    app.state.native_override_route_count = 0
+    app.state.legacy_api_fallback_allowed = _legacy_api_fallback_allowed()
+
+    if not app.state.legacy_api_fallback_allowed:
+
+        @app.api_route(
+            "/api/{legacy_api_path:path}",
+            methods=["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
+            include_in_schema=False,
+        )
+        async def block_legacy_api_fallback(legacy_api_path: str) -> None:
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    "Legacy Flask /api fallback is disabled in FastAPI-authority mode. "
+                    f"Port /api/{legacy_api_path} to ai_actuarial/api/routers before exposing it in React."
+                ),
+            )
 
     try:
         import ai_actuarial.web.app as legacy_web_app
 
         legacy_app = legacy_web_app.create_app()
-        legacy_summary = summarize_legacy_api_routes(legacy_app)
+        legacy_summary = summarize_legacy_api_routes(legacy_app, native_signatures=app.state.native_route_signatures)
         legacy_bridge = dict((getattr(legacy_app, "extensions", {}) or {}).get("fastapi_bridge", {}))
         app.mount("/", WSGIMiddleware(legacy_app))
         app.state.legacy_mount_enabled = True
@@ -131,6 +157,11 @@ def create_app() -> FastAPI:
         app.state.legacy_api_sample_paths = legacy_summary["legacy_api_sample_paths"]
         app.state.legacy_api_signatures = legacy_summary["legacy_api_signatures"]
         app.state.legacy_non_api_route_count = legacy_summary["legacy_non_api_route_count"]
+        app.state.legacy_flask_only_signatures = legacy_summary["legacy_flask_only_signatures"]
+        app.state.legacy_flask_only_route_count = legacy_summary["legacy_flask_only_route_count"]
+        app.state.legacy_flask_only_sample_signatures = legacy_summary["legacy_flask_only_sample_signatures"]
+        app.state.native_override_signatures = legacy_summary["native_override_signatures"]
+        app.state.native_override_route_count = legacy_summary["native_override_route_count"]
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to mount legacy Flask app into FastAPI gateway")
         app.state.legacy_mount_error = str(exc)

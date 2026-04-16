@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import re
 from typing import Any
 
 
@@ -11,10 +12,19 @@ def _signature(path: str, method: str) -> str:
     return f"{method} {path}"
 
 
+def normalize_route_signature(signature: str) -> str:
+    method, path = signature.split(" ", 1)
+    path = re.sub(r"<(?:[^:>]+:)?[^>]+>", "{var}", path)
+    path = re.sub(r"\{[^}:]+(?::path)?\}", "{var}", path)
+    return f"{method} {path}"
+
+
 def collect_fastapi_api_paths(app: Any) -> list[str]:
     paths: set[str] = set()
     for route in app.router.routes:
         path = getattr(route, "path", None)
+        if getattr(route, "include_in_schema", True) is False:
+            continue
         if isinstance(path, str) and path.startswith("/api"):
             paths.add(path)
     return sorted(paths)
@@ -25,6 +35,8 @@ def collect_fastapi_route_signatures(app: Any) -> list[str]:
     for route in app.router.routes:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None)
+        if getattr(route, "include_in_schema", True) is False:
+            continue
         if not isinstance(path, str) or not path.startswith("/api") or not methods:
             continue
         for method in methods:
@@ -64,11 +76,43 @@ def collect_route_signatures(route_inventory: Iterable[dict[str, Any]], *, api_o
     return sorted(signatures)
 
 
-def summarize_legacy_api_routes(flask_app: Any, *, limit: int = 25) -> dict[str, Any]:
+def collect_legacy_only_route_signatures(
+    legacy_signatures: Iterable[str],
+    native_signatures: Iterable[str],
+) -> list[str]:
+    native_normalized = {normalize_route_signature(signature) for signature in native_signatures}
+    return sorted(
+        signature for signature in legacy_signatures if normalize_route_signature(signature) not in native_normalized
+    )
+
+
+def collect_native_override_signatures(
+    legacy_signatures: Iterable[str],
+    native_signatures: Iterable[str],
+) -> list[str]:
+    legacy_by_normalized: dict[str, list[str]] = {}
+    for signature in legacy_signatures:
+        legacy_by_normalized.setdefault(normalize_route_signature(signature), []).append(signature)
+
+    matched: set[str] = set()
+    for signature in native_signatures:
+        matched.update(legacy_by_normalized.get(normalize_route_signature(signature), []))
+    return sorted(matched)
+
+
+def summarize_legacy_api_routes(
+    flask_app: Any,
+    *,
+    native_signatures: Iterable[str] = (),
+    limit: int = 25,
+) -> dict[str, Any]:
     inventory = collect_flask_route_inventory(flask_app)
     legacy_api_paths = [item["path"] for item in inventory if item["is_api"]]
     legacy_non_api_paths = [item["path"] for item in inventory if not item["is_api"]]
     legacy_api_signatures = collect_route_signatures(inventory, api_only=True)
+    native_signatures = list(native_signatures)
+    legacy_flask_only_signatures = collect_legacy_only_route_signatures(legacy_api_signatures, native_signatures)
+    native_override_signatures = collect_native_override_signatures(legacy_api_signatures, native_signatures)
     return {
         "legacy_route_inventory": inventory,
         "legacy_api_paths": legacy_api_paths,
@@ -76,4 +120,9 @@ def summarize_legacy_api_routes(flask_app: Any, *, limit: int = 25) -> dict[str,
         "legacy_api_route_count": len(legacy_api_paths),
         "legacy_api_sample_paths": legacy_api_paths[:limit],
         "legacy_non_api_route_count": len(legacy_non_api_paths),
+        "legacy_flask_only_signatures": legacy_flask_only_signatures,
+        "legacy_flask_only_route_count": len(legacy_flask_only_signatures),
+        "legacy_flask_only_sample_signatures": legacy_flask_only_signatures[:limit],
+        "native_override_signatures": native_override_signatures,
+        "native_override_route_count": len(native_override_signatures),
     }
