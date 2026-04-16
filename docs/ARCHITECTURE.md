@@ -24,8 +24,8 @@ site config
 - **Flask template UI** (`ai_actuarial/web/app.py`) — legacy server-rendered UI retained for compatibility
 
 ### Backend surfaces
-- **FastAPI gateway** (`ai_actuarial/api/`) — the **only long-term API authority** for `/api/*`
-- **Flask web app** (`ai_actuarial/web/`) — still mounted as a compatibility layer for unported routes and legacy HTML pages
+- **FastAPI gateway** (`ai_actuarial/api/`) — the **only long-term and current product API authority** for `/api/*`
+- **Flask web app** (`ai_actuarial/web/`) — mounted only for legacy HTML pages and a shrinking set of historical API handlers kept for temporary debugging/reference
 
 ## Architectural rule
 
@@ -35,15 +35,16 @@ site config
 
 That means:
 1. New product APIs must be added under `ai_actuarial/api/routers/`
-2. Flask `/api/*` routes are temporary compatibility surfaces only
-3. React should progressively depend on native FastAPI routes, not new Flask APIs
-4. Flask should continue to serve HTML pages and legacy compatibility until migration is complete
+2. Flask `/api/*` routes are temporary historical surfaces only
+3. Routed React product paths must depend only on native FastAPI routes
+4. Unmatched `/api/*` requests should be blocked by the FastAPI authority guard unless debugging explicitly enables fallback
+5. Flask should continue to serve legacy HTML pages until they are retired
 
 ## Runtime composition today
 
 ```text
 React SPA -> FastAPI /api -> native FastAPI routers
-                         -> fallback mount to legacy Flask for unported routes
+                         -> authority guard blocks unported /api fallback by default
 
 Legacy HTML UI -> Flask directly
 ```
@@ -55,7 +56,7 @@ Target steady state:
 ```text
 React SPA -> FastAPI only
 Legacy HTML UI -> Flask pages only (or later retired)
-No product-critical Flask API endpoints remaining
+Flask /api remains only as non-product historical code until fully removed
 ```
 
 ## Key subsystems
@@ -101,3 +102,7 @@ For route-level status, see:
 - `docs/API_MIGRATION_STATUS.md`
 - runtime endpoint: `GET /api/migration/status`
 - runtime inventory endpoint: `GET /api/migration/inventory` (ops/debug only, enable with `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`)
+
+Operational note:
+- unmatched `/api/*` requests are blocked by default in FastAPI-authority mode
+- set `FASTAPI_ALLOW_LEGACY_API_FALLBACK=1` only when you intentionally need to debug an unported historical Flask endpoint

@@ -29,9 +29,10 @@ def test_fastapi_migration_status_reports_gateway_state() -> None:
     assert body["success"] is True
     assert body["backend"] == "fastapi"
     assert body["api_authority"] == "fastapi"
-    assert body["legacy_api_routes_remaining"] > 0
+    assert body["legacy_api_route_count"] >= body["legacy_api_routes_remaining"] > 0
     assert body["migration_inventory_enabled"] is False
-    assert body["legacy_api_sample_paths"] == []
+    assert body["legacy_flask_only_sample_signatures"] == []
+    assert body["legacy_api_fallback_allowed"] is False
     assert "/api/health" in body["native_paths"]
     assert "/api/migration/status" in body["native_paths"]
 
@@ -56,10 +57,31 @@ def test_fastapi_migration_inventory_exposes_native_and_legacy_routes_when_enabl
     assert body["success"] is True
     assert body["api_authority"] == "fastapi"
     assert body["legacy_mount_failed"] is False
+    assert body["legacy_api_fallback_allowed"] is False
     assert "/api/health" in body["native_paths"]
     assert "/api/stats" in body["legacy_api_paths"]
-    assert "GET /api/stats" in body["native_overrides_legacy_signatures"]
+    assert "GET /api/stats" in body["native_override_signatures"]
+    assert body["legacy_flask_only_route_count"] > 0
     assert body["legacy_api_route_count"] >= len(body["legacy_api_paths"])
+
+
+def test_unported_legacy_api_fallback_is_blocked_by_default() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/api/logs/global")
+
+    assert response.status_code == 410
+    assert "Legacy Flask /api fallback is disabled" in response.json()["detail"]
+
+
+def test_legacy_api_fallback_can_be_reenabled_for_debugging(monkeypatch) -> None:
+    monkeypatch.setenv("FASTAPI_ALLOW_LEGACY_API_FALLBACK", "1")
+    monkeypatch.delenv("REQUIRE_AUTH", raising=False)
+    client = TestClient(create_app())
+
+    response = client.get("/api/files/example/indexes")
+
+    assert response.status_code != 410
 
 
 def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_path: Path) -> None:
