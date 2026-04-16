@@ -23,6 +23,16 @@ from ai_actuarial.storage import Storage
 from ..deps import AuthContext, get_auth_context, public_permissions_for_request
 
 
+def ensure_session_mutation_available(request: Request) -> None:
+    legacy_app = getattr(request.app.state, "legacy_flask_app", None)
+    if legacy_app is not None:
+        return
+    secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+    if secret:
+        return
+    raise AuthApiError("FastAPI session secret is not configured", status_code=503)
+
+
 @dataclass(slots=True)
 class SessionMutation:
     data: dict[str, Any] | None = None

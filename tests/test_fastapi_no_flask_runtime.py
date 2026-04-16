@@ -53,6 +53,42 @@ def test_fastapi_create_app_starts_without_web_package(tmp_path: Path) -> None:
     assert "ok" in result.stdout
 
 
+def test_fastapi_no_flask_runtime_auth_roundtrip(tmp_path: Path) -> None:
+    temp_root = tmp_path / "runtime-auth-check"
+    temp_root.mkdir()
+
+    shutil.copytree(ROOT / "ai_actuarial", temp_root / "ai_actuarial", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(ROOT / "config", temp_root / "config", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.rmtree(temp_root / "ai_actuarial" / "web")
+
+    script = (
+        "from fastapi.testclient import TestClient\n"
+        "from ai_actuarial.api.app import create_app\n"
+        "app = create_app()\n"
+        "client = TestClient(app)\n"
+        "register = client.post('/api/auth/register', json={'email': 'noflask-auth@example.com', 'password': 'password123', 'display_name': 'No Flask Auth'})\n"
+        "assert register.status_code == 201, register.text\n"
+        "assert client.get('/api/auth/me').json()['data']['authenticated'] is True\n"
+        "logout = client.post('/api/auth/logout')\n"
+        "assert logout.status_code == 200, logout.text\n"
+        "assert client.get('/api/auth/me').json()['data']['authenticated'] is False\n"
+        "login = client.post('/api/auth/login', json={'email': 'noflask-auth@example.com', 'password': 'password123'})\n"
+        "assert login.status_code == 200, login.text\n"
+        "assert client.get('/api/auth/me').json()['data']['authenticated'] is True\n"
+        "print('ok')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=temp_root,
+        env={**os.environ, **{"PYTHONPATH": str(temp_root), "FLASK_SECRET_KEY": "no-flask-auth-secret", "REQUIRE_AUTH": "true"}},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
+
 
 def test_fastapi_no_flask_runtime_supports_schedule_reinit_and_file_collection(tmp_path: Path) -> None:
     temp_root = tmp_path / "runtime-endpoints-check"
@@ -108,7 +144,6 @@ def test_fastapi_no_flask_runtime_supports_schedule_reinit_and_file_collection(t
 
     assert result.returncode == 0, result.stderr
     assert "ok" in result.stdout
-
 
 
 def test_fastapi_no_flask_runtime_persists_guest_chat_session(tmp_path: Path) -> None:
