@@ -138,7 +138,7 @@ export default function ProfilePage() {
         <div className="bg-muted rounded-lg p-8 text-center text-muted-foreground">
           <User className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p>{t("profile.not_logged_in")}</p>
-          <a href="/email-login" className="mt-3 inline-block text-primary underline text-sm">
+          <a href="/login" className="mt-3 inline-block text-primary underline text-sm">
             {t("profile.login_link")}
           </a>
         </div>

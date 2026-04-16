@@ -12,11 +12,15 @@ import {
   ListTodo,
   ScrollText,
   Settings,
+  Users,
+  LogOut,
+  UserCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
 import { useI18n } from "@/hooks/use-i18n";
 import { useState, createContext, useContext } from "react";
+import { useAuth } from "@/context/AuthContext";
 
 const I18nContext = createContext<ReturnType<typeof useI18n>>({
   lang: "en",
@@ -28,7 +32,7 @@ export function useTranslation() {
   return useContext(I18nContext);
 }
 
-const navItems = [
+const baseNavItems = [
   { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
   { path: "/database", icon: Database, labelKey: "nav.database" },
   { path: "/chat", icon: MessageSquare, labelKey: "nav.chat" },
@@ -41,6 +45,12 @@ const navItems = [
 function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { t } = useTranslation();
+  const { user, isLoggedIn } = useAuth();
+  const navItems = [
+    ...baseNavItems,
+    ...(isLoggedIn ? [{ path: "/profile", icon: UserCircle2, labelKey: "nav.profile" }] : []),
+    ...(user?.role === "admin" ? [{ path: "/users", icon: Users, labelKey: "nav.users" }] : []),
+  ];
 
   return (
     <aside
@@ -100,6 +110,7 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
 export default function Layout({ children }: { children: React.ReactNode }) {
   const i18n = useI18n();
   const { theme, toggleTheme } = useTheme();
+  const { user, isLoggedIn, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -134,8 +145,47 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div className="flex-1" />
             <div className="flex items-center gap-1.5">
               <span className="hidden md:inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-[11px] font-medium text-primary">
-                FastAPI-native mode
+                {i18n.t("layout.fastapiNativeMode")}
               </span>
+              {isLoggedIn ? (
+                <>
+                  <Link href="/profile">
+                    <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
+                      <UserCircle2 className="w-4 h-4 text-muted-foreground" />
+                      <span className="max-w-32 truncate">{user?.display_name || user?.email || "User"}</span>
+                    </div>
+                  </Link>
+                  {user?.role === "admin" && (
+                    <Link href="/users">
+                      <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
+                        <Users className="w-4 h-4 text-muted-foreground" />
+                        <span>{i18n.t("nav.users")}</span>
+                      </div>
+                    </Link>
+                  )}
+                  <button
+                    onClick={logout}
+                    className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    data-testid="button-logout"
+                    title="Logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link href="/login">
+                    <div className="hidden sm:flex items-center rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
+                      {i18n.t("auth.signIn")}
+                    </div>
+                  </Link>
+                  <Link href="/register">
+                    <div className="hidden sm:flex items-center rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 cursor-pointer">
+                      {i18n.t("auth.register")}
+                    </div>
+                  </Link>
+                </>
+              )}
               <button
                 onClick={i18n.toggleLang}
                 className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-semibold transition-colors"

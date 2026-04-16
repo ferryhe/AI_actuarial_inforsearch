@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, Request
+from itsdangerous import BadSignature, URLSafeSerializer
 
 from ai_actuarial.storage import Storage
 from ai_actuarial.web.app import (
@@ -12,6 +13,19 @@ from ai_actuarial.web.app import (
     _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED,
     _hash_token,
     _permissions_for_group,
+)
+
+
+_ANONYMOUS_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "stats.read",
+        "files.read",
+        "catalog.read",
+        "markdown.read",
+        "chat.view",
+        "chat.query",
+        "chat.conversations",
+    }
 )
 
 
@@ -32,20 +46,34 @@ def _extract_presented_token(request: Request) -> str | None:
 
 def _decode_flask_session(request: Request) -> dict[str, Any]:
     legacy_app = getattr(request.app.state, "legacy_flask_app", None)
-    if legacy_app is None:
-        return {}
+    if legacy_app is not None:
+        cookie_name = legacy_app.config.get("SESSION_COOKIE_NAME", "session")
+        cookie_value = request.cookies.get(cookie_name)
+        if not cookie_value:
+            return {}
 
-    cookie_name = legacy_app.config.get("SESSION_COOKIE_NAME", "session")
+        serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
+        if serializer is None:
+            return {}
+
+        try:
+            data = serializer.loads(cookie_value)
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
     cookie_value = request.cookies.get(cookie_name)
     if not cookie_value:
         return {}
-
-    serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
-    if serializer is None:
+    secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+    if not secret:
         return {}
-
+    serializer = URLSafeSerializer(secret, salt="fastapi-session")
     try:
         data = serializer.loads(cookie_value)
+    except BadSignature:
+        return {}
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
@@ -124,16 +152,23 @@ def _load_auth_context(request: Request) -> AuthContext:
     return context
 
 
+def get_auth_context(request: Request) -> AuthContext:
+    return _load_auth_context(request)
+
+
+def public_permissions_for_request(request: Request) -> frozenset[str]:
+    require_auth = bool(getattr(request.app.state, "require_auth", False))
+    return _ANONYMOUS_PERMISSIONS if require_auth else _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
+
+
 def require_permissions(*required: str):
     for permission in required:
         if permission not in _PERMISSIONS:
             raise ValueError(f"Unknown permission: {permission}")
 
     def dependency(request: Request) -> AuthContext:
-        require_auth = bool(getattr(request.app.state, "require_auth", False))
-        if not require_auth and all(
-            permission in _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED for permission in required
-        ):
+        public_permissions = public_permissions_for_request(request)
+        if all(permission in public_permissions for permission in required):
             return AuthContext(token=None, permissions=frozenset())
 
         context = _load_auth_context(request)

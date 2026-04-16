@@ -26,7 +26,7 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await apiPost("/email-login", { email, password });
+      await apiPost("/api/auth/login", { email, password });
       await refresh();
       navigate("/");
     } catch (err) {
@@ -49,7 +49,7 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await apiPost("/login", { token: token.trim() });
+      await apiPost("/api/auth/login", { token: token.trim() });
       await refresh();
       navigate("/");
     } catch (err) {

@@ -486,3 +486,104 @@ def test_apply_session_update_is_noop_without_legacy_flask_app() -> None:
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(legacy_flask_app=None)))
     chat_service.apply_session_update(response, request, chat_service.SessionUpdate({"guest_chat_user_id": "guest:test"}))
     assert response.cookies == []
+
+
+
+def test_fastapi_chat_query_enforces_anonymous_ip_quota(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch)
+    app.state.require_auth = True
+
+    import ai_actuarial.api.services.chat as chat_service
+
+    class FakeConversationManager:
+        def __init__(self, storage, config):
+            self.storage = storage
+            chat_service._ensure_conversation_schema(storage)
+
+        def create_conversation(self, user_id: str, kb_id: str | None = None, mode: str = "expert", metadata=None):
+            conversation_id = "conv_quota_test"
+            now = "2026-04-16T00:00:00+00:00"
+            self.storage._conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            self.storage._conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            self.storage._conn.execute(
+                "INSERT INTO conversations (conversation_id, user_id, title, kb_id, mode, created_at, updated_at, message_count, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, user_id, "Quota Test", kb_id, mode, now, now, 0, json.dumps(metadata) if metadata else None),
+            )
+            self.storage._conn.commit()
+            return conversation_id
+
+        def get_conversation(self, conversation_id: str):
+            return None
+
+        def add_message(self, conversation_id: str, role: str, content: str, citations=None, metadata=None):
+            return f"msg_{role}"
+
+        def get_context(self, conversation_id: str):
+            return []
+
+    class FakeRetriever:
+        def __init__(self, storage, config):
+            pass
+
+        def retrieve(self, query, kb_ids):
+            return []
+
+    class FakeLLMClient:
+        def __init__(self, config, storage=None):
+            pass
+
+        def generate_response(self, query, chunks, mode, conversation_history):
+            return "quota ok"
+
+    class FakeConfigModule:
+        class ChatbotConfig:
+            @staticmethod
+            def from_config(storage=None, default_mode="expert"):
+                return SimpleNamespace(available_modes=["expert", "summary", "tutorial", "comparison"], similarity_threshold=0.35, model="fake-chat-model", default_mode=default_mode)
+
+    class FakeConversationModule:
+        ConversationManager = FakeConversationManager
+
+    class FakeRetrievalModule:
+        RAGRetriever = FakeRetriever
+
+    class FakeLLMModule:
+        LLMClient = FakeLLMClient
+
+    class FakeRouterModule:
+        QueryRouter = lambda *args, **kwargs: None
+
+    class FakeExceptionsModule:
+        class NoResultsException(Exception):
+            pass
+
+        class EmbeddingConfigurationMismatchException(Exception):
+            pass
+
+        LLMException = RuntimeError
+        ConversationException = RuntimeError
+        RetrievalException = RuntimeError
+
+    monkeypatch.setattr(
+        chat_service,
+        "_full_chat_modules",
+        lambda: {
+            "config": FakeConfigModule,
+            "conversation": FakeConversationModule,
+            "exceptions": FakeExceptionsModule,
+            "retrieval": FakeRetrievalModule,
+            "llm": FakeLLMModule,
+            "router": FakeRouterModule,
+        },
+    )
+    monkeypatch.setattr(chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None))
+
+    payload = {"message": "hello", "kb_ids": ["chat-kb-a"], "mode": "expert"}
+    first = client.post("/api/chat/query", json=payload)
+    second = client.post("/api/chat/query", json=payload)
+    third = client.post("/api/chat/query", json=payload)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert third.status_code == 429, third.text
+    assert "Daily AI chat limit reached (2/day)" in third.text

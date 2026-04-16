@@ -1,29 +1,36 @@
-import { Switch, Route } from "wouter";
+import { useEffect } from "react";
+import { Switch, Route, useLocation } from "wouter";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Database from "@/pages/Database";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Chat from "@/pages/Chat";
-import FeatureUnavailable from "@/pages/FeatureUnavailable";
 import FileDetail from "@/pages/FileDetail";
 import FilePreview from "@/pages/FilePreview";
 import KBDetail from "@/pages/KBDetail";
 import Knowledge from "@/pages/Knowledge";
+import Login from "@/pages/Login";
 import NativeLogs from "@/pages/NativeLogs";
+import Profile from "@/pages/Profile";
+import Register from "@/pages/Register";
 import NativeSettings from "@/pages/NativeSettings";
 import Tasks from "@/pages/Tasks";
+import Users from "@/pages/Users";
 
 /** Redirects to /login when require_auth is enabled and the user is not signed in. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isLoading, isLoggedIn, requireAuth } = useAuth();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && requireAuth && !isLoggedIn) {
+      navigate("/login");
+    }
+  }, [isLoading, requireAuth, isLoggedIn, navigate]);
+
   if (isLoading) return null;
   if (requireAuth && !isLoggedIn) {
-    return (
-      <FeatureUnavailable
-        title="Authentication is required"
-        description="This environment requires authentication, but the FastAPI-native shell does not expose legacy sign-in flows. Please disable auth for native QA or finish the native auth migration first."
-      />
-    );
+    return null;
   }
   return <>{children}</>;
 }
@@ -31,47 +38,58 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function Router() {
   return (
     <Switch>
-      <Route path="/login">
-        <FeatureUnavailable
-          title="Sign in is not available in FastAPI-native mode"
-          description="This React shell only exposes flows that are implemented natively in FastAPI."
-        />
-      </Route>
-      <Route path="/register">
-        <FeatureUnavailable
-          title="Registration is not available in FastAPI-native mode"
-          description="This React shell only exposes flows that are implemented natively in FastAPI."
-        />
-      </Route>
-
+      <Route path="/login" component={Login} />
+      <Route path="/register" component={Register} />
       <Route>
-        <RequireAuth>
-          <Layout>
-            <Switch>
-              <Route path="/" component={Dashboard} />
-              <Route path="/database" component={Database} />
-              <Route path="/file-detail" component={FileDetail} />
-              <Route path="/file-preview" component={FilePreview} />
-              <Route path="/chat" component={Chat} />
-              <Route path="/tasks" component={Tasks} />
-              <Route path="/logs" component={NativeLogs} />
-              <Route path="/knowledge/:kbId" component={KBDetail} />
-              <Route path="/knowledge" component={Knowledge} />
-              <Route path="/settings" component={NativeSettings} />
-              <Route path="/users">
-                <FeatureUnavailable title="User management is not available in FastAPI-native mode" description="User management still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
-              <Route path="/profile">
-                <FeatureUnavailable title="Profile is not available in FastAPI-native mode" description="Profile management still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
-              <Route>
-                <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
-                  404
-                </div>
-              </Route>
-            </Switch>
-          </Layout>
-        </RequireAuth>
+        <Layout>
+          <Switch>
+            <Route path="/" component={Dashboard} />
+            <Route path="/database" component={Database} />
+            <Route path="/file-detail" component={FileDetail} />
+            <Route path="/file-preview" component={FilePreview} />
+            <Route path="/chat" component={Chat} />
+            <Route path="/tasks">
+              <RequireAuth>
+                <Tasks />
+              </RequireAuth>
+            </Route>
+            <Route path="/logs">
+              <RequireAuth>
+                <NativeLogs />
+              </RequireAuth>
+            </Route>
+            <Route path="/knowledge/:kbId">
+              <RequireAuth>
+                <KBDetail />
+              </RequireAuth>
+            </Route>
+            <Route path="/knowledge">
+              <RequireAuth>
+                <Knowledge />
+              </RequireAuth>
+            </Route>
+            <Route path="/settings">
+              <RequireAuth>
+                <NativeSettings />
+              </RequireAuth>
+            </Route>
+            <Route path="/users">
+              <RequireAuth>
+                <Users />
+              </RequireAuth>
+            </Route>
+            <Route path="/profile">
+              <RequireAuth>
+                <Profile />
+              </RequireAuth>
+            </Route>
+            <Route>
+              <div className="flex items-center justify-center py-32 text-muted-foreground" data-testid="text-not-found">
+                404
+              </div>
+            </Route>
+          </Switch>
+        </Layout>
       </Route>
     </Switch>
   );

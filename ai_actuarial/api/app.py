@@ -13,6 +13,7 @@ from .route_inventory import (
     collect_fastapi_route_signatures,
     summarize_legacy_api_routes,
 )
+from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
 from .routers.files_write import router as files_write_router
 from .routers.meta import router as meta_router
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(meta_router, prefix="/api", tags=["meta"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
     app.include_router(read_router, prefix="/api", tags=["read"])
+    app.include_router(auth_router, prefix="/api", tags=["auth"])
     app.include_router(ops_read_router, prefix="/api", tags=["ops-read"])
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])
     app.include_router(files_write_router, prefix="/api", tags=["files-write"])
@@ -74,6 +76,13 @@ def create_app() -> FastAPI:
     app.state.legacy_mount_enabled = False
     app.state.legacy_mount_error = None
     app.state.legacy_flask_app = None
+    app.state.fastapi_session_secret = os.getenv("FLASK_SECRET_KEY", "")
+    app.state.fastapi_session_cookie_name = "session"
+    app.state.fastapi_session_cookie_path = "/"
+    app.state.fastapi_session_cookie_domain = None
+    app.state.fastapi_session_cookie_secure = False
+    app.state.fastapi_session_cookie_httponly = True
+    app.state.fastapi_session_cookie_samesite = "Lax"
     app.state.db_path = _resolve_db_path()
     app.state.require_auth = os.getenv("REQUIRE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
     app.state.active_tasks_ref = {}
@@ -101,6 +110,13 @@ def create_app() -> FastAPI:
         app.mount("/", WSGIMiddleware(legacy_app))
         app.state.legacy_mount_enabled = True
         app.state.legacy_flask_app = legacy_app
+        app.state.fastapi_session_secret = str(legacy_app.secret_key or app.state.fastapi_session_secret or "")
+        app.state.fastapi_session_cookie_name = str(legacy_app.config.get("SESSION_COOKIE_NAME", "session") or "session")
+        app.state.fastapi_session_cookie_path = str(legacy_app.config.get("SESSION_COOKIE_PATH") or "/")
+        app.state.fastapi_session_cookie_domain = legacy_app.config.get("SESSION_COOKIE_DOMAIN") or None
+        app.state.fastapi_session_cookie_secure = bool(legacy_app.config.get("SESSION_COOKIE_SECURE", False))
+        app.state.fastapi_session_cookie_httponly = bool(legacy_app.config.get("SESSION_COOKIE_HTTPONLY", True))
+        app.state.fastapi_session_cookie_samesite = legacy_app.config.get("SESSION_COOKIE_SAMESITE") or "Lax"
         app.state.require_auth = bool(legacy_app.config.get("REQUIRE_AUTH", False))
         app.state.active_tasks_ref = legacy_web_app._active_tasks
         app.state.task_history_ref = legacy_web_app._task_history
