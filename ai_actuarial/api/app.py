@@ -13,6 +13,7 @@ from .route_inventory import (
     collect_fastapi_route_signatures,
     summarize_legacy_api_routes,
 )
+from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
 from .routers.files_write import router as files_write_router
 from .routers.meta import router as meta_router
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(meta_router, prefix="/api", tags=["meta"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
     app.include_router(read_router, prefix="/api", tags=["read"])
+    app.include_router(auth_router, prefix="/api", tags=["auth"])
     app.include_router(ops_read_router, prefix="/api", tags=["ops-read"])
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])
     app.include_router(files_write_router, prefix="/api", tags=["files-write"])

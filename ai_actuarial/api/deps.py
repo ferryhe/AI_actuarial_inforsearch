@@ -15,6 +15,19 @@ from ai_actuarial.web.app import (
 )
 
 
+_ANONYMOUS_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "stats.read",
+        "files.read",
+        "catalog.read",
+        "markdown.read",
+        "chat.view",
+        "chat.query",
+        "chat.conversations",
+    }
+)
+
+
 @dataclass(slots=True)
 class AuthContext:
     token: dict[str, Any] | None
@@ -124,16 +137,23 @@ def _load_auth_context(request: Request) -> AuthContext:
     return context
 
 
+def get_auth_context(request: Request) -> AuthContext:
+    return _load_auth_context(request)
+
+
+def public_permissions_for_request(request: Request) -> frozenset[str]:
+    require_auth = bool(getattr(request.app.state, "require_auth", False))
+    return _ANONYMOUS_PERMISSIONS if require_auth else _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
+
+
 def require_permissions(*required: str):
     for permission in required:
         if permission not in _PERMISSIONS:
             raise ValueError(f"Unknown permission: {permission}")
 
     def dependency(request: Request) -> AuthContext:
-        require_auth = bool(getattr(request.app.state, "require_auth", False))
-        if not require_auth and all(
-            permission in _PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED for permission in required
-        ):
+        public_permissions = public_permissions_for_request(request)
+        if all(permission in public_permissions for permission in required):
             return AuthContext(token=None, permissions=frozenset())
 
         context = _load_auth_context(request)

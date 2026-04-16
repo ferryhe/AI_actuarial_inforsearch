@@ -12,6 +12,7 @@ from urllib.parse import quote
 
 from ai_actuarial.api.deps import _decode_flask_session, AuthContext
 from ai_actuarial.storage import Storage
+from ai_actuarial.web.app import _AI_CHAT_QUOTA
 
 logger = logging.getLogger(__name__)
 
@@ -466,6 +467,44 @@ def _friendly_no_results_message() -> str:
     )
 
 
+def _today_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _client_ip(request) -> str:
+    trust_proxy = str(os.getenv("TRUST_PROXY", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if trust_proxy:
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[0].strip()
+    client = getattr(request, "client", None)
+    return getattr(client, "host", None) or "unknown"
+
+
+def _enforce_chat_quota(*, storage: Storage, request, auth: AuthContext) -> None:
+    token = auth.token or {}
+    email_user = token.get("_email_user") if isinstance(token, dict) else None
+    role = str((token.get("group_name") if isinstance(token, dict) else None) or "anonymous").lower()
+    limit = _AI_CHAT_QUOTA.get(role, _AI_CHAT_QUOTA.get("anonymous", 2))
+    today = _today_utc()
+
+    if email_user:
+        allowed, _count = storage.check_and_increment_ai_chat_quota(today, limit, user_id=int(email_user["id"]))
+    else:
+        allowed, _count = storage.check_and_increment_ai_chat_quota(today, limit, ip_address=_client_ip(request))
+
+    if not allowed:
+        upgrade_hint = (
+            "Please register to get more queries." if role == "anonymous"
+            else "Please upgrade to Premium for higher limits." if role == "registered"
+            else "Daily quota exceeded."
+        )
+        raise ChatApiError(
+            f"Daily AI chat limit reached ({limit}/day). {upgrade_hint}",
+            status_code=429,
+        )
+
+
 def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     citations: list[dict[str, Any]] = []
     retrieved_blocks: list[dict[str, Any]] = []
@@ -530,6 +569,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
     try:
+        _enforce_chat_quota(storage=storage, request=request, auth=auth)
         config = modules["config"].ChatbotConfig.from_config(storage=storage, default_mode=mode)
         conversation_manager = modules["conversation"].ConversationManager(storage, config)
         exceptions = modules["exceptions"]

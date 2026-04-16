@@ -293,8 +293,8 @@ def _hash_token(token: str) -> str:
 # AI Chat quota limits per role (queries per day)
 # ---------------------------------------------------------------------------
 _AI_CHAT_QUOTA: dict[str, int] = {
-    "anonymous": 1,       # Not logged in: 1 query/day per IP
-    "registered": 5,      # Registered email users: 5/day
+    "anonymous": 2,       # Not logged in: 2 queries/day per IP
+    "registered": 10,     # Registered email users: 10/day
     "premium": 100,       # Premium members: 100/day
     "reader": 50,         # Legacy token reader: generous limit
     "operator": 0,        # Operator (no AI): no chat

@@ -31,7 +31,7 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      await apiPost("/register", { email, password, display_name: displayName });
+      await apiPost("/api/auth/register", { email, password, display_name: displayName });
       await refresh();
       navigate("/");
     } catch (err) {

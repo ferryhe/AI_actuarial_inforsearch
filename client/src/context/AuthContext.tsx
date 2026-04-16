@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useLocation } from "wouter";
-import { apiGet, ApiError } from "@/lib/api";
+import { apiGet, apiPost, ApiError } from "@/lib/api";
 
 export interface AuthUser {
   id: number | null;
@@ -10,8 +10,19 @@ export interface AuthUser {
   is_active: boolean;
 }
 
+interface AuthMeResponse {
+  success?: boolean;
+  data?: {
+    require_auth?: boolean;
+    authenticated?: boolean;
+    user?: AuthUser | null;
+    permissions?: string[];
+  };
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
+  permissions: string[];
   isLoading: boolean;
   isLoggedIn: boolean;
   requireAuth: boolean;
@@ -21,6 +32,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
+  permissions: [],
   isLoading: true,
   isLoggedIn: false,
   requireAuth: false,
@@ -30,38 +42,44 @@ const AuthContext = createContext<AuthContextValue>({
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [requireAuth, setRequireAuth] = useState(false);
   const [, navigate] = useLocation();
 
   const refresh = useCallback(async () => {
     try {
-      await apiGet<{ total_files: number }>("/api/stats");
-      setUser(null);
-      setRequireAuth(false);
+      const result = await apiGet<AuthMeResponse>("/api/auth/me");
+      const auth = result.data;
+      setUser(auth?.user || null);
+      setPermissions(auth?.permissions || []);
+      setRequireAuth(!!auth?.require_auth);
     } catch (reason: unknown) {
       setUser(null);
-      if (reason instanceof ApiError && reason.status === 401) {
-        setRequireAuth(true);
-      } else {
-        setRequireAuth(false);
-      }
+      setPermissions([]);
+      setRequireAuth(reason instanceof ApiError && reason.status === 401);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   const logout = useCallback(async () => {
+    try {
+      await apiPost("/api/auth/logout");
+    } catch {}
     setUser(null);
+    setPermissions([]);
+    setRequireAuth(false);
+    await refresh();
     navigate("/");
-  }, [navigate]);
+  }, [navigate, refresh]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isLoggedIn: !!user, requireAuth, refresh, logout }}>
+    <AuthContext.Provider value={{ user, permissions, isLoading, isLoggedIn: !!user, requireAuth, refresh, logout }}>
       {children}
     </AuthContext.Provider>
   );
