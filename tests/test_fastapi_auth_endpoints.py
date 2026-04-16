@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
 from fastapi.testclient import TestClient
@@ -12,6 +13,11 @@ from ai_actuarial.web.app import _hash_password
 
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+class SeedData(TypedDict):
+    user_id: int
+    admin_token: str
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
@@ -43,7 +49,7 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
     return db_path, config_path, categories_path, files_dir
 
 
-def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, int]:
+def _seed_storage(db_path: Path, files_dir: Path) -> SeedData:
     alpha_path = files_dir / "alpha.pdf"
     alpha_path.write_bytes(PDF_BYTES)
 
@@ -93,7 +99,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, int]:
     return {"user_id": user_id, "admin_token": admin_token}
 
 
-def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool = True) -> tuple[TestClient, object, dict[str, int]]:
+def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool = True) -> tuple[TestClient, object, SeedData]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -190,6 +196,30 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
     refreshed_user = client.get("/api/user/me")
     assert refreshed_user.status_code == 200, refreshed_user.text
     assert refreshed_user.json()["user"]["display_name"] == "Renamed User"
+
+
+def test_fastapi_auth_session_persists_without_legacy_flask_app(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.legacy_flask_app = None
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "fallback@example.com",
+            "password": "password123",
+            "display_name": "Fallback User",
+        },
+    )
+    assert register.status_code == 201, register.text
+
+    auth_me = client.get("/api/auth/me")
+    assert auth_me.status_code == 200, auth_me.text
+    assert auth_me.json()["data"]["authenticated"] is True
+    assert auth_me.json()["data"]["user"]["email"] == "fallback@example.com"
+
+    logout = client.post("/api/auth/logout")
+    assert logout.status_code == 200, logout.text
+    assert client.get("/api/auth/me").json()["data"]["authenticated"] is False
 
 
 def test_fastapi_admin_user_and_token_management_surfaces_work(tmp_path: Path, monkeypatch) -> None:

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Request, Response
+from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.storage import Storage
 from ai_actuarial.web.app import (
@@ -77,6 +78,20 @@ def _apply_session_mutation(response: Response, request: Request, mutation: Sess
     if legacy_app is None:
         if mutation.clear:
             response.delete_cookie(cookie_name, path="/")
+            return
+        secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+        if not secret:
+            return
+        serializer = URLSafeSerializer(secret, salt="fastapi-session")
+        response.set_cookie(
+            key=cookie_name,
+            value=serializer.dumps(mutation.data or {}),
+            path=str(getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/"),
+            domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
+            secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
+            httponly=bool(getattr(request.app.state, "fastapi_session_cookie_httponly", True)),
+            samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
+        )
         return
 
     if mutation.clear:

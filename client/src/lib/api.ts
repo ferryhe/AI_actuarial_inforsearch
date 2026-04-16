@@ -40,6 +40,7 @@ async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promis
 
   const res = await fetch(url, {
     ...options,
+    credentials: options?.credentials ?? "include",
     headers,
   });
 

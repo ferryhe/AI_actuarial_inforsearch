@@ -48,8 +48,8 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
   const { user, isLoggedIn } = useAuth();
   const navItems = [
     ...baseNavItems,
-    ...(isLoggedIn ? [{ path: "/profile", icon: UserCircle2, labelKey: "nav.profile", label: "Profile" }] : []),
-    ...(user?.role === "admin" ? [{ path: "/users", icon: Users, labelKey: "nav.users", label: "Users" }] : []),
+    ...(isLoggedIn ? [{ path: "/profile", icon: UserCircle2, labelKey: "nav.profile" }] : []),
+    ...(user?.role === "admin" ? [{ path: "/users", icon: Users, labelKey: "nav.users" }] : []),
   ];
 
   return (
@@ -83,7 +83,7 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
       </div>
 
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ path, icon: Icon, labelKey, label }) => {
+        {navItems.map(({ path, icon: Icon, labelKey }) => {
           const active = location === path || (path !== "/" && location.startsWith(path));
           return (
             <Link key={path} href={path}>
@@ -97,7 +97,7 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
                 data-testid={`nav-${labelKey.split(".")[1]}`}
               >
                 <Icon className={cn("w-[18px] h-[18px] shrink-0", active && "text-primary")} strokeWidth={active ? 2.2 : 1.8} />
-                {!collapsed && <span className="truncate">{label || t(labelKey)}</span>}
+                {!collapsed && <span className="truncate">{t(labelKey)}</span>}
               </div>
             </Link>
           );
@@ -145,7 +145,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div className="flex-1" />
             <div className="flex items-center gap-1.5">
               <span className="hidden md:inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-[11px] font-medium text-primary">
-                FastAPI-native mode
+                {i18n.t("layout.fastapiNativeMode")}
               </span>
               {isLoggedIn ? (
                 <>
@@ -159,7 +159,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     <Link href="/users">
                       <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
                         <Users className="w-4 h-4 text-muted-foreground" />
-                        <span>Users</span>
+                        <span>{i18n.t("nav.users")}</span>
                       </div>
                     </Link>
                   )}
@@ -176,12 +176,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <>
                   <Link href="/login">
                     <div className="hidden sm:flex items-center rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
-                      Sign in
+                      {i18n.t("auth.signIn")}
                     </div>
                   </Link>
                   <Link href="/register">
                     <div className="hidden sm:flex items-center rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 cursor-pointer">
-                      Register
+                      {i18n.t("auth.register")}
                     </div>
                   </Link>
                 </>

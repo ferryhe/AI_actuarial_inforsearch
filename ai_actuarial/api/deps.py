@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, Request
+from itsdangerous import BadSignature, URLSafeSerializer
 
 from ai_actuarial.storage import Storage
 from ai_actuarial.web.app import (
@@ -45,20 +46,34 @@ def _extract_presented_token(request: Request) -> str | None:
 
 def _decode_flask_session(request: Request) -> dict[str, Any]:
     legacy_app = getattr(request.app.state, "legacy_flask_app", None)
-    if legacy_app is None:
-        return {}
+    if legacy_app is not None:
+        cookie_name = legacy_app.config.get("SESSION_COOKIE_NAME", "session")
+        cookie_value = request.cookies.get(cookie_name)
+        if not cookie_value:
+            return {}
 
-    cookie_name = legacy_app.config.get("SESSION_COOKIE_NAME", "session")
+        serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
+        if serializer is None:
+            return {}
+
+        try:
+            data = serializer.loads(cookie_value)
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
     cookie_value = request.cookies.get(cookie_name)
     if not cookie_value:
         return {}
-
-    serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
-    if serializer is None:
+    secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+    if not secret:
         return {}
-
+    serializer = URLSafeSerializer(secret, salt="fastapi-session")
     try:
         data = serializer.loads(cookie_value)
+    except BadSignature:
+        return {}
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
