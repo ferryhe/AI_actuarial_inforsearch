@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Database,
   BookOpen,
+  MessageSquare,
   Sun,
   Moon,
   Menu,
@@ -30,6 +31,7 @@ export function useTranslation() {
 const navItems = [
   { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
   { path: "/database", icon: Database, labelKey: "nav.database" },
+  { path: "/chat", icon: MessageSquare, labelKey: "nav.chat" },
   { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks" },
   { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge" },
   { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },

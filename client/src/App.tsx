@@ -3,6 +3,7 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Database from "@/pages/Database";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import Chat from "@/pages/Chat";
 import FeatureUnavailable from "@/pages/FeatureUnavailable";
 import FileDetail from "@/pages/FileDetail";
 import FilePreview from "@/pages/FilePreview";
@@ -51,9 +52,7 @@ function Router() {
               <Route path="/database" component={Database} />
               <Route path="/file-detail" component={FileDetail} />
               <Route path="/file-preview" component={FilePreview} />
-              <Route path="/chat">
-                <FeatureUnavailable title="Chat is not available in FastAPI-native mode" description="The chat workflow still depends on legacy APIs and is intentionally hidden from the native shell." />
-              </Route>
+              <Route path="/chat" component={Chat} />
               <Route path="/tasks" component={Tasks} />
               <Route path="/logs" component={NativeLogs} />
               <Route path="/knowledge/:kbId" component={KBDetail} />
