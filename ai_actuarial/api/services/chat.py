@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 from urllib.parse import quote
 
+from itsdangerous import URLSafeSerializer
+
 from ai_actuarial.api.deps import _decode_flask_session, AuthContext
 from ai_actuarial.storage import Storage
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA
@@ -183,7 +185,21 @@ def apply_session_update(response, request, session_update: SessionUpdate | None
         return
     legacy_app = getattr(request.app.state, "legacy_flask_app", None)
     if legacy_app is None:
-        logger.debug("Skipping chat session update because legacy Flask app is unavailable")
+        secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+        if not secret:
+            logger.debug("Skipping chat session update because no FastAPI session secret is configured")
+            return
+        cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
+        serializer = URLSafeSerializer(secret, salt="fastapi-session")
+        response.set_cookie(
+            key=cookie_name,
+            value=serializer.dumps(dict(session_update)),
+            httponly=bool(getattr(request.app.state, "fastapi_session_cookie_httponly", True)),
+            secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
+            samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
+            path=getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/",
+            domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
+        )
         return
     serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
     if serializer is None:

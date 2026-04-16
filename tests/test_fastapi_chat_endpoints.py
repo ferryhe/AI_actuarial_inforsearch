@@ -475,17 +475,54 @@ def test_fastapi_chat_query_maps_llm_exceptions_to_api_error(tmp_path: Path, mon
 
 
 
-def test_apply_session_update_is_noop_without_legacy_flask_app() -> None:
+def test_apply_session_update_uses_fastapi_cookie_fallback_without_legacy_flask_app() -> None:
     import ai_actuarial.api.services.chat as chat_service
 
     response = SimpleNamespace(cookies=[])
+
     def set_cookie(**kwargs):
         response.cookies.append(kwargs)
-    response.set_cookie = set_cookie
 
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(legacy_flask_app=None)))
+    response.set_cookie = set_cookie
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                legacy_flask_app=None,
+                fastapi_session_secret="chat-session-secret",
+                fastapi_session_cookie_name="session",
+                fastapi_session_cookie_path="/",
+                fastapi_session_cookie_domain=None,
+                fastapi_session_cookie_secure=False,
+                fastapi_session_cookie_httponly=True,
+                fastapi_session_cookie_samesite="Lax",
+            )
+        )
+    )
     chat_service.apply_session_update(response, request, chat_service.SessionUpdate({"guest_chat_user_id": "guest:test"}))
-    assert response.cookies == []
+    assert len(response.cookies) == 1
+    assert response.cookies[0]["key"] == "session"
+
+
+
+def test_fastapi_chat_guest_session_persists_without_legacy_flask_app(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch)
+    app.state.legacy_flask_app = None
+
+    create = client.post("/api/chat/conversations", json={"mode": "expert"})
+    assert create.status_code == 201, create.text
+    conversation_id = create.json()["data"]["conversation_id"]
+
+    listed = client.get("/api/chat/conversations")
+    assert listed.status_code == 200, listed.text
+    conversations = listed.json()["data"]["conversations"]
+    assert any(item["conversation_id"] == conversation_id for item in conversations)
+
+    detail = client.get(f"/api/chat/conversations/{conversation_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["conversation"]["conversation_id"] == conversation_id
+
+    deleted = client.delete(f"/api/chat/conversations/{conversation_id}")
+    assert deleted.status_code == 200, deleted.text
 
 
 
