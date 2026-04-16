@@ -695,7 +695,9 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
             if not files_to_index:
                 raise RagAdminError("No markdown files to index (all candidates missing markdown)")
 
-        start_background_task = getattr(bridge_state, "legacy_start_background_task", None)
+        start_background_task = getattr(bridge_state, "legacy_start_background_task", None) or getattr(
+            bridge_state, "start_background_task", None
+        )
         if start_background_task is None:
             raise RagAdminError("Task bridge is unavailable", status_code=503)
 

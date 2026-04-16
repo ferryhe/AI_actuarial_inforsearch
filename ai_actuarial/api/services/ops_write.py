@@ -100,9 +100,18 @@ class BridgeState:
         self.task_history_ref = getattr(app_state, "task_history_ref", []) or []
         self.task_lock = getattr(app_state, "task_lock", None)
         self.schedule_ref = getattr(app_state, "schedule_ref", None)
-        self.start_background_task = getattr(app_state, "legacy_start_background_task", None)
-        self.init_scheduler = getattr(app_state, "legacy_init_scheduler", None)
-        self.set_site_config = getattr(app_state, "legacy_set_site_config", None)
+        self.start_background_task = (
+            getattr(app_state, "legacy_start_background_task", None)
+            or getattr(app_state, "start_background_task", None)
+        )
+        self.init_scheduler = (
+            getattr(app_state, "legacy_init_scheduler", None)
+            or getattr(app_state, "init_scheduler", None)
+        )
+        self.set_site_config = (
+            getattr(app_state, "legacy_set_site_config", None)
+            or getattr(app_state, "set_site_config", None)
+        )
 
 
 def _load_config_data() -> dict[str, Any]:

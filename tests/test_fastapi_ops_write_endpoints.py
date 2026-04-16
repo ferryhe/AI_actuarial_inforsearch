@@ -348,6 +348,37 @@ def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, mo
 
 
 
+def test_schedule_reinit_and_file_collection_work_without_legacy_bridge(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    app.state.legacy_start_background_task = None
+    app.state.legacy_init_scheduler = None
+
+    reinit_response = client.post("/api/schedule/reinit")
+    assert reinit_response.status_code == 200, reinit_response.text
+    assert reinit_response.json()["job_count"] >= 1
+
+    real_dir = tmp_path / "native-import"
+    real_dir.mkdir(parents=True, exist_ok=True)
+    (real_dir / "native.pdf").write_text("fake pdf", encoding="utf-8")
+
+    run_response = client.post(
+        "/api/collections/run",
+        json={
+            "type": "file",
+            "name": "Native Import",
+            "directory_path": str(real_dir),
+            "extensions": ["pdf"],
+            "recursive": True,
+        },
+    )
+    assert run_response.status_code == 200, run_response.text
+    run_body = run_response.json()
+    assert run_body["success"] is True
+    assert run_body["job_id"].startswith("task_")
+
+
+
 def test_ops_write_routes_require_operator_when_auth_enabled(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)

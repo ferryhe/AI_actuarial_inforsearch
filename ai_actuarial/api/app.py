@@ -23,6 +23,7 @@ from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
 from .routers.read import router as read_router
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
+from ai_actuarial.task_runtime import NativeTaskRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +89,16 @@ def create_app() -> FastAPI:
     app.state.fastapi_session_cookie_samesite = "Lax"
     app.state.db_path = _resolve_db_path()
     app.state.require_auth = os.getenv("REQUIRE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
-    app.state.active_tasks_ref = {}
-    app.state.task_history_ref = []
-    app.state.task_lock = None
-    app.state.schedule_ref = None
+    native_runtime = NativeTaskRuntime()
+    native_refs = native_runtime.refs()
+    app.state.native_task_runtime = native_runtime
+    app.state.active_tasks_ref = native_refs.active_tasks_ref
+    app.state.task_history_ref = native_refs.task_history_ref
+    app.state.task_lock = native_refs.task_lock
+    app.state.schedule_ref = native_refs.schedule_ref
+    app.state.start_background_task = native_refs.start_background_task
+    app.state.init_scheduler = native_refs.init_scheduler
+    app.state.set_site_config = native_refs.set_site_config
     app.state.legacy_start_background_task = None
     app.state.legacy_init_scheduler = None
     app.state.legacy_set_site_config = None
@@ -143,10 +150,6 @@ def create_app() -> FastAPI:
         app.state.fastapi_session_cookie_httponly = bool(legacy_app.config.get("SESSION_COOKIE_HTTPONLY", True))
         app.state.fastapi_session_cookie_samesite = legacy_app.config.get("SESSION_COOKIE_SAMESITE") or "Lax"
         app.state.require_auth = bool(legacy_app.config.get("REQUIRE_AUTH", False))
-        app.state.active_tasks_ref = legacy_web_app._active_tasks
-        app.state.task_history_ref = legacy_web_app._task_history
-        app.state.task_lock = legacy_web_app._task_lock
-        app.state.schedule_ref = legacy_web_app.schedule
         app.state.legacy_start_background_task = legacy_bridge.get("start_background_task")
         app.state.legacy_init_scheduler = legacy_bridge.get("init_scheduler")
         app.state.legacy_set_site_config = legacy_bridge.get("set_site_config")
@@ -173,6 +176,11 @@ def create_app() -> FastAPI:
             else:
                 body = f"{base_message}\n"
             return PlainTextResponse(body, status_code=503)
+
+    try:
+        app.state.init_scheduler()
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to initialize native FastAPI scheduler")
 
     app.state.native_paths = _native_paths(app)
     return app
