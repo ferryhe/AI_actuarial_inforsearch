@@ -8,13 +8,14 @@ This document is the maintainer-facing source of truth for the React/FastAPI mig
 
 The mounted Flask app is now a historical compatibility payload, not the backend contract for the React shell.
 
-## Runtime snapshot (PR7)
+## Runtime snapshot (PR8)
 
 Current observed route counts:
 - **Native FastAPI API paths:** 79
 - **Legacy Flask API paths still present inside the mounted Flask app:** 98
 - **Flask-only API signatures still not ported to FastAPI:** 18
 - **Legacy `/api/*` fallback through FastAPI gateway:** blocked by default
+- **FastAPI startup without `ai_actuarial.web`:** supported for native `/api/*`
 
 ### Product contract status
 
@@ -145,6 +146,7 @@ By default, unmatched `/api/*` requests do **not** fall through to Flask anymore
 
 - Default: FastAPI returns `410` for unported `/api/*`
 - Temporary override for debugging only: `FASTAPI_ALLOW_LEGACY_API_FALLBACK=1`
+- If `ai_actuarial.web` is absent entirely, FastAPI still starts and serves native `/api/*`; only legacy mount capabilities disappear
 
 ### CI guardrails
 
@@ -154,6 +156,9 @@ By default, unmatched `/api/*` requests do **not** fall through to Flask anymore
 - `tests/test_react_fastapi_authority.py`
   - scans the routed React product shell
   - fails if any referenced endpoint is not native FastAPI
+- `tests/test_fastapi_no_flask_runtime.py`
+  - fails if FastAPI regains direct `web.app` imports
+  - proves `create_app()` still starts after removing `ai_actuarial/web`
 
 ## Migration policy
 

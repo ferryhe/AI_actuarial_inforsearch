@@ -1,11 +1,11 @@
 # AI Actuarial Info Search
 
 ## Project Overview
-AI-powered system for discovering, downloading, and cataloging AI-related documents from actuarial organizations worldwide. The current product contract is a FastAPI backend + React frontend, with Flask retained only for legacy HTML pages and a shrinking set of historical handlers.
+AI-powered system for discovering, downloading, and cataloging AI-related documents from actuarial organizations worldwide. The current product contract is a FastAPI backend + React frontend, with Flask now fully optional for legacy HTML pages and historical debugging only.
 
 ## Architecture
 - **Backend**: Python 3.11 + FastAPI gateway (port 8000, primary product API workflow)
-- **Legacy backend surface**: Flask app mounted behind FastAPI only for legacy HTML pages and limited historical debugging
+- **Legacy backend surface**: optional Flask app for legacy HTML pages / historical debugging; FastAPI native `/api/*` can start without it
 - **Frontend**: React + Vite + Tailwind v4 (port 5000, webview workflow)
 - **Database**: SQLite (local at `data/index.db`)
 - **AI/ML**: OpenAI, DeepSeek, Mistral providers; FAISS for vector search; sentence-transformers for embeddings

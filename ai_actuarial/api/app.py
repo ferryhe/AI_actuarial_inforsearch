@@ -22,6 +22,7 @@ from .routers.migration import router as migration_router
 from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
 from .routers.read import router as read_router
+from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,7 @@ def _native_paths(app: FastAPI) -> list[str]:
 
 
 def _resolve_db_path() -> str:
-    from ai_actuarial.web.app import _get_sites_config_path, _load_yaml
-
-    config_data = _load_yaml(_get_sites_config_path(), default={})
+    config_data = load_yaml(get_sites_config_path(), default={})
     db_path = (config_data.get("paths") or {}).get("db", "data/index.db")
     db_path = str(db_path or "data/index.db")
     return os.path.abspath(db_path) if not os.path.isabs(db_path) else db_path

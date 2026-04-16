@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from ai_actuarial.api.deps import _decode_flask_session, AuthContext
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import _AI_CHAT_QUOTA
+from ai_actuarial.shared_auth import AI_CHAT_QUOTA
 
 logger = logging.getLogger(__name__)
 
@@ -485,7 +485,7 @@ def _enforce_chat_quota(*, storage: Storage, request, auth: AuthContext) -> None
     token = auth.token or {}
     email_user = token.get("_email_user") if isinstance(token, dict) else None
     role = str((token.get("group_name") if isinstance(token, dict) else None) or "anonymous").lower()
-    limit = _AI_CHAT_QUOTA.get(role, _AI_CHAT_QUOTA.get("anonymous", 2))
+    limit = AI_CHAT_QUOTA.get(role, AI_CHAT_QUOTA.get("anonymous", 2))
     today = _today_utc()
 
     if email_user:

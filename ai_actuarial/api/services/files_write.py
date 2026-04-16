@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from ai_actuarial.rag.exceptions import ChunkingException
+from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, parse_int_clamped
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import _get_sites_config_path, _load_yaml, _parse_int_clamped
 
 
 class FileWriteError(Exception):
@@ -22,7 +22,7 @@ class FileWriteError(Exception):
 
 
 def _config_data() -> dict[str, Any]:
-    return _load_yaml(_get_sites_config_path(), default={})
+    return load_yaml(get_sites_config_path(), default={})
 
 
 
@@ -263,8 +263,8 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
         raise FileWriteError("Invalid JSON body")
     profile_id = str(payload.get("profile_id") or "").strip()
     overwrite_same_profile = bool(payload.get("overwrite_same_profile", False))
-    chunk_size = _parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
-    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
+    chunk_size = parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
+    chunk_overlap = parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
     if chunk_overlap >= chunk_size:
         chunk_overlap = max(0, chunk_size - 1)
     splitter = str(payload.get("splitter") or "semantic").strip()

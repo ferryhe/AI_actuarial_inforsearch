@@ -12,20 +12,21 @@ AI Actuarial Info Search is a system for discovering, downloading, and catalogin
 
 ## 项目架构说明（前后台组成）
 
-本项目目前有 **两套 Web 界面**，均由同一个 Flask 后台提供 API 支持：
+本项目目前有 **两套 Web 界面**：
 
 | 界面 | 技术栈 | 访问方式 | 特点 |
 |------|--------|----------|------|
-| **Flask 模板界面（旧）** | Python + Jinja2 HTML | `http://localhost:8000` | 服务端渲染，首屏快，功能完整 |
-| **React SPA 界面（新）** | React 19 + TypeScript + Vite | `http://localhost:5173`（开发） | 客户端渲染，交互流畅，支持暗色主题 |
+| **Flask 模板界面（旧）** | Python + Jinja2 HTML | `http://localhost:8000`（使用 `web` 子命令时） | 服务端渲染，首屏快，历史功能基线 |
+| **React SPA 界面（新）** | React 19 + TypeScript + Vite | `http://localhost:5173`（开发） | 客户端渲染，交互流畅，长期维护主界面 |
 
-- **Flask 界面**：服务端渲染，页面由 Python 直接生成，首屏加载快，无需额外启动前端服务。
-- **React 界面**：现代 SPA，JS bundle 初次加载后切换页面极快，用户体验更好，是长期维护的主界面。
+- **Flask 界面**：服务端渲染的 legacy HTML 界面，仍可单独启动，但已不再是 React 产品面的 API 依赖前提。
+- **React 界面**：现代 SPA，JS bundle 初次加载后切换页面极快，当前产品 API contract 由 FastAPI 提供。
 
-两套界面都 **需要保留**。但从 API 架构上，当前已经明确：
-- **FastAPI 是 `/api/*` 的唯一长期权威入口**
-- Flask 中现存的 `/api/*` 路由只作为迁移期兼容层保留
-- React 前端应逐步依赖原生 FastAPI 路由，而不是继续扩展 Flask API
+从 API / 运行时架构上，当前已经明确：
+- **FastAPI 是 `/api/*` 的唯一产品权威入口**
+- **FastAPI 可以在没有 `ai_actuarial.web` 模块的情况下启动**；缺失 legacy Flask 时只会禁用 HTML/历史兼容挂载，不影响原生 `/api/*`
+- Flask 中现存的 `/api/*` 路由只作为历史兼容代码保留，不再是 React shell 的后端 contract
+- React 前端只允许依赖原生 FastAPI 路由，而不是继续扩展 Flask API
 
 相关说明见：
 - `docs/ARCHITECTURE.md`
@@ -55,15 +56,15 @@ python -m ai_actuarial web --host 127.0.0.1 --port 8000
 
 ---
 
-### 启动 FastAPI 网关（React/FastAPI 迁移分支）
+### 启动 FastAPI 产品 API（推荐）
 
-**终端 1 – FastAPI 网关**
+**终端 1 – FastAPI 产品 API**
 
 ```bash
 # 安装 Python 依赖
 pip install -r requirements.txt
 
-# 启动 FastAPI 网关（未迁移接口会回退到 legacy Flask）
+# 启动 FastAPI 产品 API
 python -m ai_actuarial api --host 127.0.0.1 --port 8000
 ```
 
@@ -79,7 +80,7 @@ npm run dev
 
 浏览器访问 `http://localhost:5173` 使用 React SPA，或访问 `http://localhost:8000/api/health` 直接调用 FastAPI 接口。
 
-该入口主要用于 React/FastAPI 迁移过程，FastAPI 先承接新网关，未迁移接口继续兼容旧 Flask 应用。
+当前 FastAPI 已经是产品 API 的唯一权威入口；即使本机没有 `ai_actuarial.web`，原生 `/api/*` 仍可启动和工作。只有 legacy HTML 与历史兼容挂载会被禁用。
 
 ---
 

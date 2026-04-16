@@ -9,13 +9,8 @@ from typing import Any
 
 import yaml
 
+from ai_actuarial.shared_runtime import append_task_log, get_default_catalog_provider, get_sites_config_path, load_yaml
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import (
-    _append_task_log,
-    _get_default_catalog_provider,
-    _get_sites_config_path,
-    _load_yaml,
-)
 
 _VALID_SCHEDULED_TASK_TYPES = [
     "scheduled",
@@ -111,11 +106,11 @@ class BridgeState:
 
 
 def _load_config_data() -> dict[str, Any]:
-    return _load_yaml(_get_sites_config_path(), default={})
+    return load_yaml(get_sites_config_path(), default={})
 
 
 def _write_config_data(config_data: dict[str, Any]) -> None:
-    config_path = _get_sites_config_path()
+    config_path = get_sites_config_path()
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(config_data, f, sort_keys=False, allow_unicode=True)
 
@@ -145,7 +140,7 @@ def _coerce_optional_int(value: Any) -> int | None:
 
 
 def _backups_dir() -> Path:
-    return Path(_get_sites_config_path()).resolve().parent / "backups"
+    return Path(get_sites_config_path()).resolve().parent / "backups"
 
 
 def _ensure_backup_dir() -> Path:
@@ -168,7 +163,7 @@ def _backup_config(label: str = "") -> str:
     suffix = f"_{label}" if label else ""
     backup_name = f"sites_{ts}{suffix}.yaml"
     backup_path = backups_dir / backup_name
-    config_path = Path(_get_sites_config_path())
+    config_path = Path(get_sites_config_path())
     if config_path.exists():
         backup_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
     return backup_name
@@ -561,7 +556,7 @@ def _record_rejected_task(reason: str, *, collection_type: str, data: dict[str, 
     task_name = str(data.get("name") or f"{collection_type} (rejected)")
     stamp = datetime.now().isoformat()
     log_file = str(Path("data/task_logs") / f"{task_id}.log")
-    _append_task_log(task_id, "ERROR", f"Rejected request: {reason}")
+    append_task_log(task_id, "ERROR", f"Rejected request: {reason}")
     task_data = {
         "id": task_id,
         "name": task_name,
@@ -718,7 +713,7 @@ def get_catalog_stats(*, db_path: str, provider: str | None = None, input_source
 
         from ai_actuarial.catalog import CATALOG_VERSION as base_catalog_version
 
-        selected_provider = str(provider or _get_default_catalog_provider()).strip().lower()
+        selected_provider = str(provider or get_default_catalog_provider()).strip().lower()
         selected_input_source = str(input_source or "source").strip().lower()
         category_filter = str(category or "").strip()
         catalog_version = f"{base_catalog_version}:{selected_provider}:{selected_input_source}"

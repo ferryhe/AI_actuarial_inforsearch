@@ -10,15 +10,15 @@ from typing import Any
 from fastapi import Request, Response
 from itsdangerous import URLSafeSerializer
 
-from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import (
-    _AI_CHAT_QUOTA,
-    _DUMMY_PASSWORD_HASH,
-    _VALID_USER_ROLES,
-    _check_password,
-    _hash_password,
-    _hash_token,
+from ai_actuarial.shared_auth import (
+    AI_CHAT_QUOTA,
+    DUMMY_PASSWORD_HASH,
+    VALID_USER_ROLES,
+    check_password,
+    hash_password,
+    hash_token,
 )
+from ai_actuarial.storage import Storage
 
 from ..deps import AuthContext, get_auth_context, public_permissions_for_request
 
@@ -186,7 +186,7 @@ def register_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[st
     try:
         user_id = storage.create_user(
             email=email,
-            password_hash=_hash_password(password),
+            password_hash=hash_password(password),
             role="registered",
             display_name=display_name or None,
         )
@@ -219,7 +219,7 @@ def login_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[str, 
     if token_text:
         storage = Storage(_db_path(request))
         try:
-            token = storage.get_auth_token_by_hash(_hash_token(token_text))
+            token = storage.get_auth_token_by_hash(hash_token(token_text))
             if not token or not token.get("is_active"):
                 raise AuthApiError("Invalid token", status_code=401)
             expires_at = token.get("expires_at")
@@ -260,7 +260,7 @@ def login_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[str, 
     storage = Storage(_db_path(request))
     try:
         user = storage.get_user_by_email(email)
-        password_ok = _check_password(password, user["password_hash"] if user else _DUMMY_PASSWORD_HASH)
+        password_ok = check_password(password, user["password_hash"] if user else DUMMY_PASSWORD_HASH)
         if not user or not password_ok:
             raise AuthApiError("Invalid email or password", status_code=401)
         if not user.get("is_active"):
@@ -300,7 +300,7 @@ def user_me(*, request: Request, auth: AuthContext) -> dict[str, Any]:
         if isinstance(email_user, dict):
             used = storage.get_ai_chat_quota_used(today, user_id=int(email_user["id"]))
             role = str(email_user.get("role") or "registered")
-            limit = _AI_CHAT_QUOTA.get(role, 5)
+            limit = AI_CHAT_QUOTA.get(role, 5)
             recent_activity = storage.list_user_activity(user_id=int(email_user["id"]), limit=20)
             return {
                 "success": True,
@@ -323,7 +323,7 @@ def user_me(*, request: Request, auth: AuthContext) -> dict[str, Any]:
             }
 
         role = str(auth.token.get("group_name") or "reader").lower()
-        limit = _AI_CHAT_QUOTA.get(role, 5)
+        limit = AI_CHAT_QUOTA.get(role, 5)
         used = storage.get_ai_chat_quota_used(today, ip_address=_client_ip(request))
         return {
             "success": True,
@@ -378,13 +378,13 @@ def update_profile(*, request: Request, auth: AuthContext, payload: dict[str, An
             user_with_hash = storage.get_user_by_id(int(email_user["id"]))
             if not user_with_hash:
                 raise AuthApiError("User not found", status_code=404)
-            if not _check_password(current_password, user_with_hash.get("password_hash", "")):
+            if not check_password(current_password, user_with_hash.get("password_hash", "")):
                 raise AuthApiError("Current password is incorrect", status_code=400)
             if len(new_password) < 8:
                 raise AuthApiError("New password must be at least 8 characters", status_code=400)
             if len(new_password) > 1024:
                 raise AuthApiError("New password is too long (max 1024 characters)", status_code=400)
-            password_hash = _hash_password(new_password)
+            password_hash = hash_password(new_password)
 
         if display_name is None and password_hash is None:
             raise AuthApiError("No fields to update. Provide display_name or new_password.", status_code=400)
@@ -431,7 +431,7 @@ def create_auth_token(*, request: Request, payload: dict[str, Any]) -> dict[str,
     plaintext = secrets.token_urlsafe(32)
     storage = Storage(_db_path(request))
     try:
-        token_id = storage.create_auth_token(subject=subject, group_name=group_name, token_hash=_hash_token(plaintext))
+        token_id = storage.create_auth_token(subject=subject, group_name=group_name, token_hash=hash_token(plaintext))
         return {
             "success": True,
             "token": {
@@ -473,7 +473,7 @@ def _serialize_user_row(storage: Storage, user: dict[str, Any]) -> dict[str, Any
         **{k: v for k, v in user.items() if k != "password_hash"},
         "username": user.get("display_name") or user.get("email") or f"user-{user.get('id')}",
         "quota_used": quota_used,
-        "quota_limit": _AI_CHAT_QUOTA.get(role, 5),
+        "quota_limit": AI_CHAT_QUOTA.get(role, 5),
         "last_login": user.get("last_login_at"),
     }
 
@@ -504,8 +504,8 @@ def set_user_role(*, request: Request, auth: AuthContext, user_id: int, payload:
     if not isinstance(payload, dict):
         raise AuthApiError("Request body must be a JSON object", status_code=400)
     new_role = str(payload.get("role") or "").strip().lower()
-    if new_role not in _VALID_USER_ROLES:
-        raise AuthApiError(f"Invalid role. Valid roles: {', '.join(_VALID_USER_ROLES)}", status_code=400)
+    if new_role not in VALID_USER_ROLES:
+        raise AuthApiError(f"Invalid role. Valid roles: {', '.join(VALID_USER_ROLES)}", status_code=400)
     storage = Storage(_db_path(request))
     try:
         ok = storage.update_user_role(user_id, new_role)

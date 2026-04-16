@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping
 
+from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import _parse_int_clamped
 
 
 class RagAdminError(Exception):
@@ -102,8 +102,8 @@ def create_chunk_profile(*, db_path: str, payload: dict[str, Any], headers: Mapp
     name = _norm(payload.get("name"))
     if not name:
         raise RagAdminError("name is required")
-    chunk_size = _parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
-    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
+    chunk_size = parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
+    chunk_overlap = parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
     splitter = _norm(payload.get("splitter") or "semantic")
     tokenizer = _norm(payload.get("tokenizer") or "cl100k_base")
     version = _norm(payload.get("version") or "v1")
@@ -193,8 +193,8 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
     kb_mode = _norm(payload.get("kb_mode") or "manual").lower()
     if kb_mode not in {"manual", "category"}:
         raise RagAdminError("kb_mode must be 'category' or 'manual'")
-    chunk_size = _parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
-    chunk_overlap = _parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
+    chunk_size = parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
+    chunk_overlap = parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
     categories = _list(payload.get("categories"), "categories")
     file_urls = _list(payload.get("file_urls"), "file_urls")
     if kb_mode == "category" and not categories:
@@ -433,8 +433,8 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
     category = _norm(query.get("category"))
     kb_id_raw = _norm(query.get("kb_id"))
     kb_id = _kb_id(kb_id_raw) if kb_id_raw else ""
-    limit = _parse_int_clamped(query.get("limit") or 100, default=100, min_value=1, max_value=500)
-    offset = _parse_int_clamped(query.get("offset") or 0, default=0, min_value=0, max_value=1_000_000)
+    limit = parse_int_clamped(query.get("limit") or 100, default=100, min_value=1, max_value=500)
+    offset = parse_int_clamped(query.get("offset") or 0, default=0, min_value=0, max_value=1_000_000)
 
     storage = Storage(db_path)
     try:
@@ -730,8 +730,8 @@ def cleanup_chunk_sets(*, db_path: str, payload: dict[str, Any], headers: Mappin
     _require_config_write_token(headers)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
-    older_than_days = _parse_int_clamped(payload.get("older_than_days") or 30, default=30, min_value=1, max_value=3650)
-    limit = _parse_int_clamped(payload.get("limit") or 5000, default=5000, min_value=1, max_value=20000)
+    older_than_days = parse_int_clamped(payload.get("older_than_days") or 30, default=30, min_value=1, max_value=3650)
+    limit = parse_int_clamped(payload.get("limit") or 5000, default=5000, min_value=1, max_value=20000)
     dry_run = bool(payload.get("dry_run", False))
 
     storage = Storage(db_path)
