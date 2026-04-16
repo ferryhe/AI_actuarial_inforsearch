@@ -216,6 +216,57 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
 
 
 
+def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    app.state.legacy_set_site_config = None
+    config_path = Path(os.environ["CONFIG_PATH"])
+
+    update_response = client.post(
+        "/api/config/backend-settings",
+        json={
+            "defaults": {
+                "max_pages": 42,
+                "max_depth": 3,
+                "delay_seconds": 1.5,
+                "file_exts": [".pdf", ".md"],
+                "keywords": ["pricing", "ai"],
+                "exclude_keywords": ["draft"],
+                "exclude_prefixes": ["/private"],
+                "schedule_interval": "weekly",
+            },
+            "paths": {
+                "download_dir": "data/native-files",
+                "updates_dir": "data/native-updates",
+                "last_run_new": "data/native-last-run.json",
+            },
+            "search": {
+                "enabled": False,
+                "max_results": 9,
+                "delay_seconds": 2.0,
+                "languages": ["en", "zh"],
+                "country": "sg",
+                "exclude_keywords": ["jobs", "archive"],
+                "queries": ["actuarial ai", "insurance llm"],
+            },
+            "system": {"file_deletion_enabled": False},
+        },
+    )
+    assert update_response.status_code == 200, update_response.text
+    body = update_response.json()
+    assert body["success"] is True
+    assert body["defaults"]["max_pages"] == 42
+    assert body["search"]["enabled"] is False
+    assert body["runtime"]["file_deletion_enabled"] is False
+
+    written = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    assert written["defaults"]["max_pages"] == 42
+    assert written["paths"]["download_dir"] == "data/native-files"
+    assert written["search"]["queries"] == ["actuarial ai", "insurance llm"]
+    assert written["system"]["file_deletion_enabled"] is False
+
+
+
 def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)

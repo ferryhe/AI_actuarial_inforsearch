@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -24,6 +26,7 @@ from ..services.ops_write import (
     restore_backup,
     sample_sites_yaml,
     start_collection,
+    update_backend_settings,
     update_scheduled_task,
     update_site,
 )
@@ -157,6 +160,23 @@ def api_config_backups_delete(
 ):
     try:
         return delete_backup(str(payload.get("filename") or ""))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/backend-settings")
+def api_config_backend_settings_update(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return update_backend_settings(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 
