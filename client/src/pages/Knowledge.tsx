@@ -202,7 +202,7 @@ export default function Knowledge() {
         chunk_overlap: kbForm.chunk_overlap,
       });
       setKbForm({ name: "", kb_id: "", description: "", categories: "", embedding_model: "", kb_mode: "manual", chunk_size: 800, chunk_overlap: 100 });
-      setShowCreateKB(false);
+      closeCreateKB();
       loadData();
     } catch (err) {
       console.error("Failed to create KB:", err);
@@ -236,7 +236,7 @@ export default function Knowledge() {
         tokenizer: profileForm.tokenizer,
       });
       setProfileForm({ name: "", chunk_size: 512, overlap: 50, splitter: "semantic", tokenizer: "cl100k_base" });
-      setShowCreateProfile(false);
+      closeCreateProfile();
       loadData();
     } catch (err) {
       console.error("Failed to create profile:", err);
@@ -259,6 +259,24 @@ export default function Knowledge() {
   const [cleanupDryRun, setCleanupDryRun] = useState(true);
   const [cleanupRunning, setCleanupRunning] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<Record<string, unknown> | null>(null);
+
+  const openCreateKB = () => {
+    setShowCreateProfile(false);
+    setShowCreateKB(true);
+  };
+
+  const closeCreateKB = () => {
+    setShowCreateKB(false);
+  };
+
+  const openCreateProfile = () => {
+    setShowCreateKB(false);
+    setShowCreateProfile(true);
+  };
+
+  const closeCreateProfile = () => {
+    setShowCreateProfile(false);
+  };
 
   const handleCleanup = async () => {
     setCleanupRunning(true);
@@ -297,7 +315,7 @@ export default function Knowledge() {
           </p>
         </div>
         <button
-          onClick={() => setShowCreateKB(true)}
+          onClick={openCreateKB}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
           data-testid="button-create-kb"
         >
@@ -317,8 +335,10 @@ export default function Knowledge() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-sm">{t("knowledge.create_title")}</h3>
               <button
-                onClick={() => setShowCreateKB(false)}
-                className="p-1 rounded hover:bg-muted"
+                type="button"
+                aria-label="Close create knowledge base panel"
+                onClick={closeCreateKB}
+                className="p-2 rounded hover:bg-muted"
                 data-testid="button-close-create-kb"
               >
                 <X className="w-4 h-4" />
@@ -462,7 +482,15 @@ export default function Knowledge() {
                 />
               </div>
             </div>
-            <div className="flex justify-end mt-4">
+            <div className="flex justify-end mt-4 gap-2">
+              <button
+                type="button"
+                onClick={closeCreateKB}
+                className="px-4 py-2 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors"
+                data-testid="button-cancel-kb"
+              >
+                {t("common.cancel")}
+              </button>
               <button
                 onClick={handleCreateKB}
                 disabled={creating || !kbForm.name.trim()}
@@ -607,7 +635,7 @@ export default function Knowledge() {
             <h2 className="text-lg font-semibold">{t("knowledge.chunk_profiles")}</h2>
           </div>
           <button
-            onClick={() => setShowCreateProfile(true)}
+            onClick={openCreateProfile}
             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
             data-testid="button-create-profile"
           >
@@ -627,8 +655,10 @@ export default function Knowledge() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-sm">{t("knowledge.create_profile_title")}</h3>
                 <button
-                  onClick={() => setShowCreateProfile(false)}
-                  className="p-1 rounded hover:bg-muted"
+                  type="button"
+                  aria-label="Close create chunk profile panel"
+                  onClick={closeCreateProfile}
+                  className="p-2 rounded hover:bg-muted"
                   data-testid="button-close-create-profile"
                 >
                   <X className="w-4 h-4" />
@@ -710,7 +740,15 @@ export default function Knowledge() {
                   </select>
                 </div>
               </div>
-              <div className="flex justify-end mt-4">
+              <div className="flex justify-end mt-4 gap-2">
+                <button
+                  type="button"
+                  onClick={closeCreateProfile}
+                  className="px-4 py-2 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors"
+                  data-testid="button-cancel-profile"
+                >
+                  {t("common.cancel")}
+                </button>
                 <button
                   onClick={handleCreateProfile}
                   disabled={creating || !profileForm.name.trim()}
