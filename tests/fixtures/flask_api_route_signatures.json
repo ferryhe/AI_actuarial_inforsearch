@@ -4,7 +4,6 @@
     "GET /api/collections/history",
     "GET /api/config/search-defaults",
     "GET /api/files/<path:file_url>/indexes",
-    "GET /api/logs/global",
     "GET /api/rag/knowledge-bases/<kb_id>/composition/status",
     "GET /api/rag/knowledge-bases/<kb_id>/tasks",
     "GET /api/user/quota",

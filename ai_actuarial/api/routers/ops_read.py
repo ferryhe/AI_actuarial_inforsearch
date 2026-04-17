@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -11,6 +12,7 @@ from ..services.ops_read import (
     get_backend_settings,
     get_config_categories,
     get_config_sites,
+    get_global_logs,
     get_llm_providers,
     get_schedule_status,
     get_scheduled_tasks,
@@ -91,6 +93,22 @@ def api_task_log(
         return get_task_log(task_id, tail)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@router.get("/logs/global")
+def api_logs_global(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("logs.system.read")),
+) -> dict[str, object]:
+    expected_token = os.getenv("LOGS_READ_AUTH_TOKEN")
+    if expected_token:
+        provided_token = request.headers.get("X-Auth-Token")
+        if not provided_token or provided_token != expected_token:
+            return JSONResponse(status_code=403, content={"error": "Forbidden"})
+    result = get_global_logs()
+    if result.get("error") == "Forbidden":
+        return JSONResponse(status_code=403, content={"error": "Forbidden"})
+    return result
 
 
 @router.get("/config/backend-settings")

@@ -68,8 +68,8 @@ def test_fastapi_migration_inventory_exposes_native_and_legacy_routes_when_enabl
 def test_unported_legacy_api_fallback_is_blocked_by_default() -> None:
     client = TestClient(create_app())
 
-    response = client.get("/api/logs/global")
-    head_response = client.head("/api/logs/global")
+    response = client.get("/api/collections/history")
+    head_response = client.head("/api/collections/history")
 
     assert response.status_code == 410
     assert "Legacy Flask /api fallback is disabled" in response.json()["detail"]

@@ -416,3 +416,35 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert bindings["chat"]["config_section"] == "chatbot"
     assert bindings["embeddings"]["provider"] == "openai"
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
+
+
+
+def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ENABLE_GLOBAL_LOGS_API", "1")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "app.log").write_text(
+        "2026-04-17 10:00:00 INFO first\n2026-04-17 10:01:00 ERROR second\n",
+        encoding="utf-8",
+    )
+
+    admin_token = "admin-token"
+    storage = Storage(str(app.state.db_path))
+    try:
+        storage.upsert_auth_token_by_hash(
+            subject="admin-token",
+            group_name="admin",
+            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
+    finally:
+        storage.close()
+
+    response = client.get("/api/logs/global", headers={"Authorization": f"Bearer {admin_token}"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["logs"].splitlines()[0].endswith("ERROR second")
+    assert body["logs"].splitlines()[1].endswith("INFO first")

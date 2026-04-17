@@ -20,7 +20,7 @@ PRODUCT_SOURCE_FILES = [
     ROOT / "pages" / "KBDetail.tsx",
     ROOT / "pages" / "Knowledge.tsx",
     ROOT / "pages" / "Login.tsx",
-    ROOT / "pages" / "NativeLogs.tsx",
+    ROOT / "pages" / "Logs.tsx",
     ROOT / "pages" / "NativeSettings.tsx",
     ROOT / "pages" / "Profile.tsx",
     ROOT / "pages" / "Register.tsx",
