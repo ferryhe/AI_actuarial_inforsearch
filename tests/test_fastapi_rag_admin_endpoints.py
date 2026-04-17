@@ -182,6 +182,8 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
     assert create_kb.status_code == 201, create_kb.text
     kb = create_kb.json()["knowledge_base"]
     assert kb["kb_id"] == "kb-pr4-test"
+    assert kb["embedding_model"] == "text-embedding-3-large"
+    assert kb["embedding_provider"] == "openai"
 
     list_kbs = client.get("/api/rag/knowledge-bases")
     assert list_kbs.status_code == 200, list_kbs.text

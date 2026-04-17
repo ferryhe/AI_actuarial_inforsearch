@@ -11,8 +11,9 @@ from typing import Any, Mapping
 from urllib.parse import quote
 
 from itsdangerous import URLSafeSerializer
-
 from ai_actuarial.api.deps import _decode_flask_session, AuthContext
+from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
+from ai_actuarial.rag.exceptions import EmbeddingException
 from ai_actuarial.storage import Storage
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA
 
@@ -368,13 +369,44 @@ def delete_conversation(*, db_path: str, request, auth: AuthContext, conversatio
         storage.close()
 
 
+def _embedding_metadata_matches(
+    current: Mapping[str, Any],
+    *,
+    provider: Any,
+    model: Any,
+    dimension: Any,
+) -> bool:
+    current_provider = str(current.get("provider") or "").strip().lower()
+    current_model = str(current.get("model") or "").strip()
+    current_dimension = current.get("dimension")
+
+    index_provider = str(provider or "").strip().lower()
+    index_model = str(model or "").strip()
+    index_dimension = dimension
+
+    if index_provider and current_provider and index_provider != current_provider:
+        return False
+    if index_model and current_model and index_model != current_model:
+        return False
+    if index_dimension not in (None, "") and current_dimension not in (None, ""):
+        try:
+            if int(index_dimension) != int(current_dimension):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+
 def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
+        embeddings_runtime = resolve_ai_function_runtime("embeddings", storage=storage)
         current_embeddings = {
-            "provider": os.getenv("EMBEDDING_PROVIDER", "openai"),
-            "model": os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
-            "dimension": None,
+            "provider": embeddings_runtime.provider,
+            "model": embeddings_runtime.model,
+            "dimension": infer_embedding_dimension(embeddings_runtime.model),
+            "credential_source": embeddings_runtime.credential_source,
         }
         knowledge_bases: list[dict[str, Any]] = []
         rows = storage._conn.execute(
@@ -388,6 +420,33 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
         for row in rows:
             kb_id = row[0]
             composition = storage.get_kb_composition_status(kb_id)
+            latest_index = composition.get("latest_index") or {}
+            has_index = bool(composition.get("has_index"))
+            kb_provider = row[3] or "openai"
+            kb_model = row[4]
+            kb_dimension = row[5]
+            effective_index_provider = latest_index.get("embedding_provider") or kb_provider
+            effective_index_model = latest_index.get("embedding_model") or kb_model
+            effective_index_dimension = latest_index.get("embedding_dimension")
+            if effective_index_dimension in (None, ""):
+                effective_index_dimension = kb_dimension
+            embedding_compatible = _embedding_metadata_matches(
+                current_embeddings,
+                provider=effective_index_provider,
+                model=effective_index_model,
+                dimension=effective_index_dimension,
+            )
+            needs_reindex = bool(composition.get("needs_reindex")) or (has_index and not embedding_compatible)
+            index_status = str(latest_index.get("status") or "").strip().lower()
+            if not has_index or index_status in {"pending", "queued", "running", "building", "indexing"}:
+                availability = "building"
+                usable = False
+            elif needs_reindex:
+                availability = "needs_reindex"
+                usable = False
+            else:
+                availability = "ready"
+                usable = True
             knowledge_bases.append(
                 {
                     "kb_id": kb_id,
@@ -395,16 +454,18 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
                     "description": row[2],
                     "file_count": row[6],
                     "chunk_count": row[7],
-                    "embedding_provider": row[3] or "openai",
-                    "embedding_model": row[4],
-                    "embedding_dimension": row[5],
-                    "index_embedding_provider": composition.get("index_embedding_provider"),
-                    "index_embedding_model": composition.get("index_embedding_model"),
-                    "index_embedding_dimension": composition.get("index_embedding_dimension"),
-                    "index_status": composition.get("index_status"),
-                    "index_built_at": composition.get("index_built_at"),
-                    "needs_reindex": bool(composition.get("needs_reindex")),
-                    "embedding_compatible": bool(composition.get("embedding_compatible", True)),
+                    "embedding_provider": kb_provider,
+                    "embedding_model": kb_model,
+                    "embedding_dimension": kb_dimension,
+                    "index_embedding_provider": effective_index_provider,
+                    "index_embedding_model": effective_index_model,
+                    "index_embedding_dimension": effective_index_dimension,
+                    "index_status": latest_index.get("status") or ("ready" if effective_index_model else None),
+                    "index_built_at": latest_index.get("built_at"),
+                    "needs_reindex": needs_reindex,
+                    "embedding_compatible": embedding_compatible,
+                    "availability": availability,
+                    "usable": usable,
                 }
             )
         return {"success": True, "data": {"knowledge_bases": knowledge_bases, "current_embeddings": current_embeddings}}

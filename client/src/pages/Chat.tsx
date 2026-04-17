@@ -74,6 +74,8 @@ interface KnowledgeBase {
   description?: string;
   file_count?: number;
   chunk_count?: number;
+  usable?: boolean;
+  availability?: "ready" | "needs_reindex" | "building" | string;
 }
 
 interface AvailableDocument {
@@ -348,11 +350,15 @@ export default function Chat() {
   async function loadKnowledgeBases() {
     try {
       const res = await apiGet<{ success?: boolean; data?: { knowledge_bases?: KnowledgeBase[] }; knowledge_bases?: KnowledgeBase[] }>("/api/chat/knowledge-bases");
-      setKnowledgeBases(res.data?.knowledge_bases || res.knowledge_bases || []);
+      const nextKnowledgeBases = res.data?.knowledge_bases || res.knowledge_bases || [];
+      setKnowledgeBases(nextKnowledgeBases);
+      setSelectedKbs((prev) => prev.filter((kbId) => nextKnowledgeBases.some((kb) => kb.kb_id === kbId && kb.usable !== false)));
     } catch {
       setKnowledgeBases([]);
+      setSelectedKbs([]);
     }
   }
+
 
   async function loadDocuments() {
     setLoadingDocs(true);
@@ -441,12 +447,13 @@ export default function Chat() {
     const text = input.trim();
     if (!text || sending) return;
 
+    setShowKbDropdown(false);
+    setShowModeDropdown(false);
+    setSending(true);
     setErrorMsg(null);
     const userMsg: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
-    setSending(true);
-
     if (inputRef.current) {
       inputRef.current.style.height = "auto";
     }
@@ -512,9 +519,14 @@ export default function Chat() {
   }
 
   function toggleKb(id: string) {
+    const target = knowledgeBases.find((kb) => kb.kb_id === id);
+    if (target?.usable === false) {
+      return;
+    }
     setSelectedKbs((prev) =>
       prev.includes(id) ? prev.filter((k) => k !== id) : [...prev, id]
     );
+    setShowKbDropdown(false);
   }
 
   return (
@@ -743,14 +755,22 @@ export default function Chat() {
                 </p>
                 <div className="grid grid-cols-2 gap-2 text-left">
                   <button
-                    onClick={() => setInput(t("chat.suggestion_1"))}
+                    onClick={() => {
+                      setInput(t("chat.suggestion_1"));
+                      setShowKbDropdown(false);
+                      setShowModeDropdown(false);
+                    }}
                     className="p-3 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-muted/50 transition-all text-xs text-muted-foreground"
                     data-testid="suggestion-1"
                   >
                     {t("chat.suggestion_1")}
                   </button>
                   <button
-                    onClick={() => setInput(t("chat.suggestion_2"))}
+                    onClick={() => {
+                      setInput(t("chat.suggestion_2"));
+                      setShowKbDropdown(false);
+                      setShowModeDropdown(false);
+                    }}
                     className="p-3 rounded-lg border border-border bg-card hover:border-primary/30 hover:bg-muted/50 transition-all text-xs text-muted-foreground"
                     data-testid="suggestion-2"
                   >
@@ -847,25 +867,37 @@ export default function Chat() {
                         {t("chat.no_kbs")}
                       </div>
                     ) : (
-                      knowledgeBases.map((kb) => (
+                      knowledgeBases.map((kb) => {
+                        const isSelected = selectedKbs.includes(kb.kb_id);
+                        const isUsable = kb.usable !== false;
+                        const availabilityLabel = kb.availability === "needs_reindex"
+                          ? "需重建"
+                          : kb.availability === "building"
+                            ? "构建中"
+                            : kb.availability === "ready"
+                              ? "可用"
+                              : kb.availability || "";
+                        return (
                         <button
                           key={kb.kb_id}
                           onClick={() => toggleKb(kb.kb_id)}
+                          disabled={!isUsable}
                           className={cn(
-                            "w-full text-left px-3 py-2 text-xs hover:bg-muted transition-colors flex items-center gap-2",
-                            selectedKbs.includes(kb.kb_id) && "text-primary font-medium"
+                            "w-full text-left px-3 py-2 text-xs transition-colors flex items-center gap-2",
+                            isUsable ? "hover:bg-muted" : "opacity-60 cursor-not-allowed bg-muted/20",
+                            isSelected && "text-primary font-medium"
                           )}
                           data-testid={`kb-option-${kb.kb_id}`}
                         >
                           <div
                             className={cn(
                               "w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0",
-                              selectedKbs.includes(kb.kb_id)
+                              isSelected
                                 ? "bg-primary border-primary"
                                 : "border-border"
                             )}
                           >
-                            {selectedKbs.includes(kb.kb_id) && (
+                            {isSelected && (
                               <svg className="w-2.5 h-2.5 text-primary-foreground" viewBox="0 0 12 12">
                                 <path d="M10 3L4.5 8.5 2 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                               </svg>
@@ -873,15 +905,28 @@ export default function Chat() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <span className="truncate block">{kb.name}</span>
-                            {kb.description && (
-                              <span className="text-[10px] text-muted-foreground truncate block">{kb.description}</span>
-                            )}
+                            <div className="flex items-center gap-2 min-w-0">
+                              {kb.description && (
+                                <span className="text-[10px] text-muted-foreground truncate block">{kb.description}</span>
+                              )}
+                              {availabilityLabel && (
+                                <span className={cn(
+                                  "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                                  kb.availability === "ready" && "bg-emerald-500/10 text-emerald-600",
+                                  kb.availability === "needs_reindex" && "bg-amber-500/10 text-amber-700",
+                                  kb.availability === "building" && "bg-slate-500/10 text-slate-600"
+                                )}>
+                                  {availabilityLabel}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {kb.chunk_count != null && (
                             <span className="text-[10px] text-muted-foreground shrink-0">{kb.chunk_count} chunks</span>
                           )}
                         </button>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </>
@@ -894,6 +939,7 @@ export default function Chat() {
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onFocus={() => setShowKbDropdown(false)}
               onKeyDown={handleKeyDown}
               placeholder={t("chat.input_placeholder")}
               rows={1}
@@ -907,6 +953,8 @@ export default function Chat() {
               data-testid="input-chat-message"
             />
             <button
+              type="button"
+              aria-label="Send message"
               onClick={sendMessage}
               disabled={!input.trim() || sending}
               className={cn(
