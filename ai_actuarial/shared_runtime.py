@@ -54,7 +54,10 @@ def get_default_catalog_provider() -> str:
     ai_cfg = config.get("ai_config") or {}
     if not isinstance(ai_cfg, dict):
         ai_cfg = {}
-    provider = str(ai_cfg.get("catalog_provider") or "").strip().lower()
+    catalog_cfg = ai_cfg.get("catalog") or {}
+    if not isinstance(catalog_cfg, dict):
+        catalog_cfg = {}
+    provider = str(catalog_cfg.get("provider") or ai_cfg.get("catalog_provider") or "").strip().lower()
     return provider or "openai"
 
 

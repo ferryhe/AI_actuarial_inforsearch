@@ -13,7 +13,7 @@ import Login from "@/pages/Login";
 import NativeLogs from "@/pages/NativeLogs";
 import Profile from "@/pages/Profile";
 import Register from "@/pages/Register";
-import NativeSettings from "@/pages/NativeSettings";
+import SettingsPage from "@/pages/Settings";
 import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
 
@@ -70,7 +70,7 @@ function Router() {
             </Route>
             <Route path="/settings">
               <RequireAuth>
-                <NativeSettings />
+                <SettingsPage />
               </RequireAuth>
             </Route>
             <Route path="/users">

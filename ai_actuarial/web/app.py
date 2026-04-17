@@ -57,6 +57,7 @@ import schedule
 from ..ai_runtime import (
     AI_SUPPORTED_PROVIDERS,
     KNOWN_LLM_PROVIDERS,
+    OPTIONAL_API_KEY_SENTINEL,
     PROVIDER_BASE_URL_ENV_VARS,
     PROVIDER_ENV_VARS,
     PROVIDER_STARTUP_ENV_MAP,
@@ -780,7 +781,9 @@ def create_app(config: dict[str, Any] | None = None) -> Any:
             _key_env, _url_env = PROVIDER_STARTUP_ENV_MAP.get(_pname, (None, None))
             if _key_env and not os.getenv(_key_env):  # Don't override .env values
                 try:
-                    os.environ[_key_env] = _enc.decrypt(_p["api_key_encrypted"])
+                    _decrypted_key = _enc.decrypt(_p["api_key_encrypted"])
+                    if _decrypted_key != OPTIONAL_API_KEY_SENTINEL:
+                        os.environ[_key_env] = _decrypted_key
                 except Exception:
                     logger.warning(
                         "Could not decrypt stored key for provider '%s'. "
