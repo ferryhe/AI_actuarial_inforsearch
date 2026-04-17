@@ -267,6 +267,56 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
 
 
 
+def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    app.state.legacy_set_site_config = None
+    config_path = Path(os.environ["CONFIG_PATH"])
+    categories_path = Path(os.environ["CATEGORIES_CONFIG_PATH"])
+
+    categories_response = client.post(
+        "/api/config/categories",
+        json={
+            "categories": {
+                "AI Governance": ["governance", "policy"],
+                "Pricing": ["pricing", "reserve"],
+            },
+            "ai_filter_keywords": ["artificial intelligence", "large language model"],
+        },
+    )
+    assert categories_response.status_code == 200, categories_response.text
+    categories_body = categories_response.json()
+    assert categories_body["success"] is True
+    assert categories_body["categories"]["AI Governance"] == ["governance", "policy"]
+
+    written_categories = yaml.safe_load(categories_path.read_text(encoding="utf-8")) or {}
+    assert written_categories["categories"]["Pricing"] == ["pricing", "reserve"]
+    assert written_categories["ai_filter_keywords"] == ["artificial intelligence", "large language model"]
+
+    ai_models_response = client.post(
+        "/api/config/ai-models",
+        json={
+            "catalog": {"system_prompt": "native catalog prompt"},
+            "chatbot": {
+                "prompts": {"expert": "native expert prompt", "summary": "native summary prompt"},
+                "summarization_prompt": "native summarize prompt",
+            },
+        },
+    )
+    assert ai_models_response.status_code == 200, ai_models_response.text
+    ai_models_body = ai_models_response.json()
+    assert ai_models_body["success"] is True
+    assert ai_models_body["current"]["catalog"]["system_prompt"] == "native catalog prompt"
+    assert ai_models_body["current"]["chatbot"]["prompts"]["expert"] == "native expert prompt"
+    assert ai_models_body["current"]["chatbot"]["summarization_prompt"] == "native summarize prompt"
+
+    written_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    assert written_config["ai_config"]["catalog"]["system_prompt"] == "native catalog prompt"
+    assert written_config["ai_config"]["chatbot"]["prompts"]["summary"] == "native summary prompt"
+    assert written_config["ai_config"]["chatbot"]["summarization_prompt"] == "native summarize prompt"
+
+
+
 def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
