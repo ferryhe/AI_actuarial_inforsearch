@@ -75,7 +75,7 @@ interface KnowledgeBase {
   file_count?: number;
   chunk_count?: number;
   usable?: boolean;
-  availability?: "ready" | "needs_reindex" | "building" | string;
+  availability?: "ready" | "needs_reindex" | "building" | (string & {});
 }
 
 interface AvailableDocument {

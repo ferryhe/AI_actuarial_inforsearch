@@ -13,7 +13,6 @@ from urllib.parse import quote
 from itsdangerous import URLSafeSerializer
 from ai_actuarial.api.deps import _decode_flask_session, AuthContext
 from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
-from ai_actuarial.rag.exceptions import EmbeddingException
 from ai_actuarial.storage import Storage
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA
 
@@ -460,7 +459,7 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
                     "index_embedding_provider": effective_index_provider,
                     "index_embedding_model": effective_index_model,
                     "index_embedding_dimension": effective_index_dimension,
-                    "index_status": latest_index.get("status") or ("ready" if effective_index_model else None),
+                    "index_status": latest_index.get("status") or ("ready" if has_index and effective_index_model else None),
                     "index_built_at": latest_index.get("built_at"),
                     "needs_reindex": needs_reindex,
                     "embedding_compatible": embedding_compatible,
