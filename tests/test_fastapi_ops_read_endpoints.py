@@ -161,8 +161,15 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
             api_key_encrypted="not-a-real-key",
             base_url="https://api.openai.example/v1",
             notes="test provider",
+            category="llm",
         )
-        storage._conn.commit()
+        storage.upsert_llm_provider(
+            provider="serper",
+            api_key_encrypted="not-a-real-search-key",
+            base_url="https://google.serper.dev",
+            notes="test search provider",
+            category="search",
+        )
     finally:
         storage.close()
 
@@ -396,6 +403,7 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert credentials.status_code == 200, credentials.text
     credential_rows = credentials.json()["credentials"]
     assert any(row["provider_id"] == "openai" and row["source"] == "db" for row in credential_rows)
+    assert any(row["provider_id"] == "serper" and row["category"] == "search" for row in credential_rows)
 
     catalog = client.get("/api/config/model-catalog")
     assert catalog.status_code == 200, catalog.text

@@ -366,6 +366,11 @@ function AiConfigTab({ lang }: { lang: string }) {
 
   const llmProviders = providers.filter((provider) => !provider.supports?.search);
 
+  function providerAllowsEmptyApiKey(providerId: string) {
+    const provider = providers.find((item) => item.provider_id === providerId);
+    return String(provider?.api_key_hint || "").trim().toLowerCase() === "optional";
+  }
+
   function providerCredential(providerId: string, category = "llm") {
     return credentials.find((item) => item.provider_id === providerId && item.category === category);
   }
@@ -380,7 +385,7 @@ function AiConfigTab({ lang }: { lang: string }) {
   }
 
   async function saveProvider(providerId: string) {
-    if (!apiKeyInput.trim()) return;
+    if (!apiKeyInput.trim() && !providerAllowsEmptyApiKey(providerId)) return;
     setSavingProvider(providerId);
     try {
       await apiPost("/api/config/provider-credentials", {
@@ -432,7 +437,7 @@ function AiConfigTab({ lang }: { lang: string }) {
       const bindings = Object.entries(modelEdits).map(([function_name, value]) => ({ function_name, ...value }));
       const response = await apiPost<{ rebuild_required?: boolean }>("/api/config/ai-routing", { bindings });
       setToast({
-        message: response.rebuild_required ? "AI routing saved; embeddings changed and KBs may need reindex." : t("settings.models_saved"),
+        message: response.rebuild_required ? t("settings.routing_saved_reindex_required") : t("settings.models_saved"),
         type: "success",
       });
       setModelEdits({});
@@ -449,10 +454,10 @@ function AiConfigTab({ lang }: { lang: string }) {
   }
 
   const routingCards = [
-    { key: "chat", label: lang === "zh" ? "Chat" : "Chat", capability: "chat" },
-    { key: "embeddings", label: lang === "zh" ? "Embeddings" : "Embeddings", capability: "embeddings" },
-    { key: "catalog", label: lang === "zh" ? "Catalog" : "Catalog", capability: "catalog" },
-    { key: "ocr", label: lang === "zh" ? "OCR" : "OCR", capability: "ocr" },
+    { key: "chat", label: t("settings.routing_chat"), capability: "chat" },
+    { key: "embeddings", label: t("settings.routing_embeddings"), capability: "embeddings" },
+    { key: "catalog", label: t("settings.routing_catalog"), capability: "catalog" },
+    { key: "ocr", label: t("settings.routing_ocr"), capability: "ocr" },
   ] as const;
 
   return (
@@ -462,8 +467,8 @@ function AiConfigTab({ lang }: { lang: string }) {
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center gap-2">
           <Key className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">Model Providers</h3>
-          <span className="text-xs text-muted-foreground ml-auto">{llmProviders.length} providers</span>
+          <h3 className="text-sm font-semibold">{t("settings.model_providers")}</h3>
+          <span className="text-xs text-muted-foreground ml-auto">{llmProviders.length} {t("settings.providers_label")}</span>
         </div>
         <div className="divide-y divide-border">
           {llmProviders.length === 0 ? (
@@ -488,10 +493,10 @@ function AiConfigTab({ lang }: { lang: string }) {
                       ))}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground break-all">
-                      {credential?.api_base_url || provider.default_base_url || "default base URL"}
+                      {credential?.api_base_url || provider.default_base_url || t("settings.default_base_url")}
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      credential: {credential ? `${credential.source} / ${credential.category}` : "missing"}
+                      {t("settings.credential_status_label")}: {credential ? `${credential.source} / ${credential.category}` : t("settings.missing")}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -541,7 +546,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                       />
                     </div>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => saveProvider(provider.provider_id)} disabled={!apiKeyInput.trim() || savingProvider === provider.provider_id}
+                      <button onClick={() => saveProvider(provider.provider_id)} disabled={(!apiKeyInput.trim() && !providerAllowsEmptyApiKey(provider.provider_id)) || savingProvider === provider.provider_id}
                         className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                         data-testid={`button-save-provider-${provider.provider_id}`}>
                         {savingProvider === provider.provider_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
@@ -564,7 +569,7 @@ function AiConfigTab({ lang }: { lang: string }) {
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold">Model Routing</h3>
+            <h3 className="text-sm font-semibold">{t("settings.model_routing")}</h3>
           </div>
           {Object.keys(modelEdits).length > 0 && (
             <button onClick={saveRouting} disabled={savingRouting}
@@ -584,7 +589,8 @@ function AiConfigTab({ lang }: { lang: string }) {
             const filteredProviders = llmProviders
               .filter((provider) => Boolean(provider.supports?.[card.capability]))
               .filter((provider) => card.key === "ocr" || Boolean(providerCredential(provider.provider_id)));
-            const filteredModels = (available[current.provider] || []).filter((model) => (model.types || []).includes(card.capability));
+            const modelTypeCapability = card.capability === "chat" ? "chatbot" : card.capability;
+            const filteredModels = (available[current.provider] || []).filter((model) => (model.types || []).includes(modelTypeCapability));
             return (
               <div key={card.key} className="px-5 py-4" data-testid={`model-row-${card.key}`}>
                 <label className="text-xs font-semibold text-muted-foreground mb-2 block">{card.label}</label>
@@ -613,9 +619,9 @@ function AiConfigTab({ lang }: { lang: string }) {
                   </div>
                 </div>
                 <div className="mt-2 text-[11px] text-muted-foreground space-y-1">
-                  <p>credential_source: {routing[card.key]?.credential_source || "missing"}</p>
+                  <p>{t("settings.credential_source_label")}: {routing[card.key]?.credential_source || t("settings.missing")}</p>
                   {card.key === "embeddings" && routing[card.key]?.embedding_fingerprint && (
-                    <p className="font-mono break-all">fingerprint: {routing[card.key]?.embedding_fingerprint}</p>
+                    <p className="font-mono break-all">{t("settings.embedding_fingerprint_label")}: {routing[card.key]?.embedding_fingerprint}</p>
                   )}
                 </div>
               </div>

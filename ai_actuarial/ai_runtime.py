@@ -343,6 +343,8 @@ FUNCTION_BINDING_TO_SECTION = {
     "ocr": "ocr",
 }
 
+OPTIONAL_API_KEY_SENTINEL = "__HERMES_OPTIONAL_EMPTY_API_KEY__"
+
 SECTION_TO_FUNCTION_BINDING = {
     "chatbot": "chat",
     "embeddings": "embeddings",
@@ -411,42 +413,37 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
 
     if storage is not None:
         try:
-            rows = storage._conn.execute(
-                "SELECT id, provider, category, api_key_encrypted, api_base_url, status, created_at, updated_at, notes "
-                "FROM api_tokens ORDER BY provider, category"
-            ).fetchall()
+            for category in ("llm", "search"):
+                for entry in storage.list_llm_providers(category=category):
+                    provider = str(entry.get("provider") or "").strip().lower()
+                    entry_category = str(entry.get("category") or category).strip().lower() or category
+                    decrypt_ok = True
+                    try:
+                        from ai_actuarial.services.token_encryption import TokenEncryption
+
+                        TokenEncryption().decrypt(str(entry.get("api_key_encrypted") or ""))
+                    except Exception:
+                        decrypt_ok = False
+                    credentials.append(
+                        {
+                            "credential_id": f"{provider}:{entry_category}:db:{entry.get('id')}",
+                            "provider_id": provider,
+                            "label": f"{provider} ({entry_category})",
+                            "category": entry_category,
+                            "source": "db",
+                            "api_base_url": str(entry.get("api_base_url") or "").strip() or _get_effective_base_url(provider),
+                            "status": str(entry.get("status") or "active").strip() or "active",
+                            "decrypt_ok": decrypt_ok,
+                            "is_default": True,
+                            "created_at": entry.get("created_at"),
+                            "updated_at": entry.get("updated_at"),
+                            "last_error": None if decrypt_ok else "decrypt_failed",
+                            "notes": entry.get("notes"),
+                        }
+                    )
+                    seen.add(f"{provider}:{entry_category}")
         except Exception:
             logger.exception("Failed to list provider credentials from storage")
-            rows = []
-
-        for row in rows:
-            provider = str(row[1] or "").strip().lower()
-            category = str(row[2] or "llm").strip().lower() or "llm"
-            decrypt_ok = True
-            try:
-                from ai_actuarial.services.token_encryption import TokenEncryption
-
-                TokenEncryption().decrypt(str(row[3] or ""))
-            except Exception:
-                decrypt_ok = False
-            credentials.append(
-                {
-                    "credential_id": f"{provider}:{category}:db:{row[0]}",
-                    "provider_id": provider,
-                    "label": f"{provider} ({category})",
-                    "category": category,
-                    "source": "db",
-                    "api_base_url": str(row[4] or "").strip() or _get_effective_base_url(provider),
-                    "status": str(row[5] or "active").strip() or "active",
-                    "decrypt_ok": decrypt_ok,
-                    "is_default": True,
-                    "created_at": row[6],
-                    "updated_at": row[7],
-                    "last_error": None if decrypt_ok else "decrypt_failed",
-                    "notes": row[8],
-                }
-            )
-            seen.add(f"{provider}:{category}")
 
     for provider, (key_env, _base_env) in sorted(PROVIDER_STARTUP_ENV_MAP.items()):
         api_key = str(os.getenv(key_env) or "").strip()
@@ -764,6 +761,8 @@ def _resolve_provider_credentials_from_storage(
         from ai_actuarial.services.token_encryption import TokenEncryption
 
         api_key = TokenEncryption().decrypt(encrypted_key)
+        if api_key == OPTIONAL_API_KEY_SENTINEL:
+            api_key = None
     except Exception:
         logger.warning(
             "Could not decrypt stored provider key for %s; falling back to environment",

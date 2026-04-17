@@ -469,7 +469,7 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
         "/api/config/provider-credentials",
         json={
             "provider_id": "mistral",
-            "api_key": "mistral-test-key",
+            "api_key": "***",
             "api_base_url": "https://api.mistral.ai/v1",
         },
     )
@@ -501,3 +501,37 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
     assert credential_delete.status_code == 200, credential_delete.text
     remaining = client.get("/api/config/provider-credentials").json()["credentials"]
     assert not any(row["provider_id"] == "mistral" and row["source"] == "db" for row in remaining)
+
+
+def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    recorder = _BridgeRecorder()
+    _install_bridge(app, recorder)
+
+    credential_upsert = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "vllm",
+            "api_key": "",
+            "api_base_url": "http://localhost:8001/v1",
+        },
+    )
+    assert credential_upsert.status_code == 200, credential_upsert.text
+    rows = client.get("/api/config/provider-credentials").json()["credentials"]
+    assert any(row["provider_id"] == "vllm" and row["source"] == "db" for row in rows)
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chatbot", "provider": "openai", "model": "gpt-4o-mini", "temperature": 0.2},
+            ]
+        },
+    )
+    assert routing_update.status_code == 200, routing_update.text
+
+    config_data = yaml.safe_load((tmp_path / "sites.yaml").read_text(encoding="utf-8")) or {}
+    assert config_data["ai_config"]["chatbot"]["provider"] == "openai"
+    assert config_data["ai_config"]["chatbot"]["model"] == "gpt-4o-mini"
+    assert config_data["ai_config"]["chatbot"]["temperature"] == 0.2

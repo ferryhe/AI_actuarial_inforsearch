@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from datetime import datetime
@@ -12,14 +13,18 @@ import yaml
 from ai_actuarial.ai_runtime import (
     AI_SUPPORTED_PROVIDERS,
     FUNCTION_BINDING_TO_SECTION,
+    KNOWN_LLM_PROVIDERS,
+    OPTIONAL_API_KEY_SENTINEL,
     PROVIDER_ENV_VARS,
     PROVIDER_STARTUP_ENV_MAP,
+    SECTION_TO_FUNCTION_BINDING,
     binding_to_section_name,
     build_embedding_fingerprint,
     get_ai_routing,
     is_catalog_provider_supported,
     is_chat_provider_supported,
     is_embedding_provider_supported,
+    normalize_binding_function_name,
 )
 from ai_actuarial.shared_runtime import (
     append_task_log,
@@ -29,6 +34,8 @@ from ai_actuarial.shared_runtime import (
     serialize_backend_settings,
 )
 from ai_actuarial.storage import Storage
+
+logger = logging.getLogger(__name__)
 
 _VALID_SCHEDULED_TASK_TYPES = [
     "scheduled",
@@ -156,13 +163,13 @@ def _reload_runtime_caches() -> None:
 
         reload_settings()
     except Exception:
-        pass
+        logger.exception("Failed to reload config.settings cache after config update")
     try:
         from config.yaml_config import invalidate_config_cache
 
         invalidate_config_cache()
     except Exception:
-        pass
+        logger.exception("Failed to invalidate YAML config cache after config update")
 
 
 def _split_csv_or_list(value: Any) -> list[str]:
@@ -588,12 +595,13 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
         raise OpsWriteError("provider_id is required")
     if provider not in PROVIDER_STARTUP_ENV_MAP:
         raise OpsWriteError(f"Unsupported provider: {provider}")
-    if not api_key:
+    api_key_optional = str(KNOWN_LLM_PROVIDERS.get(provider, {}).get("api_key_hint") or "").strip().lower() == "optional"
+    if not api_key and not api_key_optional:
         raise OpsWriteError("api_key is required")
 
     from ai_actuarial.services.token_encryption import TokenEncryption
 
-    encrypted_key = TokenEncryption().encrypt(api_key)
+    encrypted_key = TokenEncryption().encrypt(api_key or OPTIONAL_API_KEY_SENTINEL)
     storage = Storage(db_path)
     try:
         storage.upsert_llm_provider(
@@ -608,7 +616,10 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
 
     key_env, base_env = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
     if key_env:
-        os.environ[key_env] = api_key
+        if api_key:
+            os.environ[key_env] = api_key
+        else:
+            os.environ.pop(key_env, None)
     if base_env:
         if base_url:
             os.environ[base_env] = base_url
@@ -662,11 +673,12 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
         raise OpsWriteError("No ai routing bindings provided")
 
     for item in binding_items:
-        function_name = str(item.get("function_name") or "").strip().lower()
+        function_name = normalize_binding_function_name(item.get("function_name"))
         try:
             section_name = binding_to_section_name(function_name)
         except ValueError as exc:
             raise OpsWriteError(str(exc)) from exc
+        binding_name = SECTION_TO_FUNCTION_BINDING.get(section_name, function_name)
 
         section = config_data["ai_config"].get(section_name) or {}
         if not isinstance(section, dict):
@@ -675,20 +687,20 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
         if provider is not None:
             provider_norm = str(provider).strip().lower()
             if provider_norm and provider_norm not in AI_SUPPORTED_PROVIDERS:
-                raise OpsWriteError(f"Unsupported provider '{provider_norm}' for binding '{function_name}'")
-            if function_name == "chat" and provider_norm and not is_chat_provider_supported(provider_norm):
+                raise OpsWriteError(f"Unsupported provider '{provider_norm}' for binding '{binding_name}'")
+            if binding_name == "chat" and provider_norm and not is_chat_provider_supported(provider_norm):
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support chat binding")
-            if function_name == "catalog" and provider_norm and not is_catalog_provider_supported(provider_norm):
+            if binding_name == "catalog" and provider_norm and not is_catalog_provider_supported(provider_norm):
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support catalog binding")
-            if function_name == "embeddings" and provider_norm and not is_embedding_provider_supported(provider_norm):
+            if binding_name == "embeddings" and provider_norm and not is_embedding_provider_supported(provider_norm):
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support embeddings binding")
             section["provider"] = provider_norm
         if "model" in item:
             model = str(item.get("model") or "").strip()
             if not model:
-                raise OpsWriteError(f"Model for binding '{function_name}' must be non-empty")
+                raise OpsWriteError(f"Model for binding '{binding_name}' must be non-empty")
             section["model"] = model
-        if function_name in {"chat", "catalog"}:
+        if binding_name in {"chat", "catalog"}:
             for field in ["temperature", "max_tokens", "timeout_seconds"]:
                 if field in item and item.get(field) not in (None, ""):
                     section[field] = item.get(field)
