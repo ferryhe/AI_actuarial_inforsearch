@@ -599,17 +599,26 @@ def update_categories_config(data: dict[str, Any]) -> dict[str, Any]:
             continue
         normalized_categories[name] = _normalize_list(raw_keywords, field_name=f"categories.{name}")
 
-    categories_path = Path(get_categories_config_path())
-    existing = load_yaml(categories_path, default={})
-    existing["categories"] = normalized_categories
-    existing["ai_filter_keywords"] = _normalize_list(
+    normalized_ai_filter_keywords = _normalize_list(
         payload.get("ai_filter_keywords"), field_name="ai_filter_keywords"
     )
-    existing["ai_keywords"] = _normalize_list(payload.get("ai_keywords"), field_name="ai_keywords")
+    normalized_ai_keywords = _normalize_list(payload.get("ai_keywords"), field_name="ai_keywords")
+
+    categories_path = Path(get_categories_config_path())
+    existing = load_yaml(str(categories_path), default={})
+    existing["categories"] = normalized_categories
+    existing["ai_filter_keywords"] = normalized_ai_filter_keywords
+    existing["ai_keywords"] = normalized_ai_keywords
+    categories_path.parent.mkdir(parents=True, exist_ok=True)
     with open(categories_path, "w", encoding="utf-8") as handle:
         yaml.dump(existing, handle, sort_keys=False, allow_unicode=True)
     _reload_runtime_caches()
-    return {"success": True, **existing}
+    return {
+        "categories": normalized_categories,
+        "ai_filter_keywords": normalized_ai_filter_keywords,
+        "ai_keywords": normalized_ai_keywords,
+        "success": True,
+    }
 
 
 def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None) -> dict[str, Any]:

@@ -270,9 +270,11 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
 def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    nested_categories_path = tmp_path / "nested" / "config" / "categories.yaml"
+    monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(nested_categories_path))
     app.state.legacy_set_site_config = None
     config_path = Path(os.environ["CONFIG_PATH"])
-    categories_path = Path(os.environ["CATEGORIES_CONFIG_PATH"])
+    categories_path = nested_categories_path
 
     categories_response = client.post(
         "/api/config/categories",
@@ -288,6 +290,8 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
     categories_body = categories_response.json()
     assert categories_body["success"] is True
     assert categories_body["categories"]["AI Governance"] == ["governance", "policy"]
+    assert categories_body["ai_filter_keywords"] == ["artificial intelligence", "large language model"]
+    assert categories_body["ai_keywords"] == []
 
     written_categories = yaml.safe_load(categories_path.read_text(encoding="utf-8")) or {}
     assert written_categories["categories"]["Pricing"] == ["pricing", "reserve"]
