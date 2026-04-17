@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -176,8 +177,15 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
 
     kbs = client.get("/api/chat/knowledge-bases")
     assert kbs.status_code == 200, kbs.text
-    kb_ids = {item["kb_id"] for item in kbs.json()["data"]["knowledge_bases"]}
+    kb_payload = kbs.json()["data"]
+    kb_ids = {item["kb_id"] for item in kb_payload["knowledge_bases"]}
     assert {"chat-kb-a", "chat-kb-b"}.issubset(kb_ids)
+    first_kb = next(item for item in kb_payload["knowledge_bases"] if item["kb_id"] == "chat-kb-a")
+    assert "embedding_compatible" in first_kb
+    assert "needs_reindex" in first_kb
+    assert "index_status" in first_kb
+    assert first_kb["availability"] == "building"
+    assert first_kb["usable"] is False
 
     documents = client.get("/api/chat/available-documents?keywords=solvency")
     assert documents.status_code == 200, documents.text
@@ -190,6 +198,66 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
 
     missing = client.get(f"/api/chat/conversations/{conversation_id}")
     assert missing.status_code == 404, missing.text
+
+
+
+def test_fastapi_chat_knowledge_bases_reads_current_embeddings_from_ai_config(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["ai_config"] = {
+        "embeddings": {
+            "provider": "mistral",
+            "model": "mistral-embed",
+        }
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    response = client.get("/api/chat/knowledge-bases")
+    assert response.status_code == 200, response.text
+    current = response.json()["data"]["current_embeddings"]
+    assert current["provider"] == "mistral"
+    assert current["model"] == "mistral-embed"
+
+
+def test_fastapi_chat_knowledge_bases_marks_embedding_mismatch_for_reindex(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage.create_kb_index_version(
+            kb_id="chat-kb-a",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dimension=3072,
+            index_type="Flat",
+            status="ready",
+            chunk_count=1,
+        )
+    finally:
+        storage.close()
+
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["ai_config"] = {
+        "embeddings": {
+            "provider": "mistral",
+            "model": "mistral-embed",
+        }
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    response = client.get("/api/chat/knowledge-bases")
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    kb = next(item for item in payload["knowledge_bases"] if item["kb_id"] == "chat-kb-a")
+    assert kb["embedding_compatible"] is False
+    assert kb["needs_reindex"] is True
+    assert kb["index_embedding_provider"] == "openai"
+    assert kb["index_embedding_model"] == "text-embedding-3-large"
+    assert kb["availability"] == "needs_reindex"
+    assert kb["usable"] is False
 
 
 
@@ -472,6 +540,106 @@ def test_fastapi_chat_query_maps_llm_exceptions_to_api_error(tmp_path: Path, mon
     response = client.post("/api/chat/query", json={"message": "What is Solvency II?", "kb_ids": ["chat-kb-a"], "mode": "expert"})
     assert response.status_code == 502, response.text
     assert response.json()["error"] == "LLM generation failed"
+
+
+
+def test_fastapi_chat_query_maps_embedding_mismatch_to_409_payload(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    import ai_actuarial.api.services.chat as chat_service
+
+    class FakeConversationManager:
+        def __init__(self, storage, config):
+            self.storage = storage
+            chat_service._ensure_conversation_schema(storage)
+
+        def create_conversation(self, user_id: str, kb_id: str | None = None, mode: str = "expert", metadata=None):
+            return "conv_embedding_mismatch"
+
+        def get_conversation(self, conversation_id: str):
+            return None
+
+        def add_message(self, conversation_id: str, role: str, content: str, citations=None, metadata=None):
+            return f"msg_{role}"
+
+        def get_context(self, conversation_id: str):
+            return []
+
+    class FakeMismatchError(Exception):
+        def __init__(self):
+            super().__init__("KB embedding configuration mismatch")
+            self.kb_id = "chat-kb-a"
+            self.current_provider = "mistral"
+            self.current_model = "mistral-embed"
+            self.current_dimension = None
+            self.index_provider = "openai"
+            self.index_model = "text-embedding-3-large"
+            self.index_dimension = 3072
+            self.needs_reindex = True
+
+    class FakeRetriever:
+        def __init__(self, storage, config):
+            pass
+
+        def retrieve(self, query, kb_ids):
+            raise FakeMismatchError()
+
+    class FakeLLMClient:
+        def __init__(self, config, storage=None):
+            pass
+
+        def generate_response(self, query, chunks, mode, conversation_history):
+            return "should not be called"
+
+    class FakeConfigModule:
+        class ChatbotConfig:
+            @staticmethod
+            def from_config(storage=None, default_mode="expert"):
+                return SimpleNamespace(available_modes=["expert", "summary", "tutorial", "comparison"], similarity_threshold=0.35, model="fake-chat-model", default_mode=default_mode)
+
+    class FakeConversationModule:
+        ConversationManager = FakeConversationManager
+
+    class FakeRetrievalModule:
+        RAGRetriever = FakeRetriever
+
+    class FakeLLMModule:
+        LLMClient = FakeLLMClient
+
+    class FakeRouterModule:
+        QueryRouter = lambda *args, **kwargs: None
+
+    class FakeExceptionsModule:
+        class NoResultsException(Exception):
+            pass
+
+        EmbeddingConfigurationMismatchException = FakeMismatchError
+        LLMException = RuntimeError
+        ConversationException = RuntimeError
+        RetrievalException = RuntimeError
+
+    monkeypatch.setattr(
+        chat_service,
+        "_full_chat_modules",
+        lambda: {
+            "config": FakeConfigModule,
+            "conversation": FakeConversationModule,
+            "exceptions": FakeExceptionsModule,
+            "retrieval": FakeRetrievalModule,
+            "llm": FakeLLMModule,
+            "router": FakeRouterModule,
+        },
+    )
+    monkeypatch.setattr(chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None))
+
+    response = client.post("/api/chat/query", json={"message": "What is Solvency II?", "kb_ids": ["chat-kb-a"], "mode": "expert"})
+    assert response.status_code == 409, response.text
+    payload = response.json()
+    assert payload["code"] == "KB_EMBEDDING_MISMATCH"
+    assert payload["data"]["kb_id"] == "chat-kb-a"
+    assert payload["data"]["current_embedding"]["provider"] == "mistral"
+    assert payload["data"]["index_embedding"]["provider"] == "openai"
+    assert payload["data"]["needs_reindex"] is True
 
 
 

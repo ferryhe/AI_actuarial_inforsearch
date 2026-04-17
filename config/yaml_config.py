@@ -85,7 +85,11 @@ def _get_sites_config_path() -> Path:
 
 
 @lru_cache(maxsize=8)
-def _load_yaml_config_cached(config_path_str: str, cache_version: int) -> Dict[str, Any]:
+def _load_yaml_config_cached(
+    config_path_str: str,
+    cache_version: int,
+    file_signature: tuple[int | None, int | None],
+) -> Dict[str, Any]:
     """
     Load sites.yaml configuration with caching.
     
@@ -95,6 +99,9 @@ def _load_yaml_config_cached(config_path_str: str, cache_version: int) -> Dict[s
             independently.
         cache_version: Version number for cache invalidation. Increment this value
             to force a reload from disk without clearing the entire cache.
+        file_signature: Current file metadata `(mtime_ns, size)` so in-process edits
+            to the same path invalidate the cache without requiring explicit callers
+            to know about `invalidate_config_cache()`.
         
     Returns:
         Dict containing the full configuration
@@ -123,7 +130,12 @@ def load_yaml_config() -> Dict[str, Any]:
     """
     global _cache_version
     config_path = _get_sites_config_path()
-    return _load_yaml_config_cached(str(config_path), _cache_version)
+    try:
+        stat = config_path.stat()
+        file_signature = (stat.st_mtime_ns, stat.st_size)
+    except FileNotFoundError:
+        file_signature = (None, None)
+    return _load_yaml_config_cached(str(config_path), _cache_version, file_signature)
 
 
 def invalidate_config_cache():
