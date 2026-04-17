@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from ai_actuarial import llm_models
 from ai_actuarial.ai_runtime import (
     AI_SUPPORTED_PROVIDERS,
     FUNCTION_BINDING_TO_SECTION,
@@ -28,6 +29,7 @@ from ai_actuarial.ai_runtime import (
 )
 from ai_actuarial.shared_runtime import (
     append_task_log,
+    get_categories_config_path,
     get_default_catalog_provider,
     get_sites_config_path,
     load_yaml,
@@ -582,6 +584,178 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
     return {"success": True, **serialize_backend_settings(config_data)}
+
+
+def update_categories_config(data: dict[str, Any]) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    raw_categories = payload.get("categories")
+    if not isinstance(raw_categories, dict):
+        raise OpsWriteError("categories must be an object")
+
+    normalized_categories: dict[str, list[str]] = {}
+    for raw_name, raw_keywords in raw_categories.items():
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        normalized_categories[name] = _normalize_list(raw_keywords, field_name=f"categories.{name}")
+
+    normalized_ai_filter_keywords = _normalize_list(
+        payload.get("ai_filter_keywords"), field_name="ai_filter_keywords"
+    )
+    normalized_ai_keywords = _normalize_list(payload.get("ai_keywords"), field_name="ai_keywords")
+
+    categories_path = Path(get_categories_config_path())
+    existing = load_yaml(str(categories_path), default={})
+    existing["categories"] = normalized_categories
+    existing["ai_filter_keywords"] = normalized_ai_filter_keywords
+    existing["ai_keywords"] = normalized_ai_keywords
+    categories_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(categories_path, "w", encoding="utf-8") as handle:
+        yaml.dump(existing, handle, sort_keys=False, allow_unicode=True)
+    _reload_runtime_caches()
+    return {
+        "categories": normalized_categories,
+        "ai_filter_keywords": normalized_ai_filter_keywords,
+        "ai_keywords": normalized_ai_keywords,
+        "success": True,
+    }
+
+
+def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    config_data = _load_config_data()
+    config_data.setdefault("ai_config", {})
+    previous_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
+    available_models_map = llm_models.get_available_models()
+
+    for function in ["catalog", "embeddings", "chatbot", "ocr"]:
+        func_cfg = payload.get(function)
+        if not isinstance(func_cfg, dict):
+            continue
+        config_data["ai_config"].setdefault(function, {})
+
+        if "provider" in func_cfg:
+            provider = str(func_cfg.get("provider") or "").strip().lower()
+            if provider and provider not in AI_SUPPORTED_PROVIDERS:
+                raise OpsWriteError(
+                    f"Invalid provider '{provider}' for function '{function}'. Supported providers: {sorted(AI_SUPPORTED_PROVIDERS)}"
+                )
+            config_data["ai_config"][function]["provider"] = provider
+
+        if "model" in func_cfg:
+            model = str(func_cfg.get("model") or "").strip()
+            if not model:
+                raise OpsWriteError(f"Model for function '{function}' must be a non-empty string.")
+            provider = str(config_data["ai_config"][function].get("provider") or "").strip().lower()
+            provider_models = available_models_map.get(provider, [])
+            compatible_function = "chatbot" if function == "chatbot" else function
+            compatible_models = [m for m in provider_models if compatible_function in (m.get("types") or [])]
+            valid_model_names = [str(m.get("name") or "") for m in compatible_models if str(m.get("name") or "")]
+            if valid_model_names and model not in valid_model_names:
+                raise OpsWriteError(
+                    f"Model '{model}' is not compatible with function '{function}' for provider '{provider}'. Valid models: {valid_model_names}"
+                )
+            config_data["ai_config"][function]["model"] = model
+
+        if function == "catalog" and "system_prompt" in func_cfg:
+            system_prompt = func_cfg.get("system_prompt")
+            if system_prompt in (None, ""):
+                config_data["ai_config"][function].pop("system_prompt", None)
+            else:
+                config_data["ai_config"][function]["system_prompt"] = str(system_prompt)
+
+        if function == "chatbot":
+            if "prompts" in func_cfg and isinstance(func_cfg.get("prompts"), dict):
+                prompts = config_data["ai_config"][function].setdefault("prompts", {})
+                valid_prompt_keys = {"base", "expert", "summary", "tutorial", "comparison"}
+                for key, value in func_cfg["prompts"].items():
+                    if key not in valid_prompt_keys:
+                        continue
+                    if value in (None, ""):
+                        prompts.pop(key, None)
+                    else:
+                        prompts[key] = str(value)
+                if not prompts:
+                    config_data["ai_config"][function].pop("prompts", None)
+            if "summarization_prompt" in func_cfg:
+                summarization_prompt = func_cfg.get("summarization_prompt")
+                if summarization_prompt in (None, ""):
+                    config_data["ai_config"][function].pop("summarization_prompt", None)
+                else:
+                    config_data["ai_config"][function]["summarization_prompt"] = str(summarization_prompt)
+
+    _write_config_data(config_data)
+    _notify_site_config_updated(bridge, config_data)
+    _reload_runtime_caches()
+
+    current_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
+    embeddings_changed = (
+        str(previous_embeddings.get("provider") or "").strip().lower()
+        != str(current_embeddings.get("provider") or "").strip().lower()
+        or str(previous_embeddings.get("model") or "").strip()
+        != str(current_embeddings.get("model") or "").strip()
+    )
+
+    current_chatbot = config_data["ai_config"].get("chatbot", {}) or {}
+    current_catalog = config_data["ai_config"].get("catalog", {}) or {}
+    current_ocr = config_data["ai_config"].get("ocr", {}) or {}
+    response_payload: dict[str, Any] = {
+        "success": True,
+        "current": {
+            "catalog": {
+                "provider": current_catalog.get("provider", "openai"),
+                "model": current_catalog.get("model", "gpt-4o-mini"),
+                "system_prompt": current_catalog.get("system_prompt", ""),
+            },
+            "embeddings": {
+                "provider": current_embeddings.get("provider", "openai"),
+                "model": current_embeddings.get("model", "text-embedding-3-large"),
+            },
+            "chatbot": {
+                "provider": current_chatbot.get("provider", "openai"),
+                "model": current_chatbot.get("model", "gpt-4-turbo"),
+                "prompts": {
+                    "base": (current_chatbot.get("prompts") or {}).get("base", ""),
+                    "expert": (current_chatbot.get("prompts") or {}).get("expert", ""),
+                    "summary": (current_chatbot.get("prompts") or {}).get("summary", ""),
+                    "tutorial": (current_chatbot.get("prompts") or {}).get("tutorial", ""),
+                    "comparison": (current_chatbot.get("prompts") or {}).get("comparison", ""),
+                },
+                "summarization_prompt": current_chatbot.get("summarization_prompt", ""),
+            },
+            "ocr": {
+                "provider": current_ocr.get("provider", "local"),
+                "model": current_ocr.get("model", "docling"),
+            },
+        },
+        "available": available_models_map,
+    }
+    if embeddings_changed:
+        affected_kb_ids: list[str] = []
+        storage = Storage(db_path)
+        try:
+            rows = storage._conn.execute(
+                """
+                SELECT DISTINCT kb_id
+                FROM rag_knowledge_bases
+                WHERE COALESCE(file_count, 0) > 0
+                   OR COALESCE(chunk_count, 0) > 0
+                """
+            ).fetchall()
+            affected_kb_ids = [str(row[0]) for row in rows if row and row[0]]
+        except Exception:
+            logger.warning("Failed to enumerate KBs affected by embeddings config change", exc_info=True)
+        finally:
+            storage.close()
+        response_payload.update(
+            {
+                "rebuild_required": True,
+                "affected_kb_count": len(affected_kb_ids),
+                "affected_kb_ids": affected_kb_ids,
+                "message": "Embeddings configuration changed. Rebuild all existing knowledge base indexes.",
+            }
+        )
+    return response_payload
 
 
 def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[str, Any]:

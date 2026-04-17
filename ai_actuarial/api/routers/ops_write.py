@@ -27,8 +27,10 @@ from ..services.ops_write import (
     restore_backup,
     sample_sites_yaml,
     start_collection,
+    update_ai_models_config,
     update_ai_routing,
     update_backend_settings,
+    update_categories_config,
     update_scheduled_task,
     update_site,
     upsert_provider_credential,
@@ -180,6 +182,40 @@ def api_config_backend_settings_update(
             if not provided_token or provided_token != expected_token:
                 return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_backend_settings(payload, bridge=_bridge(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/categories")
+def api_config_categories_update(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return update_categories_config(payload)
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/ai-models")
+def api_config_ai_models_update(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return update_ai_models_config(payload, db_path=_db_path(request), bridge=_bridge(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 
