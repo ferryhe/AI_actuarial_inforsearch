@@ -489,7 +489,7 @@ export default function Knowledge() {
                 className="px-4 py-2 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors"
                 data-testid="button-cancel-kb"
               >
-                {t("common.cancel") || "Cancel"}
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleCreateKB}
@@ -747,7 +747,7 @@ export default function Knowledge() {
                   className="px-4 py-2 rounded-lg border border-border bg-background text-sm font-medium hover:bg-muted transition-colors"
                   data-testid="button-cancel-profile"
                 >
-                  {t("common.cancel") || "Cancel"}
+                  {t("common.cancel")}
                 </button>
                 <button
                   onClick={handleCreateProfile}
