@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from ai_actuarial.ai_runtime import get_ai_routing, get_model_catalog, list_provider_credentials, list_provider_registry
+from ai_actuarial.storage import Storage
 from ..deps import AuthContext, require_permissions
 from ..services.ops_read import (
     get_ai_models,
@@ -105,6 +107,46 @@ def api_config_llm_providers(
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
     return get_llm_providers(db_path=_get_db_path(request))
+
+
+@router.get("/config/providers")
+def api_config_providers(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.read")),
+) -> dict[str, object]:
+    return list_provider_registry()
+
+
+@router.get("/config/provider-credentials")
+def api_config_provider_credentials(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.read")),
+) -> dict[str, object]:
+    storage = Storage(_get_db_path(request))
+    try:
+        return list_provider_credentials(storage=storage)
+    finally:
+        storage.close()
+
+
+@router.get("/config/model-catalog")
+def api_config_model_catalog(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.read")),
+) -> dict[str, object]:
+    return get_model_catalog()
+
+
+@router.get("/config/ai-routing")
+def api_config_ai_routing(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.read")),
+) -> dict[str, object]:
+    storage = Storage(_get_db_path(request))
+    try:
+        return get_ai_routing(storage=storage)
+    finally:
+        storage.close()
 
 
 @router.get("/config/ai-models")

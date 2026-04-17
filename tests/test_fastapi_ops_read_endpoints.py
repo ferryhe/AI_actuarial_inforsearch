@@ -375,3 +375,36 @@ def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(tmp_p
     log_response = client.get("/api/tasks/log/task-history-1?tail=10")
     assert log_response.status_code == 200
     assert "Completed task" in log_response.json()["log"]
+
+
+def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    _install_runtime_state(monkeypatch, app)
+
+    providers = client.get("/api/config/providers")
+    assert providers.status_code == 200, providers.text
+    provider_rows = providers.json()["providers"]
+    provider_ids = {row["provider_id"] for row in provider_rows}
+    assert any(row["provider_id"] == "openai" for row in provider_rows)
+    assert {"azure_openai", "openrouter", "vllm", "localai", "huggingface", "volcengine", "tencent_cloud", "baiduyiyan", "xunfei_spark", "google_cloud", "bedrock", "fish_audio", "mineru", "paddleocr"}.issubset(provider_ids)
+    openai_row = next(row for row in provider_rows if row["provider_id"] == "openai")
+    assert openai_row["supports"]["chat"] is True
+    assert openai_row["supports"]["embeddings"] is True
+
+    credentials = client.get("/api/config/provider-credentials")
+    assert credentials.status_code == 200, credentials.text
+    credential_rows = credentials.json()["credentials"]
+    assert any(row["provider_id"] == "openai" and row["source"] == "db" for row in credential_rows)
+
+    catalog = client.get("/api/config/model-catalog")
+    assert catalog.status_code == 200, catalog.text
+    catalog_body = catalog.json()
+    assert "openai" in catalog_body["available"]
+
+    routing = client.get("/api/config/ai-routing")
+    assert routing.status_code == 200, routing.text
+    bindings = {item["function_name"]: item for item in routing.json()["bindings"]}
+    assert bindings["chat"]["config_section"] == "chatbot"
+    assert bindings["embeddings"]["provider"] == "openai"
+    assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")

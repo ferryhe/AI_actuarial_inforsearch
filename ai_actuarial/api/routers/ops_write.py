@@ -13,6 +13,7 @@ from ..services.ops_write import (
     add_site,
     browse_folder,
     delete_backup,
+    delete_provider_credential,
     delete_scheduled_task,
     delete_site,
     export_sites_yaml,
@@ -26,9 +27,11 @@ from ..services.ops_write import (
     restore_backup,
     sample_sites_yaml,
     start_collection,
+    update_ai_routing,
     update_backend_settings,
     update_scheduled_task,
     update_site,
+    upsert_provider_credential,
 )
 
 router = APIRouter()
@@ -177,6 +180,58 @@ def api_config_backend_settings_update(
             if not provided_token or provided_token != expected_token:
                 return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_backend_settings(payload, bridge=_bridge(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/provider-credentials")
+def api_config_provider_credentials_upsert(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return upsert_provider_credential(payload, db_path=_db_path(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.delete("/config/provider-credentials/{provider_id}")
+def api_config_provider_credentials_delete(
+    provider_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        category = str(request.query_params.get("category") or "llm").strip().lower() or "llm"
+        return delete_provider_credential(provider_id, db_path=_db_path(request), category=category)
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/ai-routing")
+def api_config_ai_routing_update(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return update_ai_routing(payload, db_path=_db_path(request), bridge=_bridge(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 

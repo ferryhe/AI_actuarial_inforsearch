@@ -294,52 +294,100 @@ function OcrEnginesRow({
 
 function AiConfigTab({ lang }: { lang: string }) {
   const { t } = useTranslation();
-  const [known, setKnown] = useState<Record<string, KnownProvider>>({});
-  const [configured, setConfigured] = useState<ConfiguredProvider[]>([]);
-  const [currentModels, setCurrentModels] = useState<AiModelsCurrent | null>(null);
-  const [available, setAvailable] = useState<Record<string, AvailableModel[]>>({});
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  const [providers, setProviders] = useState<Array<{
+    provider_id: string;
+    display_name: string;
+    default_base_url?: string | null;
+    api_key_hint?: string;
+    provider_type?: string[];
+    supports: { chat?: boolean; embeddings?: boolean; catalog?: boolean; ocr?: boolean; search?: boolean };
+    status?: string;
+  }>>([]);
+  const [credentials, setCredentials] = useState<Array<{
+    credential_id: string;
+    provider_id: string;
+    label: string;
+    category: string;
+    source: string;
+    api_base_url?: string | null;
+    status?: string;
+    decrypt_ok?: boolean;
+    is_default?: boolean;
+  }>>([]);
+  const [available, setAvailable] = useState<Record<string, AvailableModel[]>>({});
+  const [routing, setRouting] = useState<Record<string, {
+    function_name: string;
+    config_section: string;
+    provider: string;
+    model: string;
+    credential_source: string;
+    configured: boolean;
+    api_base_url?: string | null;
+    embedding_dimension?: number;
+    embedding_fingerprint?: string;
+  }>>({});
 
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [baseUrlInput, setBaseUrlInput] = useState("");
   const [showKey, setShowKey] = useState(false);
+  const [savingProvider, setSavingProvider] = useState<string | null>(null);
 
   const [modelEdits, setModelEdits] = useState<Record<string, { provider: string; model: string }>>({});
-  const [savingModels, setSavingModels] = useState(false);
+  const [savingRouting, setSavingRouting] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [provRes, modelsRes] = await Promise.all([
-        apiGet<{ known: Record<string, KnownProvider>; providers: ConfiguredProvider[] }>("/api/config/llm-providers"),
-        apiGet<{ current: AiModelsCurrent; available: Record<string, AvailableModel[]> }>("/api/config/ai-models"),
+      const [providerRes, credentialRes, catalogRes, routingRes] = await Promise.all([
+        apiGet<{ providers: Array<any> }>("/api/config/providers"),
+        apiGet<{ credentials: Array<any> }>("/api/config/provider-credentials"),
+        apiGet<{ available: Record<string, AvailableModel[]> }>("/api/config/model-catalog"),
+        apiGet<{ bindings: Array<any> }>("/api/config/ai-routing"),
       ]);
-      setKnown(provRes.known || {});
-      setConfigured(provRes.providers || []);
-      setCurrentModels(modelsRes.current || null);
-      setAvailable(modelsRes.available || {});
+      setProviders(providerRes.providers || []);
+      setCredentials(credentialRes.credentials || []);
+      setAvailable(catalogRes.available || {});
+      const bindings = Object.fromEntries((routingRes.bindings || []).map((item) => [item.function_name, item]));
+      setRouting(bindings);
     } catch {
+      setToast({ message: t("settings.no_data"), type: "error" });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
-  const llmProviders = Object.entries(known).filter(([, info]) => !info.is_search_provider);
-  const configuredNames = new Set(configured.filter((p) => p.status === "active" || p.decrypt_ok).map((p) => p.provider));
+  const llmProviders = providers.filter((provider) => !provider.supports?.search);
 
-  async function saveProvider(providerName: string) {
+  function providerCredential(providerId: string, category = "llm") {
+    return credentials.find((item) => item.provider_id === providerId && item.category === category);
+  }
+
+  function startEditProvider(providerId: string) {
+    setEditingProvider(providerId);
+    setApiKeyInput("");
+    const provider = llmProviders.find((item) => item.provider_id === providerId);
+    const currentCredential = providerCredential(providerId);
+    setBaseUrlInput(String(currentCredential?.api_base_url || provider?.default_base_url || ""));
+    setShowKey(false);
+  }
+
+  async function saveProvider(providerId: string) {
     if (!apiKeyInput.trim()) return;
-    setSaving(providerName);
+    setSavingProvider(providerId);
     try {
-      await apiPost("/api/config/llm-providers", {
-        provider: providerName,
+      await apiPost("/api/config/provider-credentials", {
+        provider_id: providerId,
         api_key: apiKeyInput.trim(),
         api_base_url: baseUrlInput.trim() || undefined,
+        category: "llm",
       });
       setToast({ message: t("settings.provider_saved"), type: "success" });
       setEditingProvider(null);
@@ -349,63 +397,63 @@ function AiConfigTab({ lang }: { lang: string }) {
     } catch {
       setToast({ message: t("settings.provider_save_error"), type: "error" });
     } finally {
-      setSaving(null);
+      setSavingProvider(null);
     }
   }
 
-  async function deleteProvider(providerName: string) {
+  async function deleteProvider(providerId: string) {
     if (!window.confirm(t("settings.confirm_delete_provider"))) return;
-    setSaving(providerName);
+    setSavingProvider(providerId);
     try {
-      await apiDelete(`/api/config/llm-providers/${providerName}`);
+      await apiDelete(`/api/config/provider-credentials/${providerId}?category=llm`);
       setToast({ message: t("settings.provider_deleted"), type: "success" });
       await fetchData();
     } catch {
       setToast({ message: t("settings.provider_delete_error"), type: "error" });
     } finally {
-      setSaving(null);
+      setSavingProvider(null);
     }
   }
 
-  function startEditProvider(providerName: string) {
-    setEditingProvider(providerName);
-    setApiKeyInput("");
-    setBaseUrlInput(known[providerName]?.default_base_url || "");
-    setShowKey(false);
+  function updateModelEdit(functionName: string, field: "provider" | "model", value: string) {
+    setModelEdits((prev) => {
+      const current = prev[functionName] || {
+        provider: routing[functionName]?.provider || "",
+        model: routing[functionName]?.model || "",
+      };
+      return { ...prev, [functionName]: { ...current, [field]: value } };
+    });
   }
 
-  async function saveModelConfig() {
+  async function saveRouting() {
     if (Object.keys(modelEdits).length === 0) return;
-    setSavingModels(true);
+    setSavingRouting(true);
     try {
-      await apiPost("/api/config/ai-models", modelEdits);
-      setToast({ message: t("settings.models_saved"), type: "success" });
+      const bindings = Object.entries(modelEdits).map(([function_name, value]) => ({ function_name, ...value }));
+      const response = await apiPost<{ rebuild_required?: boolean }>("/api/config/ai-routing", { bindings });
+      setToast({
+        message: response.rebuild_required ? "AI routing saved; embeddings changed and KBs may need reindex." : t("settings.models_saved"),
+        type: "success",
+      });
       setModelEdits({});
       await fetchData();
     } catch {
       setToast({ message: t("settings.models_save_error"), type: "error" });
     } finally {
-      setSavingModels(false);
+      setSavingRouting(false);
     }
   }
 
-  function updateModelEdit(fn: AiFunction, field: "provider" | "model", value: string) {
-    setModelEdits((prev) => {
-      const current = prev[fn] || {
-        provider: currentModels?.[fn]?.provider || "",
-        model: currentModels?.[fn]?.model || "",
-      };
-      return { ...prev, [fn]: { ...current, [field]: value } };
-    });
+  if (loading) {
+    return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const routingCards = [
+    { key: "chat", label: lang === "zh" ? "Chat" : "Chat", capability: "chat" },
+    { key: "embeddings", label: lang === "zh" ? "Embeddings" : "Embeddings", capability: "embeddings" },
+    { key: "catalog", label: lang === "zh" ? "Catalog" : "Catalog", capability: "catalog" },
+    { key: "ocr", label: lang === "zh" ? "OCR" : "OCR", capability: "ocr" },
+  ] as const;
 
   return (
     <div className="space-y-8">
@@ -414,8 +462,8 @@ function AiConfigTab({ lang }: { lang: string }) {
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center gap-2">
           <Key className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">{t("settings.llm_providers")}</h3>
-          <span className="text-xs text-muted-foreground ml-auto">{configuredNames.size} {t("settings.configured").toLowerCase()}</span>
+          <h3 className="text-sm font-semibold">Model Providers</h3>
+          <span className="text-xs text-muted-foreground ml-auto">{llmProviders.length} providers</span>
         </div>
         <div className="divide-y divide-border">
           {llmProviders.length === 0 ? (
@@ -423,41 +471,41 @@ function AiConfigTab({ lang }: { lang: string }) {
               <Bot className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
               <p className="text-sm text-muted-foreground">{t("settings.no_providers")}</p>
             </div>
-          ) : llmProviders.map(([name, info]) => {
-            const isConfigured = configuredNames.has(name);
-            const isEditing = editingProvider === name;
+          ) : llmProviders.map((provider) => {
+            const credential = providerCredential(provider.provider_id);
+            const isConfigured = Boolean(credential && (credential.status === "active" || credential.decrypt_ok));
+            const isEditing = editingProvider === provider.provider_id;
             return (
-              <div key={name} className="px-5 py-4" data-testid={`provider-row-${name}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <StatusBadge configured={isConfigured} />
-                    <div>
-                      <span className="text-sm font-semibold">{info.display_name}</span>
-                      <span className="text-xs text-muted-foreground ml-2">({name})</span>
-                      {!isConfigured && (
-                        <span className="ml-2 inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400" data-testid={`badge-not-configured-${name}`}>
-                          {t("settings.not_configured")}
-                        </span>
-                      )}
+              <div key={provider.provider_id} className="px-5 py-4" data-testid={`provider-row-${provider.provider_id}`}>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <StatusBadge configured={isConfigured} />
+                      <span className="text-sm font-semibold">{provider.display_name}</span>
+                      <span className="text-xs text-muted-foreground">({provider.provider_id})</span>
+                      {(provider.provider_type || []).map((tag) => (
+                        <span key={tag} className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">{tag}</span>
+                      ))}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground break-all">
+                      {credential?.api_base_url || provider.default_base_url || "default base URL"}
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      credential: {credential ? `${credential.source} / ${credential.category}` : "missing"}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     {isConfigured && !isEditing && (
-                      <button
-                        onClick={() => deleteProvider(name)}
-                        disabled={saving === name}
+                      <button onClick={() => deleteProvider(provider.provider_id)} disabled={savingProvider === provider.provider_id}
                         className="text-xs px-2 py-1 rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
-                        data-testid={`button-delete-provider-${name}`}
-                      >
-                        {saving === name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                        data-testid={`button-delete-provider-${provider.provider_id}`}>
+                        {savingProvider === provider.provider_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                       </button>
                     )}
                     {!isEditing && (
-                      <button
-                        onClick={() => startEditProvider(name)}
+                      <button onClick={() => startEditProvider(provider.provider_id)}
                         className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
-                        data-testid={`button-edit-provider-${name}`}
-                      >
+                        data-testid={`button-edit-provider-${provider.provider_id}`}>
                         {isConfigured ? t("settings.update_key") : t("settings.add_key")}
                       </button>
                     )}
@@ -472,45 +520,35 @@ function AiConfigTab({ lang }: { lang: string }) {
                           type={showKey ? "text" : "password"}
                           value={apiKeyInput}
                           onChange={(e) => setApiKeyInput(e.target.value)}
-                          placeholder={info.api_key_hint || "sk-..."}
+                          placeholder={provider.api_key_hint || "sk-..."}
                           className="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                          data-testid={`input-api-key-${name}`}
+                          data-testid={`input-api-key-${provider.provider_id}`}
                         />
-                        <button
-                          onClick={() => setShowKey(!showKey)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
-                        >
+                        <button onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground">
                           {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     </div>
-                    {info.default_base_url && (
-                      <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>
-                        <input
-                          type="text"
-                          value={baseUrlInput}
-                          onChange={(e) => setBaseUrlInput(e.target.value)}
-                          placeholder={info.default_base_url}
-                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                          data-testid={`input-base-url-${name}`}
-                        />
-                      </div>
-                    )}
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>
+                      <input
+                        type="text"
+                        value={baseUrlInput}
+                        onChange={(e) => setBaseUrlInput(e.target.value)}
+                        placeholder={provider.default_base_url || "https://..."}
+                        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        data-testid={`input-base-url-${provider.provider_id}`}
+                      />
+                    </div>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => saveProvider(name)}
-                        disabled={!apiKeyInput.trim() || saving === name}
+                      <button onClick={() => saveProvider(provider.provider_id)} disabled={!apiKeyInput.trim() || savingProvider === provider.provider_id}
                         className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                        data-testid={`button-save-provider-${name}`}
-                      >
-                        {saving === name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        data-testid={`button-save-provider-${provider.provider_id}`}>
+                        {savingProvider === provider.provider_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                         {t("settings.save")}
                       </button>
-                      <button
-                        onClick={() => { setEditingProvider(null); setApiKeyInput(""); }}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
-                      >
+                      <button onClick={() => { setEditingProvider(null); setApiKeyInput(""); setBaseUrlInput(""); }}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
                         {t("settings.cancel")}
                       </button>
                     </div>
@@ -522,82 +560,67 @@ function AiConfigTab({ lang }: { lang: string }) {
         </div>
       </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-        className="rounded-xl border border-border bg-card overflow-hidden">
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold">{t("settings.model_selection")}</h3>
+            <h3 className="text-sm font-semibold">Model Routing</h3>
           </div>
           {Object.keys(modelEdits).length > 0 && (
-            <button
-              onClick={saveModelConfig}
-              disabled={savingModels}
+            <button onClick={saveRouting} disabled={savingRouting}
               className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              data-testid="button-save-models"
-            >
-              {savingModels ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              data-testid="button-save-models">
+              {savingRouting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
               {t("settings.save_model_config")}
             </button>
           )}
         </div>
         <div className="divide-y divide-border">
-          {AI_FUNCTIONS.filter((fn) => fn !== "ocr").map((fn) => {
-            const cur = modelEdits[fn] || currentModels?.[fn] || { provider: "", model: "" };
-            const typeKey = fn === "chatbot" ? "chat" : fn;
-            const filteredProviders = Object.keys(available).filter((p) => {
-              if (!configuredNames.has(p)) return false;
-              const models = available[p] || [];
-              return models.some((m) => (m.types || []).includes(typeKey));
-            });
-            const filteredModels = (available[cur.provider] || []).filter((m) => (m.types || []).includes(typeKey));
-            const fnLabel = lang === "zh" ? FUNCTION_LABELS[fn].zh : FUNCTION_LABELS[fn].en;
+          {routingCards.map((card) => {
+            const current = modelEdits[card.key] || {
+              provider: routing[card.key]?.provider || "",
+              model: routing[card.key]?.model || "",
+            };
+            const filteredProviders = llmProviders
+              .filter((provider) => Boolean(provider.supports?.[card.capability]))
+              .filter((provider) => card.key === "ocr" || Boolean(providerCredential(provider.provider_id)));
+            const filteredModels = (available[current.provider] || []).filter((model) => (model.types || []).includes(card.capability));
             return (
-              <div key={fn} className="px-5 py-4" data-testid={`model-row-${fn}`}>
-                <label className="text-xs font-semibold text-muted-foreground mb-2 block">{fnLabel}</label>
-                <div className="grid grid-cols-2 gap-3">
+              <div key={card.key} className="px-5 py-4" data-testid={`model-row-${card.key}`}>
+                <label className="text-xs font-semibold text-muted-foreground mb-2 block">{card.label}</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
-                    <select
-                      value={cur.provider}
-                      onChange={(e) => updateModelEdit(fn, "provider", e.target.value)}
+                    <select value={current.provider} onChange={(e) => updateModelEdit(card.key, "provider", e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                      data-testid={`select-provider-${fn}`}
-                    >
+                      data-testid={`select-provider-${card.key}`}>
                       <option value="">—</option>
-                      {filteredProviders.map((p) => (
-                        <option key={p} value={p}>{known[p]?.display_name || p}</option>
+                      {filteredProviders.map((provider) => (
+                        <option key={provider.provider_id} value={provider.provider_id}>{provider.display_name}</option>
                       ))}
                     </select>
                   </div>
                   <div>
                     <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
-                    <select
-                      value={cur.model}
-                      onChange={(e) => updateModelEdit(fn, "model", e.target.value)}
+                    <select value={current.model} onChange={(e) => updateModelEdit(card.key, "model", e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                      data-testid={`select-model-${fn}`}
-                    >
+                      data-testid={`select-model-${card.key}`}>
                       <option value="">—</option>
-                      {filteredModels.map((m) => (
-                        <option key={m.name} value={m.name}>{m.display_name || m.name}</option>
+                      {filteredModels.map((model) => (
+                        <option key={model.name} value={model.name}>{model.display_name || model.name}</option>
                       ))}
                     </select>
                   </div>
                 </div>
+                <div className="mt-2 text-[11px] text-muted-foreground space-y-1">
+                  <p>credential_source: {routing[card.key]?.credential_source || "missing"}</p>
+                  {card.key === "embeddings" && routing[card.key]?.embedding_fingerprint && (
+                    <p className="font-mono break-all">fingerprint: {routing[card.key]?.embedding_fingerprint}</p>
+                  )}
+                </div>
               </div>
             );
           })}
-          <OcrEnginesRow
-            available={available}
-            configuredNames={configuredNames}
-            known={known}
-            currentModels={currentModels}
-            modelEdits={modelEdits}
-            updateModelEdit={updateModelEdit}
-            lang={lang}
-            t={t}
-          />
         </div>
       </motion.div>
     </div>
@@ -801,22 +824,38 @@ function SearchCrawlerTab() {
   const [editDefaults, setEditDefaults] = useState<BackendDefaults>({});
   const [dirty, setDirty] = useState(false);
 
-  const [known, setKnown] = useState<Record<string, KnownProvider>>({});
+  const [searchProviders, setSearchProviders] = useState<Array<{
+    provider_id: string;
+    display_name: string;
+    api_key_hint?: string;
+    default_base_url?: string | null;
+    supports: { search?: boolean };
+  }>>([]);
+  const [searchCredentials, setSearchCredentials] = useState<Array<{
+    provider_id: string;
+    category: string;
+    source: string;
+    status?: string;
+    decrypt_ok?: boolean;
+    api_base_url?: string | null;
+  }>>([]);
   const [searchKeyEdit, setSearchKeyEdit] = useState<{ engine: string; key: string } | null>(null);
   const [searchKeySaving, setSearchKeySaving] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [settingsRes, enginesRes, provRes] = await Promise.all([
+      const [settingsRes, enginesRes, providerRes, credentialRes] = await Promise.all([
         apiGet<BackendSettings>("/api/config/backend-settings"),
         apiGet<{ engines: SearchEngine[] }>("/api/config/search-engines"),
-        apiGet<{ known: Record<string, KnownProvider> }>("/api/config/llm-providers"),
+        apiGet<{ providers: Array<any> }>("/api/config/providers"),
+        apiGet<{ credentials: Array<any> }>("/api/config/provider-credentials"),
       ]);
       setSettings(settingsRes);
       setEditDefaults(settingsRes.defaults || {});
       setSearchEngines(enginesRes.engines || []);
-      setKnown(provRes.known || {});
+      setSearchProviders((providerRes.providers || []).filter((item) => item.supports?.search));
+      setSearchCredentials((credentialRes.credentials || []).filter((item) => item.category === "search"));
     } catch {
     } finally {
       setLoading(false);
@@ -851,14 +890,25 @@ function SearchCrawlerTab() {
     tavily: "tavily",
   };
 
+  function searchProviderByEngine(engineId: string) {
+    const providerId = SEARCH_PROVIDER_MAP[engineId] || engineId;
+    return searchProviders.find((item) => item.provider_id === providerId);
+  }
+
+  function searchCredentialByEngine(engineId: string) {
+    const providerId = SEARCH_PROVIDER_MAP[engineId] || engineId;
+    return searchCredentials.find((item) => item.provider_id === providerId);
+  }
+
   async function saveSearchKey() {
     if (!searchKeyEdit?.key.trim() || !searchKeyEdit.engine) return;
     setSearchKeySaving(true);
     try {
       const providerName = SEARCH_PROVIDER_MAP[searchKeyEdit.engine] || searchKeyEdit.engine;
-      await apiPost("/api/config/llm-providers", {
-        provider: providerName,
+      await apiPost("/api/config/provider-credentials", {
+        provider_id: providerName,
         api_key: searchKeyEdit.key.trim(),
+        category: "search",
       });
       setToast({ message: t("settings.provider_saved"), type: "success" });
       setSearchKeyEdit(null);
@@ -896,7 +946,13 @@ function SearchCrawlerTab() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <StatusBadge configured={engine.configured} />
-                  <span className="text-sm font-semibold">{engine.name}</span>
+                  <div>
+                    <span className="text-sm font-semibold">{engine.name}</span>
+                    <div className="text-[11px] text-muted-foreground">
+                      provider: {searchProviderByEngine(engine.id)?.display_name || SEARCH_PROVIDER_MAP[engine.id] || engine.id}
+                      {searchCredentialByEngine(engine.id) ? ` · credential: ${searchCredentialByEngine(engine.id)?.source} / search` : " · credential: missing"}
+                    </div>
+                  </div>
                   {!engine.configured && (
                     <span className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400" data-testid={`badge-not-configured-search-${engine.id}`}>
                       {t("settings.not_configured")}
@@ -919,7 +975,7 @@ function SearchCrawlerTab() {
                     type="password"
                     value={searchKeyEdit.key}
                     onChange={(e) => setSearchKeyEdit({ ...searchKeyEdit, key: e.target.value })}
-                    placeholder={known[SEARCH_PROVIDER_MAP[engine.id]]?.api_key_hint || "API Key"}
+                    placeholder={searchProviderByEngine(engine.id)?.api_key_hint || "API Key"}
                     className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                     data-testid={`input-search-key-${engine.id}`}
                   />

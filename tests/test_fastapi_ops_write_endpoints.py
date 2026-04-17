@@ -457,3 +457,47 @@ def test_ops_write_routes_require_operator_when_auth_enabled(tmp_path: Path, mon
         json={"name": "Allowed Site", "url": "https://allowed.example"},
     )
     assert operator.status_code == 200, operator.text
+
+
+def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    recorder = _BridgeRecorder()
+    _install_bridge(app, recorder)
+
+    credential_upsert = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "mistral",
+            "api_key": "mistral-test-key",
+            "api_base_url": "https://api.mistral.ai/v1",
+        },
+    )
+    assert credential_upsert.status_code == 200, credential_upsert.text
+    credentials = client.get("/api/config/provider-credentials")
+    rows = credentials.json()["credentials"]
+    assert any(row["provider_id"] == "mistral" and row["source"] == "db" for row in rows)
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chat", "provider": "openai", "model": "gpt-4o-mini"},
+                {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"},
+                {"function_name": "catalog", "provider": "openai", "model": "gpt-4o-mini"},
+            ]
+        },
+    )
+    assert routing_update.status_code == 200, routing_update.text
+    routing_body = routing_update.json()
+    assert routing_body["success"] is True
+    assert routing_body["rebuild_required"] is True
+    bindings = {item["function_name"]: item for item in routing_body["bindings"]}
+    assert bindings["chat"]["model"] == "gpt-4o-mini"
+    assert bindings["embeddings"]["model"] == "text-embedding-3-small"
+    assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-small:")
+
+    credential_delete = client.delete("/api/config/provider-credentials/mistral")
+    assert credential_delete.status_code == 200, credential_delete.text
+    remaining = client.get("/api/config/provider-credentials").json()["credentials"]
+    assert not any(row["provider_id"] == "mistral" and row["source"] == "db" for row in remaining)

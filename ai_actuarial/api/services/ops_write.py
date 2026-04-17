@@ -9,6 +9,18 @@ from typing import Any
 
 import yaml
 
+from ai_actuarial.ai_runtime import (
+    AI_SUPPORTED_PROVIDERS,
+    FUNCTION_BINDING_TO_SECTION,
+    PROVIDER_ENV_VARS,
+    PROVIDER_STARTUP_ENV_MAP,
+    binding_to_section_name,
+    build_embedding_fingerprint,
+    get_ai_routing,
+    is_catalog_provider_supported,
+    is_chat_provider_supported,
+    is_embedding_provider_supported,
+)
 from ai_actuarial.shared_runtime import (
     append_task_log,
     get_default_catalog_provider,
@@ -136,6 +148,21 @@ def _notify_site_config_updated(bridge: BridgeState | None, config_data: dict[st
     setter = bridge.set_site_config
     if callable(setter):
         setter(config_data)
+
+
+def _reload_runtime_caches() -> None:
+    try:
+        from config.settings import reload_settings
+
+        reload_settings()
+    except Exception:
+        pass
+    try:
+        from config.yaml_config import invalidate_config_cache
+
+        invalidate_config_cache()
+    except Exception:
+        pass
 
 
 def _split_csv_or_list(value: Any) -> list[str]:
@@ -548,6 +575,149 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
     return {"success": True, **serialize_backend_settings(config_data)}
+
+
+def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    provider = str(payload.get("provider_id") or payload.get("provider") or "").strip().lower()
+    api_key = str(payload.get("api_key") or "").strip()
+    base_url = str(payload.get("api_base_url") or payload.get("base_url") or "").strip() or None
+    notes = str(payload.get("notes") or "").strip() or None
+    category = str(payload.get("category") or "llm").strip().lower() or "llm"
+    if not provider:
+        raise OpsWriteError("provider_id is required")
+    if provider not in PROVIDER_STARTUP_ENV_MAP:
+        raise OpsWriteError(f"Unsupported provider: {provider}")
+    if not api_key:
+        raise OpsWriteError("api_key is required")
+
+    from ai_actuarial.services.token_encryption import TokenEncryption
+
+    encrypted_key = TokenEncryption().encrypt(api_key)
+    storage = Storage(db_path)
+    try:
+        storage.upsert_llm_provider(
+            provider=provider,
+            api_key_encrypted=encrypted_key,
+            base_url=base_url,
+            notes=notes,
+            category=category,
+        )
+    finally:
+        storage.close()
+
+    key_env, base_env = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+    if key_env:
+        os.environ[key_env] = api_key
+    if base_env:
+        if base_url:
+            os.environ[base_env] = base_url
+        else:
+            os.environ.pop(base_env, None)
+    _reload_runtime_caches()
+    return {"success": True}
+
+
+def delete_provider_credential(provider_id: str, *, db_path: str, category: str = "llm") -> dict[str, Any]:
+    provider = str(provider_id or "").strip().lower()
+    if not provider:
+        raise OpsWriteError("provider_id is required")
+    storage = Storage(db_path)
+    try:
+        deleted = storage.delete_llm_provider(provider, category=category)
+    finally:
+        storage.close()
+    if not deleted:
+        raise OpsWriteError("Provider credential not found", status_code=404)
+
+    key_env, base_env = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+    if key_env:
+        os.environ.pop(key_env, None)
+    if base_env:
+        os.environ.pop(base_env, None)
+    _reload_runtime_caches()
+    return {"success": True}
+
+
+def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    config_data = _load_config_data()
+    config_data.setdefault("ai_config", {})
+    previous_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
+
+    bindings = payload.get("bindings")
+    if isinstance(bindings, list):
+        binding_items = []
+        for item in bindings:
+            if isinstance(item, dict):
+                binding_items.append(item)
+    else:
+        binding_items = [
+            {"function_name": key, **value}
+            for key, value in payload.items()
+            if key in FUNCTION_BINDING_TO_SECTION and isinstance(value, dict)
+        ]
+
+    if not binding_items:
+        raise OpsWriteError("No ai routing bindings provided")
+
+    for item in binding_items:
+        function_name = str(item.get("function_name") or "").strip().lower()
+        try:
+            section_name = binding_to_section_name(function_name)
+        except ValueError as exc:
+            raise OpsWriteError(str(exc)) from exc
+
+        section = config_data["ai_config"].get(section_name) or {}
+        if not isinstance(section, dict):
+            section = {}
+        provider = item.get("provider")
+        if provider is not None:
+            provider_norm = str(provider).strip().lower()
+            if provider_norm and provider_norm not in AI_SUPPORTED_PROVIDERS:
+                raise OpsWriteError(f"Unsupported provider '{provider_norm}' for binding '{function_name}'")
+            if function_name == "chat" and provider_norm and not is_chat_provider_supported(provider_norm):
+                raise OpsWriteError(f"Provider '{provider_norm}' does not support chat binding")
+            if function_name == "catalog" and provider_norm and not is_catalog_provider_supported(provider_norm):
+                raise OpsWriteError(f"Provider '{provider_norm}' does not support catalog binding")
+            if function_name == "embeddings" and provider_norm and not is_embedding_provider_supported(provider_norm):
+                raise OpsWriteError(f"Provider '{provider_norm}' does not support embeddings binding")
+            section["provider"] = provider_norm
+        if "model" in item:
+            model = str(item.get("model") or "").strip()
+            if not model:
+                raise OpsWriteError(f"Model for binding '{function_name}' must be non-empty")
+            section["model"] = model
+        if function_name in {"chat", "catalog"}:
+            for field in ["temperature", "max_tokens", "timeout_seconds"]:
+                if field in item and item.get(field) not in (None, ""):
+                    section[field] = item.get(field)
+        config_data["ai_config"][section_name] = section
+
+    _write_config_data(config_data)
+    _notify_site_config_updated(bridge, config_data)
+    _reload_runtime_caches()
+
+    current_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
+    embeddings_changed = (
+        str(previous_embeddings.get("provider") or "").strip().lower()
+        != str(current_embeddings.get("provider") or "").strip().lower()
+        or str(previous_embeddings.get("model") or "").strip()
+        != str(current_embeddings.get("model") or "").strip()
+    )
+
+    response_storage = Storage(db_path)
+    try:
+        response_payload: dict[str, Any] = {"success": True, **get_ai_routing(storage=response_storage)}
+    finally:
+        response_storage.close()
+    if embeddings_changed:
+        response_payload["rebuild_required"] = True
+        response_payload["embedding_fingerprint"] = build_embedding_fingerprint(
+            current_embeddings.get("provider"),
+            current_embeddings.get("model"),
+        )
+    return response_payload
 
 
 def add_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:

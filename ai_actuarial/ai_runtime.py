@@ -7,14 +7,23 @@ import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+import ai_actuarial.llm_models as llm_models
+from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
+
 logger = logging.getLogger(__name__)
 
 AI_SUPPORTED_PROVIDERS = {
     "openai",
+    "azure_openai",
+    "openrouter",
+    "vllm",
+    "localai",
+    "huggingface",
     "mistral",
     "siliconflow",
     "anthropic",
     "google",
+    "google_cloud",
     "deepseek",
     "zhipuai",
     "moonshot",
@@ -22,6 +31,14 @@ AI_SUPPORTED_PROVIDERS = {
     "cohere",
     "kimi",
     "minimax",
+    "volcengine",
+    "tencent_cloud",
+    "baiduyiyan",
+    "xunfei_spark",
+    "bedrock",
+    "fish_audio",
+    "mineru",
+    "paddleocr",
     "local",
 }
 
@@ -30,6 +47,31 @@ KNOWN_LLM_PROVIDERS = {
         "display_name": "OpenAI",
         "default_base_url": "https://api.openai.com/v1",
         "api_key_hint": "sk-...",
+    },
+    "azure_openai": {
+        "display_name": "Azure OpenAI",
+        "default_base_url": "",
+        "api_key_hint": "...",
+    },
+    "openrouter": {
+        "display_name": "OpenRouter",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        "api_key_hint": "sk-or-...",
+    },
+    "vllm": {
+        "display_name": "vLLM",
+        "default_base_url": "http://localhost:8001/v1",
+        "api_key_hint": "optional",
+    },
+    "localai": {
+        "display_name": "LocalAI",
+        "default_base_url": "http://localhost:8080/v1",
+        "api_key_hint": "optional",
+    },
+    "huggingface": {
+        "display_name": "HuggingFace",
+        "default_base_url": "https://api-inference.huggingface.co/v1",
+        "api_key_hint": "hf_...",
     },
     "mistral": {
         "display_name": "Mistral AI",
@@ -45,6 +87,11 @@ KNOWN_LLM_PROVIDERS = {
         "display_name": "Google Gemini",
         "default_base_url": "https://generativelanguage.googleapis.com",
         "api_key_hint": "AIza...",
+    },
+    "google_cloud": {
+        "display_name": "Google Cloud",
+        "default_base_url": "https://aiplatform.googleapis.com/v1",
+        "api_key_hint": "...",
     },
     "deepseek": {
         "display_name": "DeepSeek",
@@ -86,6 +133,46 @@ KNOWN_LLM_PROVIDERS = {
         "default_base_url": "https://api.minimax.chat/v1",
         "api_key_hint": "...",
     },
+    "volcengine": {
+        "display_name": "VolcEngine",
+        "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "api_key_hint": "...",
+    },
+    "tencent_cloud": {
+        "display_name": "Tencent Cloud",
+        "default_base_url": "https://api.hunyuan.cloud.tencent.com/v1",
+        "api_key_hint": "...",
+    },
+    "baiduyiyan": {
+        "display_name": "BaiduYiyan",
+        "default_base_url": "https://qianfan.baidubce.com/v2",
+        "api_key_hint": "...",
+    },
+    "xunfei_spark": {
+        "display_name": "XunFei Spark",
+        "default_base_url": "https://spark-api-open.xf-yun.com/v1",
+        "api_key_hint": "...",
+    },
+    "bedrock": {
+        "display_name": "AWS Bedrock",
+        "default_base_url": "",
+        "api_key_hint": "AKIA...",
+    },
+    "fish_audio": {
+        "display_name": "Fish Audio",
+        "default_base_url": "https://api.fish.audio/v1",
+        "api_key_hint": "...",
+    },
+    "mineru": {
+        "display_name": "MinerU",
+        "default_base_url": "",
+        "api_key_hint": "optional",
+    },
+    "paddleocr": {
+        "display_name": "PaddleOCR",
+        "default_base_url": "",
+        "api_key_hint": "optional",
+    },
     "brave_search": {
         "display_name": "Brave Search",
         "default_base_url": "",
@@ -114,9 +201,15 @@ KNOWN_LLM_PROVIDERS = {
 
 PROVIDER_STARTUP_ENV_MAP = {
     "openai": ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
+    "azure_openai": ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_BASE_URL"),
+    "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"),
+    "vllm": ("VLLM_API_KEY", "VLLM_BASE_URL"),
+    "localai": ("LOCALAI_API_KEY", "LOCALAI_BASE_URL"),
+    "huggingface": ("HUGGINGFACE_API_KEY", "HUGGINGFACE_BASE_URL"),
     "mistral": ("MISTRAL_API_KEY", "MISTRAL_BASE_URL"),
     "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
     "google": ("GOOGLE_API_KEY", "GOOGLE_BASE_URL"),
+    "google_cloud": ("GOOGLE_CLOUD_API_KEY", "GOOGLE_CLOUD_BASE_URL"),
     "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"),
     "zhipuai": ("ZHIPUAI_API_KEY", "ZHIPUAI_BASE_URL"),
     "moonshot": ("MOONSHOT_API_KEY", "MOONSHOT_BASE_URL"),
@@ -125,6 +218,14 @@ PROVIDER_STARTUP_ENV_MAP = {
     "cohere": ("COHERE_API_KEY", "COHERE_BASE_URL"),
     "kimi": ("KIMI_API_KEY", "KIMI_BASE_URL"),
     "minimax": ("MINIMAX_API_KEY", "MINIMAX_BASE_URL"),
+    "volcengine": ("VOLCENGINE_API_KEY", "VOLCENGINE_BASE_URL"),
+    "tencent_cloud": ("TENCENT_CLOUD_API_KEY", "TENCENT_CLOUD_BASE_URL"),
+    "baiduyiyan": ("BAIDUYIYAN_API_KEY", "BAIDUYIYAN_BASE_URL"),
+    "xunfei_spark": ("XUNFEI_SPARK_API_KEY", "XUNFEI_SPARK_BASE_URL"),
+    "bedrock": ("BEDROCK_API_KEY", "BEDROCK_BASE_URL"),
+    "fish_audio": ("FISH_AUDIO_API_KEY", "FISH_AUDIO_BASE_URL"),
+    "mineru": ("MINERU_API_KEY", "MINERU_BASE_URL"),
+    "paddleocr": ("PADDLEOCR_API_KEY", "PADDLEOCR_BASE_URL"),
     "brave_search": ("BRAVE_API_KEY", None),
     "serpapi": ("SERPAPI_API_KEY", None),
     "serper": ("SERPER_API_KEY", None),
@@ -143,6 +244,11 @@ PROVIDER_BASE_URL_ENV_VARS = {
 
 CHAT_OPENAI_COMPATIBLE_PROVIDERS = {
     "openai",
+    "azure_openai",
+    "openrouter",
+    "vllm",
+    "localai",
+    "huggingface",
     "mistral",
     "deepseek",
     "moonshot",
@@ -151,14 +257,31 @@ CHAT_OPENAI_COMPATIBLE_PROVIDERS = {
     "zhipuai",
     "siliconflow",
     "minimax",
+    "volcengine",
+    "tencent_cloud",
+    "baiduyiyan",
+    "xunfei_spark",
+    "google_cloud",
+    "bedrock",
 }
 
 EMBEDDING_OPENAI_COMPATIBLE_PROVIDERS = {
     "openai",
+    "azure_openai",
+    "openrouter",
+    "vllm",
+    "localai",
+    "huggingface",
     "siliconflow",
     "qwen",
     "zhipuai",
     "minimax",
+    "volcengine",
+    "tencent_cloud",
+    "baiduyiyan",
+    "xunfei_spark",
+    "google_cloud",
+    "bedrock",
 }
 
 DEFAULT_AI_FUNCTION_CONFIG = {
@@ -208,6 +331,23 @@ OCR_PROVIDER_ENGINE_MAP = {
     "local": "docling",
     "mistral": "mistral",
     "siliconflow": "deepseekocr",
+    "mineru": "mineru",
+    "paddleocr": "paddleocr",
+}
+
+FUNCTION_BINDING_TO_SECTION = {
+    "chat": "chatbot",
+    "chatbot": "chatbot",
+    "embeddings": "embeddings",
+    "catalog": "catalog",
+    "ocr": "ocr",
+}
+
+SECTION_TO_FUNCTION_BINDING = {
+    "chatbot": "chat",
+    "embeddings": "embeddings",
+    "catalog": "catalog",
+    "ocr": "ocr",
 }
 
 
@@ -240,6 +380,130 @@ class OCRRuntime:
     base_url: str | None
     credential_source: str
     raw_config: dict[str, Any]
+
+
+def list_provider_registry() -> dict[str, list[dict[str, Any]]]:
+    providers: list[dict[str, Any]] = []
+    for provider_id, info in sorted(KNOWN_LLM_PROVIDERS.items()):
+        providers.append(
+            {
+                "provider_id": provider_id,
+                "display_name": info.get("display_name", provider_id),
+                "default_base_url": info.get("default_base_url") or None,
+                "api_key_hint": info.get("api_key_hint") or "",
+                "provider_type": _provider_type_labels(provider_id, info),
+                "supports": {
+                    "chat": is_chat_provider_supported(provider_id),
+                    "embeddings": is_embedding_provider_supported(provider_id),
+                    "catalog": is_catalog_provider_supported(provider_id),
+                    "ocr": provider_id in OCR_PROVIDER_ENGINE_MAP or provider_id == "local",
+                    "search": bool(info.get("is_search_provider")),
+                },
+                "status": "active",
+            }
+        )
+    return {"providers": providers}
+
+
+def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[dict[str, Any]]]:
+    credentials: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    if storage is not None:
+        try:
+            rows = storage._conn.execute(
+                "SELECT id, provider, category, api_key_encrypted, api_base_url, status, created_at, updated_at, notes "
+                "FROM api_tokens ORDER BY provider, category"
+            ).fetchall()
+        except Exception:
+            logger.exception("Failed to list provider credentials from storage")
+            rows = []
+
+        for row in rows:
+            provider = str(row[1] or "").strip().lower()
+            category = str(row[2] or "llm").strip().lower() or "llm"
+            decrypt_ok = True
+            try:
+                from ai_actuarial.services.token_encryption import TokenEncryption
+
+                TokenEncryption().decrypt(str(row[3] or ""))
+            except Exception:
+                decrypt_ok = False
+            credentials.append(
+                {
+                    "credential_id": f"{provider}:{category}:db:{row[0]}",
+                    "provider_id": provider,
+                    "label": f"{provider} ({category})",
+                    "category": category,
+                    "source": "db",
+                    "api_base_url": str(row[4] or "").strip() or _get_effective_base_url(provider),
+                    "status": str(row[5] or "active").strip() or "active",
+                    "decrypt_ok": decrypt_ok,
+                    "is_default": True,
+                    "created_at": row[6],
+                    "updated_at": row[7],
+                    "last_error": None if decrypt_ok else "decrypt_failed",
+                    "notes": row[8],
+                }
+            )
+            seen.add(f"{provider}:{category}")
+
+    for provider, (key_env, _base_env) in sorted(PROVIDER_STARTUP_ENV_MAP.items()):
+        api_key = str(os.getenv(key_env) or "").strip()
+        if not api_key:
+            continue
+        category = "search" if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider")) else "llm"
+        if f"{provider}:{category}" in seen:
+            continue
+        credentials.append(
+            {
+                "credential_id": f"{provider}:{category}:env",
+                "provider_id": provider,
+                "label": f"{provider} ({category})",
+                "category": category,
+                "source": "env",
+                "api_base_url": _get_effective_base_url(provider),
+                "status": "active",
+                "decrypt_ok": True,
+                "is_default": True,
+                "created_at": None,
+                "updated_at": None,
+                "last_error": None,
+                "notes": None,
+            }
+        )
+
+    return {"credentials": credentials}
+
+
+def get_model_catalog() -> dict[str, Any]:
+    return {
+        "available": llm_models.get_available_models(),
+        "providers": list_provider_registry()["providers"],
+    }
+
+
+def get_ai_routing(*, storage: Any | None = None, yaml_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    bindings: list[dict[str, Any]] = []
+    for function_name in ["chat", "embeddings", "catalog", "ocr"]:
+        section_name = FUNCTION_BINDING_TO_SECTION[function_name]
+        runtime = resolve_ai_function_runtime(section_name, storage=storage, yaml_config=yaml_config)
+        binding: dict[str, Any] = {
+            "function_name": function_name,
+            "config_section": section_name,
+            "provider": runtime.provider,
+            "model": runtime.model,
+            "credential_source": runtime.credential_source,
+            "binding_source": "sites.yaml:ai_config",
+            "configured": bool(runtime.api_key) or runtime.provider == "local",
+            "api_base_url": runtime.base_url,
+            "raw_config": runtime.raw_config,
+        }
+        if function_name == "embeddings":
+            binding["embedding_dimension"] = infer_embedding_dimension(runtime.model)
+            binding["embedding_fingerprint"] = build_embedding_fingerprint(runtime.provider, runtime.model)
+        bindings.append(binding)
+    return {"bindings": bindings}
 
 
 def get_provider_api_key_env_var(provider: str | None) -> str | None:
@@ -567,6 +831,32 @@ def _normalize_provider(provider: str | None, *, default: str = "openai") -> str
     return normalized or default
 
 
+def _provider_type_labels(provider_id: str, info: Mapping[str, Any]) -> list[str]:
+    labels: list[str] = []
+    if is_chat_provider_supported(provider_id):
+        labels.append("chat")
+    if is_embedding_provider_supported(provider_id):
+        labels.append("embedding")
+    if is_catalog_provider_supported(provider_id):
+        labels.append("catalog")
+    if provider_id in OCR_PROVIDER_ENGINE_MAP or provider_id == "local":
+        labels.append("ocr")
+    if bool(info.get("is_search_provider")):
+        labels.append("search")
+    return labels
+
+
+def normalize_binding_function_name(function_name: str | None) -> str:
+    normalized = str(function_name or "").strip().lower()
+    if normalized not in FUNCTION_BINDING_TO_SECTION:
+        raise ValueError(f"Unsupported function binding: {function_name}")
+    return normalized
+
+
+def binding_to_section_name(function_name: str | None) -> str:
+    return FUNCTION_BINDING_TO_SECTION[normalize_binding_function_name(function_name)]
+
+
 def infer_embedding_dimension(model: str | None) -> int | None:
     """Infer embedding dimension for a known model identifier."""
     normalized = str(model or "").strip()
@@ -601,3 +891,10 @@ def infer_embedding_provider(
         return "local"
     normalized_fallback = str(fallback or "").strip().lower()
     return normalized_fallback or None
+
+
+def build_embedding_fingerprint(provider: str | None, model: str | None, dimension: int | None = None) -> str:
+    provider_norm = _normalize_provider(provider)
+    model_norm = str(model or "").strip()
+    effective_dimension = dimension if dimension is not None else infer_embedding_dimension(model_norm)
+    return f"{provider_norm}:{model_norm}:{effective_dimension or 'unknown'}"
