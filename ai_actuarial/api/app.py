@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,18 +19,11 @@ from .routers.migration import router as migration_router
 from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
 from .routers.read import router as read_router
+from ai_actuarial.config import settings
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_cors_origins() -> list[str]:
-    raw = os.getenv(
-        "FASTAPI_CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000",
-    )
-    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 def _native_paths(app: FastAPI) -> list[str]:
@@ -40,13 +32,11 @@ def _native_paths(app: FastAPI) -> list[str]:
 
 def _resolve_db_path() -> str:
     config_data = load_yaml(get_sites_config_path(), default={})
-    db_path = (config_data.get("paths") or {}).get("db", "data/index.db")
-    db_path = str(db_path or "data/index.db")
-    return os.path.abspath(db_path) if not os.path.isabs(db_path) else db_path
+    return settings.resolve_db_path(config_data)
 
 
 def _legacy_api_fallback_allowed() -> bool:
-    return os.getenv("FASTAPI_ALLOW_LEGACY_API_FALLBACK", "").strip().lower() in {"1", "true", "yes", "on"}
+    return settings.FASTAPI_ALLOW_LEGACY_API_FALLBACK
 
 
 def create_app() -> FastAPI:
@@ -58,7 +48,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=_parse_cors_origins(),
+        allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -67,7 +57,7 @@ def create_app() -> FastAPI:
     # Rate limiting middleware (applied after CORS)
     app.add_middleware(
         RateLimitMiddleware,
-        enabled=os.getenv("RATE_LIMIT_ENABLED", "true").lower() not in {"false", "0", "no"},
+        enabled=settings.RATE_LIMIT_ENABLED,
     )
 
     app.include_router(meta_router, prefix="/api", tags=["meta"])
@@ -80,7 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(rag_admin_router, prefix="/api", tags=["rag-admin"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])
 
-    app.state.fastapi_session_secret = os.getenv("FLASK_SECRET_KEY", "")
+    app.state.fastapi_session_secret = settings.FLASK_SECRET_KEY
     app.state.fastapi_session_cookie_name = "session"
     app.state.fastapi_session_cookie_path = "/"
     app.state.fastapi_session_cookie_domain = None
@@ -88,7 +78,7 @@ def create_app() -> FastAPI:
     app.state.fastapi_session_cookie_httponly = True
     app.state.fastapi_session_cookie_samesite = "Lax"
     app.state.db_path = _resolve_db_path()
-    app.state.require_auth = os.getenv("REQUIRE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+    app.state.require_auth = settings.REQUIRE_AUTH
     native_runtime = NativeTaskRuntime()
     native_refs = native_runtime.refs()
     app.state.native_task_runtime = native_runtime

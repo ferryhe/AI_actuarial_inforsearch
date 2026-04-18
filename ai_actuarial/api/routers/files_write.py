@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from ai_actuarial.config import settings
 from ..deps import AuthContext, require_permissions
 from ..services.files_write import (
     FileWriteError,
@@ -58,7 +58,7 @@ def _json_error(exc: FileWriteError) -> JSONResponse:
 
 
 def _require_config_write_token(request: Request) -> JSONResponse | None:
-    expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+    expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
     if not expected_token:
         return None
     provided_token = request.headers.get("X-Auth-Token")
