@@ -490,6 +490,19 @@ def list_backups() -> dict[str, list[dict[str, Any]]]:
     return {"backups": backups}
 
 
+def create_backup(label: str = "manual") -> dict[str, Any]:
+    backup_name = _backup_config(label)
+    backups_dir = _ensure_backup_dir()
+    backup_path = backups_dir / backup_name
+    stat = backup_path.stat()
+    return {
+        "filename": backup_name,
+        "timestamp": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        "size_bytes": stat.st_size,
+        "size": stat.st_size,
+    }
+
+
 def restore_backup(filename: str, *, bridge: BridgeState | None = None) -> dict[str, Any]:
     backup_path = _validate_backup_filename(filename)
     if not backup_path.exists():

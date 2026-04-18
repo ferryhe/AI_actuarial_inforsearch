@@ -221,3 +221,44 @@ def api_config_categories(
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
     return get_config_categories()
+
+
+@router.get("/search")
+def api_search(
+    request: Request,
+    q: str = "",
+    kb_id: str | None = None,
+    limit: int = 20,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+) -> dict[str, object]:
+    if not q:
+        return {"results": [], "count": 0}
+    storage = Storage(_get_db_path(request))
+    try:
+        query_lower = q.lower()
+        cursor = storage._conn.execute(
+            """
+            SELECT kb_id, name, description, created_at FROM rag_knowledge_bases
+            WHERE kb_mode = 'category' OR kb_mode = 'hybrid'
+            """
+        )
+        results = []
+        for row in cursor.fetchall():
+            kb_id_row, name, description, created_at = row
+            score = 0
+            if name and query_lower in name.lower():
+                score += 10
+            if description and query_lower in description.lower():
+                score += 5
+            if score > 0:
+                results.append({
+                    "kb_id": kb_id_row,
+                    "name": name,
+                    "description": description,
+                    "created_at": created_at,
+                    "score": score,
+                })
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return {"results": results[:limit], "count": len(results)}
+    finally:
+        storage.close()
