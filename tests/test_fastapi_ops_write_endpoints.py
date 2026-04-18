@@ -7,7 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
+from cryptography.fernet import Fernet
 
+from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
 from test_fastapi_ops_read_endpoints import (
     _build_test_client,
@@ -619,6 +621,88 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
     catalog_binding = next(item for item in second_update.json()["bindings"] if item["function_name"] == "catalog")
     assert catalog_binding["provider"] == "openai"
     assert catalog_binding.get("credential_id") in (None, "openai:llm:env") or str(catalog_binding.get("credential_id", "")).startswith("openai:")
+
+
+def test_provider_credentials_import_env_bootstraps_default_instance(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    TokenEncryption._instance = None
+    monkeypatch.setenv("MISTRAL_API_KEY", "env-mistral-key")
+    monkeypatch.setenv("MISTRAL_BASE_URL", "https://env.mistral.example/v1")
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    recorder = _BridgeRecorder()
+    _install_bridge(app, recorder)
+
+    response = client.post(
+        "/api/config/provider-credentials/import-env",
+        json={"providers": ["mistral"]},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is True
+    assert body["imported_count"] == 1
+    assert body["skipped_count"] == 0
+    assert body["imported"][0]["provider_id"] == "mistral"
+
+    rows = client.get("/api/config/provider-credentials").json()["credentials"]
+    imported = next(row for row in rows if row["provider_id"] == "mistral" and row["source"] == "db")
+    assert imported["instance_id"] == "default"
+    assert imported["is_default"] is True
+    assert imported["api_base_url"] == "https://env.mistral.example/v1"
+    TokenEncryption._instance = None
+
+
+
+def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    old_key = Fernet.generate_key().decode()
+    new_key = Fernet.generate_key().decode()
+    TokenEncryption._instance = None
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    recorder = _BridgeRecorder()
+    _install_bridge(app, recorder)
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", old_key)
+    TokenEncryption._instance = None
+
+    create = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "mistral",
+            "instance_id": "default",
+            "label": "Mistral Default",
+            "api_key": "rotate-me",
+            "api_base_url": "https://api.mistral.ai/v1",
+        },
+    )
+    assert create.status_code == 200, create.text
+
+    storage = Storage(str(app.state.db_path))
+    try:
+        before = storage.get_llm_provider("mistral", category="llm", instance_id="default")
+        before_cipher = str(before["api_key_encrypted"])
+    finally:
+        storage.close()
+
+    rotate = client.post(
+        "/api/config/provider-credentials/re-encrypt",
+        json={"old_key": old_key, "new_key": new_key, "category": "llm", "providers": ["mistral"]},
+    )
+    assert rotate.status_code == 200, rotate.text
+    rotate_body = rotate.json()
+    assert rotate_body["success"] is True
+    assert rotate_body["rotated_count"] >= 1
+    assert rotate_body["failed_count"] == 0
+
+    storage = Storage(str(app.state.db_path))
+    try:
+        after = storage.get_llm_provider("mistral", category="llm", instance_id="default")
+        after_cipher = str(after["api_key_encrypted"])
+    finally:
+        storage.close()
+
+    assert before_cipher != after_cipher
+    assert Fernet(new_key.encode()).decrypt(after_cipher.encode()).decode() == "rotate-me"
+    TokenEncryption._instance = None
+
 
 
 def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp_path: Path, monkeypatch) -> None:

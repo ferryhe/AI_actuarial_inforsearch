@@ -20,8 +20,10 @@ from ..services.ops_write import (
     get_catalog_stats,
     get_chunk_generation_stats,
     get_markdown_conversion_stats,
+    import_provider_credentials_from_env,
     import_sites,
     list_backups,
+    reencrypt_provider_credentials,
     request_task_stop,
     reinitialize_scheduler,
     restore_backup,
@@ -233,6 +235,40 @@ def api_config_provider_credentials_upsert(
             if not provided_token or provided_token != expected_token:
                 return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return upsert_provider_credential(payload, db_path=_db_path(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/provider-credentials/import-env")
+def api_config_provider_credentials_import_env(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return import_provider_credentials_from_env(payload, db_path=_db_path(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/provider-credentials/re-encrypt")
+def api_config_provider_credentials_reencrypt(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return reencrypt_provider_credentials(payload, db_path=_db_path(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 

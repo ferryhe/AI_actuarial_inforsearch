@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from cryptography.fernet import Fernet
 
 from ai_actuarial import llm_models
 from ai_actuarial.ai_runtime import (
@@ -764,21 +765,175 @@ def _apply_default_provider_env(provider: str, default_row: dict[str, Any] | Non
         os.environ.pop(key_env, None)
     if base_env:
         os.environ.pop(base_env, None)
-    if not default_row:
+    if not default_row or not key_env:
         return
-    api_key: str | None = None
     try:
         from ai_actuarial.services.token_encryption import TokenEncryption
-
         api_key = TokenEncryption().decrypt(str(default_row.get("api_key_encrypted") or ""))
-        if api_key == OPTIONAL_API_KEY_SENTINEL:
-            api_key = None
     except Exception:
-        api_key = None
-    if key_env and api_key:
+        return
+    if api_key and api_key != OPTIONAL_API_KEY_SENTINEL:
         os.environ[key_env] = api_key
     if base_env and default_row.get("api_base_url"):
         os.environ[base_env] = str(default_row.get("api_base_url"))
+
+
+def _set_runtime_token_encryption_key(key: str) -> None:
+    normalized = str(key or "").strip()
+    if not normalized:
+        return
+    os.environ["TOKEN_ENCRYPTION_KEY"] = normalized
+    from ai_actuarial.services.token_encryption import TokenEncryption
+    TokenEncryption._instance = None
+
+
+
+def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path: str) -> dict[str, Any]:
+    payload = _coerce_required_dict(data or {})
+    overwrite = bool(payload.get("overwrite", False))
+    providers_filter = {
+        str(item).strip().lower()
+        for item in (payload.get("providers") or [])
+        if str(item).strip()
+    }
+
+    from ai_actuarial.services.token_encryption import TokenEncryption
+
+    storage = Storage(db_path)
+    imported: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    try:
+        for provider, (key_env, base_env) in sorted(PROVIDER_STARTUP_ENV_MAP.items()):
+            if providers_filter and provider not in providers_filter:
+                continue
+            api_key = str(os.getenv(key_env) or "").strip()
+            if not api_key:
+                continue
+            category = "search" if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider")) else "llm"
+            existing = storage.get_llm_provider(provider, category=category, instance_id="default")
+            if existing and not overwrite:
+                skipped.append({"provider_id": provider, "category": category, "reason": "default_instance_exists"})
+                continue
+            try:
+                encrypted_key = TokenEncryption().encrypt(api_key)
+            except ValueError as exc:
+                raise OpsWriteError(
+                    "Provider credential import is unavailable because token encryption is not configured correctly.",
+                    status=503,
+                ) from exc
+            token_id = storage.upsert_llm_provider(
+                provider=provider,
+                api_key_encrypted=encrypted_key,
+                base_url=str(os.getenv(base_env) or "").strip() or None if base_env else None,
+                notes="imported from environment",
+                category=category,
+                instance_id="default",
+                label=f"{provider} ({category})",
+                is_default=True,
+            )
+            default_row = storage.get_llm_provider(provider, category=category, instance_id="default")
+            _apply_default_provider_env(provider, default_row)
+            imported.append(
+                {
+                    "provider_id": provider,
+                    "category": category,
+                    "credential_id": f"{provider}:{category}:db:{token_id}",
+                    "api_base_url": (default_row or {}).get("api_base_url"),
+                }
+            )
+    finally:
+        storage.close()
+
+    _reload_runtime_caches()
+    return {
+        "success": True,
+        "imported_count": len(imported),
+        "skipped_count": len(skipped),
+        "imported": imported,
+        "skipped": skipped,
+    }
+
+
+
+def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str) -> dict[str, Any]:
+    payload = _coerce_required_dict(data or {})
+    old_key = str(payload.get("old_key") or "").strip()
+    new_key = str(payload.get("new_key") or "").strip() or str(os.getenv("TOKEN_ENCRYPTION_KEY") or "").strip()
+    category_filter = str(payload.get("category") or "").strip().lower() or None
+    providers_filter = {
+        str(item).strip().lower()
+        for item in (payload.get("providers") or [])
+        if str(item).strip()
+    }
+    if not old_key:
+        raise OpsWriteError("old_key is required")
+    if not new_key:
+        raise OpsWriteError("new_key is required or TOKEN_ENCRYPTION_KEY must be set")
+
+    try:
+        old_cipher = Fernet(old_key.encode())
+        new_cipher = Fernet(new_key.encode())
+    except Exception as exc:
+        raise OpsWriteError("Invalid encryption key format") from exc
+
+    _set_runtime_token_encryption_key(new_key)
+
+    storage = Storage(db_path)
+    rotated: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    try:
+        categories = [category_filter] if category_filter else ["llm", "search"]
+        for category in categories:
+            for entry in storage.list_llm_providers(category=category):
+                provider_id = str(entry.get("provider") or "").strip().lower()
+                if providers_filter and provider_id not in providers_filter:
+                    continue
+                encrypted_value = str(entry.get("api_key_encrypted") or "")
+                if not encrypted_value:
+                    continue
+                try:
+                    plaintext = old_cipher.decrypt(encrypted_value.encode()).decode()
+                    reencrypted = new_cipher.encrypt(plaintext.encode()).decode()
+                except Exception:
+                    failed.append(
+                        {
+                            "provider_id": provider_id,
+                            "category": category,
+                            "instance_id": str(entry.get("instance_id") or "default").strip() or "default",
+                        }
+                    )
+                    continue
+                storage.upsert_llm_provider(
+                    provider=provider_id,
+                    api_key_encrypted=reencrypted,
+                    base_url=str(entry.get("api_base_url") or "").strip() or None,
+                    notes=entry.get("notes"),
+                    category=category,
+                    instance_id=str(entry.get("instance_id") or "default").strip() or "default",
+                    label=str(entry.get("label") or "").strip() or None,
+                    is_default=bool(entry.get("is_default", True)),
+                )
+                rotated.append(
+                    {
+                        "provider_id": str(entry.get("provider") or "").strip().lower(),
+                        "category": category,
+                        "instance_id": str(entry.get("instance_id") or "default").strip() or "default",
+                    }
+                )
+        for provider in {item["provider_id"] for item in rotated}:
+            default_row = storage.get_llm_provider(provider, category="llm") or storage.get_llm_provider(provider, category="search")
+            _apply_default_provider_env(provider, default_row)
+    finally:
+        storage.close()
+
+    _reload_runtime_caches()
+    return {
+        "success": True,
+        "rotated_count": len(rotated),
+        "failed_count": len(failed),
+        "rotated": rotated,
+        "failed": failed,
+    }
 
 
 
@@ -802,7 +957,13 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
 
     from ai_actuarial.services.token_encryption import TokenEncryption
 
-    encrypted_key = TokenEncryption().encrypt(api_key or OPTIONAL_API_KEY_SENTINEL)
+    try:
+        encrypted_key = TokenEncryption().encrypt(api_key or OPTIONAL_API_KEY_SENTINEL)
+    except ValueError as exc:
+        raise OpsWriteError(
+            "Provider credential writes are unavailable because token encryption is not configured correctly.",
+            status=503,
+        ) from exc
     storage = Storage(db_path)
     try:
         token_id = storage.upsert_llm_provider(

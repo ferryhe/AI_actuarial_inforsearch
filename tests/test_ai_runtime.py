@@ -8,6 +8,8 @@ import shutil
 import tempfile
 import unittest
 
+from cryptography.fernet import Fernet
+
 from ai_actuarial.ai_runtime import (
     get_ai_function_section,
     resolve_provider_credentials,
@@ -25,11 +27,14 @@ class TestAiRuntime(unittest.TestCase):
         self.original_env = dict(os.environ)
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
+        os.environ["TOKEN_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+        TokenEncryption._instance = None
         self.storage = Storage(self.db_path)
 
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self.original_env)
+        TokenEncryption._instance = None
         self.storage.close()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 

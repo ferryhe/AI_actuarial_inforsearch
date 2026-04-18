@@ -7,11 +7,14 @@ Based on RAGFlow best practices for secure token storage.
 """
 import os
 import logging
+import shlex
 import threading
+from pathlib import Path
 from cryptography.fernet import Fernet
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TokenEncryption:
@@ -41,8 +44,13 @@ class TokenEncryption:
             with cls._lock:
                 # Double-check pattern for thread safety
                 if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialize()
+                    instance = super().__new__(cls)
+                    try:
+                        instance._initialize()
+                    except Exception:
+                        cls._instance = None
+                        raise
+                    cls._instance = instance
         return cls._instance
     
     def _initialize(self):
@@ -52,66 +60,45 @@ class TokenEncryption:
         logger.info("Token encryption service initialized")
     
     def _get_or_create_encryption_key(self) -> bytes:
-        """
-        Get encryption key from environment, persistent key file, or create one.
-
-        Priority:
-          1. TOKEN_ENCRYPTION_KEY env var (highest — set this in production)
-          2. Persistent key file (TOKEN_ENCRYPTION_KEY_FILE env var, or
-             data/token_encryption.key relative to CWD)
-          3. Generate a new key and save it to the key file so it survives restarts
-
-        Returns:
-            Encryption key as bytes
-        """
-        # 1. Explicit env var
-        key_str = os.getenv('TOKEN_ENCRYPTION_KEY')
+        """Get the encryption key from process env or project .env only."""
+        key_str = self._get_env_or_dotenv_value('TOKEN_ENCRYPTION_KEY')
         if key_str:
             return key_str.encode()
 
-        # 2. Persistent key file
-        key_file = self._get_key_file_path()
-        if key_file and os.path.exists(key_file):
-            try:
-                with open(key_file, 'rb') as f:
-                    key = f.read().strip()
-                if key:
-                    logger.info("Token encryption key loaded from key file: %s", key_file)
-                    return key
-            except Exception as exc:
-                logger.warning("Failed to read encryption key file %s: %s", key_file, exc)
-
-        # 3. Generate new key and persist it so the next restart can reuse it
-        logger.warning(
-            "TOKEN_ENCRYPTION_KEY is not set. Generating a new key. "
-            "For production, set TOKEN_ENCRYPTION_KEY in your .env file."
+        raise ValueError(
+            'TOKEN_ENCRYPTION_KEY is required. Set it in the process environment '
+            'or in the project .env file before starting the service.'
         )
-        key = Fernet.generate_key()
-        if key_file:
-            try:
-                os.makedirs(os.path.dirname(os.path.abspath(key_file)), exist_ok=True)
-                with open(key_file, 'wb') as f:
-                    f.write(key)
-                logger.warning(
-                    "Encryption key saved to %s so it persists across restarts. "
-                    "For production, copy this value and set TOKEN_ENCRYPTION_KEY "
-                    "in your .env file instead.", key_file
-                )
-            except Exception as exc:
-                logger.error(
-                    "Could not persist encryption key to %s: %s. "
-                    "All stored API keys will become unreadable on the next restart! "
-                    "Set TOKEN_ENCRYPTION_KEY in your .env file to fix this.", key_file, exc
-                )
-        return key
 
-    def _get_key_file_path(self) -> Optional[str]:
-        """Return the path to use for the persistent key file."""
-        explicit = os.getenv('TOKEN_ENCRYPTION_KEY_FILE')
-        if explicit:
-            return explicit
-        # Default: data/token_encryption.key (data/ is already gitignored)
-        return os.path.join(os.getcwd(), 'data', 'token_encryption.key')
+    def _get_env_or_dotenv_value(self, key_name: str) -> Optional[str]:
+        """Return a config value from process env first, then project .env."""
+        env_value = str(os.getenv(key_name) or "").strip()
+        if env_value:
+            return env_value
+
+        dotenv_path = PROJECT_ROOT / '.env'
+        if not dotenv_path.exists():
+            return None
+
+        try:
+            for raw_line in dotenv_path.read_text(encoding='utf-8').splitlines():
+                line = raw_line.strip()
+                if line.startswith('export '):
+                    line = line[len('export '):].strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                current_key, current_value = line.split('=', 1)
+                if current_key.strip() != key_name:
+                    continue
+                value = current_value.strip()
+                if value:
+                    parsed = shlex.split(value, comments=True, posix=True)
+                    value = parsed[0] if parsed else ''
+                return value or None
+        except Exception as exc:
+            logger.warning('Failed to read project .env for %s: %s', key_name, exc)
+
+        return None
     
     def encrypt(self, plaintext: str) -> str:
         """

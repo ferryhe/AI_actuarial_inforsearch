@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 from datetime import datetime, time, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
 from ai_actuarial.web.app import _task_log_path
 
@@ -198,6 +201,8 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
     db_path, config_path, categories_path = _write_config_files(tmp_path)
     seed = _seed_storage(db_path)
 
+    TokenEncryption._instance = None
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-ops-read-test-secret")

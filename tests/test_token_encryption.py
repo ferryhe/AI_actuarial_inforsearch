@@ -5,8 +5,10 @@ Tests cover encryption, decryption, masking, singleton pattern,
 and error handling.
 """
 import os
+
 import pytest
 from cryptography.fernet import Fernet
+
 from ai_actuarial.services.token_encryption import TokenEncryption
 
 
@@ -144,34 +146,65 @@ class TestTokenEncryption:
         
         assert masked == "****"
     
-    def test_initialization_with_missing_key_generates_new(self, caplog, tmp_path):
-        """Test that missing TOKEN_ENCRYPTION_KEY still works (uses/creates key file)."""
-        import importlib
-        import ai_actuarial.services.token_encryption as te_mod
+    def test_initialization_reads_key_from_project_dotenv(self, monkeypatch, tmp_path):
+        """Test that TOKEN_ENCRYPTION_KEY can be read directly from project .env."""
+        monkeypatch.setattr("ai_actuarial.services.token_encryption.PROJECT_ROOT", tmp_path)
+        dotenv_path = tmp_path / '.env'
+        dotenv_key = Fernet.generate_key().decode()
 
-        # Remove the env var
-        if 'TOKEN_ENCRYPTION_KEY' in os.environ:
-            del os.environ['TOKEN_ENCRYPTION_KEY']
-
-        # Point key file to a temp location so we don't interfere with real data
-        os.environ['TOKEN_ENCRYPTION_KEY_FILE'] = str(tmp_path / 'test.key')
-
+        os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
         TokenEncryption._instance = None
 
         try:
-            encryption = TokenEncryption()
+            dotenv_path.write_text(f"TOKEN_ENCRYPTION_KEY={dotenv_key}\n", encoding='utf-8')
 
-            # Should still work with a generated key
-            plaintext = "test-api-key"
+            encryption = TokenEncryption()
+            plaintext = "dotenv-api-key"
             encrypted = encryption.encrypt(plaintext)
-            decrypted = encryption.decrypt(encrypted)
+            decrypted = Fernet(dotenv_key.encode()).decrypt(encrypted.encode()).decode()
 
             assert decrypted == plaintext
-
-            # Key file should have been created
-            assert (tmp_path / 'test.key').exists()
         finally:
-            os.environ.pop('TOKEN_ENCRYPTION_KEY_FILE', None)
+            TokenEncryption._instance = None
+
+    def test_initialization_reads_export_style_key_from_project_dotenv(self, monkeypatch, tmp_path):
+        """Test that export-style dotenv lines and trailing comments are accepted."""
+        monkeypatch.setattr("ai_actuarial.services.token_encryption.PROJECT_ROOT", tmp_path)
+        dotenv_path = tmp_path / '.env'
+        dotenv_key = Fernet.generate_key().decode()
+
+        os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
+        TokenEncryption._instance = None
+
+        try:
+            dotenv_path.write_text(
+                f'export TOKEN_ENCRYPTION_KEY="{dotenv_key}"  # prod key\n',
+                encoding='utf-8',
+            )
+
+            encryption = TokenEncryption()
+            plaintext = "dotenv-export-api-key"
+            encrypted = encryption.encrypt(plaintext)
+            decrypted = Fernet(dotenv_key.encode()).decrypt(encrypted.encode()).decode()
+
+            assert decrypted == plaintext
+        finally:
+            TokenEncryption._instance = None
+
+    def test_initialization_with_missing_key_raises_error(self, monkeypatch, tmp_path):
+        """Test that missing TOKEN_ENCRYPTION_KEY fails instead of generating a new key."""
+        monkeypatch.setattr("ai_actuarial.services.token_encryption.PROJECT_ROOT", tmp_path)
+        dotenv_path = tmp_path / '.env'
+
+        os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
+        TokenEncryption._instance = None
+
+        try:
+            dotenv_path.write_text('', encoding='utf-8')
+
+            with pytest.raises(ValueError, match='TOKEN_ENCRYPTION_KEY is required'):
+                TokenEncryption()
+        finally:
             TokenEncryption._instance = None
     
     def test_encrypt_decrypt_special_characters(self):
