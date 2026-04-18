@@ -25,6 +25,55 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import VectorStoreException
 
 
+# ============================================================
+# Safe Unpickler - Security hardening against malicious .pkl files
+# ============================================================
+
+class SafeUnpickler(pickle.Unpickler):
+    """
+    Safe unpickler that only allows known-safe classes.
+    
+    Prevents code execution attacks via malicious pickle files.
+    Only stdlib types and numpy/pandas are allowed.
+    """
+    
+    # Whitelist of allowed module prefixes
+    SAFE_PREFIXES: tuple[str, ...] = (
+        'builtins', 'types', 'datetime', 're', 'collections',
+        'hashlib', 'io', 'numpy', 'pandas', 'pickle',
+    )
+    
+    def find_class(self, module: str, name: str) -> Any:
+        """Override to restrict which classes can be loaded."""
+        # Check module prefix against whitelist
+        for prefix in self.SAFE_PREFIXES:
+            if module == prefix or module.startswith(prefix + '.'):
+                return super().find_class(module, name)
+        
+        # Block all other imports
+        raise pickle.UnpicklingError(
+            f"Disallowed module: {module}.{name}. "
+            f"Only safe stdlib/numpy/pandas types are allowed."
+        )
+
+
+def safe_pickle_load(filepath: Path | str) -> Any:
+    """
+    Safely load a pickle file, rejecting malicious content.
+    
+    Args:
+        filepath: Path to the pickle file
+        
+    Returns:
+        Unpickled Python object
+        
+    Raises:
+        pickle.UnpicklingError: If the file contains disallowed content
+    """
+    with open(filepath, 'rb') as f:
+        return SafeUnpickler(f).load()
+
+
 class VectorStore:
     """
     FAISS-based vector store with incremental update support.
@@ -303,9 +352,13 @@ class VectorStore:
             return []
         
         try:
-            with open(metadata_path, 'rb') as f:
-                metadata = pickle.load(f)
+            # Use safe loader to prevent code execution from malicious .pkl files
+            metadata = safe_pickle_load(metadata_path)
             return metadata
+        except pickle.UnpicklingError as e:
+            raise VectorStoreException(
+                f"Failed to load metadata (security check failed): {e}"
+            )
         except Exception as e:
             raise VectorStoreException(f"Failed to load metadata: {e}")
     
