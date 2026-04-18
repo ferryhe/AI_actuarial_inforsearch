@@ -8,8 +8,8 @@ import yaml
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.shared_auth import hash_password
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import _hash_password
 
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
@@ -89,7 +89,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> SeedData:
         )
         user_id = storage.create_user(
             "member@example.com",
-            _hash_password("password123"),
+            hash_password("password123"),
             role="registered",
             display_name="Member User",
         )
@@ -198,9 +198,9 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
     assert refreshed_user.json()["user"]["display_name"] == "Renamed User"
 
 
-def test_fastapi_auth_session_persists_without_legacy_flask_app(tmp_path: Path, monkeypatch) -> None:
+
+def test_fastapi_auth_session_persists_with_fastapi_native_session(tmp_path: Path, monkeypatch) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    app.state.legacy_flask_app = None
 
     register = client.post(
         "/api/auth/register",
@@ -223,9 +223,30 @@ def test_fastapi_auth_session_persists_without_legacy_flask_app(tmp_path: Path, 
 
 
 
+def test_fastapi_auth_logout_clears_cookie_with_configured_domain(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.fastapi_session_cookie_domain = "example.com"
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "domainlogout@example.com",
+            "password": "password123",
+            "display_name": "Domain Logout",
+        },
+    )
+    assert register.status_code == 201, register.text
+
+    logout = client.post("/api/auth/logout")
+    assert logout.status_code == 200, logout.text
+    set_cookie = logout.headers.get("set-cookie", "")
+    assert "Domain=example.com" in set_cookie
+    assert 'session=""' in set_cookie
+
+
+
 def test_fastapi_auth_no_flask_runtime_register_login_logout_roundtrip(tmp_path: Path, monkeypatch) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    app.state.legacy_flask_app = None
 
     register = client.post(
         "/api/auth/register",
@@ -254,9 +275,8 @@ def test_fastapi_auth_no_flask_runtime_register_login_logout_roundtrip(tmp_path:
 
 
 
-def test_fastapi_auth_register_and_login_fail_closed_without_legacy_flask_app_and_session_secret(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_auth_register_and_login_fail_closed_without_session_secret(tmp_path: Path, monkeypatch) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
-    app.state.legacy_flask_app = None
     app.state.fastapi_session_secret = ""
 
     register = client.post(

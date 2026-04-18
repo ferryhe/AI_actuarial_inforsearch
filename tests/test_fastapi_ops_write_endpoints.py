@@ -502,7 +502,7 @@ def test_ops_write_routes_require_operator_when_auth_enabled(tmp_path: Path, mon
     )
     assert reader.status_code == 403
 
-    cookie_name = app.state.legacy_flask_app.config.get("SESSION_COOKIE_NAME", "session")
+    cookie_name = app.state.fastapi_session_cookie_name
     operator_cookie = _make_session_cookie(
         app,
         {"email_user_id": seed["operator_user_id"]},

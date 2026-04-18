@@ -24,9 +24,6 @@ from ..deps import AuthContext, get_auth_context, public_permissions_for_request
 
 
 def ensure_session_mutation_available(request: Request) -> None:
-    legacy_app = getattr(request.app.state, "legacy_flask_app", None)
-    if legacy_app is not None:
-        return
     secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
     if secret:
         return
@@ -73,61 +70,34 @@ def _client_ip(request: Request) -> str:
 
 
 def _legacy_session_cookie_name(request: Request) -> str:
-    legacy_app = getattr(request.app.state, "legacy_flask_app", None)
-    if legacy_app is None:
-        return "session"
-    return str(legacy_app.config.get("SESSION_COOKIE_NAME", "session") or "session")
+    return str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
 
 
 def _apply_session_mutation(response: Response, request: Request, mutation: SessionMutation | None) -> None:
     if mutation is None:
         return
 
-    legacy_app = getattr(request.app.state, "legacy_flask_app", None)
     cookie_name = _legacy_session_cookie_name(request)
-    if legacy_app is None:
-        if mutation.clear:
-            response.delete_cookie(cookie_name, path="/")
-            return
-        secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
-        if not secret:
-            return
-        serializer = URLSafeSerializer(secret, salt="fastapi-session")
-        response.set_cookie(
-            key=cookie_name,
-            value=serializer.dumps(mutation.data or {}),
-            path=str(getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/"),
-            domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
-            secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
-            httponly=bool(getattr(request.app.state, "fastapi_session_cookie_httponly", True)),
-            samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
-        )
-        return
-
     if mutation.clear:
         response.delete_cookie(
             cookie_name,
-            path=str(legacy_app.config.get("SESSION_COOKIE_PATH") or "/"),
-            domain=legacy_app.config.get("SESSION_COOKIE_DOMAIN") or None,
-            secure=bool(legacy_app.config.get("SESSION_COOKIE_SECURE", False)),
-            httponly=bool(legacy_app.config.get("SESSION_COOKIE_HTTPONLY", True)),
-            samesite=legacy_app.config.get("SESSION_COOKIE_SAMESITE") or "Lax",
+            path=str(getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/"),
+            domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
         )
         return
 
-    serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
-    if serializer is None:
+    secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+    if not secret:
         return
-
-    payload = mutation.data or {}
+    serializer = URLSafeSerializer(secret, salt="fastapi-session")
     response.set_cookie(
         key=cookie_name,
-        value=serializer.dumps(payload),
-        path=str(legacy_app.config.get("SESSION_COOKIE_PATH") or "/"),
-        domain=legacy_app.config.get("SESSION_COOKIE_DOMAIN") or None,
-        secure=bool(legacy_app.config.get("SESSION_COOKIE_SECURE", False)),
-        httponly=bool(legacy_app.config.get("SESSION_COOKIE_HTTPONLY", True)),
-        samesite=legacy_app.config.get("SESSION_COOKIE_SAMESITE") or "Lax",
+        value=serializer.dumps(mutation.data or {}),
+        path=str(getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/"),
+        domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
+        secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
+        httponly=bool(getattr(request.app.state, "fastapi_session_cookie_httponly", True)),
+        samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
     )
 
 

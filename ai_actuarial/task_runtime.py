@@ -6,6 +6,7 @@ import os
 import secrets
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,12 +40,31 @@ class RuntimeRefs:
 class NativeTaskRuntime:
     def __init__(self) -> None:
         self.active_tasks: dict[str, dict[str, Any]] = {}
-        self.task_history: list[dict[str, Any]] = []
+        self.task_history: list[dict[str, Any]] = self._load_history_from_disk()
         self.task_lock = threading.RLock()
         self.scheduler = schedule.Scheduler()
         self._scheduler_lock = threading.RLock()
         self._scheduler_loop_started = False
         self._site_config_override: dict[str, Any] | None = None
+
+    def _load_history_from_disk(self) -> list[dict[str, Any]]:
+        path = Path("data/job_history.jsonl")
+        if not path.exists():
+            return []
+        try:
+            rows: deque[dict[str, Any]] = deque(maxlen=100)
+            with path.open("r", encoding="utf-8") as handle:
+                for line_no, line in enumerate(handle, start=1):
+                    if not line.strip():
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError as exc:
+                        logger.warning("Skipping malformed job history line %s in %s: %s", line_no, path, exc)
+            return list(rows)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load job history: %s", exc)
+            return []
 
     def refs(self) -> RuntimeRefs:
         return RuntimeRefs(

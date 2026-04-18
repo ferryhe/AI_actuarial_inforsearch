@@ -29,9 +29,9 @@ def test_fastapi_migration_status_reports_gateway_state() -> None:
     assert body["success"] is True
     assert body["backend"] == "fastapi"
     assert body["api_authority"] == "fastapi"
-    assert body["legacy_api_route_count"] >= body["legacy_api_routes_remaining"] > 0
+    assert body["runtime_mode"] == "fastapi_only"
+    assert body["legacy_runtime_present"] is False
     assert body["migration_inventory_enabled"] is False
-    assert body["legacy_flask_only_sample_signatures"] == []
     assert body["legacy_api_fallback_allowed"] is False
     assert "/api/health" in body["native_paths"]
     assert "/api/migration/status" in body["native_paths"]
@@ -46,7 +46,7 @@ def test_fastapi_migration_inventory_is_disabled_by_default() -> None:
     assert response.json()["detail"] == "Migration inventory is disabled"
 
 
-def test_fastapi_migration_inventory_exposes_native_and_legacy_routes_when_enabled(monkeypatch) -> None:
+def test_fastapi_migration_inventory_exposes_native_routes_when_enabled(monkeypatch) -> None:
     monkeypatch.setenv("FASTAPI_ENABLE_MIGRATION_INVENTORY", "1")
     client = TestClient(create_app())
 
@@ -56,13 +56,12 @@ def test_fastapi_migration_inventory_exposes_native_and_legacy_routes_when_enabl
     body = response.json()
     assert body["success"] is True
     assert body["api_authority"] == "fastapi"
-    assert body["legacy_mount_failed"] is False
+    assert body["runtime_mode"] == "fastapi_only"
+    assert body["legacy_runtime_present"] is False
     assert body["legacy_api_fallback_allowed"] is False
     assert "/api/health" in body["native_paths"]
-    assert "/api/stats" in body["legacy_api_paths"]
-    assert "GET /api/stats" in body["native_override_signatures"]
-    assert body["legacy_flask_only_route_count"] > 0
-    assert body["legacy_api_route_count"] >= len(body["legacy_api_paths"])
+    assert "/api/migration/status" in body["native_paths"]
+    assert "GET /api/health" in body["native_route_signatures"]
 
 
 def test_unported_legacy_api_fallback_is_blocked_by_default() -> None:
@@ -101,22 +100,24 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
     categories_path.write_text("categories: {}\n", encoding="utf-8")
     history_dir = tmp_path / "data"
     history_dir.mkdir(parents=True, exist_ok=True)
-    (history_dir / "job_history.jsonl").write_text(
+    history_lines = ["{not-json}\n"]
+    history_lines.extend(
         json.dumps(
             {
-                "id": "task-history-from-disk",
-                "name": "Loaded History",
+                "id": f"task-history-{index}",
+                "name": f"Loaded History {index}",
                 "type": "markdown_conversion",
                 "status": "completed",
                 "started_at": "2026-04-15T12:43:39.212434",
                 "completed_at": "2026-04-15T12:43:40.097561",
-                "items_processed": 1,
-                "items_total": 1,
+                "items_processed": index,
+                "items_total": index,
             }
         )
-        + "\n",
-        encoding="utf-8",
+        + "\n"
+        for index in range(105)
     )
+    (history_dir / "job_history.jsonl").write_text("".join(history_lines), encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -128,4 +129,12 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
 
     assert response.status_code == 200
     body = response.json()
-    assert any(task.get("id") == "task-history-from-disk" for task in body["tasks"])
+    task_ids = [task.get("id") for task in body["tasks"]]
+    assert len(body["tasks"]) == 5
+    assert task_ids == [
+        "task-history-5",
+        "task-history-6",
+        "task-history-7",
+        "task-history-8",
+        "task-history-9",
+    ]

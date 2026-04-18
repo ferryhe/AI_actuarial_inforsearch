@@ -122,13 +122,6 @@ def _full_chat_modules() -> ChatModules:
         ) from exc
 
 
-def _legacy_app(request) -> Any:
-    app = getattr(request.app.state, "legacy_flask_app", None)
-    if app is None:
-        raise ChatApiError("Legacy Flask app is unavailable", status_code=503)
-    return app
-
-
 def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -183,36 +176,20 @@ def _resolve_chat_user(request, auth: AuthContext) -> tuple[str, SessionUpdate |
 def apply_session_update(response, request, session_update: SessionUpdate | None) -> None:
     if not session_update:
         return
-    legacy_app = getattr(request.app.state, "legacy_flask_app", None)
-    if legacy_app is None:
-        secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
-        if not secret:
-            logger.debug("Skipping chat session update because no FastAPI session secret is configured")
-            return
-        cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
-        serializer = URLSafeSerializer(secret, salt="fastapi-session")
-        response.set_cookie(
-            key=cookie_name,
-            value=serializer.dumps(dict(session_update)),
-            httponly=bool(getattr(request.app.state, "fastapi_session_cookie_httponly", True)),
-            secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
-            samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
-            path=getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/",
-            domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
-        )
+    secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+    if not secret:
+        logger.debug("Skipping chat session update because no FastAPI session secret is configured")
         return
-    serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
-    if serializer is None:
-        return
-    cookie_name = legacy_app.config.get("SESSION_COOKIE_NAME", "session")
-    cookie_value = serializer.dumps(dict(session_update))
+    cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
+    serializer = URLSafeSerializer(secret, salt="fastapi-session")
     response.set_cookie(
         key=cookie_name,
-        value=cookie_value,
-        httponly=bool(legacy_app.config.get("SESSION_COOKIE_HTTPONLY", True)),
-        secure=bool(legacy_app.config.get("SESSION_COOKIE_SECURE", False)),
-        samesite=legacy_app.config.get("SESSION_COOKIE_SAMESITE", "Lax") or "Lax",
-        path=legacy_app.config.get("SESSION_COOKIE_PATH", "/") or "/",
+        value=serializer.dumps(dict(session_update)),
+        httponly=bool(getattr(request.app.state, "fastapi_session_cookie_httponly", True)),
+        secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
+        samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
+        path=getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/",
+        domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
     )
 
 

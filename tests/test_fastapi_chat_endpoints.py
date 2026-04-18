@@ -643,7 +643,7 @@ def test_fastapi_chat_query_maps_embedding_mismatch_to_409_payload(tmp_path: Pat
 
 
 
-def test_apply_session_update_uses_fastapi_cookie_fallback_without_legacy_flask_app() -> None:
+def test_apply_session_update_uses_fastapi_cookie_serializer() -> None:
     import ai_actuarial.api.services.chat as chat_service
 
     response = SimpleNamespace(cookies=[])
@@ -655,7 +655,6 @@ def test_apply_session_update_uses_fastapi_cookie_fallback_without_legacy_flask_
     request = SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
-                legacy_flask_app=None,
                 fastapi_session_secret="chat-session-secret",
                 fastapi_session_cookie_name="session",
                 fastapi_session_cookie_path="/",
@@ -672,9 +671,8 @@ def test_apply_session_update_uses_fastapi_cookie_fallback_without_legacy_flask_
 
 
 
-def test_fastapi_chat_guest_session_persists_without_legacy_flask_app(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_chat_guest_session_persists_with_fastapi_native_session(tmp_path: Path, monkeypatch) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch)
-    app.state.legacy_flask_app = None
 
     create = client.post("/api/chat/conversations", json={"mode": "expert"})
     assert create.status_code == 201, create.text

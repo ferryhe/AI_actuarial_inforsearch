@@ -10,11 +10,16 @@ from types import SimpleNamespace
 import yaml
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
-from ai_actuarial.web.app import _task_log_path
+
+
+def _task_log_path(base_dir: Path, task_id: str) -> Path:
+    safe_id = "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in (task_id or "unknown"))
+    return base_dir / "data" / "task_logs" / f"{safe_id}.log"
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
@@ -201,6 +206,7 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
     db_path, config_path, categories_path = _write_config_files(tmp_path)
     seed = _seed_storage(db_path)
 
+    monkeypatch.chdir(tmp_path)
     TokenEncryption._instance = None
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -218,15 +224,11 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
 
 
 def _make_session_cookie(app, payload: dict[str, object]) -> str:
-    legacy_app = app.state.legacy_flask_app
-    serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
-    assert serializer is not None
+    serializer = URLSafeSerializer(app.state.fastapi_session_secret, salt="fastapi-session")
     return serializer.dumps(payload)
 
 
 def _install_runtime_state(monkeypatch, app) -> None:
-    import ai_actuarial.web.app as legacy_web_app
-
     active_tasks = {
         "task-live": {
             "id": "task-live",
@@ -283,17 +285,12 @@ def _install_runtime_state(monkeypatch, app) -> None:
 
     schedule_ref = SimpleNamespace(jobs=[DummyJob()])
 
-    monkeypatch.setattr(legacy_web_app, "_active_tasks", active_tasks, raising=True)
-    monkeypatch.setattr(legacy_web_app, "_task_history", task_history, raising=True)
-    monkeypatch.setattr(legacy_web_app, "_task_lock", task_lock, raising=True)
-    monkeypatch.setattr(legacy_web_app, "schedule", schedule_ref, raising=True)
-
     app.state.active_tasks_ref = active_tasks
     app.state.task_history_ref = task_history
     app.state.task_lock = task_lock
     app.state.schedule_ref = schedule_ref
 
-    log_path = _task_log_path("task-history-1")
+    log_path = _task_log_path(Path.cwd(), "task-history-1")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
         "2026-04-15 05:00:00 INFO Started task\n2026-04-15 05:20:00 INFO Completed task\n",
@@ -321,12 +318,10 @@ def _patch_available_models(monkeypatch) -> None:
     monkeypatch.setattr(llm_models, "get_available_models", lambda provider=None: fake_models, raising=True)
 
 
-def test_fastapi_ops_read_routes_match_legacy_contract(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     _install_runtime_state(monkeypatch, app)
-
-    legacy_client = app.state.legacy_flask_app.test_client()
 
     endpoints = [
         "/api/config/sites",
@@ -342,32 +337,33 @@ def test_fastapi_ops_read_routes_match_legacy_contract(tmp_path: Path, monkeypat
         "/api/config/categories",
     ]
 
-    exact_match_endpoints = {
-        "/api/config/sites",
-        "/api/schedule/status",
-        "/api/scheduled-tasks",
-        "/api/tasks/log/task-history-1?tail=500",
-        "/api/config/backend-settings",
-        "/api/config/llm-providers",
-        "/api/config/ai-models",
-        "/api/config/search-engines",
-        "/api/config/categories",
-    }
-
     for endpoint in endpoints:
         fast = client.get(endpoint)
-        legacy = legacy_client.get(endpoint)
         assert fast.status_code == 200, endpoint
-        assert legacy.status_code == 200, endpoint
-        if endpoint in exact_match_endpoints:
-            assert fast.json() == legacy.get_json(), endpoint
-            continue
-
-        fast_tasks = fast.json()["tasks"]
-        legacy_tasks = legacy.get_json()["tasks"]
-        assert [task["id"] for task in fast_tasks] == [task["id"] for task in legacy_tasks], endpoint
-        assert [task["status"] for task in fast_tasks] == [task["status"] for task in legacy_tasks], endpoint
-        assert [task.get("current_activity") for task in fast_tasks] == [task.get("current_activity") for task in legacy_tasks], endpoint
+        body = fast.json()
+        if endpoint == "/api/config/sites":
+            assert body["sites"][0]["name"] == "Alpha Site"
+        elif endpoint == "/api/schedule/status":
+            assert body["count"] == 1
+            assert body["jobs"][0]["label"].startswith("daily")
+        elif endpoint == "/api/scheduled-tasks":
+            assert body["tasks"][0]["name"] == "Nightly Catalog"
+        elif endpoint == "/api/tasks/active":
+            assert body["tasks"][0]["id"] == "task-live"
+        elif endpoint == "/api/tasks/history?limit=20":
+            assert body["tasks"][0]["id"] == "task-history-1"
+        elif endpoint == "/api/tasks/log/task-history-1?tail=500":
+            assert "Completed task" in body["log"]
+        elif endpoint == "/api/config/backend-settings":
+            assert body["defaults"]["max_pages"] == 10
+        elif endpoint == "/api/config/llm-providers":
+            assert any(item["provider"] == "openai" for item in body["providers"])
+        elif endpoint == "/api/config/ai-models":
+            assert "openai" in body["available"]
+        elif endpoint == "/api/config/search-engines":
+            assert any(item["id"] == "brave" for item in body["engines"])
+        elif endpoint == "/api/config/categories":
+            assert "AI" in body["categories"]
 
     migration = client.get("/api/migration/status")
     body = migration.json()
@@ -397,7 +393,7 @@ def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(tmp_p
     assert authorized.status_code == 200
     assert authorized.json()["sites"][0]["name"] == "Alpha Site"
 
-    cookie_name = app.state.legacy_flask_app.config.get("SESSION_COOKIE_NAME", "session")
+    cookie_name = app.state.fastapi_session_cookie_name
     session_cookie = _make_session_cookie(app, {"email_user_id": seed["operator_user_id"]})
     client.cookies.set(cookie_name, session_cookie)
 
@@ -468,7 +464,7 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
     finally:
         storage.close()
 
-    cookie_name = app.state.legacy_flask_app.config.get("SESSION_COOKIE_NAME", "session")
+    cookie_name = app.state.fastapi_session_cookie_name
     session_cookie = _make_session_cookie(app, {"email_user_id": admin_user_id})
     client.cookies.set(cookie_name, session_cookie)
 
