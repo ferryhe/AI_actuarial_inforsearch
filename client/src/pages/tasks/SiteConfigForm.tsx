@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
+import { getStoredAuthToken } from "@/lib/api";
 import { FormField, InputField } from "@/components/FormFields";
 
 interface SiteConfig {
@@ -185,7 +186,10 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
         </button>
         <button onClick={async () => {
             try {
-              const res = await fetch("/api/config/sites/export");
+              const authToken = getStoredAuthToken();
+              const headers: Record<string, string> = {};
+              if (authToken) headers["X-Auth-Token"] = authToken;
+              const res = await fetch("/api/config/sites/export", { headers });
               if (!res.ok) return;
               const blob = await res.blob();
               const cd = res.headers.get("content-disposition") || "";
@@ -204,7 +208,10 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
         </button>
         <button onClick={async () => {
             try {
-              const res = await fetch("/api/config/sites/sample");
+              const authToken = getStoredAuthToken();
+              const headers: Record<string, string> = {};
+              if (authToken) headers["X-Auth-Token"] = authToken;
+              const res = await fetch("/api/config/sites/sample", { headers });
               if (!res.ok) return;
               const blob = await res.blob();
               const a = document.createElement("a");

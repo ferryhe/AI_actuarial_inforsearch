@@ -21,6 +21,8 @@ from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from ai_actuarial.api.deps import get_auth_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,24 +119,13 @@ def get_rate_limit_store() -> RateLimitStore:
 def _get_user_role(request: Request) -> str:
     """Extract user role from the request auth context."""
     try:
-        # Try to get auth context from request state
-        auth_context = getattr(request.state, "auth_context", None)
-        if auth_context is not None:
-            token = getattr(auth_context, "token", None)
-            if token is not None:
-                group_name = token.get("group_name", "")
-                if group_name in ROLE_RATE_LIMITS:
-                    return group_name
-    except Exception:
-        pass
-
-    # Try to get role from session
-    try:
-        session_data = getattr(request.state, "_fastapi_session_data", {})
-        if isinstance(session_data, dict):
-            role = session_data.get("role", "")
-            if role in ROLE_RATE_LIMITS:
-                return role
+        # Call get_auth_context to properly load auth context in middleware
+        # (request.state.auth_context is set by require_permissions dependency, which runs after middleware)
+        auth_context = get_auth_context(request)
+        if auth_context.token is not None:
+            group_name = auth_context.token.get("group_name", "")
+            if group_name in ROLE_RATE_LIMITS:
+                return group_name
     except Exception:
         pass
 
@@ -143,18 +134,16 @@ def _get_user_role(request: Request) -> str:
 
 def _get_rate_limit_key(request: Request) -> str:
     """Generate a unique key for rate limiting."""
-    # Try to get user ID from auth context
     try:
-        auth_context = getattr(request.state, "auth_context", None)
-        if auth_context is not None:
-            token = getattr(auth_context, "token", None)
-            if token is not None:
-                email_user_id = token.get("_email_user_id")
-                if email_user_id is not None:
-                    return f"user:{email_user_id}"
-                subject = token.get("subject", "")
-                if subject:
-                    return f"token:{subject}"
+        # Call get_auth_context to properly load auth context in middleware
+        auth_context = get_auth_context(request)
+        if auth_context.token is not None:
+            email_user_id = auth_context.token.get("_email_user_id")
+            if email_user_id is not None:
+                return f"user:{email_user_id}"
+            subject = auth_context.token.get("subject", "")
+            if subject:
+                return f"token:{subject}"
     except Exception:
         pass
 

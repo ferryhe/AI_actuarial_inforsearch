@@ -12,7 +12,7 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
 // Extracted components
-import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
+import { } from "@/components/FormFields";
 import { SiteConfigForm } from "./tasks/SiteConfigForm";
 import { ScheduledTasksSection } from "./tasks/ScheduledTasksSection";
 import { WebCrawlForm } from "./tasks/WebCrawlForm";
@@ -162,6 +162,16 @@ export default function Tasks() {
 
   const totalPages = Math.ceil(filteredHistoryTasks.length / pageSize);
   const paginatedHistoryTasks = filteredHistoryTasks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  // Clamp currentPage when totalPages changes to prevent empty table
+  useEffect(() => {
+    setCurrentPage((prev) => {
+      if (totalPages === 0) return 1;
+      if (prev > totalPages) return totalPages;
+      return prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPages]);
 
   function renderForm() {
     switch (activeForm) {

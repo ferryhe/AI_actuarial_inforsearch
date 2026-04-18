@@ -47,14 +47,14 @@ export function FilterBar({
         className="px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
       >
         <option value="">All Types</option>
-        <option value="site_config">Site Config</option>
-        <option value="web_crawl">Web Crawl</option>
-        <option value="adhoc_url">URL</option>
-        <option value="file_import">File Import</option>
-        <option value="web_search">Search</option>
+        <option value="scheduled">Site Config</option>
+        <option value="quick_check">Web Crawl</option>
+        <option value="url">URL</option>
+        <option value="file">File Import</option>
+        <option value="search">Search</option>
         <option value="catalog">Catalog</option>
-        <option value="markdown">Markdown</option>
-        <option value="chunk">Chunk</option>
+        <option value="markdown_conversion">Markdown</option>
+        <option value="chunk_generation">Chunk</option>
       </select>
     </div>
   );
