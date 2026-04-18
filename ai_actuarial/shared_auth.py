@@ -58,13 +58,15 @@ PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
 # - Dashboard, catalog, knowledge base lists
 # - Chat with 5 message limit
 # - No file downloads, no write operations
+# NOTE: tasks.view grants API access to task list/detail endpoints.
+# The "no task details click" restriction is enforced FRONTEND-only.
 GUEST_PERMISSIONS: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
         "catalog.read",
         "markdown.read",
-        "tasks.view",        # View only, no task details click
+        "tasks.view",
         "chat.view",
         "chat.query",
     }
@@ -121,6 +123,7 @@ OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
         "tasks.stop",
         "logs.task.read",
         "export.read",
+        "tokens.manage",      # API token management
         "chat.view",
         "chat.query",
         "chat.conversations",
@@ -142,13 +145,17 @@ GROUP_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": ADMIN_PERMISSIONS,
 }
 
-# Chat quota per user group (-1 = unlimited)
+# Chat quota per user group (0 = no access, positive = limit, 999999 = unlimited)
 AI_CHAT_QUOTA: dict[str, int] = {
     "guest": 5,           # Limited to 5 messages
     "registered": 20,      # 20 messages
     "premium": 50,        # 50 messages
     "operator": 200,      # 200 messages
-    "admin": -1,          # Unlimited
+    "admin": 999999,     # Unlimited (use large sentinel, not -1; storage treats <=0 as "no access")
+    # Legacy role aliases for backwards compatibility
+    "anonymous": 5,       # Alias for guest
+    "reader": 20,         # Alias for registered
+    "operator_ai": 200,   # Alias for operator
 }
 
 # Valid user roles
