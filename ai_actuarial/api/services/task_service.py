@@ -276,10 +276,12 @@ def get_markdown_stats_summary(*, db_path: str, category: str | None = None) -> 
             FROM catalog_items c
             LEFT JOIN files f ON f.url = c.file_url
             WHERE c.category IS NOT NULL
+            {f"AND c.category = ?" if category else ""}
             GROUP BY {sources_filter}
             ORDER BY total DESC
             LIMIT 20
             """,
+            ([category] if category else []),
         ).fetchall()
 
         by_source = [
@@ -335,10 +337,12 @@ def get_chunk_stats_summary(*, db_path: str, category: str | None = None) -> dic
             LEFT JOIN files f ON f.url = c.file_url
             LEFT JOIN file_chunk_sets s ON s.file_url = c.file_url
             WHERE c.category IS NOT NULL
+            {f"AND c.category = ?" if category else ""}
             GROUP BY COALESCE(f.source_site, '(none)')
             ORDER BY total DESC
             LIMIT 20
             """,
+            ([category] if category else []),
         ).fetchall()
 
         by_source = [

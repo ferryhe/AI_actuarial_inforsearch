@@ -42,6 +42,16 @@ def browse_folder(path: str | None = None) -> dict[str, Any]:
     else:
         root = Path(path).resolve()
 
+    # Path safety: restrict to data directory tree
+    data_dir = Path("data").resolve()
+    allowed_root = data_dir.parent.resolve()
+    try:
+        root_within_root = os.path.commonpath([str(allowed_root), str(root)]) == str(allowed_root)
+    except ValueError:
+        root_within_root = False
+    if not root_within_root:
+        return {"path": str(root), "parent": None, "items": [], "error": "Access denied: path outside allowed directory"}
+
     if not root.exists():
         return {"path": str(root), "parent": None, "items": [], "error": "Path does not exist"}
     if not root.is_dir():
@@ -64,9 +74,16 @@ def browse_folder(path: str | None = None) -> dict[str, Any]:
         except OSError:
             items.append({"name": entry.name, "is_dir": entry.is_dir(), "size": 0})
 
+    parent = root.parent
+    try:
+        parent_within_root = os.path.commonpath([str(allowed_root), str(parent)]) == str(allowed_root)
+    except ValueError:
+        parent_within_root = False
+    has_parent = parent != root and parent_within_root
+
     return {
         "path": str(root),
-        "parent": str(root.parent) if root.parent != root else None,
+        "parent": str(parent) if has_parent else None,
         "items": items,
     }
 
@@ -86,7 +103,7 @@ def start_collection(data: dict[str, Any], *, bridge: Any) -> dict[str, Any]:
         raise RuntimeError("Bridge does not support task starting")
 
     try:
-        task_info = start_fn(name=task_name, task_type=collection_type, payload=payload)
+        task_info = start_fn(collection_type, payload, task_name=task_name)
         return {"success": True, "task_id": task_info.get("task_id") or task_name, "task": task_info}
     except Exception as exc:
         logger.exception("Failed to start collection task: %s", exc)

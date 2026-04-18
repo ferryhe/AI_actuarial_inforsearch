@@ -10,10 +10,10 @@ Services are organized by domain:
 from __future__ import annotations
 
 from ai_actuarial.api.services.task_service import (
-    get_catalog_stats,
-    get_chunk_generation_stats,
+    get_catalog_stats_summary,
+    get_chunk_stats_summary,
     get_file_catalog_stats,
-    get_markdown_conversion_stats,
+    get_markdown_stats_summary,
     get_schedule_status,
     get_scheduled_tasks,
     get_task_log,
@@ -38,10 +38,10 @@ from ai_actuarial.api.services.collection_service import (
 
 __all__ = [
     # task_service
-    "get_catalog_stats",
-    "get_chunk_generation_stats",
+    "get_catalog_stats_summary",
+    "get_chunk_stats_summary",
     "get_file_catalog_stats",
-    "get_markdown_conversion_stats",
+    "get_markdown_stats_summary",
     "get_schedule_status",
     "get_scheduled_tasks",
     "get_task_log",
