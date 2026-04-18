@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import json
@@ -12,6 +13,8 @@ from typing import Iterable
 
 from .storage import Storage
 from .utils import load_category_config
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Catalog rules / keywords - Load from config file
@@ -947,7 +950,7 @@ def build_catalog_incremental(
                     errors += 1
                     continue
     if processed or skipped or errors:
-        print(
+        logger.info(
             f"catalog_incremental: processed={processed} skipped={skipped} errors={errors}"
         )
     return results
