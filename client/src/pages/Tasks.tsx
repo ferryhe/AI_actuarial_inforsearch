@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
 import TagSelect, { PRESET_FILE_EXTENSIONS, PRESET_LANGUAGES, PRESET_COUNTRIES } from "@/components/TagSelect";
 import { useTaskOptions } from "@/hooks/use-task-options";
@@ -1539,6 +1540,8 @@ interface HistoryTask {
 
 export default function Tasks() {
   const { t } = useTranslation();
+  const { user, isLoggedIn, permissions } = useAuth();
+  const isGuest = !isLoggedIn || user?.role === "guest";
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
   const [sites, setSites] = useState<SiteConfig[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1594,6 +1597,10 @@ export default function Tasks() {
 
   const viewTaskLog = async (taskId: string | undefined, taskName: string | undefined, task?: HistoryTask) => {
     if (!taskId) return;
+    if (isGuest) {
+      setLogModal({ taskId, taskName: taskName || taskId, log: t("tasks.guest_detail_disabled"), task });
+      return;
+    }
     setLogModalLoading(true);
     setLogModal({ taskId, taskName: taskName || taskId, log: "", task });
     try {

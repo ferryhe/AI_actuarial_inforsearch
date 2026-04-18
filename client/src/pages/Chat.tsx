@@ -17,9 +17,11 @@ import {
   ChevronRight,
   ExternalLink,
   Sparkles,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 
 interface Conversation {
@@ -297,6 +299,9 @@ type SidebarTab = "conversations" | "documents";
 
 export default function Chat() {
   const { t } = useTranslation();
+  const { user, isLoggedIn } = useAuth();
+  const isGuest = !isLoggedIn || user?.role === "guest";
+  const GUEST_CHAT_QUOTA = 5;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -315,6 +320,7 @@ export default function Chat() {
   const [docSearch, setDocSearch] = useState("");
   const [docCategory, setDocCategory] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -446,6 +452,18 @@ export default function Chat() {
   async function sendMessage() {
     const text = input.trim();
     if (!text || sending) return;
+
+    // Check guest quota
+    if (isGuest) {
+      const userMessageCount = messages.filter((m) => m.role === "user").length;
+      if (userMessageCount >= GUEST_CHAT_QUOTA) {
+        setQuotaWarning(t("chat.quota_exceeded"));
+        return;
+      }
+      if (userMessageCount === GUEST_CHAT_QUOTA - 1) {
+        setQuotaWarning(t("chat.quota_last_message"));
+      }
+    }
 
     setShowKbDropdown(false);
     setShowModeDropdown(false);
@@ -935,11 +953,17 @@ export default function Chat() {
           </div>
 
           <div className="flex items-end gap-2">
+            {quotaWarning && (
+              <div className="w-full mb-1 px-2 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                {quotaWarning}
+              </div>
+            )}
             <textarea
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onFocus={() => setShowKbDropdown(false)}
+              onFocus={() => { setShowKbDropdown(false); setQuotaWarning(null); }}
               onKeyDown={handleKeyDown}
               placeholder={t("chat.input_placeholder")}
               rows={1}
