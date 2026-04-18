@@ -76,9 +76,7 @@ def get_global_logs() -> dict[str, str]:
     if not log_file.exists():
         return {"logs": "No logs found."}
 
-    with open(log_file, "r", encoding="utf-8", errors="replace") as handle:
-        all_lines = handle.readlines()
-    lines = all_lines[-500:]
+    lines = tail_text_file(log_file, max_lines=500).splitlines(keepends=True)
     lines.reverse()
     return {"logs": "".join(lines)}
 

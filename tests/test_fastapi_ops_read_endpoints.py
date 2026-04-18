@@ -417,8 +417,6 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert bindings["embeddings"]["provider"] == "openai"
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
 
-
-
 def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
@@ -431,19 +429,22 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
         encoding="utf-8",
     )
 
-    admin_token = "admin-token"
     storage = Storage(str(app.state.db_path))
     try:
-        storage.upsert_auth_token_by_hash(
-            subject="admin-token",
-            group_name="admin",
-            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
-            is_active=True,
+        admin_user_id = storage.create_user(
+            "admin@example.com",
+            "admin-password-hash",
+            role="admin",
+            display_name="Admin",
         )
     finally:
         storage.close()
 
-    response = client.get("/api/logs/global", headers={"Authorization": f"Bearer {admin_token}"})
+    cookie_name = app.state.legacy_flask_app.config.get("SESSION_COOKIE_NAME", "session")
+    session_cookie = _make_session_cookie(app, {"email_user_id": admin_user_id})
+    client.cookies.set(cookie_name, session_cookie)
+
+    response = client.get("/api/logs/global")
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["logs"].splitlines()[0].endswith("ERROR second")
