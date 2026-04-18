@@ -9,7 +9,7 @@ export class ApiError extends Error {
   }
 }
 
-function getStoredAuthToken(): string {
+export function getStoredAuthToken(): string {
   if (typeof window === "undefined") return "";
   return window.sessionStorage.getItem("api_write_auth_token") || window.localStorage.getItem("api_write_auth_token") || "";
 }

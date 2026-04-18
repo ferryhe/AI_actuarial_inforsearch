@@ -6,6 +6,7 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from .middleware import RateLimitMiddleware
 from .route_inventory import (
     collect_fastapi_api_paths,
     collect_fastapi_route_signatures,
@@ -61,6 +62,12 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+    # Rate limiting middleware (applied after CORS)
+    app.add_middleware(
+        RateLimitMiddleware,
+        enabled=os.getenv("RATE_LIMIT_ENABLED", "true").lower() not in {"false", "0", "no"},
     )
 
     app.include_router(meta_router, prefix="/api", tags=["meta"])
