@@ -195,7 +195,7 @@ class StorageV2AuthMixin:
     # ---------------------------------------------------------------------------
     
     _LLM_TOKEN_COLS = (
-        "id", "provider", "category", "api_key_encrypted",
+        "id", "provider", "category", "instance_id", "label", "is_default", "api_key_encrypted",
         "api_base_url", "status", "created_at", "updated_at", "notes",
     )
     
@@ -206,26 +206,47 @@ class StorageV2AuthMixin:
         base_url: str | None = None,
         notes: str | None = None,
         category: str = "llm",
-    ) -> None:
-        """Insert or update an LLM provider API token."""
-        ts = self.now()
-        
+        *,
+        instance_id: str = "default",
+        label: str | None = None,
+        is_default: bool = True,
+    ) -> int:
+        """Insert or update an LLM provider API token instance."""
+        normalized_instance = str(instance_id or "default").strip() or "default"
+        normalized_label = str(label or "").strip() or f"{provider} ({category})"
+
+        if is_default:
+            self._session.query(ApiToken).filter(
+                and_(
+                    ApiToken.provider == provider,
+                    ApiToken.category == category,
+                )
+            ).update({"is_default": 0, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+
         existing = self._session.query(ApiToken).filter(
             and_(
                 ApiToken.provider == provider,
-                ApiToken.category == category
+                ApiToken.category == category,
+                ApiToken.instance_id == normalized_instance,
             )
         ).first()
         
         if existing:
+            existing.label = normalized_label
+            existing.is_default = 1 if is_default else 0
             existing.api_key_encrypted = api_key_encrypted
             existing.api_base_url = base_url
             existing.notes = notes
+            existing.status = "active"
             existing.updated_at = datetime.now(timezone.utc)
+            token_id = int(existing.id)
         else:
             api_token = ApiToken(
                 provider=provider,
                 category=category,
+                instance_id=normalized_instance,
+                label=normalized_label,
+                is_default=1 if is_default else 0,
                 api_key_encrypted=api_key_encrypted,
                 api_base_url=base_url,
                 status="active",
@@ -234,19 +255,26 @@ class StorageV2AuthMixin:
                 notes=notes,
             )
             self._session.add(api_token)
+            self._session.flush()
+            token_id = int(api_token.id)
         
         self.backend._maybe_commit()
+        return token_id
     
     def get_llm_provider(
-        self, provider: str, category: str = "llm"
+        self, provider: str, category: str = "llm", instance_id: str | None = None
     ) -> dict | None:
         """Get a single LLM provider record."""
-        token = self._session.query(ApiToken).filter(
+        query = self._session.query(ApiToken).filter(
             and_(
                 ApiToken.provider == provider,
                 ApiToken.category == category
             )
-        ).first()
+        )
+        if instance_id:
+            token = query.filter(ApiToken.instance_id == instance_id).first()
+        else:
+            token = query.order_by(ApiToken.is_default.desc(), ApiToken.updated_at.desc(), ApiToken.id.desc()).first()
         
         if not token:
             return None
@@ -255,6 +283,9 @@ class StorageV2AuthMixin:
             "id": token.id,
             "provider": token.provider,
             "category": token.category,
+            "instance_id": token.instance_id,
+            "label": token.label,
+            "is_default": bool(token.is_default),
             "api_key_encrypted": token.api_key_encrypted,
             "api_base_url": token.api_base_url,
             "status": token.status,
@@ -267,13 +298,16 @@ class StorageV2AuthMixin:
         """List all LLM provider records for the given category."""
         tokens = self._session.query(ApiToken).filter(
             ApiToken.category == category
-        ).order_by(ApiToken.provider).all()
+        ).order_by(ApiToken.provider, ApiToken.is_default.desc(), ApiToken.updated_at.desc(), ApiToken.id.desc()).all()
         
         return [
             {
                 "id": t.id,
                 "provider": t.provider,
                 "category": t.category,
+                "instance_id": t.instance_id,
+                "label": t.label,
+                "is_default": bool(t.is_default),
                 "api_key_encrypted": t.api_key_encrypted,
                 "api_base_url": t.api_base_url,
                 "status": t.status,
@@ -284,14 +318,17 @@ class StorageV2AuthMixin:
             for t in tokens
         ]
     
-    def delete_llm_provider(self, provider: str, category: str = "llm") -> bool:
+    def delete_llm_provider(self, provider: str, category: str = "llm", instance_id: str | None = None) -> bool:
         """Delete an LLM provider record."""
-        deleted = self._session.query(ApiToken).filter(
+        query = self._session.query(ApiToken).filter(
             and_(
                 ApiToken.provider == provider,
                 ApiToken.category == category
             )
-        ).delete(synchronize_session=False)
+        )
+        if instance_id:
+            query = query.filter(ApiToken.instance_id == instance_id)
+        deleted = query.delete(synchronize_session=False)
         
         self.backend._maybe_commit()
         return deleted > 0

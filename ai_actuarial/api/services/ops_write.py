@@ -758,6 +758,30 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
     return response_payload
 
 
+def _apply_default_provider_env(provider: str, default_row: dict[str, Any] | None) -> None:
+    key_env, base_env = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
+    if key_env:
+        os.environ.pop(key_env, None)
+    if base_env:
+        os.environ.pop(base_env, None)
+    if not default_row:
+        return
+    api_key: str | None = None
+    try:
+        from ai_actuarial.services.token_encryption import TokenEncryption
+
+        api_key = TokenEncryption().decrypt(str(default_row.get("api_key_encrypted") or ""))
+        if api_key == OPTIONAL_API_KEY_SENTINEL:
+            api_key = None
+    except Exception:
+        api_key = None
+    if key_env and api_key:
+        os.environ[key_env] = api_key
+    if base_env and default_row.get("api_base_url"):
+        os.environ[base_env] = str(default_row.get("api_base_url"))
+
+
+
 def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     provider = str(payload.get("provider_id") or payload.get("provider") or "").strip().lower()
@@ -765,6 +789,9 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
     base_url = str(payload.get("api_base_url") or payload.get("base_url") or "").strip() or None
     notes = str(payload.get("notes") or "").strip() or None
     category = str(payload.get("category") or "llm").strip().lower() or "llm"
+    instance_id = str(payload.get("instance_id") or "default").strip() or "default"
+    label = str(payload.get("label") or "").strip() or f"{provider} ({category})"
+    is_default = bool(payload.get("is_default", True))
     if not provider:
         raise OpsWriteError("provider_id is required")
     if provider not in PROVIDER_STARTUP_ENV_MAP:
@@ -778,48 +805,45 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
     encrypted_key = TokenEncryption().encrypt(api_key or OPTIONAL_API_KEY_SENTINEL)
     storage = Storage(db_path)
     try:
-        storage.upsert_llm_provider(
+        token_id = storage.upsert_llm_provider(
             provider=provider,
             api_key_encrypted=encrypted_key,
             base_url=base_url,
             notes=notes,
             category=category,
+            instance_id=instance_id,
+            label=label,
+            is_default=is_default,
         )
+        default_row = storage.get_llm_provider(provider, category=category)
     finally:
         storage.close()
 
-    key_env, base_env = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
-    if key_env:
-        if api_key:
-            os.environ[key_env] = api_key
-        else:
-            os.environ.pop(key_env, None)
-    if base_env:
-        if base_url:
-            os.environ[base_env] = base_url
-        else:
-            os.environ.pop(base_env, None)
+    _apply_default_provider_env(provider, default_row)
     _reload_runtime_caches()
-    return {"success": True}
+    return {
+        "success": True,
+        "credential_id": f"{provider}:{category}:db:{token_id}",
+        "instance_id": instance_id,
+        "label": label,
+        "is_default": is_default,
+    }
 
 
-def delete_provider_credential(provider_id: str, *, db_path: str, category: str = "llm") -> dict[str, Any]:
+def delete_provider_credential(provider_id: str, *, db_path: str, category: str = "llm", instance_id: str | None = None) -> dict[str, Any]:
     provider = str(provider_id or "").strip().lower()
     if not provider:
         raise OpsWriteError("provider_id is required")
     storage = Storage(db_path)
     try:
-        deleted = storage.delete_llm_provider(provider, category=category)
+        deleted = storage.delete_llm_provider(provider, category=category, instance_id=instance_id)
+        default_row = storage.get_llm_provider(provider, category=category)
     finally:
         storage.close()
     if not deleted:
         raise OpsWriteError("Provider credential not found", status_code=404)
 
-    key_env, base_env = PROVIDER_STARTUP_ENV_MAP.get(provider, (None, None))
-    if key_env:
-        os.environ.pop(key_env, None)
-    if base_env:
-        os.environ.pop(base_env, None)
+    _apply_default_provider_env(provider, default_row)
     _reload_runtime_caches()
     return {"success": True}
 
@@ -857,7 +881,9 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
         section = config_data["ai_config"].get(section_name) or {}
         if not isinstance(section, dict):
             section = {}
+        provider_norm = str(section.get("provider") or "").strip().lower()
         provider = item.get("provider")
+        provider_changed = False
         if provider is not None:
             provider_norm = str(provider).strip().lower()
             if provider_norm and provider_norm not in AI_SUPPORTED_PROVIDERS:
@@ -868,7 +894,23 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support catalog binding")
             if binding_name == "embeddings" and provider_norm and not is_embedding_provider_supported(provider_norm):
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support embeddings binding")
+            provider_changed = provider_norm != str(section.get("provider") or "").strip().lower()
             section["provider"] = provider_norm
+            if provider_changed:
+                section.pop("credential_id", None)
+        if "credential_id" in item:
+            credential_id = str(item.get("credential_id") or "").strip()
+            if credential_id:
+                if not provider_norm:
+                    raise OpsWriteError(f"Provider is required when credential_id is set for binding '{binding_name}'")
+                expected_prefix = f"{provider_norm}:"
+                if not credential_id.startswith(expected_prefix):
+                    raise OpsWriteError(f"Credential '{credential_id}' does not belong to provider '{provider_norm}'")
+                section["credential_id"] = credential_id
+            else:
+                section.pop("credential_id", None)
+        elif provider_changed:
+            section.pop("credential_id", None)
         if "model" in item:
             model = str(item.get("model") or "").strip()
             if not model:
@@ -898,11 +940,30 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
     finally:
         response_storage.close()
     if embeddings_changed:
+        affected_kb_ids: list[str] = []
+        kb_storage = Storage(db_path)
+        try:
+            rows = kb_storage._conn.execute(
+                """
+                SELECT DISTINCT kb_id
+                FROM rag_knowledge_bases
+                WHERE COALESCE(file_count, 0) > 0
+                   OR COALESCE(chunk_count, 0) > 0
+                ORDER BY kb_id
+                """
+            ).fetchall()
+            affected_kb_ids = [str(row[0]) for row in rows if row and row[0]]
+        except Exception:
+            logger.warning("Failed to enumerate KBs affected by embeddings config change", exc_info=True)
+        finally:
+            kb_storage.close()
         response_payload["rebuild_required"] = True
         response_payload["embedding_fingerprint"] = build_embedding_fingerprint(
             current_embeddings.get("provider"),
             current_embeddings.get("model"),
         )
+        response_payload["affected_kb_count"] = len(affected_kb_ids)
+        response_payload["affected_kb_ids"] = affected_kb_ids
     return response_payload
 
 

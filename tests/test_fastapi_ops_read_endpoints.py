@@ -162,6 +162,19 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
             base_url="https://api.openai.example/v1",
             notes="test provider",
             category="llm",
+            instance_id="primary",
+            label="OpenAI Primary",
+            is_default=True,
+        )
+        storage.upsert_llm_provider(
+            provider="openai",
+            api_key_encrypted="not-a-real-backup-key",
+            base_url="https://backup.openai.example/v1",
+            notes="backup provider",
+            category="llm",
+            instance_id="backup",
+            label="OpenAI Backup",
+            is_default=False,
         )
         storage.upsert_llm_provider(
             provider="serper",
@@ -288,6 +301,10 @@ def _patch_available_models(monkeypatch) -> None:
         "openai": [
             {"name": "gpt-4o-mini", "display_name": "GPT-4o Mini", "types": ["catalog", "chatbot"]},
             {"name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "types": ["embeddings"]},
+            {"name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "types": ["embeddings"]},
+        ],
+        "mistral": [
+            {"name": "mistral-small-latest", "display_name": "Mistral Small Latest", "types": ["catalog", "chatbot"]},
         ],
         "local": [
             {"name": "docling", "display_name": "Docling", "types": ["ocr"]},
@@ -402,7 +419,10 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     credentials = client.get("/api/config/provider-credentials")
     assert credentials.status_code == 200, credentials.text
     credential_rows = credentials.json()["credentials"]
-    assert any(row["provider_id"] == "openai" and row["source"] == "db" for row in credential_rows)
+    openai_credentials = [row for row in credential_rows if row["provider_id"] == "openai" and row["source"] == "db"]
+    assert len(openai_credentials) == 2
+    assert any(row["instance_id"] == "primary" and row["is_default"] is True for row in openai_credentials)
+    assert any(row["instance_id"] == "backup" and row["is_default"] is False for row in openai_credentials)
     assert any(row["provider_id"] == "serper" and row["category"] == "search" for row in credential_rows)
 
     catalog = client.get("/api/config/model-catalog")
@@ -415,6 +435,9 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     bindings = {item["function_name"]: item for item in routing.json()["bindings"]}
     assert bindings["chat"]["config_section"] == "chatbot"
     assert bindings["embeddings"]["provider"] == "openai"
+    assert bindings["embeddings"]["credential_id"]
+    assert bindings["embeddings"]["configured"] is True
+    assert bindings["embeddings"]["embedding_dimension"] == 3072
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
 
 def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:

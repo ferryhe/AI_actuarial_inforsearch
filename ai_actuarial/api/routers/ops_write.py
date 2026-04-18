@@ -250,7 +250,8 @@ def api_config_provider_credentials_delete(
             if not provided_token or provided_token != expected_token:
                 return JSONResponse(status_code=403, content={"error": "Forbidden"})
         category = str(request.query_params.get("category") or "llm").strip().lower() or "llm"
-        return delete_provider_credential(provider_id, db_path=_db_path(request), category=category)
+        instance_id = str(request.query_params.get("instance_id") or "").strip() or None
+        return delete_provider_credential(provider_id, db_path=_db_path(request), category=category, instance_id=instance_id)
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 

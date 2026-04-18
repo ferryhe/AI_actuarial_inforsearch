@@ -309,6 +309,7 @@ function AiConfigTab({ lang }: { lang: string }) {
   const [credentials, setCredentials] = useState<Array<{
     credential_id: string;
     provider_id: string;
+    instance_id: string;
     label: string;
     category: string;
     source: string;
@@ -316,6 +317,7 @@ function AiConfigTab({ lang }: { lang: string }) {
     status?: string;
     decrypt_ok?: boolean;
     is_default?: boolean;
+    last_error?: string | null;
   }>>([]);
   const [available, setAvailable] = useState<Record<string, AvailableModel[]>>({});
   const [routing, setRouting] = useState<Record<string, {
@@ -324,6 +326,8 @@ function AiConfigTab({ lang }: { lang: string }) {
     provider: string;
     model: string;
     credential_source: string;
+    credential_id?: string | null;
+    credential_label?: string | null;
     configured: boolean;
     api_base_url?: string | null;
     embedding_dimension?: number;
@@ -336,8 +340,9 @@ function AiConfigTab({ lang }: { lang: string }) {
   const [showKey, setShowKey] = useState(false);
   const [savingProvider, setSavingProvider] = useState<string | null>(null);
 
-  const [modelEdits, setModelEdits] = useState<Record<string, { provider: string; model: string }>>({});
+  const [modelEdits, setModelEdits] = useState<Record<string, { provider: string; model: string; credential_id?: string }>>({});
   const [savingRouting, setSavingRouting] = useState(false);
+  const [routingWarning, setRoutingWarning] = useState<{ affected_kb_count: number; affected_kb_ids: string[]; embedding_fingerprint?: string } | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -371,8 +376,20 @@ function AiConfigTab({ lang }: { lang: string }) {
     return String(provider?.api_key_hint || "").trim().toLowerCase() === "optional";
   }
 
+  function providerCredentials(providerId: string, category = "llm") {
+    return credentials.filter((item) => item.provider_id === providerId && item.category === category);
+  }
+
   function providerCredential(providerId: string, category = "llm") {
-    return credentials.find((item) => item.provider_id === providerId && item.category === category);
+    return providerCredentials(providerId, category).find((item) => item.is_default) || providerCredentials(providerId, category)[0];
+  }
+
+  function credentialStatusText(credential?: { source: string; status?: string; decrypt_ok?: boolean; last_error?: string | null }) {
+    if (!credential) return t("settings.missing");
+    if (credential.decrypt_ok === false || credential.last_error) return t("settings.decrypt_failed");
+    if (credential.status === "active") return t("settings.status_active");
+    if (credential.status === "inactive") return t("settings.status_inactive");
+    return credential.status || credential.source || t("settings.status_active");
   }
 
   function startEditProvider(providerId: string) {
@@ -420,13 +437,19 @@ function AiConfigTab({ lang }: { lang: string }) {
     }
   }
 
-  function updateModelEdit(functionName: string, field: "provider" | "model", value: string) {
+  function updateModelEdit(functionName: string, field: "provider" | "model" | "credential_id", value: string) {
     setModelEdits((prev) => {
       const current = prev[functionName] || {
         provider: routing[functionName]?.provider || "",
         model: routing[functionName]?.model || "",
+        credential_id: routing[functionName]?.credential_id || "",
       };
-      return { ...prev, [functionName]: { ...current, [field]: value } };
+      const next = { ...current, [field]: value };
+      if (field === "provider") {
+        next.credential_id = "";
+        next.model = "";
+      }
+      return { ...prev, [functionName]: next };
     });
   }
 
@@ -435,7 +458,16 @@ function AiConfigTab({ lang }: { lang: string }) {
     setSavingRouting(true);
     try {
       const bindings = Object.entries(modelEdits).map(([function_name, value]) => ({ function_name, ...value }));
-      const response = await apiPost<{ rebuild_required?: boolean }>("/api/config/ai-routing", { bindings });
+      const response = await apiPost<{ rebuild_required?: boolean; affected_kb_count?: number; affected_kb_ids?: string[]; embedding_fingerprint?: string }>("/api/config/ai-routing", { bindings });
+      if (response.rebuild_required) {
+        setRoutingWarning({
+          affected_kb_count: response.affected_kb_count || 0,
+          affected_kb_ids: response.affected_kb_ids || [],
+          embedding_fingerprint: response.embedding_fingerprint,
+        });
+      } else {
+        setRoutingWarning(null);
+      }
       setToast({
         message: response.rebuild_required ? t("settings.routing_saved_reindex_required") : t("settings.models_saved"),
         type: "success",
@@ -496,7 +528,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                       {credential?.api_base_url || provider.default_base_url || t("settings.default_base_url")}
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      {t("settings.credential_status_label")}: {credential ? `${credential.source} / ${credential.category}` : t("settings.missing")}
+                      {t("settings.status")}: {credentialStatusText(credential)}{credential?.source ? ` / ${credential.source}` : ""}{credential?.is_default ? ` / ${t("settings.default")}` : ""}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -581,20 +613,36 @@ function AiConfigTab({ lang }: { lang: string }) {
           )}
         </div>
         <div className="divide-y divide-border">
+          {routingWarning && (
+            <div className="px-5 py-4 bg-amber-500/5 border-b border-amber-500/20 text-sm text-amber-800 dark:text-amber-300" data-testid="routing-warning-reindex">
+              <div className="font-medium">{t("settings.routing_saved_reindex_required")}</div>
+              <div className="mt-1 text-xs">
+                {t("settings.affected_kbs")}: {routingWarning.affected_kb_count}
+              </div>
+              {routingWarning.affected_kb_ids.length > 0 && (
+                <div className="mt-1 text-[11px] break-all">
+                  {routingWarning.affected_kb_ids.slice(0, 6).join(", ")}
+                  {routingWarning.affected_kb_ids.length > 6 ? " …" : ""}
+                </div>
+              )}
+            </div>
+          )}
           {routingCards.map((card) => {
             const current = modelEdits[card.key] || {
               provider: routing[card.key]?.provider || "",
               model: routing[card.key]?.model || "",
+              credential_id: routing[card.key]?.credential_id || "",
             };
             const filteredProviders = llmProviders
               .filter((provider) => Boolean(provider.supports?.[card.capability]))
-              .filter((provider) => card.key === "ocr" || Boolean(providerCredential(provider.provider_id)));
+              .filter((provider) => card.key === "ocr" || providerCredentials(provider.provider_id).length > 0);
+            const filteredCredentials = current.provider ? providerCredentials(current.provider) : [];
             const modelTypeCapability = card.capability === "chat" ? "chatbot" : card.capability;
             const filteredModels = (available[current.provider] || []).filter((model) => (model.types || []).includes(modelTypeCapability));
             return (
               <div key={card.key} className="px-5 py-4" data-testid={`model-row-${card.key}`}>
                 <label className="text-xs font-semibold text-muted-foreground mb-2 block">{card.label}</label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
                     <select value={current.provider} onChange={(e) => updateModelEdit(card.key, "provider", e.target.value)}
@@ -603,6 +651,17 @@ function AiConfigTab({ lang }: { lang: string }) {
                       <option value="">—</option>
                       {filteredProviders.map((provider) => (
                         <option key={provider.provider_id} value={provider.provider_id}>{provider.display_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
+                    <select value={current.credential_id || ""} onChange={(e) => updateModelEdit(card.key, "credential_id", e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      data-testid={`select-credential-${card.key}`}>
+                      <option value="">—</option>
+                      {filteredCredentials.map((credential) => (
+                        <option key={credential.credential_id} value={credential.credential_id}>{credential.label}{credential.is_default ? ` (${t("settings.default")})` : ""}</option>
                       ))}
                     </select>
                   </div>
@@ -619,7 +678,9 @@ function AiConfigTab({ lang }: { lang: string }) {
                   </div>
                 </div>
                 <div className="mt-2 text-[11px] text-muted-foreground space-y-1">
+                  <p>{t("settings.status")}: {routing[card.key]?.configured ? t("settings.status_configured") : t("settings.missing")}</p>
                   <p>{t("settings.credential_source_label")}: {routing[card.key]?.credential_source || t("settings.missing")}</p>
+                  {routing[card.key]?.credential_label && <p>{t("settings.credential")}: {routing[card.key]?.credential_label}</p>}
                   {card.key === "embeddings" && routing[card.key]?.embedding_fingerprint && (
                     <p className="font-mono break-all">{t("settings.embedding_fingerprint_label")}: {routing[card.key]?.embedding_fingerprint}</p>
                   )}
