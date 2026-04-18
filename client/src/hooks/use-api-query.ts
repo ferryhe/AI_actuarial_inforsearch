@@ -61,6 +61,11 @@ export function useApiQuery<T>(
   const queryFnRef = useRef(queryFn);
   queryFnRef.current = queryFn;
 
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  onSuccessRef.current = onSuccess;
+  onErrorRef.current = onError;
+
   const fetch = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
       setRefreshing(true);
@@ -72,11 +77,11 @@ export function useApiQuery<T>(
     try {
       const result = await queryFnRef.current();
       setData(result);
-      onSuccess?.(result);
+      onSuccessRef.current?.(result);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       setError(error);
-      onError?.(error);
+      onErrorRef.current?.(error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -84,7 +89,7 @@ export function useApiQuery<T>(
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refetch = useCallback(() => {
-    fetch(false);
+    fetch(true);
   }, [fetch]);
 
   const reset = useCallback(() => {

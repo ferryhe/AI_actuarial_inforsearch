@@ -125,7 +125,7 @@ def list_conversations(
         """,
         (user_id, limit, offset),
     )
-    cols = [d[0] for d in storage._conn.execute("SELECT * FROM conversations WHERE 1=0").description]
+    cols = [d[0] for d in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
@@ -213,7 +213,7 @@ def get_conversation_messages(
         """,
         (conversation_id, limit),
     )
-    cols = [d[0] for d in storage._conn.execute("SELECT * FROM messages WHERE 1=0").description]
+    cols = [d[0] for d in cursor.description]
     results = []
     for row in cursor.fetchall():
         d = dict(zip(cols, row))

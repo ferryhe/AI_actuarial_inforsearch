@@ -166,7 +166,7 @@ def get_scheduled_tasks() -> dict[str, list[dict[str, Any]]]:
 # ---------------------------------------------------------------------------
 
 
-def get_catalog_stats(
+def get_catalog_stats_summary(
     *,
     db_path: str,
     provider: str | None = None,
@@ -232,7 +232,7 @@ def _build_catalog_stats_filters(
     return (" AND ".join(filters), params)
 
 
-def get_markdown_conversion_stats(*, db_path: str, category: str | None = None) -> dict[str, Any]:
+def get_markdown_stats_summary(*, db_path: str, category: str | None = None) -> dict[str, Any]:
     """Return markdown conversion statistics."""
     storage = Storage(db_path)
     try:
@@ -301,7 +301,7 @@ def get_markdown_conversion_stats(*, db_path: str, category: str | None = None) 
         storage.close()
 
 
-def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> dict[str, Any]:
+def get_chunk_stats_summary(*, db_path: str, category: str | None = None) -> dict[str, Any]:
     """Return chunk generation statistics."""
     storage = Storage(db_path)
     try:
@@ -316,7 +316,8 @@ def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> 
             SELECT COUNT(DISTINCT c.file_url)
             FROM catalog_items c
             LEFT JOIN file_chunk_sets s ON s.file_url = c.file_url
-            WHERE {'c.category = ?' if category else '1=1'}
+            WHERE 1=1
+            {f"AND c.category = ?" if category else ""}
             AND s.chunk_set_id IS NOT NULL
             """,
             params,

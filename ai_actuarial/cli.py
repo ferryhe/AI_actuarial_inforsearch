@@ -551,6 +551,10 @@ def cmd_api(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(message)s",
+    )
     _load_dotenv(".env")
     parser = build_parser()
     args = parser.parse_args()
