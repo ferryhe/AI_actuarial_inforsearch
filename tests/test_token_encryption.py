@@ -5,9 +5,11 @@ Tests cover encryption, decryption, masking, singleton pattern,
 and error handling.
 """
 import os
+
 import pytest
 from cryptography.fernet import Fernet
-from ai_actuarial.services.token_encryption import TokenEncryption
+
+from ai_actuarial.services.token_encryption import PROJECT_ROOT, TokenEncryption
 
 
 class TestTokenEncryption:
@@ -144,34 +146,77 @@ class TestTokenEncryption:
         
         assert masked == "****"
     
-    def test_initialization_with_missing_key_generates_new(self, caplog, tmp_path):
-        """Test that missing TOKEN_ENCRYPTION_KEY still works (uses/creates key file)."""
-        import importlib
-        import ai_actuarial.services.token_encryption as te_mod
+    def test_initialization_reads_key_from_project_dotenv(self):
+        """Test that TOKEN_ENCRYPTION_KEY can be read directly from project .env."""
+        dotenv_path = PROJECT_ROOT / '.env'
+        original_content = dotenv_path.read_text(encoding='utf-8') if dotenv_path.exists() else None
+        dotenv_key = Fernet.generate_key().decode()
 
-        # Remove the env var
-        if 'TOKEN_ENCRYPTION_KEY' in os.environ:
-            del os.environ['TOKEN_ENCRYPTION_KEY']
-
-        # Point key file to a temp location so we don't interfere with real data
-        os.environ['TOKEN_ENCRYPTION_KEY_FILE'] = str(tmp_path / 'test.key')
-
+        os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
         TokenEncryption._instance = None
 
         try:
-            encryption = TokenEncryption()
+            dotenv_path.write_text(f"TOKEN_ENCRYPTION_KEY={dotenv_key}\n", encoding='utf-8')
 
-            # Should still work with a generated key
-            plaintext = "test-api-key"
+            encryption = TokenEncryption()
+            plaintext = "dotenv-api-key"
             encrypted = encryption.encrypt(plaintext)
-            decrypted = encryption.decrypt(encrypted)
+            decrypted = Fernet(dotenv_key.encode()).decrypt(encrypted.encode()).decode()
 
             assert decrypted == plaintext
-
-            # Key file should have been created
-            assert (tmp_path / 'test.key').exists()
         finally:
-            os.environ.pop('TOKEN_ENCRYPTION_KEY_FILE', None)
+            if original_content is None:
+                dotenv_path.unlink(missing_ok=True)
+            else:
+                dotenv_path.write_text(original_content, encoding='utf-8')
+            TokenEncryption._instance = None
+
+    def test_initialization_reads_export_style_key_from_project_dotenv(self):
+        """Test that export-style dotenv lines and trailing comments are accepted."""
+        dotenv_path = PROJECT_ROOT / '.env'
+        original_content = dotenv_path.read_text(encoding='utf-8') if dotenv_path.exists() else None
+        dotenv_key = Fernet.generate_key().decode()
+
+        os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
+        TokenEncryption._instance = None
+
+        try:
+            dotenv_path.write_text(
+                f'export TOKEN_ENCRYPTION_KEY="{dotenv_key}"  # prod key\n',
+                encoding='utf-8',
+            )
+
+            encryption = TokenEncryption()
+            plaintext = "dotenv-export-api-key"
+            encrypted = encryption.encrypt(plaintext)
+            decrypted = Fernet(dotenv_key.encode()).decrypt(encrypted.encode()).decode()
+
+            assert decrypted == plaintext
+        finally:
+            if original_content is None:
+                dotenv_path.unlink(missing_ok=True)
+            else:
+                dotenv_path.write_text(original_content, encoding='utf-8')
+            TokenEncryption._instance = None
+
+    def test_initialization_with_missing_key_raises_error(self):
+        """Test that missing TOKEN_ENCRYPTION_KEY fails instead of generating a new key."""
+        dotenv_path = PROJECT_ROOT / '.env'
+        original_content = dotenv_path.read_text(encoding='utf-8') if dotenv_path.exists() else None
+
+        os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
+        TokenEncryption._instance = None
+
+        try:
+            dotenv_path.write_text('', encoding='utf-8')
+
+            with pytest.raises(ValueError, match='TOKEN_ENCRYPTION_KEY is required'):
+                TokenEncryption()
+        finally:
+            if original_content is None:
+                dotenv_path.unlink(missing_ok=True)
+            else:
+                dotenv_path.write_text(original_content, encoding='utf-8')
             TokenEncryption._instance = None
     
     def test_encrypt_decrypt_special_characters(self):
