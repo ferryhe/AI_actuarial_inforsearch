@@ -41,6 +41,7 @@ AI Actuarial Info Search is a system for discovering, downloading, and catalogin
 - Python 3.10+
 - Node.js 18+（含 npm，仅 React 界面需要）
 - （可选）AI 服务的 API Key，配置在 `config/sites.yaml` 或 `.env`
+- 如果要使用数据库里保存的 provider credentials，必须在进程环境或项目 `.env` 中设置固定的 `TOKEN_ENCRYPTION_KEY`
 
 ### 只启动 Flask 界面（最简单，端口 8000）
 
@@ -276,15 +277,38 @@ flowchart LR
 ### Environment Variables
 - Web search keys: `BRAVE_API_KEY`, `SERPAPI_API_KEY`
 - Markdown conversion API keys: `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `SILICONFLOW_BASE_URL`
+- Provider credential encryption key: `TOKEN_ENCRYPTION_KEY`（必须稳定；用于解密数据库中保存的 provider credentials）
 - File deletion: set `ENABLE_FILE_DELETION=true` before starting the web service
 - Authentication: `REQUIRE_AUTH=true` (default: false for guest read-only mode)
+
+### Provider Credential Encryption Key
+
+- `TOKEN_ENCRYPTION_KEY` 用于加解密数据库中的 provider credentials。
+- 可以来自：
+  - **进程环境变量**
+  - **项目根目录 `.env`**
+- 当前实现**不会再自动生成 key**，也**不会再使用 key-file fallback**。
+- 如果缺少这个变量，服务会在启动或首次使用加密服务时直接报错。
+- 如果更换了这个 key，历史上已经存入数据库的 provider credentials 将无法解密。
+
+生成示例：
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+建议把生成后的值写入项目 `.env`：
+
+```dotenv
+TOKEN_ENCRYPTION_KEY=your-generated-fernet-key
+```
 
 ### Configuration Migration (2026-02-15)
 The project has migrated from `.env` file configuration to YAML-based configuration with backward compatibility:
 
 - **New**: AI provider settings in `config/sites.yaml` under `ai_providers` section
 - **Backward Compatible**: `.env` file still supported for API keys and basic settings
-- **Flexible**: Mix and match - use `.env` for secrets and `sites.yaml` for structured config
+- **Flexible**: Mix and match - use `.env` for secrets (including `TOKEN_ENCRYPTION_KEY`) and `sites.yaml` for structured config
 - **Migration Guide**: See `docs/20260215_CONFIG_MIGRATION_PLAN.md`
 
 ### AI Provider Configuration
@@ -303,6 +327,14 @@ ai_providers:
     api_key: "${DEEPSEEK_API_KEY}"
     default_model: "deepseek-chat"
 ```
+
+Provider/model binding lives in `config/sites.yaml`, while secrets may still come from `.env`.
+
+Important for database-backed provider credentials:
+
+- Settings / FastAPI write APIs can persist provider credentials into the database.
+- Those stored credentials require a stable `TOKEN_ENCRYPTION_KEY` to remain readable across restarts and deployments.
+- `.env.example` documents the required variable.
 
 See `.env.example` for all available environment variables.
 
