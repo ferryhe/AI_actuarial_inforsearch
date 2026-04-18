@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping
 
+from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage
 
@@ -72,6 +73,85 @@ def _serialize_kb(kb: Any) -> dict[str, Any]:
         "chunk_count": kb.chunk_count,
         "created_at": kb.created_at,
         "updated_at": kb.updated_at,
+    }
+
+
+
+def _embedding_metadata_matches(current: Mapping[str, Any], *, provider: Any, model: Any, dimension: Any) -> bool:
+    current_provider = str(current.get("provider") or "").strip().lower()
+    current_model = str(current.get("model") or "").strip()
+    current_dimension = current.get("dimension")
+
+    index_provider = str(provider or "").strip().lower()
+    index_model = str(model or "").strip()
+    index_dimension = dimension
+
+    if index_provider and current_provider and index_provider != current_provider:
+        return False
+    if index_model and current_model and index_model != current_model:
+        return False
+    if index_dimension not in (None, "") and current_dimension not in (None, ""):
+        try:
+            if int(index_dimension) != int(current_dimension):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+
+def _build_kb_embedding_status(*, storage: Storage, kb_payload: dict[str, Any]) -> dict[str, Any]:
+    kb_id = str(kb_payload.get("kb_id") or "").strip()
+    runtime = resolve_ai_function_runtime("embeddings", storage=storage)
+    current_embeddings = {
+        "provider": runtime.provider,
+        "model": runtime.model,
+        "dimension": infer_embedding_dimension(runtime.model),
+        "credential_source": runtime.credential_source,
+        "credential_id": runtime.credential_id,
+        "credential_label": runtime.credential_label,
+        "embedding_fingerprint": build_embedding_fingerprint(runtime.provider, runtime.model),
+    }
+    composition = storage.get_kb_composition_status(kb_id) if kb_id else {}
+    latest_index = composition.get("latest_index") or {}
+    has_index = bool(composition.get("has_index"))
+    kb_provider = kb_payload.get("embedding_provider") or "openai"
+    kb_model = kb_payload.get("embedding_model")
+    kb_dimension = kb_payload.get("embedding_dimension")
+    effective_index_provider = latest_index.get("embedding_provider") or kb_provider
+    effective_index_model = latest_index.get("embedding_model") or kb_model
+    effective_index_dimension = latest_index.get("embedding_dimension")
+    if effective_index_dimension in (None, ""):
+        effective_index_dimension = kb_dimension
+    embedding_compatible = _embedding_metadata_matches(
+        current_embeddings,
+        provider=effective_index_provider,
+        model=effective_index_model,
+        dimension=effective_index_dimension,
+    )
+    needs_reindex = bool(composition.get("needs_reindex")) or (has_index and not embedding_compatible)
+    index_status = str(latest_index.get("status") or "").strip().lower()
+    if not has_index or index_status in {"pending", "queued", "running", "building", "indexing"}:
+        availability = "building"
+        usable = False
+    elif needs_reindex:
+        availability = "needs_reindex"
+        usable = False
+    else:
+        availability = "ready"
+        usable = True
+    return {
+        **kb_payload,
+        "index_embedding_provider": effective_index_provider,
+        "index_embedding_model": effective_index_model,
+        "index_embedding_dimension": effective_index_dimension,
+        "index_status": latest_index.get("status") or ("ready" if has_index and effective_index_model else None),
+        "index_built_at": latest_index.get("built_at"),
+        "needs_reindex": needs_reindex,
+        "embedding_compatible": embedding_compatible,
+        "availability": availability,
+        "usable": usable,
+        "current_embeddings": current_embeddings,
     }
 
 
@@ -175,7 +255,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
                 or search in (kb.kb_id or "").lower()
             ):
                 continue
-            kbs.append(_serialize_kb(kb))
+            kbs.append(_build_kb_embedding_status(storage=storage, kb_payload=_serialize_kb(kb)))
         return {"knowledge_bases": kbs}
     finally:
         storage.close()
@@ -232,7 +312,7 @@ def get_knowledge_base(*, db_path: str, kb_id: str) -> dict[str, Any]:
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        payload = _serialize_kb(kb)
+        payload = _build_kb_embedding_status(storage=storage, kb_payload=_serialize_kb(kb))
         payload["stats"] = manager.get_kb_stats(kid)
         payload["categories"] = manager.get_kb_categories(kid)
         return {"knowledge_base": payload}

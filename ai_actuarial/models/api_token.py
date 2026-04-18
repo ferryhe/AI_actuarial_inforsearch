@@ -39,9 +39,12 @@ class ApiToken(Base):
     # Primary key
     id = Column(Integer, primary_key=True, autoincrement=True)
     
-    # Provider and category (unique combination)
+    # Provider and category (unique combination with credential instance)
     provider = Column(String(50), nullable=False)
     category = Column(String(20), nullable=False)
+    instance_id = Column(String(64), nullable=False, default='default')
+    label = Column(String(255), nullable=True)
+    is_default = Column(Integer, nullable=False, default=1)
     
     # Encrypted credentials
     api_key_encrypted = Column(Text, nullable=False)
@@ -68,7 +71,8 @@ class ApiToken(Base):
     
     # Indexes for performance
     __table_args__ = (
-        Index('idx_provider_category', 'provider', 'category', unique=True),
+        Index('idx_provider_category_instance', 'provider', 'category', 'instance_id', unique=True),
+        Index('idx_provider_default', 'provider', 'category', 'is_default'),
         Index('idx_provider_status', 'provider', 'status'),
     )
     
@@ -87,6 +91,9 @@ class ApiToken(Base):
             'id': self.id,
             'provider': self.provider,
             'category': self.category,
+            'instance_id': self.instance_id,
+            'label': self.label,
+            'is_default': bool(self.is_default),
             'api_base_url': self.api_base_url,
             'status': self.status,
             'verification_status': self.verification_status,
@@ -107,4 +114,7 @@ class ApiToken(Base):
     
     def __repr__(self) -> str:
         """String representation of the token."""
-        return f"<ApiToken(id={self.id}, provider={self.provider}, category={self.category})>"
+        return (
+            f"<ApiToken(id={self.id}, provider={self.provider}, category={self.category}, "
+            f"instance_id={self.instance_id})>"
+        )

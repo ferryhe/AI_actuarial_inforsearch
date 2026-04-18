@@ -360,6 +360,10 @@ class ProviderCredentials:
     base_url: str | None
     source: str
     configured: bool
+    credential_id: str | None = None
+    label: str | None = None
+    instance_id: str | None = None
+    is_default: bool = False
 
 
 @dataclass(frozen=True)
@@ -371,6 +375,8 @@ class AIFunctionRuntime:
     api_key: str | None = None
     base_url: str | None = None
     credential_source: str = "none"
+    credential_id: str | None = None
+    credential_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -428,20 +434,21 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
                         {
                             "credential_id": f"{provider}:{entry_category}:db:{entry.get('id')}",
                             "provider_id": provider,
-                            "label": f"{provider} ({entry_category})",
+                            "instance_id": str(entry.get("instance_id") or "default").strip() or "default",
+                            "label": str(entry.get("label") or f"{provider} ({entry_category})").strip(),
                             "category": entry_category,
                             "source": "db",
                             "api_base_url": str(entry.get("api_base_url") or "").strip() or _get_effective_base_url(provider),
                             "status": str(entry.get("status") or "active").strip() or "active",
                             "decrypt_ok": decrypt_ok,
-                            "is_default": True,
+                            "is_default": bool(entry.get("is_default", True)),
                             "created_at": entry.get("created_at"),
                             "updated_at": entry.get("updated_at"),
                             "last_error": None if decrypt_ok else "decrypt_failed",
                             "notes": entry.get("notes"),
                         }
                     )
-                    seen.add(f"{provider}:{entry_category}")
+                    seen.add(f"{provider}:{entry_category}:{str(entry.get('instance_id') or 'default').strip() or 'default'}")
         except Exception:
             logger.exception("Failed to list provider credentials from storage")
 
@@ -450,12 +457,13 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
         if not api_key:
             continue
         category = "search" if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider")) else "llm"
-        if f"{provider}:{category}" in seen:
+        if f"{provider}:{category}:default" in seen:
             continue
         credentials.append(
             {
                 "credential_id": f"{provider}:{category}:env",
                 "provider_id": provider,
+                "instance_id": "default",
                 "label": f"{provider} ({category})",
                 "category": category,
                 "source": "env",
@@ -491,6 +499,8 @@ def get_ai_routing(*, storage: Any | None = None, yaml_config: Mapping[str, Any]
             "provider": runtime.provider,
             "model": runtime.model,
             "credential_source": runtime.credential_source,
+            "credential_id": runtime.credential_id,
+            "credential_label": runtime.credential_label,
             "binding_source": "sites.yaml:ai_config",
             "configured": bool(runtime.api_key) or runtime.provider == "local",
             "api_base_url": runtime.base_url,
@@ -600,6 +610,8 @@ def resolve_ai_function_runtime(
         or ""
     ).strip()
 
+    credential_id = str(section.get("credential_id") or section.get("provider_credential_id") or "").strip() or None
+
     if provider == "local":
         return AIFunctionRuntime(
             function_name=function_name,
@@ -609,9 +621,11 @@ def resolve_ai_function_runtime(
             api_key=None,
             base_url=None,
             credential_source="local",
+            credential_id=credential_id,
+            credential_label="Local runtime",
         )
 
-    credentials = resolve_provider_credentials(provider, storage=storage)
+    credentials = resolve_provider_credentials(provider, storage=storage, credential_id=credential_id)
     return AIFunctionRuntime(
         function_name=function_name,
         provider=provider,
@@ -620,6 +634,8 @@ def resolve_ai_function_runtime(
         api_key=credentials.api_key,
         base_url=credentials.base_url,
         credential_source=credentials.source,
+        credential_id=credentials.credential_id,
+        credential_label=credentials.label,
     )
 
 
@@ -703,6 +719,7 @@ def resolve_provider_credentials(
     *,
     storage: Any | None = None,
     category: str = "llm",
+    credential_id: str | None = None,
 ) -> ProviderCredentials:
     """Resolve provider credentials from DB first, then environment fallback."""
     normalized_provider = _normalize_provider(provider)
@@ -712,6 +729,7 @@ def resolve_provider_credentials(
             normalized_provider,
             storage=storage,
             category=category,
+            credential_id=credential_id,
         )
         if db_credentials is not None:
             return db_credentials
@@ -726,6 +744,10 @@ def resolve_provider_credentials(
             base_url=base_url,
             source="env",
             configured=True,
+            credential_id=f"{normalized_provider}:{category}:env",
+            label=f"{normalized_provider} ({category})",
+            instance_id="default",
+            is_default=True,
         )
 
     return ProviderCredentials(
@@ -734,6 +756,7 @@ def resolve_provider_credentials(
         base_url=base_url,
         source="missing",
         configured=False,
+        credential_id=credential_id,
     )
 
 
@@ -742,10 +765,21 @@ def _resolve_provider_credentials_from_storage(
     *,
     storage: Any,
     category: str,
+    credential_id: str | None = None,
 ) -> ProviderCredentials | None:
     """Resolve provider credentials from the provider token store."""
     try:
-        row = storage.get_llm_provider(provider, category=category)
+        instance_id = None
+        if credential_id and ":db:" in credential_id:
+            row_id = str(credential_id).rsplit(":db:", 1)[-1].strip()
+            if row_id.isdigit():
+                for entry in storage.list_llm_providers(category=category):
+                    if str(entry.get("id") or "") == row_id and str(entry.get("provider") or "").strip().lower() == provider:
+                        instance_id = str(entry.get("instance_id") or "default").strip() or "default"
+                        break
+        elif credential_id and ":env" in credential_id:
+            return None
+        row = storage.get_llm_provider(provider, category=category, instance_id=instance_id)
     except Exception:
         logger.exception("Failed to load provider credentials from storage for %s", provider)
         return None
@@ -771,12 +805,17 @@ def _resolve_provider_credentials_from_storage(
         return None
 
     base_url = str(row.get("api_base_url") or "").strip() or _get_effective_base_url(provider)
+    instance_id = str(row.get("instance_id") or "default").strip() or "default"
     return ProviderCredentials(
         provider=provider,
         api_key=api_key,
         base_url=base_url,
         source="db",
         configured=True,
+        credential_id=f"{provider}:{category}:db:{row.get('id')}",
+        label=str(row.get("label") or f"{provider} ({category})").strip(),
+        instance_id=instance_id,
+        is_default=bool(row.get("is_default", True)),
     )
 
 

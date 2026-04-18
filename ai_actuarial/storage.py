@@ -184,6 +184,9 @@ class Storage:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider TEXT NOT NULL,
                 category TEXT NOT NULL DEFAULT 'llm',
+                instance_id TEXT NOT NULL DEFAULT 'default',
+                label TEXT,
+                is_default INTEGER NOT NULL DEFAULT 1,
                 api_key_encrypted TEXT NOT NULL,
                 api_base_url TEXT,
                 status TEXT NOT NULL DEFAULT 'active',
@@ -193,10 +196,30 @@ class Storage:
             )
             """
         )
+        self._ensure_columns(
+            "api_tokens",
+            {
+                "instance_id": "TEXT DEFAULT 'default'",
+                "label": "TEXT",
+                "is_default": "INTEGER DEFAULT 1",
+            },
+        )
+        self._conn.execute("UPDATE api_tokens SET instance_id = 'default' WHERE instance_id IS NULL OR instance_id = ''")
+        self._conn.execute(
+            "UPDATE api_tokens SET label = provider || ' (' || category || ')' WHERE label IS NULL OR label = ''"
+        )
+        self._conn.execute("UPDATE api_tokens SET is_default = 1 WHERE is_default IS NULL")
+        self._conn.execute("DROP INDEX IF EXISTS idx_api_tokens_provider_category")
         self._conn.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_provider_category
-            ON api_tokens(provider, category)
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_provider_category_instance
+            ON api_tokens(provider, category, instance_id)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_api_tokens_provider_category_default
+            ON api_tokens(provider, category, is_default)
             """
         )
         self._conn.commit()
@@ -766,8 +789,8 @@ class Storage:
     # LLM provider API token management
     # ---------------------------------------------------------------------------
 
-    _LLM_TOKEN_COLS = (
-        "id", "provider", "category", "api_key_encrypted",
+    _LLM_TOKEN_COLS=(
+        "id", "provider", "category", "instance_id", "label", "is_default", "api_key_encrypted",
         "api_base_url", "status", "created_at", "updated_at", "notes",
     )
 
@@ -778,84 +801,87 @@ class Storage:
         base_url: str | None = None,
         notes: str | None = None,
         category: str = "llm",
-    ) -> None:
-        """Insert or update an LLM provider API token.
-
-        Args:
-            provider: Provider identifier (e.g. 'openai', 'mistral').
-            api_key_encrypted: Fernet-encrypted API key string.
-            base_url: Optional custom API base URL.
-            notes: Optional notes.
-            category: Token category (default 'llm').
-        """
+        *,
+        instance_id: str = "default",
+        label: str | None = None,
+        is_default: bool = True,
+    ) -> int:
+        """Insert or update an LLM provider API token instance."""
         ts = self.now()
+        normalized_instance = str(instance_id or "default").strip() or "default"
+        normalized_label = str(label or "").strip() or f"{provider} ({category})"
+        if is_default:
+            self._conn.execute(
+                "UPDATE api_tokens SET is_default = 0, updated_at = ? WHERE provider=? AND category=?",
+                (ts, provider, category),
+            )
         self._conn.execute(
             """
             INSERT INTO api_tokens
-                (provider, category, api_key_encrypted, api_base_url, status, created_at, updated_at, notes)
-            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
-            ON CONFLICT(provider, category) DO UPDATE SET
+                (provider, category, instance_id, label, is_default, api_key_encrypted, api_base_url, status, created_at, updated_at, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+            ON CONFLICT(provider, category, instance_id) DO UPDATE SET
+                label = excluded.label,
+                is_default = excluded.is_default,
                 api_key_encrypted = excluded.api_key_encrypted,
                 api_base_url = excluded.api_base_url,
                 notes = excluded.notes,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                status = excluded.status
             """,
-            (provider, category, api_key_encrypted, base_url, ts, ts, notes),
+            (provider, category, normalized_instance, normalized_label, 1 if is_default else 0, api_key_encrypted, base_url, ts, ts, notes),
         )
+        row = self._conn.execute(
+            "SELECT id FROM api_tokens WHERE provider=? AND category=? AND instance_id=?",
+            (provider, category, normalized_instance),
+        ).fetchone()
         self._maybe_commit()
+        return int(row[0]) if row else 0
 
     def get_llm_provider(
-        self, provider: str, category: str = "llm"
+        self, provider: str, category: str = "llm", instance_id: str | None = None
     ) -> dict | None:
-        """Get a single LLM provider record.
-
-        Args:
-            provider: Provider identifier.
-            category: Token category (default 'llm').
-
-        Returns:
-            Dictionary with provider data or None if not found.
-        """
-        cur = self._conn.execute(
-            "SELECT id, provider, category, api_key_encrypted, api_base_url, status, "
-            "created_at, updated_at, notes FROM api_tokens WHERE provider=? AND category=?",
-            (provider, category),
-        )
+        """Get a single LLM provider record, defaulting to the default instance."""
+        if instance_id:
+            cur = self._conn.execute(
+                "SELECT id, provider, category, instance_id, label, is_default, api_key_encrypted, api_base_url, status, "
+                "created_at, updated_at, notes FROM api_tokens WHERE provider=? AND category=? AND instance_id=?",
+                (provider, category, instance_id),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, provider, category, instance_id, label, is_default, api_key_encrypted, api_base_url, status, "
+                "created_at, updated_at, notes FROM api_tokens WHERE provider=? AND category=? "
+                "ORDER BY is_default DESC, updated_at DESC, id DESC LIMIT 1",
+                (provider, category),
+            )
         row = cur.fetchone()
         if row is None:
             return None
         return dict(zip(self._LLM_TOKEN_COLS, row))
 
     def list_llm_providers(self, category: str = "llm") -> list[dict]:
-        """List all LLM provider records for the given category.
-
-        Args:
-            category: Token category (default 'llm').
-
-        Returns:
-            List of provider dictionaries ordered by provider name.
-        """
+        """List all LLM provider records for the given category."""
         cur = self._conn.execute(
-            "SELECT id, provider, category, api_key_encrypted, api_base_url, status, "
-            "created_at, updated_at, notes FROM api_tokens WHERE category=? ORDER BY provider",
+            "SELECT id, provider, category, instance_id, label, is_default, api_key_encrypted, api_base_url, status, "
+            "created_at, updated_at, notes FROM api_tokens WHERE category=? "
+            "ORDER BY provider, is_default DESC, updated_at DESC, id DESC",
             (category,),
         )
         return [dict(zip(self._LLM_TOKEN_COLS, row)) for row in cur.fetchall()]
 
-    def delete_llm_provider(self, provider: str, category: str = "llm") -> bool:
-        """Delete an LLM provider record.
-
-        Args:
-            provider: Provider identifier.
-            category: Token category (default 'llm').
-
-        Returns:
-            True if a record was deleted, False if not found.
-        """
-        cur = self._conn.execute(
-            "DELETE FROM api_tokens WHERE provider=? AND category=?",
-            (provider, category),
-        )
+    def delete_llm_provider(self, provider: str, category: str = "llm", instance_id: str | None = None) -> bool:
+        """Delete an LLM provider record."""
+        if instance_id:
+            cur = self._conn.execute(
+                "DELETE FROM api_tokens WHERE provider=? AND category=? AND instance_id=?",
+                (provider, category, instance_id),
+            )
+        else:
+            cur = self._conn.execute(
+                "DELETE FROM api_tokens WHERE provider=? AND category=?",
+                (provider, category),
+            )
         self._maybe_commit()
         return cur.rowcount > 0
 

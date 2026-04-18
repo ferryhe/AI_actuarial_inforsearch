@@ -523,14 +523,30 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
         "/api/config/provider-credentials",
         json={
             "provider_id": "mistral",
+            "instance_id": "primary",
+            "label": "Mistral Primary",
             "api_key": "***",
             "api_base_url": "https://api.mistral.ai/v1",
         },
     )
     assert credential_upsert.status_code == 200, credential_upsert.text
+    backup_upsert = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "mistral",
+            "instance_id": "backup",
+            "label": "Mistral Backup",
+            "api_key": "***",
+            "api_base_url": "https://backup.mistral.ai/v1",
+            "is_default": False,
+        },
+    )
+    assert backup_upsert.status_code == 200, backup_upsert.text
+    backup_credential_id = backup_upsert.json()["credential_id"]
     credentials = client.get("/api/config/provider-credentials")
     rows = credentials.json()["credentials"]
-    assert any(row["provider_id"] == "mistral" and row["source"] == "db" for row in rows)
+    assert any(row["provider_id"] == "mistral" and row["instance_id"] == "primary" and row["source"] == "db" for row in rows)
+    assert any(row["provider_id"] == "mistral" and row["instance_id"] == "backup" and row["source"] == "db" for row in rows)
 
     routing_update = client.post(
         "/api/config/ai-routing",
@@ -538,7 +554,7 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
             "bindings": [
                 {"function_name": "chat", "provider": "openai", "model": "gpt-4o-mini"},
                 {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"},
-                {"function_name": "catalog", "provider": "openai", "model": "gpt-4o-mini"},
+                {"function_name": "catalog", "provider": "mistral", "credential_id": backup_credential_id, "model": "mistral-small-latest"},
             ]
         },
     )
@@ -546,15 +562,20 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
     routing_body = routing_update.json()
     assert routing_body["success"] is True
     assert routing_body["rebuild_required"] is True
+    assert routing_body["affected_kb_count"] == 0
+    assert routing_body["affected_kb_ids"] == []
     bindings = {item["function_name"]: item for item in routing_body["bindings"]}
     assert bindings["chat"]["model"] == "gpt-4o-mini"
     assert bindings["embeddings"]["model"] == "text-embedding-3-small"
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-small:")
+    assert bindings["catalog"]["provider"] == "mistral"
+    assert bindings["catalog"]["credential_id"] == backup_credential_id
 
-    credential_delete = client.delete("/api/config/provider-credentials/mistral")
+    credential_delete = client.delete("/api/config/provider-credentials/mistral?instance_id=backup")
     assert credential_delete.status_code == 200, credential_delete.text
     remaining = client.get("/api/config/provider-credentials").json()["credentials"]
-    assert not any(row["provider_id"] == "mistral" and row["source"] == "db" for row in remaining)
+    assert any(row["provider_id"] == "mistral" and row["instance_id"] == "primary" and row["source"] == "db" for row in remaining)
+    assert not any(row["provider_id"] == "mistral" and row["instance_id"] == "backup" and row["source"] == "db" for row in remaining)
 
 
 def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp_path: Path, monkeypatch) -> None:

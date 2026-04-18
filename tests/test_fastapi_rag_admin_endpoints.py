@@ -187,11 +187,16 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
 
     list_kbs = client.get("/api/rag/knowledge-bases")
     assert list_kbs.status_code == 200, list_kbs.text
-    assert any(item["kb_id"] == "kb-pr4-test" for item in list_kbs.json()["knowledge_bases"])
+    listed_kb = next(item for item in list_kbs.json()["knowledge_bases"] if item["kb_id"] == "kb-pr4-test")
+    assert listed_kb["current_embeddings"]["provider"] == "openai"
+    assert listed_kb["embedding_compatible"] is True
+    assert listed_kb["availability"] in {"building", "ready"}
 
     get_kb = client.get("/api/rag/knowledge-bases/kb-pr4-test")
     assert get_kb.status_code == 200, get_kb.text
-    assert get_kb.json()["knowledge_base"]["name"] == "PR4 Test KB"
+    detail_body = get_kb.json()["knowledge_base"]
+    assert detail_body["name"] == "PR4 Test KB"
+    assert detail_body["current_embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
 
     update_kb = client.put(
         "/api/rag/knowledge-bases/kb-pr4-test",
