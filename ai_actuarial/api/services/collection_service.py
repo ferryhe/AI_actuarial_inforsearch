@@ -44,7 +44,7 @@ def browse_folder(path: str | None = None) -> dict[str, Any]:
 
     # Path safety: restrict to data directory tree
     data_dir = Path("data").resolve()
-    allowed_root = data_dir.parent.resolve()
+    allowed_root = data_dir
     try:
         root_within_root = os.path.commonpath([str(allowed_root), str(root)]) == str(allowed_root)
     except ValueError:
