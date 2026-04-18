@@ -23,19 +23,66 @@ The FastAPI application is pre-configured with Swagger UI. Access it at:
 ## API Versioning Strategy
 
 ### Current Approach
-Currently the API uses path-based versioning: `/api/{resource}`.
+Currently the API uses path-based versioning: `/api/{resource}` with no explicit version prefix. All endpoints are considered `v1` implicitly.
 
-### Future Versioning Plan
-A header-based versioning strategy is planned:
+### URL Path Versioning (Current → Planned)
+The recommended path for explicit versioning when needed:
 
 ```
 GET /api/v1/endpoint   → Current stable version
 GET /api/v2/endpoint   → Next version (when available)
 ```
 
-Version headers:
+**Note**: Migrating from the current implicit `/api/` prefix to `/api/v1/` requires a coordinated front-end update. Until that migration is complete, the current `/api/` URLs are considered the stable v1 surface.
+
+### Header-Based Versioning (Future)
+When the API surface changes significantly, header-based versioning will be layered on top:
+
 ```
 API-Version: 2024-01-01  (date-based version label)
+```
+
+This allows the same URL to serve different response shapes based on the requested version.
+
+### Endpoints That Need Versioning Consideration
+The following endpoints have complex response shapes or are likely to evolve and should be explicitly versioned when a v2 is introduced:
+
+| Endpoint | Reason |
+|----------|--------|
+| `POST /api/chat/query` | LLM response format may change with model upgrades |
+| `POST /api/rag-admin/index` | Indexing strategy evolves with RAG improvements |
+| `GET /api/read/inventory` | Pagination and filter schema may expand |
+| `POST /api/files-write/upload` | File processing pipeline changes |
+
+### Deprecation Policy
+
+1. **Old versions are supported for at least 6 months** after a new version is released.
+2. **Deprecation notice**: Endpoints planned for removal will return `Warning` headers:
+   ```
+   Warning: 299 - "Deprecated: /api/v1/endpoint will be removed in 2025-07-01. Use /api/v2/endpoint."
+   ```
+3. **Removal**: After the sunset date, the endpoint returns `410 Gone`.
+4. **Communication**: Deprecations are announced in:
+   - API response headers (Warning header)
+   - Swagger UI (`/docs`) deprecation notices
+   - Release notes
+
+### Version Lifecycle
+
+| Stage | Description |
+|-------|-------------|
+| **Current** | `/api/` implicit v1 — stable, supported |
+| **Planned** | `/api/v1/` explicit — same surface as `/api/`, just explicit |
+| **Future** | `/api/v2/` — new features, possible breaking changes |
+
+### Checking API Version
+
+```bash
+# Check OpenAPI schema version
+curl http://localhost:5000/openapi.json | jq '.info.version'
+
+# Check which version an endpoint belongs to
+curl http://localhost:5000/openapi.json | jq '.paths["/api/chat/query"]'
 ```
 
 ## Endpoint Groups

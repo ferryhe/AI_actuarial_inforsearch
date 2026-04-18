@@ -42,8 +42,21 @@ def _legacy_api_fallback_allowed() -> bool:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Actuarial Info Search API",
+        description=(
+            "REST API for the AI Actuarial Info Search platform. "
+            "Provides document search, RAG administration, chat, and system management endpoints."
+        ),
         version="0.1.0",
         summary="FastAPI product API for the React frontend.",
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        responses={
+            401: {"description": "Authentication required"},
+            403: {"description": "Insufficient permissions"},
+            429: {"description": "Rate limit exceeded"},
+            500: {"description": "Internal server error"},
+        },
     )
 
     app.add_middleware(
