@@ -34,17 +34,15 @@ def sample_user():
 
 @pytest.fixture
 def guest_token():
-    """Generate a mock guest token."""
+    """Generate a deterministic mock guest token."""
     import hashlib
-    import time
-    token_data = f"guest:{time.time()}"
+    token_data = "guest:test-fixture"
     return hashlib.sha256(token_data.encode()).hexdigest()
 
 
 @pytest.fixture
 def admin_token():
-    """Generate a mock admin token."""
+    """Generate a deterministic mock admin token."""
     import hashlib
-    import time
-    token_data = f"admin:{time.time()}"
+    token_data = "admin:test-fixture"
     return hashlib.sha256(token_data.encode()).hexdigest()
