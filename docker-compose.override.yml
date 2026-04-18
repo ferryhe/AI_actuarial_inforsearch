@@ -1,9 +1,7 @@
 # docker-compose.override.yml — Production overrides
 # Usage: docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 #
-# Copy to docker-compose.override.yml and fill in your values:
-#   cp docker-compose.override.yml.example docker-compose.override.yml
-# Then set required environment variables:
+# Set required environment variables:
 #   export FLASK_SECRET_KEY=<strong-random-key>
 #   export LOGS_READ_AUTH_TOKEN=<strong-random-token>
 #   export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
@@ -23,7 +21,7 @@ services:
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:?LOGS_READ_AUTH_TOKEN is required}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:?CONFIG_WRITE_AUTH_TOKEN is required}
       - RATE_LIMIT_ENABLED=true
-      - CORS_ORIGINS=${CADDY_DOMAIN:?CADDY_DOMAIN required}
+      - FASTAPI_CORS_ORIGINS=${CADDY_DOMAIN:?CADDY_DOMAIN required}
     volumes:
       - ai-data:/app/data:rw
       - /etc/localtime:/etc/localtime:ro

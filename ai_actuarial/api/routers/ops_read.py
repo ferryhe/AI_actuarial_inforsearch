@@ -107,8 +107,8 @@ def api_tasks_active(
     Return currently running tasks (in-progress collections/crawls).
 
     Returns:
-        A dictionary mapping task IDs to their current state, progress,
-        and metadata for all active tasks.
+        A dict with an ``active_tasks`` list containing the current state,
+        progress, and metadata for all active tasks.
 
     Raises:
         401: If the request is not authenticated.

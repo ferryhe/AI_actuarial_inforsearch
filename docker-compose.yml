@@ -15,19 +15,18 @@ services:
       - "${API_PORT:-5000}:5000"
     environment:
       - ENV=development
-      - FASTAPI_ALLOW_LEGACY_API_FALLBACK=${FASTAPI_ALLOW_LEGACY_API_FALLBACK:-true}
+      - FASTAPI_ALLOW_LEGACY_API_FALLBACK=${FASTAPI_ALLOW_LEGACY_API_FALLBACK:-false}
       - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-dev-secret-change-in-production}
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:-}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:-}
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
-      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:5173","http://localhost:3000"]}
-      - DB_PATH=/app/data/ai_inforsearch.db
+      - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:-["http://localhost:5173","http://localhost:3000"]}
     volumes:
       - ai-data:/app/data
-      - ./sites.yaml:/app/sites.yaml:ro
+      - ./config/sites.yaml:/app/sites.yaml:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/meta/ping", "-o", "/dev/null"]
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/health", "-o", "/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3

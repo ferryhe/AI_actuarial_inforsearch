@@ -458,7 +458,8 @@ def api_collections_run(
             options.
 
     Returns:
-        A dict with the created task ID and initial status.
+        A dict with ``success`` flag, a ``message``, and a ``job_id``
+        for the enqueued collection task.
 
     Raises:
         400: If the payload is invalid or the named site does not exist.

@@ -161,8 +161,9 @@ def api_chat_query(
             restrict retrieval to.
 
     Returns:
-        A dict containing the assistant's reply text, the updated
-        conversation_id, and any cited document references.
+        A dict with ``success`` flag and a ``data`` object containing
+        ``conversation_id``, ``message_id``, ``response`` (reply text),
+        ``citations``, ``retrieved_blocks``, and ``metadata``.
 
     Raises:
         400: If the payload is malformed or missing required fields.
