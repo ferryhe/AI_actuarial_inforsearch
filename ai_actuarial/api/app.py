@@ -3,15 +3,12 @@ from __future__ import annotations
 import logging
 import os
 
-from a2wsgi import WSGIMiddleware
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import PlainTextResponse
 
 from .route_inventory import (
     collect_fastapi_api_paths,
     collect_fastapi_route_signatures,
-    summarize_legacy_api_routes,
 )
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
@@ -55,7 +52,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AI Actuarial Info Search API",
         version="0.1.0",
-        summary="FastAPI gateway for the React frontend with Flask compatibility fallback.",
+        summary="FastAPI product API for the React frontend.",
     )
 
     app.add_middleware(
@@ -76,10 +73,6 @@ def create_app() -> FastAPI:
     app.include_router(rag_admin_router, prefix="/api", tags=["rag-admin"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])
 
-    app.state.legacy_backend = "flask"
-    app.state.legacy_mount_enabled = False
-    app.state.legacy_mount_error = None
-    app.state.legacy_flask_app = None
     app.state.fastapi_session_secret = os.getenv("FLASK_SECRET_KEY", "")
     app.state.fastapi_session_cookie_name = "session"
     app.state.fastapi_session_cookie_path = "/"
@@ -99,22 +92,7 @@ def create_app() -> FastAPI:
     app.state.start_background_task = native_refs.start_background_task
     app.state.init_scheduler = native_refs.init_scheduler
     app.state.set_site_config = native_refs.set_site_config
-    app.state.legacy_start_background_task = None
-    app.state.legacy_init_scheduler = None
-    app.state.legacy_set_site_config = None
     app.state.native_route_signatures = collect_fastapi_route_signatures(app)
-
-    app.state.legacy_route_inventory = []
-    app.state.legacy_api_paths = []
-    app.state.legacy_api_route_count = 0
-    app.state.legacy_api_sample_paths = []
-    app.state.legacy_api_signatures = []
-    app.state.legacy_non_api_route_count = 0
-    app.state.legacy_flask_only_signatures = []
-    app.state.legacy_flask_only_route_count = 0
-    app.state.legacy_flask_only_sample_signatures = []
-    app.state.native_override_signatures = []
-    app.state.native_override_route_count = 0
     app.state.legacy_api_fallback_allowed = _legacy_api_fallback_allowed()
 
     if not app.state.legacy_api_fallback_allowed:
@@ -132,50 +110,6 @@ def create_app() -> FastAPI:
                     f"Port /api/{legacy_api_path} to ai_actuarial/api/routers before exposing it in React."
                 ),
             )
-
-    try:
-        import ai_actuarial.web.app as legacy_web_app
-
-        legacy_app = legacy_web_app.create_app()
-        legacy_summary = summarize_legacy_api_routes(legacy_app, native_signatures=app.state.native_route_signatures)
-        legacy_bridge = dict((getattr(legacy_app, "extensions", {}) or {}).get("fastapi_bridge", {}))
-        app.mount("/", WSGIMiddleware(legacy_app))
-        app.state.legacy_mount_enabled = True
-        app.state.legacy_flask_app = legacy_app
-        app.state.fastapi_session_secret = str(legacy_app.secret_key or app.state.fastapi_session_secret or "")
-        app.state.fastapi_session_cookie_name = str(legacy_app.config.get("SESSION_COOKIE_NAME", "session") or "session")
-        app.state.fastapi_session_cookie_path = str(legacy_app.config.get("SESSION_COOKIE_PATH") or "/")
-        app.state.fastapi_session_cookie_domain = legacy_app.config.get("SESSION_COOKIE_DOMAIN") or None
-        app.state.fastapi_session_cookie_secure = bool(legacy_app.config.get("SESSION_COOKIE_SECURE", False))
-        app.state.fastapi_session_cookie_httponly = bool(legacy_app.config.get("SESSION_COOKIE_HTTPONLY", True))
-        app.state.fastapi_session_cookie_samesite = legacy_app.config.get("SESSION_COOKIE_SAMESITE") or "Lax"
-        app.state.require_auth = bool(legacy_app.config.get("REQUIRE_AUTH", False))
-        app.state.legacy_start_background_task = legacy_bridge.get("start_background_task")
-        app.state.legacy_init_scheduler = legacy_bridge.get("init_scheduler")
-        app.state.legacy_set_site_config = legacy_bridge.get("set_site_config")
-        app.state.legacy_route_inventory = legacy_summary["legacy_route_inventory"]
-        app.state.legacy_api_paths = legacy_summary["legacy_api_paths"]
-        app.state.legacy_api_route_count = legacy_summary["legacy_api_route_count"]
-        app.state.legacy_api_sample_paths = legacy_summary["legacy_api_sample_paths"]
-        app.state.legacy_api_signatures = legacy_summary["legacy_api_signatures"]
-        app.state.legacy_non_api_route_count = legacy_summary["legacy_non_api_route_count"]
-        app.state.legacy_flask_only_signatures = legacy_summary["legacy_flask_only_signatures"]
-        app.state.legacy_flask_only_route_count = legacy_summary["legacy_flask_only_route_count"]
-        app.state.legacy_flask_only_sample_signatures = legacy_summary["legacy_flask_only_sample_signatures"]
-        app.state.native_override_signatures = legacy_summary["native_override_signatures"]
-        app.state.native_override_route_count = legacy_summary["native_override_route_count"]
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to mount legacy Flask app into FastAPI gateway")
-        app.state.legacy_mount_error = str(exc)
-
-        @app.get("/{path:path}", include_in_schema=False)
-        async def legacy_unavailable(path: str) -> PlainTextResponse:
-            base_message = "Legacy Flask app is unavailable inside the FastAPI gateway."
-            if os.getenv("FASTAPI_EXPOSE_ERROR_DETAILS") == "1":
-                body = f"{base_message}\nReason: {exc}\n"
-            else:
-                body = f"{base_message}\n"
-            return PlainTextResponse(body, status_code=503)
 
     try:
         app.state.init_scheduler()

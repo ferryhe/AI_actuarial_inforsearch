@@ -39,12 +39,24 @@ class RuntimeRefs:
 class NativeTaskRuntime:
     def __init__(self) -> None:
         self.active_tasks: dict[str, dict[str, Any]] = {}
-        self.task_history: list[dict[str, Any]] = []
+        self.task_history: list[dict[str, Any]] = self._load_history_from_disk()
         self.task_lock = threading.RLock()
         self.scheduler = schedule.Scheduler()
         self._scheduler_lock = threading.RLock()
         self._scheduler_loop_started = False
         self._site_config_override: dict[str, Any] | None = None
+
+    def _load_history_from_disk(self) -> list[dict[str, Any]]:
+        path = Path("data/job_history.jsonl")
+        if not path.exists():
+            return []
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                rows = [json.loads(line) for line in handle if line.strip()]
+            return rows[-100:] if len(rows) > 100 else rows
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to load job history: %s", exc)
+            return []
 
     def refs(self) -> RuntimeRefs:
         return RuntimeRefs(

@@ -12,21 +12,18 @@ AI Actuarial Info Search is a system for discovering, downloading, and catalogin
 
 ## 项目架构说明（前后台组成）
 
-本项目目前有 **两套 Web 界面**：
+本项目当前的正式产品面由两部分组成：
 
-| 界面 | 技术栈 | 访问方式 | 特点 |
+| 组件 | 技术栈 | 访问方式 | 说明 |
 |------|--------|----------|------|
-| **Flask 模板界面（旧）** | Python + Jinja2 HTML | `http://localhost:8000`（使用 `web` 子命令时） | 服务端渲染，首屏快，历史功能基线 |
-| **React SPA 界面（新）** | React 19 + TypeScript + Vite | `http://localhost:5173`（开发） | 客户端渲染，交互流畅，长期维护主界面 |
-
-- **Flask 界面**：服务端渲染的 legacy HTML 界面，仍可单独启动，但已不再是 React 产品面的 API 依赖前提。
-- **React 界面**：现代 SPA，JS bundle 初次加载后切换页面极快，当前产品 API contract 由 FastAPI 提供。
+| **FastAPI 产品 API** | Python + FastAPI | `http://localhost:8000/api/*` | 唯一正式产品 API 权威入口 |
+| **React SPA 界面** | React 19 + TypeScript + Vite | `http://localhost:5173`（开发） | 长期维护的产品前端 |
 
 从 API / 运行时架构上，当前已经明确：
 - **FastAPI 是 `/api/*` 的唯一产品权威入口**
-- **FastAPI 可以在没有 `ai_actuarial.web` 模块的情况下启动**；缺失 legacy Flask 时只会禁用 HTML/历史兼容挂载，不影响原生 `/api/*`
-- Flask 中现存的 `/api/*` 路由只作为历史兼容代码保留，不再是 React shell 的后端 contract
-- React 前端只允许依赖原生 FastAPI 路由，而不是继续扩展 Flask API
+- **FastAPI runtime 已不再挂载 legacy Flask/WSGI 应用**
+- React 前端只允许依赖原生 FastAPI 路由
+- 历史 Flask HTML / Jinja2 界面已从正式运行时中移除
 
 相关说明见：
 - `docs/ARCHITECTURE.md`
@@ -42,20 +39,6 @@ AI Actuarial Info Search is a system for discovering, downloading, and catalogin
 - Node.js 18+（含 npm，仅 React 界面需要）
 - （可选）AI 服务的 API Key，配置在 `config/sites.yaml` 或 `.env`
 - 如果要使用数据库里保存的 provider credentials，必须在进程环境或项目 `.env` 中设置固定的 `TOKEN_ENCRYPTION_KEY`
-
-### 只启动 Flask 界面（最简单，端口 8000）
-
-```bash
-# 安装 Python 依赖
-pip install -r requirements.txt
-
-# 启动服务（含 Flask HTML 界面 + REST API）
-python -m ai_actuarial web --host 127.0.0.1 --port 8000
-```
-
-浏览器访问 `http://localhost:8000`，直接使用 Flask 服务端渲染界面。
-
----
 
 ### 启动 FastAPI 产品 API（推荐）
 
@@ -81,7 +64,7 @@ npm run dev
 
 浏览器访问 `http://localhost:5173` 使用 React SPA，或访问 `http://localhost:8000/api/health` 直接调用 FastAPI 接口。
 
-当前 FastAPI 已经是产品 API 的唯一权威入口；即使本机没有 `ai_actuarial.web`，原生 `/api/*` 仍可启动和工作。只有 legacy HTML 与历史兼容挂载会被禁用。
+当前 FastAPI 已经是产品 API 的唯一权威入口，运行时不再挂载 legacy Flask HTML/WSGI 应用。
 
 ---
 
@@ -126,7 +109,7 @@ Help actuarial teams stay current on AI/ML developments through reliable discove
 ## Authentication Modes
 
 - `REQUIRE_AUTH=true`: all pages and APIs require login (token or session).
-- `REQUIRE_AUTH=false` (default): **guest read-only** mode.
+- `REQUIRE_AUTH=false`（默认）: **guest read-only** mode.
   - Guests can browse Dashboard and Database (read-only).
   - Guests cannot download stored files or run/edit tasks.
   - Tasks / Schedule / Settings and all write operations require a token.
@@ -193,8 +176,7 @@ Note: an `auto` mode previously existed but is intentionally disabled in the UI 
 
 ## Project Structure (High-Level)
 
-- `ai_actuarial/` core package (crawler, catalog, storage, collectors, processors)
-- `ai_actuarial/web/` web application (Flask app, templates, assets)
+- `ai_actuarial/` core package (FastAPI API, crawler, catalog, storage, collectors, processors)
 - `config/` site/category YAML plus optional python settings package (`config/settings.py` for conversion engines)
 - `data/` downloaded files, catalogs, and database
 - `docs/` implementation notes and operational guidance
@@ -203,8 +185,7 @@ Note: an `auto` mode previously existed but is intentionally disabled in the UI 
 
 ```
 AI_actuarial_inforsearch/
-├─ ai_actuarial/           # Core package (crawler, catalog, storage, web app)
-│   └─ web/                # Flask REST API backend (app.py, chat_routes.py, rag_routes.py)
+├─ ai_actuarial/           # Core package + FastAPI product API
 ├─ client/                 # React + TypeScript frontend (Vite, Tailwind, Wouter)
 │   └─ src/pages/          # Dashboard, Database, Chat, Tasks, Knowledge, Settings, …
 ├─ config/                 # Site and category configuration
@@ -246,7 +227,7 @@ flowchart LR
         H[data/catalog.*]
     end
     subgraph UI
-        I[Flask REST API :8000]
+        I[FastAPI Product API :8000]
         J[React SPA :5173 dev / :8000 prod]
     end
 
@@ -266,7 +247,7 @@ flowchart LR
 | Component | Supported / Notes |
 | --- | --- |
 | Python | 3.10+ |
-| Web Server | Flask (built-in dev server for local) |
+| Web Server | FastAPI (uvicorn) |
 | Database | SQLite (local), PostgreSQL (production) |
 | Deployment | Docker + Docker Compose |
 | Reverse Proxy | Caddy |

@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import yaml
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.storage import Storage
@@ -176,9 +177,7 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
 
 
 def _make_session_cookie(app, payload: dict[str, object]) -> str:
-    legacy_app = app.state.legacy_flask_app
-    serializer = legacy_app.session_interface.get_signing_serializer(legacy_app)
-    assert serializer is not None
+    serializer = URLSafeSerializer(app.state.fastapi_session_secret, salt="fastapi-session")
     return serializer.dumps(payload)
 
 
@@ -241,11 +240,15 @@ def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monk
     ]
 
 
-def test_fastapi_native_read_routes_require_bearer_auth(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_native_read_routes_keep_public_reads_available_under_require_auth(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
-    unauthorized = client.get("/api/stats")
-    assert unauthorized.status_code == 401
+    public_stats = client.get("/api/stats")
+    assert public_stats.status_code == 200
+
+    public_files = client.get("/api/files")
+    assert public_files.status_code == 200
+    assert public_files.json()["total"] == 2
 
     authorized = client.get(
         "/api/files",
@@ -324,7 +327,7 @@ def test_fastapi_markdown_route_preserves_percent_encoded_file_urls(tmp_path: Pa
 def test_fastapi_native_read_routes_accept_flask_session_cookie(tmp_path: Path, monkeypatch) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
-    cookie_name = app.state.legacy_flask_app.config.get("SESSION_COOKIE_NAME", "session")
+    cookie_name = app.state.fastapi_session_cookie_name
     session_cookie = _make_session_cookie(app, {"email_user_id": seed["user_id"]})
     client.cookies.set(cookie_name, session_cookie)
 
