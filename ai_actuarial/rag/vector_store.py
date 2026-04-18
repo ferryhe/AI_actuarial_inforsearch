@@ -25,6 +25,92 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import VectorStoreException
 
 
+# ============================================================
+# Safe Unpickler - Security hardening against malicious .pkl files
+# ============================================================
+
+class SafeUnpickler(pickle.Unpickler):
+    """
+    Safe unpickler that only allows explicitly approved globals.
+    
+    Prevents code execution attacks via malicious pickle files.
+    Only specific builtins and minimal numpy globals needed for
+    persisted vector-store data are allowed.
+    
+    Security: Uses exact (module, name) whitelist instead of module prefixes
+    to prevent bypasses via dangerous callables like eval/exec/__import__.
+    """
+    
+    # Exact whitelist of allowed pickle globals.
+    # Avoid broad module-level allowlists such as `builtins` because they
+    # would permit dangerous callables like `eval`, `exec`, and `__import__`.
+    SAFE_GLOBALS: set[tuple[str, str]] = {
+        # Safe builtins commonly used by pickled metadata structures
+        ('builtins', 'dict'),
+        ('builtins', 'list'),
+        ('builtins', 'set'),
+        ('builtins', 'frozenset'),
+        ('builtins', 'tuple'),
+        ('builtins', 'str'),
+        ('builtins', 'int'),
+        ('builtins', 'float'),
+        ('builtins', 'bool'),
+        ('builtins', 'bytes'),
+        ('builtins', 'bytearray'),
+        ('builtins', 'complex'),
+        ('builtins', 'slice'),
+        ('builtins', 'type'),
+        
+        # Safe stdlib container helpers
+        ('collections', 'OrderedDict'),
+        ('collections', 'defaultdict'),
+        ('collections', 'deque'),
+        ('collections', 'Counter'),
+        
+        # Safe datetime types
+        ('datetime', 'date'),
+        ('datetime', 'datetime'),
+        ('datetime', 'time'),
+        ('datetime', 'timedelta'),
+        ('datetime', 'timezone'),
+        
+        # Minimal numpy globals commonly required to unpickle ndarrays/scalars
+        ('numpy', 'dtype'),
+        ('numpy', 'ndarray'),
+        ('numpy.core.multiarray', '_reconstruct'),
+        ('numpy.core.multiarray', 'scalar'),
+        ('numpy', 'integer'),
+        ('numpy', 'floating'),
+    }
+    
+    def find_class(self, module: str, name: str) -> Any:
+        """Override to restrict which globals can be loaded."""
+        if (module, name) in self.SAFE_GLOBALS:
+            return super().find_class(module, name)
+        
+        raise pickle.UnpicklingError(
+            f"Disallowed global: {module}.{name}. "
+            f"Only explicitly allowlisted safe types are allowed."
+        )
+
+
+def safe_pickle_load(filepath: Path | str) -> Any:
+    """
+    Safely load a pickle file, rejecting malicious content.
+    
+    Args:
+        filepath: Path to the pickle file
+        
+    Returns:
+        Unpickled Python object
+        
+    Raises:
+        pickle.UnpicklingError: If the file contains disallowed content
+    """
+    with open(filepath, 'rb') as f:
+        return SafeUnpickler(f).load()
+
+
 class VectorStore:
     """
     FAISS-based vector store with incremental update support.
@@ -303,9 +389,26 @@ class VectorStore:
             return []
         
         try:
-            with open(metadata_path, 'rb') as f:
-                metadata = pickle.load(f)
+            # Use safe loader to prevent code execution from malicious .pkl files
+            metadata = safe_pickle_load(metadata_path)
+            
+            # Validate metadata format
+            if not isinstance(metadata, list):
+                raise VectorStoreException(
+                    "Invalid metadata format: expected a list of metadata dicts"
+                )
+            if not all(isinstance(item, dict) for item in metadata):
+                raise VectorStoreException(
+                    "Invalid metadata format: expected all metadata entries to be dicts"
+                )
+            
             return metadata
+        except pickle.UnpicklingError as e:
+            raise VectorStoreException(
+                f"Failed to load metadata (security check failed): {e}"
+            )
+        except VectorStoreException:
+            raise  # Re-raise our own exceptions
         except Exception as e:
             raise VectorStoreException(f"Failed to load metadata: {e}")
     

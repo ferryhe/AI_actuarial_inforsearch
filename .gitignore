@@ -46,3 +46,5 @@ dmypy.json
 *.log
 # Vite pre-bundled dependency cache
 client/.vite/
+.codex/
+CODEX_REVIEW.md
