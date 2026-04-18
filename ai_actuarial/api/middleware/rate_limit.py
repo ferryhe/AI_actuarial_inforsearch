@@ -30,6 +30,7 @@ ROLE_RATE_LIMITS: dict[str, int] = {
     "registered": 30,
     "premium": 60,
     "operator": 200,
+    "admin": 999999,
 }
 
 # Default rate limit for unknown roles
@@ -71,6 +72,7 @@ class RateLimitStore:
 
     def __init__(self) -> None:
         self._buckets: dict[str, RateLimitBucket] = defaultdict(RateLimitBucket)
+        self._cleanup_thread_started = False
 
     def get_bucket(self, key: str) -> RateLimitBucket:
         return self._buckets[key]
@@ -84,6 +86,21 @@ class RateLimitStore:
             if not bucket.timestamps:
                 del self._buckets[key]
 
+    def _start_cleanup_thread(self) -> None:
+        """Start background cleanup thread if not already running."""
+        import threading
+        if self._cleanup_thread_started:
+            return
+        self._cleanup_thread_started = True
+
+        def cleanup_loop() -> None:
+            while True:
+                time.sleep(300)  # Run cleanup every 5 minutes
+                self.clear_expired()
+
+        thread = threading.Thread(target=cleanup_loop, daemon=True)
+        thread.start()
+
 
 # Global rate limit store
 _rate_limit_store: RateLimitStore | None = None
@@ -93,6 +110,7 @@ def get_rate_limit_store() -> RateLimitStore:
     global _rate_limit_store
     if _rate_limit_store is None:
         _rate_limit_store = RateLimitStore()
+        _rate_limit_store._start_cleanup_thread()
     return _rate_limit_store
 
 
@@ -181,6 +199,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         key = _get_rate_limit_key(request)
         bucket = self.store.get_bucket(key)
 
+        # Calculate remaining BEFORE the request for accurate header
+        remaining = bucket.remaining(limit)
+
         if not bucket.is_allowed(limit):
             logger.warning(f"Rate limit exceeded for {key} (role: {role})")
             raise HTTPException(
@@ -188,12 +209,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 detail=f"Rate limit exceeded. Limit: {limit} requests/minute for {role} role.",
             )
 
-        response = await call_next(request)
-
-        # Add rate limit headers
-        remaining = bucket.remaining(limit)
-        response.headers["X-RateLimit-Limit"] = str(limit)
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
-        response.headers["X-RateLimit-Reset"] = "60"
+        try:
+            response = await call_next(request)
+        finally:
+            # Add rate limit headers (remaining may have changed after request)
+            response.headers["X-RateLimit-Limit"] = str(limit)
+            response.headers["X-RateLimit-Remaining"] = str(bucket.remaining(limit))
+            response.headers["X-RateLimit-Reset"] = "60"
 
         return response
