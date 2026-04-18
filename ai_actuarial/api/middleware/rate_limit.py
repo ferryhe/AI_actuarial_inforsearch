@@ -198,12 +198,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 detail=f"Rate limit exceeded. Limit: {limit} requests/minute for {role} role.",
             )
 
+        response = None
         try:
             response = await call_next(request)
         finally:
-            # Add rate limit headers (remaining may have changed after request)
-            response.headers["X-RateLimit-Limit"] = str(limit)
-            response.headers["X-RateLimit-Remaining"] = str(bucket.remaining(limit))
-            response.headers["X-RateLimit-Reset"] = "60"
+            if response is not None:
+                # Add rate limit headers (remaining may have changed after request)
+                response.headers["X-RateLimit-Limit"] = str(limit)
+                response.headers["X-RateLimit-Remaining"] = str(bucket.remaining(limit))
+                response.headers["X-RateLimit-Reset"] = "60"
 
         return response
