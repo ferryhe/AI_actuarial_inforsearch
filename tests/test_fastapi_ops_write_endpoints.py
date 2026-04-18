@@ -656,11 +656,12 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
     _patch_available_models(monkeypatch)
     old_key = Fernet.generate_key().decode()
     new_key = Fernet.generate_key().decode()
-    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", old_key)
     TokenEncryption._instance = None
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", old_key)
+    TokenEncryption._instance = None
 
     create = client.post(
         "/api/config/provider-credentials",

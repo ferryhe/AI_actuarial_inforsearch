@@ -72,7 +72,7 @@ class TokenEncryption:
 
     def _get_env_or_dotenv_value(self, key_name: str) -> Optional[str]:
         """Return a config value from process env first, then project .env."""
-        env_value = os.getenv(key_name)
+        env_value = str(os.getenv(key_name) or "").strip()
         if env_value:
             return env_value
 

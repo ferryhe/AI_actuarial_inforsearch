@@ -765,21 +765,26 @@ def _apply_default_provider_env(provider: str, default_row: dict[str, Any] | Non
         os.environ.pop(key_env, None)
     if base_env:
         os.environ.pop(base_env, None)
-    if not default_row:
+    if not default_row or not key_env:
         return
-    api_key: str | None = None
     try:
         from ai_actuarial.services.token_encryption import TokenEncryption
-
         api_key = TokenEncryption().decrypt(str(default_row.get("api_key_encrypted") or ""))
-        if api_key == OPTIONAL_API_KEY_SENTINEL:
-            api_key = None
     except Exception:
-        api_key = None
-    if key_env and api_key:
+        return
+    if api_key and api_key != OPTIONAL_API_KEY_SENTINEL:
         os.environ[key_env] = api_key
     if base_env and default_row.get("api_base_url"):
         os.environ[base_env] = str(default_row.get("api_base_url"))
+
+
+def _set_runtime_token_encryption_key(key: str) -> None:
+    normalized = str(key or "").strip()
+    if not normalized:
+        return
+    os.environ["TOKEN_ENCRYPTION_KEY"] = normalized
+    from ai_actuarial.services.token_encryption import TokenEncryption
+    TokenEncryption._instance = None
 
 
 
@@ -809,7 +814,13 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
             if existing and not overwrite:
                 skipped.append({"provider_id": provider, "category": category, "reason": "default_instance_exists"})
                 continue
-            encrypted_key = TokenEncryption().encrypt(api_key)
+            try:
+                encrypted_key = TokenEncryption().encrypt(api_key)
+            except ValueError as exc:
+                raise OpsWriteError(
+                    "Provider credential import is unavailable because token encryption is not configured correctly.",
+                    status=503,
+                ) from exc
             token_id = storage.upsert_llm_provider(
                 provider=provider,
                 api_key_encrypted=encrypted_key,
@@ -827,7 +838,7 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
                     "provider_id": provider,
                     "category": category,
                     "credential_id": f"{provider}:{category}:db:{token_id}",
-                    "base_url": (default_row or {}).get("api_base_url"),
+                    "api_base_url": (default_row or {}).get("api_base_url"),
                 }
             )
     finally:
@@ -864,6 +875,8 @@ def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str)
         new_cipher = Fernet(new_key.encode())
     except Exception as exc:
         raise OpsWriteError("Invalid encryption key format") from exc
+
+    _set_runtime_token_encryption_key(new_key)
 
     storage = Storage(db_path)
     rotated: list[dict[str, Any]] = []
@@ -944,7 +957,13 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
 
     from ai_actuarial.services.token_encryption import TokenEncryption
 
-    encrypted_key = TokenEncryption().encrypt(api_key or OPTIONAL_API_KEY_SENTINEL)
+    try:
+        encrypted_key = TokenEncryption().encrypt(api_key or OPTIONAL_API_KEY_SENTINEL)
+    except ValueError as exc:
+        raise OpsWriteError(
+            "Provider credential writes are unavailable because token encryption is not configured correctly.",
+            status=503,
+        ) from exc
     storage = Storage(db_path)
     try:
         token_id = storage.upsert_llm_provider(

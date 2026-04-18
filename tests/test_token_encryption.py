@@ -9,7 +9,7 @@ import os
 import pytest
 from cryptography.fernet import Fernet
 
-from ai_actuarial.services.token_encryption import PROJECT_ROOT, TokenEncryption
+from ai_actuarial.services.token_encryption import TokenEncryption
 
 
 class TestTokenEncryption:
@@ -146,10 +146,10 @@ class TestTokenEncryption:
         
         assert masked == "****"
     
-    def test_initialization_reads_key_from_project_dotenv(self):
+    def test_initialization_reads_key_from_project_dotenv(self, monkeypatch, tmp_path):
         """Test that TOKEN_ENCRYPTION_KEY can be read directly from project .env."""
-        dotenv_path = PROJECT_ROOT / '.env'
-        original_content = dotenv_path.read_text(encoding='utf-8') if dotenv_path.exists() else None
+        monkeypatch.setattr("ai_actuarial.services.token_encryption.PROJECT_ROOT", tmp_path)
+        dotenv_path = tmp_path / '.env'
         dotenv_key = Fernet.generate_key().decode()
 
         os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
@@ -165,16 +165,12 @@ class TestTokenEncryption:
 
             assert decrypted == plaintext
         finally:
-            if original_content is None:
-                dotenv_path.unlink(missing_ok=True)
-            else:
-                dotenv_path.write_text(original_content, encoding='utf-8')
             TokenEncryption._instance = None
 
-    def test_initialization_reads_export_style_key_from_project_dotenv(self):
+    def test_initialization_reads_export_style_key_from_project_dotenv(self, monkeypatch, tmp_path):
         """Test that export-style dotenv lines and trailing comments are accepted."""
-        dotenv_path = PROJECT_ROOT / '.env'
-        original_content = dotenv_path.read_text(encoding='utf-8') if dotenv_path.exists() else None
+        monkeypatch.setattr("ai_actuarial.services.token_encryption.PROJECT_ROOT", tmp_path)
+        dotenv_path = tmp_path / '.env'
         dotenv_key = Fernet.generate_key().decode()
 
         os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
@@ -193,16 +189,12 @@ class TestTokenEncryption:
 
             assert decrypted == plaintext
         finally:
-            if original_content is None:
-                dotenv_path.unlink(missing_ok=True)
-            else:
-                dotenv_path.write_text(original_content, encoding='utf-8')
             TokenEncryption._instance = None
 
-    def test_initialization_with_missing_key_raises_error(self):
+    def test_initialization_with_missing_key_raises_error(self, monkeypatch, tmp_path):
         """Test that missing TOKEN_ENCRYPTION_KEY fails instead of generating a new key."""
-        dotenv_path = PROJECT_ROOT / '.env'
-        original_content = dotenv_path.read_text(encoding='utf-8') if dotenv_path.exists() else None
+        monkeypatch.setattr("ai_actuarial.services.token_encryption.PROJECT_ROOT", tmp_path)
+        dotenv_path = tmp_path / '.env'
 
         os.environ.pop('TOKEN_ENCRYPTION_KEY', None)
         TokenEncryption._instance = None
@@ -213,10 +205,6 @@ class TestTokenEncryption:
             with pytest.raises(ValueError, match='TOKEN_ENCRYPTION_KEY is required'):
                 TokenEncryption()
         finally:
-            if original_content is None:
-                dotenv_path.unlink(missing_ok=True)
-            else:
-                dotenv_path.write_text(original_content, encoding='utf-8')
             TokenEncryption._instance = None
     
     def test_encrypt_decrypt_special_characters(self):
