@@ -11,7 +11,7 @@ This document covers deployment, configuration, and operations for the AI Actuar
 docker compose up
 
 # Production
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
 
 ## Docker Compose Commands
@@ -59,10 +59,10 @@ docker compose exec api sh
 
 ```bash
 # Backup the SQLite database
-cp data/ai_actuarial.db data/ai_actuarial.db.backup.$(date +%Y%m%d_%H%M%S)
+cp data/index.db data/index.db.backup.$(date +%Y%m%d_%H%M%S)
 
 # Restore from backup
-cp data/ai_actuarial.db.backup.20260101_120000 data/ai_actuarial.db
+cp data/index.db.backup.20260101_120000 data/index.db
 ```
 
 ## Environment Variables
@@ -73,7 +73,6 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `SECRET_KEY` | Flask session secret key | `python -c "import secrets; print(secrets.token_hex(32))"` |
 | `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting API credentials in DB | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 
 ### API Keys
@@ -92,7 +91,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 |----------|---------|-------------|
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
 | `MISTRAL_BASE_URL` | `https://api.mistral.ai` | Mistral API base URL |
-| `DATABASE_PATH` | `./data/ai_actuarial.db` | SQLite database path |
+| `DB_PATH` | `./data/index.db` | SQLite database path |
 
 ## Configuration Files
 
@@ -103,37 +102,68 @@ Most runtime configuration is in `config/sites.yaml` (AI models, RAG settings, f
 ### `config/sites.yaml` Structure
 
 ```yaml
-catalog:
-  model: gpt-4o
-  embedding_model: text-embedding-3-large
-chatbot:
-  model: gpt-4o
-  temperature: 0.7
-  max_tokens: 1000
-rag:
+defaults:
+  user_agent: 'AI-Actuarial-InfoSearch/0.1 (+contact: you@example.com)'
+  max_pages: 200
+  max_depth: 2
+  delay_seconds: 0.5
+paths:
+  download_dir: data/files
+  db: data/index.db
+search:
+  enabled: true
+  max_results: 5
+  languages:
+  - en
+  - zh
+ai_config:
+  catalog:
+    provider: openai
+    model: gpt-4o-mini
+  embeddings:
+    provider: openai
+    model: text-embedding-3-large
+    similarity_threshold: 0.4
+  chatbot:
+    provider: openai
+    model: gpt-4-turbo
+    temperature: 0.7
+    max_tokens: 1000
+rag_config:
   chunk_strategy: semantic_structure
   max_chunk_tokens: 800
-  similarity_threshold: 0.4
+  min_chunk_tokens: 100
+  index_type: Flat
 features:
   require_auth: false
-  rate_limit_enabled: true
+  enable_rate_limiting: true
+  rate_limit_defaults: '200 per hour, 50 per minute'
 server:
   host: 0.0.0.0
   port: 5000
   max_content_length: 52428800
+database:
+  type: sqlite
+  path: data/index.db
+sites:
+- name: Example Site
+  url: https://example.com
+  keywords:
+  - artificial intelligence
+  - machine learning
 ```
 
 ## Common Troubleshooting
 
 ### API returns 401 Unauthorized
 
-- Ensure `REQUIRE_AUTH=false` (in `sites.yaml`) for development, or configure valid credentials.
-- Check that `SECRET_KEY` is set and stable across restarts.
+- Ensure `require_auth: false` (in `sites.yaml`) for development, or configure valid credentials.
+- Check that `TOKEN_ENCRYPTION_KEY` is set and stable across restarts.
 
 ### Rate limit errors (429)
 
-- Rate limiting is enabled by default. Adjust in `sites.yaml` or set `RATE_LIMIT_ENABLED=false` for development.
-- Per-endpoint limits: auth=20/min, chat=30/min, read=100/min, meta=200/min.
+- Rate limiting is role-based. Adjust in `sites.yaml` or set `RATE_LIMIT_ENABLED=false` for development.
+- Role-based limits: guest=10/min, registered=30/min, premium=60/min, operator=200/min.
 
 ### Database locked errors
 
@@ -160,18 +190,18 @@ ss -tlnp | grep 5000
 
 ### RAG / search not returning results
 
-- Check that documents have been indexed: POST `/api/rag-admin/index`
-- Verify embedding model is configured in `sites.yaml`
+- Check that documents have been indexed: POST `/api/rag/knowledge-bases/{kb_id}/index`
+- Verify embedding model is configured in `sites.yaml` under `ai_config.embeddings`
 - Check similarity threshold — too high may filter all results
 
 ## Backup & Restore
 
 ### Files to Back Up
 
-1. **Database**: `data/ai_actuarial.db`
+1. **Database**: `data/index.db`
 2. **Configuration**: `config/sites.yaml`
 3. **Environment**: `.env` (secrets only — store securely, never in version control)
-4. **Uploaded files**: `data/uploads/` (if using file storage)
+4. **Uploaded files**: `data/files/` (if using file storage)
 
 ### Backup Script
 
@@ -180,7 +210,7 @@ ss -tlnp | grep 5000
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_DIR="./backups/$DATE"
 mkdir -p "$BACKUP_DIR"
-cp data/ai_actuarial.db "$BACKUP_DIR/"
+cp data/index.db "$BACKUP_DIR/"
 cp config/sites.yaml "$BACKUP_DIR/"
 echo "Backup saved to $BACKUP_DIR"
 ```
@@ -192,7 +222,7 @@ echo "Backup saved to $BACKUP_DIR"
 docker compose down
 
 # Replace files
-cp backups/20260101_120000/ai_actuarial.db data/
+cp backups/20260101_120000/index.db data/
 cp backups/20260101_120000/sites.yaml config/
 
 # Restart

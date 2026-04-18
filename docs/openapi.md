@@ -25,8 +25,8 @@ The FastAPI application is pre-configured with Swagger UI. Access it at:
 ### Current Approach
 Currently the API uses path-based versioning: `/api/{resource}` with no explicit version prefix. All endpoints are considered `v1` implicitly.
 
-### URL Path Versioning (Current → Planned)
-The recommended path for explicit versioning when needed:
+### URL Path Versioning (Planned)
+The planned path for explicit versioning when needed:
 
 ```
 GET /api/v1/endpoint   → Current stable version
@@ -50,9 +50,9 @@ The following endpoints have complex response shapes or are likely to evolve and
 | Endpoint | Reason |
 |----------|--------|
 | `POST /api/chat/query` | LLM response format may change with model upgrades |
-| `POST /api/rag-admin/index` | Indexing strategy evolves with RAG improvements |
-| `GET /api/read/inventory` | Pagination and filter schema may expand |
-| `POST /api/files-write/upload` | File processing pipeline changes |
+| `POST /api/rag/knowledge-bases/{kb_id}/index` | Indexing strategy evolves with RAG improvements |
+| `GET /api/read/files` | Pagination and filter schema may expand |
+| `POST /api/files-write/files/update` | File processing pipeline changes |
 
 ### Deprecation Policy
 
@@ -93,64 +93,144 @@ System information and health checks.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check endpoint |
-| GET | `/meta/version` | API version info |
+| GET | `/health/detailed` | Detailed health check with version info |
 
 ### Auth (`/api/auth`)
 Authentication and session management.
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/auth/me` | Get current user info |
+| POST | `/auth/register` | User registration |
 | POST | `/auth/login` | User login |
 | POST | `/auth/logout` | User logout |
-| GET | `/auth/session` | Get current session |
+| GET | `/auth/tokens` | List API tokens |
+| POST | `/auth/tokens` | Create API token |
+| POST | `/auth/tokens/{token_id}/revoke` | Revoke an API token |
 
 ### Read (`/api/read`)
 Document and file reading operations.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/read/inventory` | List all inventory items |
-| GET | `/read/inventory/{id}` | Get specific inventory item |
-| GET | `/read/search` | Search documents |
+| GET | `/stats` | System statistics |
+| GET | `/sources` | List all sources |
+| GET | `/categories` | List categories |
+| GET | `/files` | List all files |
+| GET | `/files/detail` | Get file details |
+| GET | `/files/{file_url:path}/markdown` | Get file as markdown |
 
 ### Ops-Read (`/api/ops-read`)
 Administrative read operations.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/ops-read/stats` | System statistics |
-| GET | `/ops-read/config` | Runtime configuration |
+| GET | `/config/sites` | Get site configuration |
+| GET | `/schedule/status` | Scheduler status |
+| GET | `/scheduled-tasks` | List scheduled tasks |
+| GET | `/tasks/active` | List active tasks |
+| GET | `/tasks/history` | List task history |
+| GET | `/tasks/log/{task_id}` | Get task log |
+| GET | `/logs/global` | Global logs |
+| GET | `/config/backend-settings` | Backend settings |
+| GET | `/config/llm-providers` | LLM provider info |
+| GET | `/config/providers` | All providers |
+| GET | `/config/provider-credentials` | Provider credentials |
+| GET | `/config/model-catalog` | Model catalog |
+| GET | `/config/ai-routing` | AI routing config |
+| GET | `/config/ai-models` | AI models config |
+| GET | `/config/search-engines` | Search engine config |
+| GET | `/config/categories` | Categories config |
+| GET | `/search` | Search endpoint |
 
 ### Ops-Write (`/api/ops-write`)
 Administrative write operations.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/ops-write/reload-config` | Reload configuration |
+| POST | `/config/sites/add` | Add site configuration |
+| POST | `/config/sites/update` | Update site configuration |
+| POST | `/config/sites/delete` | Delete site configuration |
+| POST | `/config/sites/import` | Import sites |
+| GET | `/config/sites/export` | Export sites |
+| GET | `/config/sites/sample` | Sample site config |
+| POST | `/config/backups` | Create backup |
+| POST | `/config/backups/restore` | Restore from backup |
+| POST | `/config/backups/delete` | Delete backup |
+| POST | `/config/backend-settings` | Update backend settings |
+| POST | `/config/categories` | Manage categories |
+| POST | `/config/ai-models` | Manage AI models |
+| POST | `/config/provider-credentials` | Manage provider credentials |
+| POST | `/config/provider-credentials/import-env` | Import from env |
+| POST | `/config/provider-credentials/re-encrypt` | Re-encrypt credentials |
+| DELETE | `/config/provider-credentials/{provider_id}` | Delete provider |
+| POST | `/config/ai-routing` | Update AI routing |
+| POST | `/scheduled-tasks/add` | Add scheduled task |
+| POST | `/scheduled-tasks/update` | Update scheduled task |
+| POST | `/scheduled-tasks/delete` | Delete scheduled task |
+| POST | `/schedule/reinit` | Reinitialize scheduler |
+| POST | `/tasks/stop/{task_id}` | Stop a task |
+| POST | `/collections/run` | Trigger on-demand collection |
+| GET | `/utils/browse-folder` | Browse folder |
+| GET | `/catalog/stats` | Catalog statistics |
+| GET | `/markdown_conversion/stats` | Markdown conversion stats |
+| GET | `/chunk_generation/stats` | Chunk generation stats |
 
 ### Files-Write (`/api/files-write`)
 File upload and management.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/files-write/upload` | Upload a file |
-| DELETE | `/files-write/{id}` | Delete a file |
+| POST | `/files/update` | Upload/update a file |
+| POST | `/files/delete` | Delete a file |
+| POST | `/files/{file_url:path}/markdown` | Get file as markdown |
+| GET | `/download` | Download file |
+| GET | `/export` | Export files |
+| GET | `/rag/files/preview` | Preview RAG file |
+| GET | `/files/{file_url:path}/chunk-sets` | Get chunk sets |
+| POST | `/files/{file_url:path}/chunk-sets/generate` | Generate chunk sets |
 
 ### RAG-Admin (`/api/rag-admin`)
 RAG (Retrieval-Augmented Generation) administration.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/rag-admin/index` | Index a document |
-| DELETE | `/rag-admin/index/{id}` | Remove from index |
+| GET | `/chunk/profiles` | List chunk profiles |
+| POST | `/chunk/profiles` | Create chunk profile |
+| PUT | `/chunk/profiles/{profile_id}` | Update chunk profile |
+| DELETE | `/chunk/profiles/{profile_id}` | Delete chunk profile |
+| POST | `/chunk-sets/cleanup` | Cleanup chunk sets |
+| GET | `/rag/knowledge-bases` | List knowledge bases |
+| POST | `/rag/knowledge-bases` | Create knowledge base |
+| GET | `/rag/knowledge-bases/{kb_id}` | Get knowledge base |
+| PUT | `/rag/knowledge-bases/{kb_id}` | Update knowledge base |
+| DELETE | `/rag/knowledge-bases/{kb_id}` | Delete knowledge base |
+| GET | `/rag/knowledge-bases/{kb_id}/stats` | KB statistics |
+| GET | `/rag/knowledge-bases/{kb_id}/files` | List KB files |
+| POST | `/rag/knowledge-bases/{kb_id}/files` | Add file to KB |
+| DELETE | `/rag/knowledge-bases/{kb_id}/files/{file_url:path}` | Remove file from KB |
+| GET | `/rag/categories/unmapped` | Unmapped categories |
+| GET | `/rag/categories/mapping` | Category mapping |
+| GET | `/rag/files/selectable` | Selectable files |
+| GET | `/rag/knowledge-bases/{kb_id}/categories` | KB categories |
+| POST | `/rag/knowledge-bases/{kb_id}/categories` | Set KB categories |
+| GET | `/rag/knowledge-bases/{kb_id}/files/pending` | Pending files |
+| POST | `/rag/knowledge-bases/{kb_id}/bindings` | Manage bindings |
+| GET | `/rag/knowledge-bases/{kb_id}/bindings` | Get bindings |
+| POST | `/rag/knowledge-bases/{kb_id}/index` | Index knowledge base |
 
 ### Chat (`/api/chat`)
 Chatbot and AI interaction endpoints.
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/chat/conversations` | List conversations |
+| POST | `/chat/conversations` | Create conversation |
+| GET | `/chat/conversations/{conversation_id}` | Get conversation |
+| DELETE | `/chat/conversations/{conversation_id}` | Delete conversation |
+| GET | `/chat/knowledge-bases` | List available knowledge bases |
+| GET | `/chat/available-documents` | List available documents |
 | POST | `/chat/query` | Send a chat query |
-| GET | `/chat/history` | Get chat history |
 
 ### Migration (`/api/migration`)
 Flask-to-FastAPI migration utilities.
@@ -158,7 +238,7 @@ Flask-to-FastAPI migration utilities.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/migration/status` | Migration status |
-| POST | `/migration/flag` | Set migration flag |
+| GET | `/migration/inventory` | Migration inventory |
 
 ## OpenAPI Schema Components
 
@@ -201,7 +281,7 @@ Flask-to-FastAPI migration utilities.
 
 ### Pagination
 
-List endpoints use cursor-based pagination:
+List endpoints use offset/limit pagination:
 
 ```yaml
 PaginationParams:

@@ -85,36 +85,39 @@ Content-Type: application/json
 ```json
 {
   "name": "soa-publications",
+  "type": "url",
   "force": true,
-  "depth": 2,
-  "category": "soa"
+  "depth": 2
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | ✅ | Site name (must match a configured site in sites.yaml) |
+| `name` | string | ✅ | Site name or task name |
+| `type` | string | ❌ | Collection type (default: `url`) |
 | `force` | boolean | ❌ | If `true`, re-downloads already-processed pages; default `false` |
 | `depth` | integer | ❌ | Crawl depth override; omit to use site default |
-| `category` | string | ❌ | Category override for this run |
 
 ### Response `200 OK`
 
 ```json
 {
+  "success": true,
   "task_id": "task_xyz789",
-  "status": "queued",
-  "site": "soa-publications",
-  "started_at": "2026-04-19T06:50:00Z"
+  "task": {
+    "task_id": "task_xyz789",
+    "task_name": "soa-publications",
+    "type": "url",
+    "status": "running"
+  }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `success` | boolean | Whether the task was successfully enqueued |
 | `task_id` | string | Unique identifier for the new collection task |
-| `status` | string | Initial status: `"queued"` |
-| `site` | string | Site name the task is running for |
-| `started_at` | string (ISO 8601) | Timestamp the task was enqueued |
+| `task` | object | Full task info including type, status, and metadata |
 
 ### Error Responses
 
@@ -143,17 +146,16 @@ Authorization: Bearer <token>
 
 ```json
 {
-  "active_tasks": [
+  "tasks": [
     {
       "task_id": "task_xyz789",
-      "task_type": "collection",
-      "site_name": "soa-publications",
+      "task_name": "soa-publications",
+      "type": "url",
       "status": "running",
-      "progress_pct": 45,
-      "pages_processed": 120,
-      "pages_total": 267,
       "started_at": "2026-04-19T06:50:00Z",
-      "estimated_finish": "2026-04-19T07:05:00Z"
+      "items_processed": 120,
+      "items_downloaded": 100,
+      "items_skipped": 5
     }
   ]
 }
@@ -161,16 +163,12 @@ Authorization: Bearer <token>
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `active_tasks` | array[object] | List of currently running tasks |
-| `active_tasks[].task_id` | string | Unique task identifier |
-| `active_tasks[].task_type` | string | Type: `"collection"`, `"crawl"`, `"index"` etc. |
-| `active_tasks[].site_name` | string | Name of the site being collected |
-| `active_tasks[].status` | string | Current state: `"running"`, `"paused"`, `"stopping"` |
-| `active_tasks[].progress_pct` | integer | Estimated completion percentage (0–100) |
-| `active_tasks[].pages_processed` | integer | Number of pages processed so far |
-| `active_tasks[].pages_total` | integer | Estimated total pages to process |
-| `active_tasks[].started_at` | string (ISO 8601) | When the task started |
-| `active_tasks[].estimated_finish` | string (ISO 8601) | Estimated completion time |
+| `tasks` | array[object] | List of currently running tasks |
+| `tasks[].task_id` | string | Unique task identifier |
+| `tasks[].task_name` | string | Human-readable task name |
+| `tasks[].type` | string | Task type: `"url"`, `"catalog"`, `"markdown"`, etc. |
+| `tasks[].status` | string | Current state: `"running"`, `"paused"`, `"stopping"` |
+| `tasks[].started_at` | string (ISO 8601) | When the task started |
 
 ### Error Responses
 
@@ -200,7 +198,7 @@ Content-Type: application/json
   "conversation_id": "conv_abc123",
   "message": "What are the latest SOA continuing education requirements?",
   "kb_ids": ["kb_soa_main", "kb_soa_ce"],
-  "stream": false
+  "mode": "expert"
 }
 ```
 
@@ -209,44 +207,62 @@ Content-Type: application/json
 | `conversation_id` | string | ❌ | Existing conversation ID to continue; omit or use `null` to start a new conversation |
 | `message` | string | ✅ | User's natural-language question |
 | `kb_ids` | array[string] | ❌ | Restrict retrieval to these knowledge-base IDs |
-| `stream` | boolean | ❌ | If `true`, response uses server-sent events; default `false` |
+| `mode` | string | ❌ | Chat mode: `"expert"` (default) or `"beginner"` |
+| `document_content` | string | ❌ | Upload document content directly for analysis |
 
 ### Response `200 OK` (non-streaming)
 
 ```json
 {
-  "conversation_id": "conv_abc123",
-  "reply": "Based on the SOA continuing education requirements...",
-  "references": [
-    {
-      "kb_id": "kb_soa_main",
-      "kb_name": "SOA Main",
-      "doc_title": "CE Requirements 2025",
-      "doc_id": "doc_001",
-      "chunk_snippet": "...at least 30 hours of CE every two years...",
-      "relevance_score": 0.94
+  "success": true,
+  "data": {
+    "conversation_id": "conv_abc123",
+    "message_id": "msg_xyz789",
+    "response": "Based on the SOA continuing education requirements...",
+    "citations": [
+      {
+        "kb_id": "kb_soa_main",
+        "kb_name": "SOA Main",
+        "doc_title": "CE Requirements 2025",
+        "chunk_id": "chunk_001",
+        "similarity_score": 0.94
+      }
+    ],
+    "retrieved_blocks": [
+      {
+        "content": "...at least 30 hours of CE every two years...",
+        "metadata": {
+          "filename": "CE_Requirements_2025.pdf",
+          "kb_id": "kb_soa_main",
+          "kb_name": "SOA Main",
+          "chunk_id": "chunk_001"
+        }
+      }
+    ],
+    "metadata": {
+      "retrieval_time_ms": 0,
+      "generation_time_ms": 0,
+      "model": "gpt-4-turbo",
+      "mode": "expert",
+      "num_chunks": 5,
+      "no_results": false
     }
-  ],
-  "model_used": "gpt-4o-mini",
-  "tokens_used": 1842,
-  "created_at": "2026-04-19T06:55:00Z"
+  }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conversation_id` | string | Conversation ID (echoed from request or newly created) |
-| `reply` | string | Assistant's full text response |
-| `references` | array[object] | Retrieved document chunks used to ground the answer |
-| `references[].kb_id` | string | Source knowledge-base ID |
-| `references[].kb_name` | string | Source KB display name |
-| `references[].doc_title` | string | Title of the source document |
-| `references[].doc_id` | string | Internal document identifier |
-| `references[].chunk_snippet` | string | Relevant excerpt from the retrieved chunk |
-| `references[].relevance_score` | float | Relevance score (0–1) of this chunk |
-| `model_used` | string | LLM model that generated the response |
-| `tokens_used` | integer | Total tokens consumed for this turn |
-| `created_at` | string (ISO 8601) | Timestamp of the response |
+| `success` | boolean | Whether the query succeeded |
+| `data.conversation_id` | string | Conversation ID (echoed from request or newly created) |
+| `data.message_id` | string | ID of the assistant's message |
+| `data.response` | string | Assistant's full text response |
+| `data.citations` | array[object] | Source citations for the response |
+| `data.retrieved_blocks` | array[object] | Retrieved document chunks used to ground the answer |
+| `data.metadata.model` | string | LLM model that generated the response |
+| `data.metadata.mode` | string | Chat mode used |
+| `data.metadata.num_chunks` | integer | Number of chunks retrieved |
+| `data.metadata.no_results` | boolean | Whether no relevant documents were found |
 
 ### Error Responses
 

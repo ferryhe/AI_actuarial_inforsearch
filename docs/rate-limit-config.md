@@ -11,29 +11,32 @@ Rate limiting is controlled via environment variables in `.env`:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `RATE_LIMIT_ENABLED` | Enable/disable rate limiting | `true` |
-| `RATE_LIMIT_STORAGE` | Storage backend (`memory`, `redis`) | `memory` |
-| `RATE_LIMIT_DEFAULT` | Default requests per window | `100` |
-| `RATE_LIMIT_WINDOW` | Time window in seconds | `60` |
+| `RATE_LIMIT_PER_MINUTE` | Default requests per minute for unknown roles | `60` |
+| `RATE_LIMIT_BURST` | Burst limit | `10` |
 
 ## Rate Limit Headers
 
-All API responses include rate limit headers:
+Rate limit headers are attached to responses from limited endpoints only (not all endpoints):
 
 ```
 X-RateLimit-Limit: 100
 X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1713500000
+X-RateLimit-Reset: 60
 ```
 
-## Per-Endpoint Limits
+## Role-Based Limits
 
-| Endpoint Group | Limit | Window |
-|----------------|-------|--------|
-| `/api/auth/*` | 20 req | 60s |
-| `/api/chat/*` | 30 req | 60s |
-| `/api/read/*` | 100 req | 60s |
-| `/api/meta/*` | 200 req | 60s |
-| All others | `RATE_LIMIT_DEFAULT` | `RATE_LIMIT_WINDOW` |
+Rate limits are applied per-user based on authenticated role:
+
+| Role | Limit | Window |
+|------|-------|--------|
+| `guest` | 10 req | 60s |
+| `registered` | 30 req | 60s |
+| `premium` | 60 req | 60s |
+| `operator` | 200 req | 60s |
+| `admin` | unlimited | — |
+
+Rate limiting is applied to these endpoints only: `/api/search`, `/api/chat/query`, `/api/chat/conversations`, `/api/collections/run`.
 
 ## Error Response
 
@@ -41,7 +44,7 @@ When rate limited, the API returns `429 Too Many Requests`:
 
 ```json
 {
-  "detail": "Rate limit exceeded. Try again in 45 seconds."
+  "detail": "Rate limit exceeded. Limit: 30 requests/minute for registered role."
 }
 ```
 
@@ -50,4 +53,4 @@ When rate limited, the API returns `429 Too Many Requests`:
 - Rate limit counters are stored in memory by default (not shared across processes)
 - For multi-instance deployments, use Redis as the storage backend
 - The middleware runs after CORS middleware in the FastAPI stack
-- Health check endpoints (`/api/meta/health`) are exempt from rate limiting
+- Health check endpoints (`/api/health`) are exempt from rate limiting
