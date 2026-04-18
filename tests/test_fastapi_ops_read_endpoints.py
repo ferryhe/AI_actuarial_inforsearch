@@ -416,3 +416,36 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert bindings["chat"]["config_section"] == "chatbot"
     assert bindings["embeddings"]["provider"] == "openai"
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
+
+def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ENABLE_GLOBAL_LOGS_API", "1")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "app.log").write_text(
+        "2026-04-17 10:00:00 INFO first\n2026-04-17 10:01:00 ERROR second\n",
+        encoding="utf-8",
+    )
+
+    storage = Storage(str(app.state.db_path))
+    try:
+        admin_user_id = storage.create_user(
+            "admin@example.com",
+            "admin-password-hash",
+            role="admin",
+            display_name="Admin",
+        )
+    finally:
+        storage.close()
+
+    cookie_name = app.state.legacy_flask_app.config.get("SESSION_COOKIE_NAME", "session")
+    session_cookie = _make_session_cookie(app, {"email_user_id": admin_user_id})
+    client.cookies.set(cookie_name, session_cookie)
+
+    response = client.get("/api/logs/global")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["logs"].splitlines()[0].endswith("ERROR second")
+    assert body["logs"].splitlines()[1].endswith("INFO first")

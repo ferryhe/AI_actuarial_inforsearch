@@ -10,7 +10,7 @@ import FilePreview from "@/pages/FilePreview";
 import KBDetail from "@/pages/KBDetail";
 import Knowledge from "@/pages/Knowledge";
 import Login from "@/pages/Login";
-import NativeLogs from "@/pages/NativeLogs";
+import LogsPage from "@/pages/Logs";
 import Profile from "@/pages/Profile";
 import Register from "@/pages/Register";
 import SettingsPage from "@/pages/Settings";
@@ -55,7 +55,7 @@ function Router() {
             </Route>
             <Route path="/logs">
               <RequireAuth>
-                <NativeLogs />
+                <LogsPage />
               </RequireAuth>
             </Route>
             <Route path="/knowledge/:kbId">

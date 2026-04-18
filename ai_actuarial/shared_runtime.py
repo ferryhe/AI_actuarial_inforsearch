@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -76,8 +77,8 @@ def tail_text_file(path: Path, max_lines: int = 400) -> str:
     if max_lines <= 0 or not path.exists():
         return ""
     with path.open("r", encoding="utf-8", errors="replace") as handle:
-        lines = handle.readlines()
-    return "".join(lines[-max_lines:])
+        lines = deque(handle, maxlen=max_lines)
+    return "".join(lines)
 
 
 def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:

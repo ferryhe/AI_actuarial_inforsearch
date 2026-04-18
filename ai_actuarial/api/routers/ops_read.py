@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -11,6 +13,7 @@ from ..services.ops_read import (
     get_backend_settings,
     get_config_categories,
     get_config_sites,
+    get_global_logs,
     get_llm_providers,
     get_schedule_status,
     get_scheduled_tasks,
@@ -24,12 +27,40 @@ from ..services.ops_read import (
 
 router = APIRouter()
 
+_GLOBAL_LOGS_RATE_LIMIT = 30
+_GLOBAL_LOGS_WINDOW_SECONDS = 60.0
+
 
 def _get_db_path(request: Request) -> str:
     db_path = str(getattr(request.app.state, "db_path", "") or "")
     if not db_path:
         raise HTTPException(status_code=500, detail="Database path is unavailable")
     return db_path
+
+
+def _global_logs_rate_key(request: Request, auth: AuthContext) -> str:
+    token = auth.token or {}
+    if token.get("_email_user_id") is not None:
+        return f"user:{token['_email_user_id']}"
+    if token.get("id") is not None:
+        return f"token:{token['id']}"
+    client_host = getattr(getattr(request, "client", None), "host", None) or "unknown"
+    return f"ip:{client_host}"
+
+
+def _enforce_global_logs_rate_limit(request: Request, auth: AuthContext) -> JSONResponse | None:
+    now = time.monotonic()
+    bucket_key = _global_logs_rate_key(request, auth)
+    buckets = getattr(request.app.state, "global_logs_rate_limit_buckets", None)
+    if not isinstance(buckets, dict):
+        buckets = {}
+        request.app.state.global_logs_rate_limit_buckets = buckets
+    recent = [stamp for stamp in buckets.get(bucket_key, []) if now - stamp < _GLOBAL_LOGS_WINDOW_SECONDS]
+    if len(recent) >= _GLOBAL_LOGS_RATE_LIMIT:
+        return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
+    recent.append(now)
+    buckets[bucket_key] = recent
+    return None
 
 
 @router.get("/config/sites")
@@ -91,6 +122,25 @@ def api_task_log(
         return get_task_log(task_id, tail)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@router.get("/logs/global")
+def api_logs_global(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("logs.system.read")),
+) -> dict[str, object]:
+    rate_limited = _enforce_global_logs_rate_limit(request, _auth)
+    if rate_limited is not None:
+        return rate_limited
+    expected_token = os.getenv("LOGS_READ_AUTH_TOKEN")
+    if expected_token:
+        provided_token = request.headers.get("X-Auth-Token")
+        if not provided_token or provided_token != expected_token:
+            return JSONResponse(status_code=403, content={"error": "Forbidden"})
+    result = get_global_logs()
+    if result.get("error") == "Forbidden":
+        return JSONResponse(status_code=403, content={"error": "Forbidden"})
+    return result
 
 
 @router.get("/config/backend-settings")

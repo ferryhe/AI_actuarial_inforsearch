@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 import ai_actuarial.llm_models as llm_models
@@ -64,6 +65,20 @@ def get_backend_settings() -> dict[str, Any]:
         if "categories_config_path" in runtime:
             runtime["categories_config_path_set"] = bool(runtime.pop("categories_config_path", None))
     return settings
+
+
+def get_global_logs() -> dict[str, str]:
+    enable_global_logs_api = str(os.getenv("ENABLE_GLOBAL_LOGS_API") or "").strip().lower()
+    if enable_global_logs_api not in {"1", "true", "yes", "on"}:
+        return {"error": "Forbidden"}
+
+    log_file = Path("data") / "app.log"
+    if not log_file.exists():
+        return {"logs": "No logs found."}
+
+    lines = tail_text_file(log_file, max_lines=500).splitlines(keepends=True)
+    lines.reverse()
+    return {"logs": "".join(lines)}
 
 
 def get_search_engines() -> dict[str, list[dict[str, object]]]:
