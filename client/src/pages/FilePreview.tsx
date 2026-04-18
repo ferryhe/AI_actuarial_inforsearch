@@ -12,10 +12,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ImageIcon,
+  Lock,
 } from "lucide-react";
 import { buildFileDetailPath, getReturnPathFromSearch } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/lib/api";
 
 interface FileInfo {
@@ -218,10 +220,16 @@ function OriginalPane({ fileInfo }: { fileInfo: FileInfo }) {
           <div className="text-center py-12">
             <FileText className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
             <p className="text-sm text-muted-foreground mb-3">{t("fp.no_preview")}</p>
-            <a href={`/api/download?url=${encodeURIComponent(fileInfo.url)}`} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline" data-testid="link-download-original">
-              <Download className="w-4 h-4" />{t("fv.download")}
-            </a>
+            {canDownload ? (
+              <a href={`/api/download?url=${encodeURIComponent(fileInfo.url)}`} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline" data-testid="link-download-original">
+                <Download className="w-4 h-4" />{t("fv.download")}
+              </a>
+            ) : (
+              <div className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                <Lock className="w-4 h-4" />{t("fp.download_requires_login")}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -278,6 +286,9 @@ function ChunksPane({ chunks, chunkSets, activeChunkSetId, onChunkSetChange }: {
 
 export default function FilePreview() {
   const { t } = useTranslation();
+  const { user, isLoggedIn, permissions } = useAuth();
+  const isGuest = !isLoggedIn || user?.role === "guest";
+  const canDownload = permissions.includes("files.download");
   const [, navigate] = useLocation();
   const searchStr = useSearch();
   const searchParams = new URLSearchParams(searchStr);
