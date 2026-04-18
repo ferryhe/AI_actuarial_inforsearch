@@ -36,6 +36,17 @@ def api_list_conversations(
     response: Response,
     auth: AuthContext = Depends(require_permissions("chat.conversations")),
 ):
+    """
+    List all chat conversations for the authenticated user.
+
+    Returns:
+        A list of conversation summaries, each containing the conversation
+        ID, title, creation time, last-message timestamp, and message count.
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``chat.conversations`` permission.
+    """
     try:
         payload, session_update = list_conversations(db_path=_db_path(request), request=request, auth=auth)
         apply_session_update(response, request, session_update)
@@ -66,6 +77,22 @@ def api_get_conversation(
     response: Response,
     auth: AuthContext = Depends(require_permissions("chat.conversations")),
 ):
+    """
+    Retrieve the full message history of a specific conversation.
+
+    Path params:
+        conversation_id: The unique identifier of the conversation.
+
+    Returns:
+        A dict with the conversation metadata (id, title, created_at)
+        and a ``messages`` list containing all turns with role, content,
+        and timestamps.
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``chat.conversations`` permission.
+        404: If the conversation does not exist or belongs to another user.
+    """
     try:
         payload, session_update = get_conversation_detail(
             db_path=_db_path(request), request=request, auth=auth, conversation_id=conversation_id
@@ -122,6 +149,28 @@ def api_chat_query(
     response: Response,
     auth: AuthContext = Depends(require_permissions("chat.query")),
 ):
+    """
+    Send a user message to the RAG chatbot and receive a streamed or
+    blocking LLM response backed by the knowledge base.
+
+    Payload:
+        conversation_id (str): ID of the conversation to continue,
+            or null to start a new one.
+        message (str): The user's natural-language query.
+        kb_ids (list[str]): Optional list of knowledge-base IDs to
+            restrict retrieval to.
+
+    Returns:
+        A dict containing the assistant's reply text, the updated
+        conversation_id, and any cited document references.
+
+    Raises:
+        400: If the payload is malformed or missing required fields.
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``chat.query`` permission.
+        429: If the rate limit for chat queries is exceeded.
+        503: If no LLM provider is configured or reachable.
+    """
     try:
         result, session_update = query_chat(db_path=_db_path(request), request=request, auth=auth, payload=payload)
         apply_session_update(response, request, session_update)

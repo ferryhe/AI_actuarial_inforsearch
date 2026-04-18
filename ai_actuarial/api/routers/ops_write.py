@@ -62,6 +62,25 @@ def api_config_sites_add(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("schedule.write")),
 ):
+    """
+    Add a new site (data source) to the sites configuration.
+
+    The payload should conform to the site schema (name, url, crawl_rules,
+    schedule, category, etc.).
+
+    Args:
+        payload: A dictionary containing the new site's configuration.
+
+    Returns:
+        The result of the site creation, including the site name and
+        confirmation of addition to sites.yaml.
+
+    Raises:
+        400: If the payload is malformed or validation fails.
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``schedule.write`` permission.
+        409: If a site with the same name already exists.
+    """
     try:
         return add_site(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
@@ -329,6 +348,26 @@ def api_scheduled_tasks_add(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("schedule.write")),
 ):
+    """
+    Register a new scheduled (cron-style) task for periodic collections.
+
+    The task will be queued with the built-in scheduler and executed
+    automatically at the configured interval.
+
+    Args:
+        payload: A dict with at least ``name`` and ``schedule`` (cron expr);
+            may also include ``task_type``, ``site_names``, and runtime options.
+
+    Returns:
+        The created task record including its name, schedule, and
+        next-run timestamp.
+
+    Raises:
+        400: If the payload is invalid or the cron expression is malformed.
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``schedule.write`` permission.
+        409: If a scheduled task with the same name already exists.
+    """
     try:
         return add_scheduled_task(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
@@ -376,6 +415,23 @@ def api_tasks_stop(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.stop")),
 ):
+    """
+    Gracefully request termination of a running task.
+
+    The task is asked to stop; cleanup is performed asynchronously.
+    Use ``GET /api/tasks/active`` to confirm the task has exited.
+
+    Args:
+        task_id: The unique identifier of the task to stop.
+
+    Returns:
+        A dict confirming the stop request was accepted.
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``tasks.stop`` permission.
+        404: If no active task with the given ID exists.
+    """
     try:
         return request_task_stop(task_id, bridge=_bridge(request))
     except OpsWriteError as exc:
@@ -388,6 +444,28 @@ def api_collections_run(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
+    """
+    Trigger an immediate on-demand collection (crawl + ingestion) for one
+    or more sites, bypassing the schedule.
+
+    This is the primary endpoint for manually running a document collection
+    task. The collection runs asynchronously; check ``GET /api/tasks/active``
+    for progress.
+
+    Args:
+        payload: A dict that must include ``name`` (site name) and may
+            include ``force`` (bool), ``depth`` (int), and other collection
+            options.
+
+    Returns:
+        A dict with the created task ID and initial status.
+
+    Raises:
+        400: If the payload is invalid or the named site does not exist.
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``tasks.run`` permission.
+        429: If a collection for the same site is already running.
+    """
     try:
         return start_collection(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
