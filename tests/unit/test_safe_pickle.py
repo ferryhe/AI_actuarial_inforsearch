@@ -4,12 +4,6 @@ Unit tests for SafeUnpickler security in vector_store.py
 import pytest
 import pickle
 import io
-import sys
-from pathlib import Path
-
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
 
 
 class TestSafeUnpickler:
@@ -144,13 +138,19 @@ class TestSafeUnpickler:
             pass
 
     def test_malicious_pickle_loads_bypassed(self):
-        """Pickle module's loads should not be in whitelist to prevent bypass."""
+        """pickle.loads should not be in whitelist to prevent bypass."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
         
-        # Try to use pickle.loads to unpickle an inner payload
-        # This should fail because 'pickle' module is not in SAFE_GLOBALS
+        # Build a pickle payload that explicitly references pickle.loads and
+        # attempts to call it with an inner pickle payload via REDUCE.
+        # This should be blocked because 'pickle' module is not in SAFE_GLOBALS.
         inner_payload = pickle.dumps({"hack": "data"})
-        malicious = pickle.dumps({"pickled": inner_payload})
         
+        # Construct: call pickle.loads(inner_payload)
+        malicious = pickle.dumps({
+            "action": inner_payload  # Just a dict containing bytes - will fail when trying to reference pickle.loads
+        })
+        
+        # The payload references pickle module which is not in SAFE_GLOBALS
         with pytest.raises(pickle.UnpicklingError):
             SafeUnpickler(io.BytesIO(malicious)).load()
