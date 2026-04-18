@@ -79,7 +79,11 @@ def _apply_session_mutation(response: Response, request: Request, mutation: Sess
 
     cookie_name = _legacy_session_cookie_name(request)
     if mutation.clear:
-        response.delete_cookie(cookie_name, path=str(getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/"))
+        response.delete_cookie(
+            cookie_name,
+            path=str(getattr(request.app.state, "fastapi_session_cookie_path", "/") or "/"),
+            domain=getattr(request.app.state, "fastapi_session_cookie_domain", None) or None,
+        )
         return
 
     secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")

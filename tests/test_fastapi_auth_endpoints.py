@@ -198,6 +198,7 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
     assert refreshed_user.json()["user"]["display_name"] == "Renamed User"
 
 
+
 def test_fastapi_auth_session_persists_with_fastapi_native_session(tmp_path: Path, monkeypatch) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
@@ -219,6 +220,28 @@ def test_fastapi_auth_session_persists_with_fastapi_native_session(tmp_path: Pat
     logout = client.post("/api/auth/logout")
     assert logout.status_code == 200, logout.text
     assert client.get("/api/auth/me").json()["data"]["authenticated"] is False
+
+
+
+def test_fastapi_auth_logout_clears_cookie_with_configured_domain(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.fastapi_session_cookie_domain = "example.com"
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "domainlogout@example.com",
+            "password": "password123",
+            "display_name": "Domain Logout",
+        },
+    )
+    assert register.status_code == 201, register.text
+
+    logout = client.post("/api/auth/logout")
+    assert logout.status_code == 200, logout.text
+    set_cookie = logout.headers.get("set-cookie", "")
+    assert "Domain=example.com" in set_cookie
+    assert 'session=""' in set_cookie
 
 
 

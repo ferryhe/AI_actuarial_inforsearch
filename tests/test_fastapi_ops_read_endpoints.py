@@ -17,9 +17,9 @@ from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
 
 
-def _task_log_path(task_id: str) -> Path:
+def _task_log_path(base_dir: Path, task_id: str) -> Path:
     safe_id = "".join(ch if ch.isalnum() or ch in "_.-" else "_" for ch in (task_id or "unknown"))
-    return Path("data") / "task_logs" / f"{safe_id}.log"
+    return base_dir / "data" / "task_logs" / f"{safe_id}.log"
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
@@ -206,6 +206,7 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
     db_path, config_path, categories_path = _write_config_files(tmp_path)
     seed = _seed_storage(db_path)
 
+    monkeypatch.chdir(tmp_path)
     TokenEncryption._instance = None
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -289,7 +290,7 @@ def _install_runtime_state(monkeypatch, app) -> None:
     app.state.task_lock = task_lock
     app.state.schedule_ref = schedule_ref
 
-    log_path = _task_log_path("task-history-1")
+    log_path = _task_log_path(Path.cwd(), "task-history-1")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
         "2026-04-15 05:00:00 INFO Started task\n2026-04-15 05:20:00 INFO Completed task\n",

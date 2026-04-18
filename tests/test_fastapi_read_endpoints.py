@@ -324,7 +324,7 @@ def test_fastapi_markdown_route_preserves_percent_encoded_file_urls(tmp_path: Pa
     assert response.json()["markdown"]["markdown_content"] == "# Encoded Document\n\nStored under a percent-encoded URL."
 
 
-def test_fastapi_native_read_routes_accept_flask_session_cookie(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_native_read_routes_accept_fastapi_session_cookie(tmp_path: Path, monkeypatch) -> None:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     cookie_name = app.state.fastapi_session_cookie_name

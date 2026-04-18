@@ -6,6 +6,7 @@ import os
 import secrets
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -51,9 +52,16 @@ class NativeTaskRuntime:
         if not path.exists():
             return []
         try:
+            rows: deque[dict[str, Any]] = deque(maxlen=100)
             with path.open("r", encoding="utf-8") as handle:
-                rows = [json.loads(line) for line in handle if line.strip()]
-            return rows[-100:] if len(rows) > 100 else rows
+                for line_no, line in enumerate(handle, start=1):
+                    if not line.strip():
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError as exc:
+                        logger.warning("Skipping malformed job history line %s in %s: %s", line_no, path, exc)
+            return list(rows)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load job history: %s", exc)
             return []

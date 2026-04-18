@@ -100,22 +100,24 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
     categories_path.write_text("categories: {}\n", encoding="utf-8")
     history_dir = tmp_path / "data"
     history_dir.mkdir(parents=True, exist_ok=True)
-    (history_dir / "job_history.jsonl").write_text(
+    history_lines = ["{not-json}\n"]
+    history_lines.extend(
         json.dumps(
             {
-                "id": "task-history-from-disk",
-                "name": "Loaded History",
+                "id": f"task-history-{index}",
+                "name": f"Loaded History {index}",
                 "type": "markdown_conversion",
                 "status": "completed",
                 "started_at": "2026-04-15T12:43:39.212434",
                 "completed_at": "2026-04-15T12:43:40.097561",
-                "items_processed": 1,
-                "items_total": 1,
+                "items_processed": index,
+                "items_total": index,
             }
         )
-        + "\n",
-        encoding="utf-8",
+        + "\n"
+        for index in range(105)
     )
+    (history_dir / "job_history.jsonl").write_text("".join(history_lines), encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -127,4 +129,12 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
 
     assert response.status_code == 200
     body = response.json()
-    assert any(task.get("id") == "task-history-from-disk" for task in body["tasks"])
+    task_ids = [task.get("id") for task in body["tasks"]]
+    assert len(body["tasks"]) == 5
+    assert task_ids == [
+        "task-history-5",
+        "task-history-6",
+        "task-history-7",
+        "task-history-8",
+        "task-history-9",
+    ]
