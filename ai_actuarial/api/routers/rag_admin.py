@@ -14,6 +14,8 @@ from ..services.rag_admin import (
     create_knowledge_base,
     delete_chunk_profile,
     delete_knowledge_base,
+    get_categories_mapping,
+    get_kb_bindings,
     get_knowledge_base,
     get_knowledge_base_categories,
     get_knowledge_base_stats,
@@ -25,6 +27,7 @@ from ..services.rag_admin import (
     list_selectable_files,
     remove_knowledge_base_file,
     set_knowledge_base_categories,
+    update_chunk_profile,
     update_knowledge_base,
 )
 
@@ -66,6 +69,19 @@ def api_create_chunk_profile(
     try:
         result = create_chunk_profile(db_path=_db_path(request), payload=payload, headers=dict(request.headers))
         return JSONResponse(status_code=201, content=result)
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
+@router.put("/chunk/profiles/{profile_id}")
+def api_update_chunk_profile(
+    profile_id: str,
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        return update_chunk_profile(db_path=_db_path(request), profile_id=profile_id, payload=payload, headers=dict(request.headers))
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -216,6 +232,17 @@ def api_unmapped_categories(
         return _error_response(exc)
 
 
+@router.get("/rag/categories/mapping")
+def api_categories_mapping(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return get_categories_mapping(db_path=_db_path(request))
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
 @router.get("/rag/files/selectable")
 def api_selectable_files(
     request: Request,
@@ -273,6 +300,18 @@ def api_bind_chunk_sets(
 ):
     try:
         return bind_chunk_sets(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers))
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
+@router.get("/rag/knowledge-bases/{kb_id}/bindings")
+def api_get_kb_bindings(
+    kb_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return get_kb_bindings(db_path=_db_path(request), kb_id=kb_id)
     except RagAdminError as exc:
         return _error_response(exc)
 

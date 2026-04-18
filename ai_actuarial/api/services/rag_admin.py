@@ -232,6 +232,68 @@ def delete_chunk_profile(*, db_path: str, profile_id: str, headers: Mapping[str,
         storage.close()
 
 
+def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
+    _require_config_write_token(headers)
+    normalized_profile_id = _norm(profile_id)
+    if not normalized_profile_id:
+        raise RagAdminError("profile_id is required")
+    if not isinstance(payload, dict):
+        raise RagAdminError("Invalid JSON body")
+    storage = Storage(db_path)
+    try:
+        profile = storage.get_chunk_profile(normalized_profile_id)
+        if not profile:
+            raise RagAdminError("chunk profile not found", status_code=404)
+        updates = []
+        values = []
+        if "name" in payload:
+            updates.append("name = ?")
+            values.append(_norm(payload["name"]))
+        if "chunk_size" in payload:
+            updates.append("chunk_size = ?")
+            values.append(int(payload["chunk_size"]))
+        if "chunk_overlap" in payload:
+            updates.append("chunk_overlap = ?")
+            values.append(int(payload["chunk_overlap"]))
+        if updates:
+            import time as time_module
+            updates.append("updated_at = ?")
+            values.append(time_module.time())
+            values.append(normalized_profile_id)
+            storage._conn.execute(
+                f"UPDATE chunk_profiles SET {', '.join(updates)} WHERE profile_id = ?",
+                values,
+            )
+            storage._conn.commit()
+        updated = storage.get_chunk_profile(normalized_profile_id)
+        return {"profile": updated}
+    finally:
+        storage.close()
+
+
+def get_kb_bindings(*, db_path: str, kb_id: str) -> dict[str, Any]:
+    kid = _kb_id(kb_id)
+    storage = Storage(db_path)
+    try:
+        bindings = storage.list_kb_chunk_bindings(kid)
+        return {"kb_id": kid, "bindings": bindings, "count": len(bindings)}
+    finally:
+        storage.close()
+
+
+def get_categories_mapping(*, db_path: str) -> dict[str, Any]:
+    storage = Storage(db_path)
+    try:
+        cursor = storage._conn.execute(
+            """
+            SELECT DISTINCT category FROM source_metadata WHERE category IS NOT NULL AND category != ''
+            """
+        )
+        mapped_categories = [row[0] for row in cursor.fetchall() if row[0]]
+        return {"categories": mapped_categories, "count": len(mapped_categories)}
+    finally:
+        storage.close()
+
 
 def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
     KnowledgeBase, _manager, storage = _manager_and_storage(db_path)

@@ -12,6 +12,7 @@ from ..services.ops_write import (
     add_scheduled_task,
     add_site,
     browse_folder,
+    create_backup,
     delete_backup,
     delete_provider_credential,
     delete_scheduled_task,
@@ -143,6 +144,20 @@ def api_config_backups(
 ):
     try:
         return list_backups()
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/backups")
+def api_config_backups_create(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+):
+    try:
+        label = str(payload.get("label", "manual") or "manual")
+        result = create_backup(label)
+        return JSONResponse(status_code=201, content=result)
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 

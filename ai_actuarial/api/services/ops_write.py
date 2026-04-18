@@ -490,6 +490,27 @@ def list_backups() -> dict[str, list[dict[str, Any]]]:
     return {"backups": backups}
 
 
+def create_backup(label: str = "manual") -> dict[str, Any]:
+    # Sanitize label to prevent path traversal
+    import re
+    safe_label = re.sub(r'[^a-zA-Z0-9_-]', '_', label)[:50]
+    if not safe_label:
+        safe_label = "manual"
+    backup_name = _backup_config(safe_label)
+    backups_dir = _ensure_backup_dir()
+    backup_path = backups_dir / backup_name
+    try:
+        stat = backup_path.stat()
+        return {
+            "filename": backup_name,
+            "timestamp": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "size_bytes": stat.st_size,
+            "size": stat.st_size,
+        }
+    except FileNotFoundError:
+        raise OpsWriteError("Backup file was not created", status_code=500)
+
+
 def restore_backup(filename: str, *, bridge: BridgeState | None = None) -> dict[str, Any]:
     backup_path = _validate_backup_filename(filename)
     if not backup_path.exists():
