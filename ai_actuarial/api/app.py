@@ -19,6 +19,7 @@ from .routers.migration import router as migration_router
 from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
 from .routers.read import router as read_router
+from .routers.metrics import router as metrics_router
 from ai_actuarial.config import settings
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
 from ai_actuarial.task_runtime import NativeTaskRuntime
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(meta_router, prefix="/api", tags=["meta"])
+    app.include_router(metrics_router, prefix="/api", tags=["metrics"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
     app.include_router(read_router, prefix="/api", tags=["read"])
     app.include_router(auth_router, prefix="/api", tags=["auth"])
@@ -127,6 +129,19 @@ def create_app() -> FastAPI:
         logger.exception("Failed to initialize native FastAPI scheduler")
 
     app.state.native_paths = _native_paths(app)
+
+    # Attach metrics tracking to request lifecycle
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from .routers.metrics import record_request
+
+    class _MetricsMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            record_request(request.url.path)
+            return response
+
+    app.add_middleware(_MetricsMiddleware)
+
     return app
 
 
