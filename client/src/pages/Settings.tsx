@@ -386,8 +386,10 @@ function AiConfigTab({ lang }: { lang: string }) {
 
   function credentialStatusText(credential?: { source: string; status?: string; decrypt_ok?: boolean; last_error?: string | null }) {
     if (!credential) return t("settings.missing");
-    if (credential.decrypt_ok === false || credential.last_error) return "decrypt_failed";
-    return credential.status || credential.source || "active";
+    if (credential.decrypt_ok === false || credential.last_error) return t("settings.decrypt_failed");
+    if (credential.status === "active") return t("settings.status_active");
+    if (credential.status === "inactive") return t("settings.status_inactive");
+    return credential.status || credential.source || t("settings.status_active");
   }
 
   function startEditProvider(providerId: string) {
@@ -526,7 +528,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                       {credential?.api_base_url || provider.default_base_url || t("settings.default_base_url")}
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      status: {credentialStatusText(credential)}{credential?.source ? ` / ${credential.source}` : ""}{credential?.is_default ? " / default" : ""}
+                      {t("settings.status")}: {credentialStatusText(credential)}{credential?.source ? ` / ${credential.source}` : ""}{credential?.is_default ? ` / ${t("settings.default")}` : ""}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -615,7 +617,7 @@ function AiConfigTab({ lang }: { lang: string }) {
             <div className="px-5 py-4 bg-amber-500/5 border-b border-amber-500/20 text-sm text-amber-800 dark:text-amber-300" data-testid="routing-warning-reindex">
               <div className="font-medium">{t("settings.routing_saved_reindex_required")}</div>
               <div className="mt-1 text-xs">
-                {routingWarning.affected_kb_count > 0 ? `Affected KBs: ${routingWarning.affected_kb_count}` : "Affected KBs: 0"}
+                {t("settings.affected_kbs")}: {routingWarning.affected_kb_count}
               </div>
               {routingWarning.affected_kb_ids.length > 0 && (
                 <div className="mt-1 text-[11px] break-all">
@@ -653,13 +655,13 @@ function AiConfigTab({ lang }: { lang: string }) {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">Credential</label>
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
                     <select value={current.credential_id || ""} onChange={(e) => updateModelEdit(card.key, "credential_id", e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
                       data-testid={`select-credential-${card.key}`}>
                       <option value="">—</option>
                       {filteredCredentials.map((credential) => (
-                        <option key={credential.credential_id} value={credential.credential_id}>{credential.label}{credential.is_default ? " (default)" : ""}</option>
+                        <option key={credential.credential_id} value={credential.credential_id}>{credential.label}{credential.is_default ? ` (${t("settings.default")})` : ""}</option>
                       ))}
                     </select>
                   </div>
@@ -676,9 +678,9 @@ function AiConfigTab({ lang }: { lang: string }) {
                   </div>
                 </div>
                 <div className="mt-2 text-[11px] text-muted-foreground space-y-1">
-                  <p>Status: {routing[card.key]?.configured ? "configured" : "missing"}</p>
+                  <p>{t("settings.status")}: {routing[card.key]?.configured ? t("settings.status_configured") : t("settings.missing")}</p>
                   <p>{t("settings.credential_source_label")}: {routing[card.key]?.credential_source || t("settings.missing")}</p>
-                  {routing[card.key]?.credential_label && <p>Credential: {routing[card.key]?.credential_label}</p>}
+                  {routing[card.key]?.credential_label && <p>{t("settings.credential")}: {routing[card.key]?.credential_label}</p>}
                   {card.key === "embeddings" && routing[card.key]?.embedding_fingerprint && (
                     <p className="font-mono break-all">{t("settings.embedding_fingerprint_label")}: {routing[card.key]?.embedding_fingerprint}</p>
                   )}

@@ -578,6 +578,49 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
     assert not any(row["provider_id"] == "mistral" and row["instance_id"] == "backup" and row["source"] == "db" for row in remaining)
 
 
+def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    recorder = _BridgeRecorder()
+    _install_bridge(app, recorder)
+
+    mistral = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "mistral",
+            "instance_id": "primary",
+            "label": "Mistral Primary",
+            "api_key": "***",
+            "api_base_url": "https://api.mistral.ai/v1",
+        },
+    )
+    assert mistral.status_code == 200, mistral.text
+    mistral_credential_id = mistral.json()["credential_id"]
+
+    first_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "catalog", "provider": "mistral", "credential_id": mistral_credential_id, "model": "mistral-small-latest"},
+            ]
+        },
+    )
+    assert first_update.status_code == 200, first_update.text
+
+    second_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "catalog", "provider": "openai", "model": "gpt-4o-mini"},
+            ]
+        },
+    )
+    assert second_update.status_code == 200, second_update.text
+    catalog_binding = next(item for item in second_update.json()["bindings"] if item["function_name"] == "catalog")
+    assert catalog_binding["provider"] == "openai"
+    assert catalog_binding.get("credential_id") in (None, "openai:llm:env") or str(catalog_binding.get("credential_id", "")).startswith("openai:")
+
+
 def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)

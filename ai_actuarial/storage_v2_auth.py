@@ -194,7 +194,7 @@ class StorageV2AuthMixin:
     # LLM Provider API Token Management
     # ---------------------------------------------------------------------------
     
-    _LLM_TOKEN_COLS=(
+    _LLM_TOKEN_COLS = (
         "id", "provider", "category", "instance_id", "label", "is_default", "api_key_encrypted",
         "api_base_url", "status", "created_at", "updated_at", "notes",
     )

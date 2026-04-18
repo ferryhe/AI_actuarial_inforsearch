@@ -416,6 +416,7 @@ def list_provider_registry() -> dict[str, list[dict[str, Any]]]:
 def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[dict[str, Any]]]:
     credentials: list[dict[str, Any]] = []
     seen: set[str] = set()
+    seen_provider_categories: set[str] = set()
 
     if storage is not None:
         try:
@@ -449,6 +450,7 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
                         }
                     )
                     seen.add(f"{provider}:{entry_category}:{str(entry.get('instance_id') or 'default').strip() or 'default'}")
+                    seen_provider_categories.add(f"{provider}:{entry_category}")
         except Exception:
             logger.exception("Failed to list provider credentials from storage")
 
@@ -457,7 +459,7 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
         if not api_key:
             continue
         category = "search" if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider")) else "llm"
-        if f"{provider}:{category}:default" in seen:
+        if f"{provider}:{category}" in seen_provider_categories:
             continue
         credentials.append(
             {
@@ -770,13 +772,17 @@ def _resolve_provider_credentials_from_storage(
     """Resolve provider credentials from the provider token store."""
     try:
         instance_id = None
+        credential_id_found = credential_id is None
         if credential_id and ":db:" in credential_id:
             row_id = str(credential_id).rsplit(":db:", 1)[-1].strip()
             if row_id.isdigit():
                 for entry in storage.list_llm_providers(category=category):
                     if str(entry.get("id") or "") == row_id and str(entry.get("provider") or "").strip().lower() == provider:
                         instance_id = str(entry.get("instance_id") or "default").strip() or "default"
+                        credential_id_found = True
                         break
+            if not credential_id_found:
+                return None
         elif credential_id and ":env" in credential_id:
             return None
         row = storage.get_llm_provider(provider, category=category, instance_id=instance_id)

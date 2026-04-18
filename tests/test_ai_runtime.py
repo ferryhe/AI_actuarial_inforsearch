@@ -125,6 +125,28 @@ class TestAiRuntime(unittest.TestCase):
         self.assertEqual(runtime.engine, "marker")
         self.assertEqual(runtime.model, "marker")
 
+    def test_resolve_provider_credentials_invalid_db_credential_id_does_not_fall_back(self):
+        """Unknown bound credential ids should be treated as missing instead of silently using the default."""
+        encrypted = TokenEncryption().encrypt("db-openai-key")
+        self.storage.upsert_llm_provider(
+            provider="openai",
+            api_key_encrypted=encrypted,
+            base_url="https://api.openai.example/v1",
+            instance_id="primary",
+            label="OpenAI Primary",
+        )
+
+        credentials = resolve_provider_credentials(
+            "openai",
+            storage=self.storage,
+            credential_id="openai:llm:db:999999",
+        )
+
+        self.assertEqual(credentials.provider, "openai")
+        self.assertIsNone(credentials.api_key)
+        self.assertFalse(credentials.configured)
+        self.assertEqual(credentials.source, "missing")
+
     def test_resolve_provider_credentials_unknown_provider_does_not_crash(self):
         """Unknown provider names should return an unconfigured runtime instead of crashing."""
         credentials = resolve_provider_credentials("unknown-provider", storage=self.storage)

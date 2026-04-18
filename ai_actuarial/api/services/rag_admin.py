@@ -100,10 +100,9 @@ def _embedding_metadata_matches(current: Mapping[str, Any], *, provider: Any, mo
 
 
 
-def _build_kb_embedding_status(*, storage: Storage, kb_payload: dict[str, Any]) -> dict[str, Any]:
-    kb_id = str(kb_payload.get("kb_id") or "").strip()
+def _current_embeddings_payload(*, storage: Storage) -> dict[str, Any]:
     runtime = resolve_ai_function_runtime("embeddings", storage=storage)
-    current_embeddings = {
+    return {
         "provider": runtime.provider,
         "model": runtime.model,
         "dimension": infer_embedding_dimension(runtime.model),
@@ -112,6 +111,17 @@ def _build_kb_embedding_status(*, storage: Storage, kb_payload: dict[str, Any]) 
         "credential_label": runtime.credential_label,
         "embedding_fingerprint": build_embedding_fingerprint(runtime.provider, runtime.model),
     }
+
+
+
+def _build_kb_embedding_status(
+    *,
+    storage: Storage,
+    kb_payload: dict[str, Any],
+    current_embeddings: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    kb_id = str(kb_payload.get("kb_id") or "").strip()
+    effective_current_embeddings = dict(current_embeddings) if current_embeddings is not None else _current_embeddings_payload(storage=storage)
     composition = storage.get_kb_composition_status(kb_id) if kb_id else {}
     latest_index = composition.get("latest_index") or {}
     has_index = bool(composition.get("has_index"))
@@ -124,7 +134,7 @@ def _build_kb_embedding_status(*, storage: Storage, kb_payload: dict[str, Any]) 
     if effective_index_dimension in (None, ""):
         effective_index_dimension = kb_dimension
     embedding_compatible = _embedding_metadata_matches(
-        current_embeddings,
+        effective_current_embeddings,
         provider=effective_index_provider,
         model=effective_index_model,
         dimension=effective_index_dimension,
@@ -151,7 +161,7 @@ def _build_kb_embedding_status(*, storage: Storage, kb_payload: dict[str, Any]) 
         "embedding_compatible": embedding_compatible,
         "availability": availability,
         "usable": usable,
-        "current_embeddings": current_embeddings,
+        "current_embeddings": effective_current_embeddings,
     }
 
 
@@ -236,6 +246,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
             ORDER BY created_at DESC
             """
         )
+        current_embeddings = _current_embeddings_payload(storage=storage)
         kbs = []
         for row in cursor.fetchall():
             kb = KnowledgeBase(
@@ -255,7 +266,13 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
                 or search in (kb.kb_id or "").lower()
             ):
                 continue
-            kbs.append(_build_kb_embedding_status(storage=storage, kb_payload=_serialize_kb(kb)))
+            kbs.append(
+                _build_kb_embedding_status(
+                    storage=storage,
+                    kb_payload=_serialize_kb(kb),
+                    current_embeddings=current_embeddings,
+                )
+            )
         return {"knowledge_bases": kbs}
     finally:
         storage.close()
