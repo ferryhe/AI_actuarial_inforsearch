@@ -8,7 +8,6 @@ and ops_write.py for better code organization and reduced duplication.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
 
 from ai_actuarial.shared_runtime import (
@@ -181,7 +180,7 @@ def get_catalog_stats(
         where_clause = f"WHERE {filters}" if filters else ""
         total = storage._conn.execute(f"SELECT COUNT(*) FROM catalog_items c {where_clause}", params).fetchone()[0]
         total_ok = storage._conn.execute(
-            f"SELECT COUNT(*) FROM catalog_items c WHERE c.status = 'ok' {filters.replace('WHERE', 'AND') if filters else ''}",
+            f"SELECT COUNT(*) FROM catalog_items c WHERE c.status = 'ok' AND {filters}",
             params,
         ).fetchone()[0]
 
@@ -317,7 +316,7 @@ def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> 
             SELECT COUNT(DISTINCT c.file_url)
             FROM catalog_items c
             LEFT JOIN file_chunk_sets s ON s.file_url = c.file_url
-            {sql_where}
+            WHERE {'c.category = ?' if category else '1=1'}
             AND s.chunk_set_id IS NOT NULL
             """,
             params,

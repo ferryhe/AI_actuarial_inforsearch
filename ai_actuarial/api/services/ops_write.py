@@ -880,7 +880,7 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
 def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str) -> dict[str, Any]:
     payload = _coerce_required_dict(data or {})
     old_key = str(payload.get("old_key") or "").strip()
-    new_key = str(payload.get("new_key") or "").strip() or settings.TOKEN_ENCRYPTION_KEY
+    new_key = str(payload.get("new_key") or "").strip() or settings.TOKEN_ENCRYPTION_KEY.strip()
     category_filter = str(payload.get("category") or "").strip().lower() or None
     providers_filter = {
         str(item).strip().lower()

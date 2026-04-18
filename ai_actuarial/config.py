@@ -2,7 +2,7 @@
 Centralized configuration management for ai_actuarial.
 
 All configuration values are defined here in one place.
-Replace scattered os.getenv() calls throughout the codebase with settings.KEY.
+Prefer centralized settings from this module over scattered os.getenv() calls.
 
 Usage:
     from ai_actuarial.config import settings
