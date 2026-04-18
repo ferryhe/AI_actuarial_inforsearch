@@ -233,15 +233,22 @@ def api_search(
 ) -> dict[str, object]:
     if not q:
         return {"results": [], "count": 0}
+    # Clamp limit to prevent abuse
+    limit = min(max(1, limit), 100)
     storage = Storage(_get_db_path(request))
     try:
         query_lower = q.lower()
-        cursor = storage._conn.execute(
-            """
+        # Build query with optional kb_id filter
+        sql = """
             SELECT kb_id, name, description, created_at FROM rag_knowledge_bases
-            WHERE kb_mode = 'category' OR kb_mode = 'hybrid'
-            """
-        )
+            WHERE (kb_mode = 'category' OR kb_mode = 'hybrid')
+        """
+        params: list[str | int] = []
+        if kb_id:
+            sql += " AND kb_id = ?"
+            params.append(kb_id)
+        # Fetch more than limit since we filter in Python for scoring
+        cursor = storage._conn.execute(sql + " LIMIT 1000", params)
         results = []
         for row in cursor.fetchall():
             kb_id_row, name, description, created_at = row

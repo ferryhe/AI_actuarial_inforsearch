@@ -244,12 +244,27 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
         profile = storage.get_chunk_profile(normalized_profile_id)
         if not profile:
             raise RagAdminError("chunk profile not found", status_code=404)
+        updates = []
+        values = []
         if "name" in payload:
-            storage.update_chunk_profile_name(normalized_profile_id, _norm(payload["name"]))
+            updates.append("name = ?")
+            values.append(_norm(payload["name"]))
         if "chunk_size" in payload:
-            storage.update_chunk_profile_chunk_size(normalized_profile_id, int(payload["chunk_size"]))
+            updates.append("chunk_size = ?")
+            values.append(int(payload["chunk_size"]))
         if "chunk_overlap" in payload:
-            storage.update_chunk_profile_chunk_overlap(normalized_profile_id, int(payload["chunk_overlap"]))
+            updates.append("chunk_overlap = ?")
+            values.append(int(payload["chunk_overlap"]))
+        if updates:
+            import time as time_module
+            updates.append("updated_at = ?")
+            values.append(time_module.time())
+            values.append(normalized_profile_id)
+            storage._conn.execute(
+                f"UPDATE chunk_profiles SET {', '.join(updates)} WHERE profile_id = ?",
+                values,
+            )
+            storage._conn.commit()
         updated = storage.get_chunk_profile(normalized_profile_id)
         return {"profile": updated}
     finally:
