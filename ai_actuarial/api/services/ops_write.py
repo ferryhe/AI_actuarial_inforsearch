@@ -36,6 +36,7 @@ from ai_actuarial.shared_runtime import (
     load_yaml,
     serialize_backend_settings,
 )
+from ai_actuarial.config import settings
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -879,7 +880,7 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
 def reencrypt_provider_credentials(data: dict[str, Any] | None, *, db_path: str) -> dict[str, Any]:
     payload = _coerce_required_dict(data or {})
     old_key = str(payload.get("old_key") or "").strip()
-    new_key = str(payload.get("new_key") or "").strip() or str(os.getenv("TOKEN_ENCRYPTION_KEY") or "").strip()
+    new_key = str(payload.get("new_key") or "").strip() or settings.TOKEN_ENCRYPTION_KEY.strip()
     category_filter = str(payload.get("category") or "").strip().lower() or None
     providers_filter = {
         str(item).strip().lower()

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ai_actuarial.config import settings
 from ai_actuarial.rag.exceptions import ChunkingException
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, parse_int_clamped
 from ai_actuarial.storage import Storage
@@ -61,12 +62,12 @@ def _is_file_deletion_enabled() -> bool:
     system_cfg = config.get("system") or {}
     if "file_deletion_enabled" in system_cfg:
         return bool(system_cfg.get("file_deletion_enabled"))
-    return str(os.getenv("ENABLE_FILE_DELETION", "")).strip().lower() in {"1", "true", "yes", "on"}
+    return settings.ENABLE_FILE_DELETION
 
 
 
 def _check_file_deletion_token(headers: dict[str, str]) -> None:
-    expected_token = os.getenv("FILE_DELETION_AUTH_TOKEN")
+    expected_token = settings.FILE_DELETION_AUTH_TOKEN
     if not expected_token:
         return
     provided = headers.get("x-auth-token") or headers.get("X-Auth-Token")

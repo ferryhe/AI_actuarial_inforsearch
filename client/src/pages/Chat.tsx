@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { useApiQuery } from "@/hooks/use-api-query";
 
 interface Conversation {
   id: string;

@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import Request, Response
 from itsdangerous import URLSafeSerializer
 
+from ai_actuarial.config import settings
 from ai_actuarial.shared_auth import (
     AI_CHAT_QUOTA,
     DUMMY_PASSWORD_HASH,
@@ -60,7 +61,7 @@ def _now_date() -> str:
 
 
 def _client_ip(request: Request) -> str:
-    trust_proxy = str(os.getenv("TRUST_PROXY", "")).strip().lower() in {"1", "true", "yes", "on"}
+    trust_proxy = settings.TRUST_PROXY
     if trust_proxy:
         xff = request.headers.get("X-Forwarded-For", "")
         if xff:

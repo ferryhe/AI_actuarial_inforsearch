@@ -11,6 +11,7 @@ from ai_actuarial.ai_runtime import (
     PROVIDER_BASE_URL_ENV_VARS,
     PROVIDER_ENV_VARS,
 )
+from ai_actuarial.config import settings
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.shared_runtime import (
     get_categories_config_path,
@@ -22,13 +23,6 @@ from ai_actuarial.shared_runtime import (
     task_log_path,
 )
 from ai_actuarial.storage import Storage
-
-_SEARCH_ENGINE_ENV_VARS = {
-    "brave": "BRAVE_API_KEY",
-    "google": "SERPAPI_API_KEY",
-    "serper": "SERPER_API_KEY",
-    "tavily": "TAVILY_API_KEY",
-}
 
 _SEARCH_ENGINE_DISPLAY = {
     "brave": "Brave Search",
@@ -68,8 +62,7 @@ def get_backend_settings() -> dict[str, Any]:
 
 
 def get_global_logs() -> dict[str, str]:
-    enable_global_logs_api = str(os.getenv("ENABLE_GLOBAL_LOGS_API") or "").strip().lower()
-    if enable_global_logs_api not in {"1", "true", "yes", "on"}:
+    if not settings.ENABLE_GLOBAL_LOGS_API:
         return {"error": "Forbidden"}
 
     log_file = Path("data") / "app.log"
@@ -83,12 +76,12 @@ def get_global_logs() -> dict[str, str]:
 
 def get_search_engines() -> dict[str, list[dict[str, object]]]:
     engines = []
-    for engine_id, env_var in _SEARCH_ENGINE_ENV_VARS.items():
+    for engine_id, display_name in _SEARCH_ENGINE_DISPLAY.items():
         engines.append(
             {
                 "id": engine_id,
-                "name": _SEARCH_ENGINE_DISPLAY.get(engine_id, engine_id),
-                "configured": bool(os.getenv(env_var)),
+                "name": display_name,
+                "configured": settings.is_search_engine_configured(engine_id),
             }
         )
     return {"engines": engines}

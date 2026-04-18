@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 from .crawler import Crawler, SiteConfig
 from .catalog import (
@@ -187,7 +190,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     _write_timestamped_updates(cfg, all_new)
     storage.close()
 
-    print(f"New files: {len(all_new)}")
+    logger.info(f"New files: {len(all_new)}")
     return 0
 
 
@@ -261,7 +264,7 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         with open(out_json, "w", encoding="utf-8") as f:
             json.dump(existing, f, ensure_ascii=False, indent=2)
         write_catalog_md(out_md, items, append=args.append)
-        print(f"[legacy] Catalog items: {len(items)}")
+        logger.info(f"[legacy] Catalog items: {len(items)}")
         return 0
     
     if args.legacy_incremental:
@@ -317,7 +320,7 @@ def cmd_catalog(args: argparse.Namespace) -> int:
         for i in items
     ]
     write_catalog_md(out_md, md_items, append=True)
-    print(f"[incremental] Catalog items: {len(items)}")
+    logger.info(f"[incremental] Catalog items: {len(items)}")
     return 0
 
 
@@ -463,13 +466,13 @@ def cmd_collect_url(args: argparse.Namespace) -> int:
     storage.close()
     
     print(f"\nURL Collection Results:")
-    print(f"  Found: {result.items_found}")
-    print(f"  Downloaded: {result.items_downloaded}")
-    print(f"  Skipped: {result.items_skipped}")
+    logger.info(f"  Found: {result.items_found}")
+    logger.info(f"  Downloaded: {result.items_downloaded}")
+    logger.info(f"  Skipped: {result.items_skipped}")
     if result.errors:
-        print(f"  Errors: {len(result.errors)}")
+        logger.warning(f"  Errors: {len(result.errors)}")
         for error in result.errors[:5]:  # Show first 5 errors
-            print(f"    - {error}")
+            logger.warning(f"    - {error}")
     
     return 0 if result.success else 1
 
@@ -496,13 +499,13 @@ def cmd_collect_file(args: argparse.Namespace) -> int:
     storage.close()
     
     print(f"\nFile Import Results:")
-    print(f"  Found: {result.items_found}")
-    print(f"  Imported: {result.items_downloaded}")
-    print(f"  Skipped: {result.items_skipped}")
+    logger.info(f"  Found: {result.items_found}")
+    logger.info(f"  Imported: {result.items_downloaded}")
+    logger.info(f"  Skipped: {result.items_skipped}")
     if result.errors:
-        print(f"  Errors: {len(result.errors)}")
+        logger.warning(f"  Errors: {len(result.errors)}")
         for error in result.errors[:5]:  # Show first 5 errors
-            print(f"    - {error}")
+            logger.warning(f"    - {error}")
     
     return 0 if result.success else 1
 
@@ -512,12 +515,12 @@ def cmd_web(args: argparse.Namespace) -> int:
     try:
         from .web.app import run_server
     except ImportError:
-        print("Flask is required for the web interface.")
-        print("Install it with: pip install flask")
+        logger.warning("Flask is required for the web interface.")
+        logger.warning("Install it with: pip install flask")
         return 1
     
-    print(f"Starting web interface on {args.host}:{args.port}")
-    print("Press Ctrl+C to stop")
+    logger.info(f"Starting web interface on {args.host}:{args.port}")
+    logger.info("Press Ctrl+C to stop")
     
     try:
         run_server(host=args.host, port=args.port, debug=args.debug)
@@ -537,7 +540,7 @@ def cmd_api(args: argparse.Namespace) -> int:
         return 1
 
     print(f"Starting FastAPI gateway on {args.host}:{args.port}")
-    print("Press Ctrl+C to stop")
+    logger.info("Press Ctrl+C to stop")
 
     try:
         run_server(host=args.host, port=args.port, reload=args.reload)
@@ -549,6 +552,10 @@ def cmd_api(args: argparse.Namespace) -> int:
 
 def main() -> int:
     _load_dotenv(".env")
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(message)s",
+    )
     parser = build_parser()
     args = parser.parse_args()
     return args.func(args)

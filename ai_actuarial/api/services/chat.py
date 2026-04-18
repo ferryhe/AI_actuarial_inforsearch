@@ -13,6 +13,7 @@ from urllib.parse import quote
 from itsdangerous import URLSafeSerializer
 from ai_actuarial.api.deps import _decode_flask_session, AuthContext
 from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
+from ai_actuarial.config import settings
 from ai_actuarial.storage import Storage
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA
 
@@ -525,7 +526,7 @@ def _today_utc() -> str:
 
 
 def _client_ip(request) -> str:
-    trust_proxy = str(os.getenv("TRUST_PROXY", "")).strip().lower() in {"1", "true", "yes", "on"}
+    trust_proxy = settings.TRUST_PROXY
     if trust_proxy:
         xff = request.headers.get("X-Forwarded-For", "")
         if xff:
@@ -770,7 +771,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         conversation_exc = getattr(exceptions, "ConversationException", None)
         llm_exc = getattr(exceptions, "LLMException", None)
         retrieval_exc = getattr(exceptions, "RetrievalException", None)
-        expose_detail = os.getenv("EXPOSE_ERROR_DETAILS") == "1"
+        expose_detail = settings.EXPOSE_ERROR_DETAILS
         if conversation_exc and isinstance(exc, conversation_exc):
             detail = f": {exc}" if expose_detail else ""
             raise ChatApiError(f"Conversation error{detail}", status_code=400) from exc
