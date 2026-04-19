@@ -284,21 +284,22 @@ Flask-to-FastAPI migration utilities.
 List endpoints use offset/limit pagination:
 
 ```yaml
-PaginationParams:
-  in: query
-  name: offset
-  schema:
-    type: integer
-    default: 0
-    minimum: 0
-
-  in: query
-  name: limit
-  schema:
-    type: integer
-    default: 20
-    minimum: 1
-    maximum: 100
+parameters:
+  - in: query
+    name: offset
+    schema:
+      type: integer
+      default: 0
+      minimum: 0
+    description: Number of records to skip before returning results.
+  - in: query
+    name: limit
+    schema:
+      type: integer
+      default: 20
+      minimum: 1
+      maximum: 100
+    description: Maximum number of records to return.
 ```
 
 ## Documentation Maintenance

@@ -107,7 +107,7 @@ def api_tasks_active(
     Return currently running tasks (in-progress collections/crawls).
 
     Returns:
-        A dict with an ``active_tasks`` list containing the current state,
+        A dict with a ``tasks`` list containing the current state,
         progress, and metadata for all active tasks.
 
     Raises:
@@ -131,8 +131,8 @@ def api_tasks_history(
         limit: Maximum number of history entries to return (default 50, max 500).
 
     Returns:
-        A list of completed/failed task records with timestamps, status,
-        and summary information.
+        A dict with a ``tasks`` list containing completed/failed
+        task records with timestamps, status, and summary information.
 
     Raises:
         401: If the request is not authenticated.

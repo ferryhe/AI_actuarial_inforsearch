@@ -35,7 +35,7 @@ def get_uptime_seconds() -> float:
 @router.get("/metrics")
 async def get_metrics(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("ops.read")),
+    _auth: AuthContext = Depends(require_permissions("stats.read")),
 ) -> dict:
     """Return system metrics in JSON format (auth required)."""
     rate_limit_tiers = {}

@@ -15,7 +15,7 @@ services:
     restart: on-failure
     environment:
       - ENV=production
-      - FASTAPI_ALLOW_LEGACY_API_FALLBACK=false
+      - FASTAPI_ALLOW_LEGACY_API_FALLBACK=${FASTAPI_ALLOW_LEGACY_API_FALLBACK:-false}
       - REQUIRE_AUTH=true
       - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:?FLASK_SECRET_KEY is required in production}
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:?LOGS_READ_AUTH_TOKEN is required}
