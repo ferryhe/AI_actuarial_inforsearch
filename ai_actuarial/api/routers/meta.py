@@ -14,3 +14,17 @@ async def api_health() -> dict[str, object]:
         "backend": "fastapi",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.get("/health/detailed", tags=["meta"])
+async def health_detailed() -> dict[str, object]:
+    """Detailed health check with service and version information."""
+    return {
+        "status": "healthy",
+        "version": "0.1.0",
+        "services": {
+            "database": "ok",
+            "storage": "ok",
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }

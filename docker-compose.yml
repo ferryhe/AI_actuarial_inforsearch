@@ -1,0 +1,122 @@
+# docker-compose.yml — AI Actuarial Info Search
+# Usage: docker compose up (-d for detached)
+#   Development:  docker compose up
+#   Production:  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+
+services:
+  # ── API (FastAPI) ────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-5000}:5000"
+    environment:
+      - ENV=development
+      - FASTAPI_ALLOW_LEGACY_API_FALLBACK=${FASTAPI_ALLOW_LEGACY_API_FALLBACK:-false}
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-dev-secret-change-in-production}
+      - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:-}
+      - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:-}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
+      - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:-["http://localhost:5173","http://localhost:3000"]}
+    volumes:
+      - ai-data:/app/data
+      - ./config/sites.yaml:/app/config/sites.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/health", "-o", "/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    networks:
+      - ai-net
+
+  # ── Frontend (Vite dev server in dev, static build in prod) ─────────────────
+  frontend:
+    image: node:20-alpine
+    container_name: ai-frontend
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://api:5000}
+      - NODE_ENV=development
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5173", "-o", "/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    networks:
+      - ai-net
+
+  # ── Caddy reverse-proxy ───────────────────────────────────────────────────────
+  caddy:
+    image: caddy:3-alpine
+    container_name: ai-caddy
+    restart: unless-stopped
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ai-caddy-data:/data
+      - ai-caddy-config:/config
+    environment:
+      - ACME_EMAIL=${ACME_EMAIL:-}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    networks:
+      - ai-net
+
+volumes:
+  ai-data:
+    driver: local
+  ai-caddy-data:
+    driver: local
+  ai-caddy-config:
+    driver: local
+
+networks:
+  ai-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16

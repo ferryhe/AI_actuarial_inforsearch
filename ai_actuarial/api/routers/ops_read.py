@@ -68,6 +68,17 @@ def api_config_sites(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.view")),
 ) -> dict[str, object]:
+    """
+    List all configured sites (data sources) from sites.yaml.
+
+    Returns:
+        A dictionary with the full sites configuration, including names,
+        URLs, crawl rules, and schedule settings.
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``tasks.view`` permission.
+    """
     return get_config_sites()
 
 
@@ -92,6 +103,17 @@ def api_tasks_active(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.view")),
 ) -> dict[str, object]:
+    """
+    Return currently running tasks (in-progress collections/crawls).
+
+    Returns:
+        A dict with a ``tasks`` list containing the current state,
+        progress, and metadata for all active tasks.
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``tasks.view`` permission.
+    """
     active_tasks_ref = getattr(request.app.state, "active_tasks_ref", {}) or {}
     task_lock = getattr(request.app.state, "task_lock", None)
     return list_active_tasks(active_tasks_ref, task_lock)
@@ -102,6 +124,20 @@ def api_tasks_history(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.view")),
 ) -> dict[str, object]:
+    """
+    Return historical (completed or failed) task records.
+
+    Query params:
+        limit: Maximum number of history entries to return (default 50, max 500).
+
+    Returns:
+        A dict with a ``tasks`` list containing completed/failed
+        task records with timestamps, status, and summary information.
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``tasks.view`` permission.
+    """
     limit = parse_task_history_limit(request.query_params.get("limit"))
     task_history_ref = getattr(request.app.state, "task_history_ref", []) or []
     task_lock = getattr(request.app.state, "task_lock", None)
@@ -231,6 +267,26 @@ def api_search(
     limit: int = 20,
     _auth: AuthContext = Depends(require_permissions("catalog.read")),
 ) -> dict[str, object]:
+    """
+    Search the knowledge-base catalog by keyword.
+
+    Performs a lightweight text search over knowledge-base names and
+    descriptions, returning scored results ordered by relevance.
+
+    Query params:
+        q: Search query string (case-insensitive substring match).
+        kb_id: Optional knowledge-base ID to restrict results to one category.
+        limit: Maximum results to return (clamped to 1–100, default 20).
+
+    Returns:
+        A dict with ``results`` (list of matching knowledge bases with
+        ``kb_id``, ``name``, ``description``, ``created_at``, and ``score``)
+        and ``count`` (total matches before limit).
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``catalog.read`` permission.
+    """
     if not q:
         return {"results": [], "count": 0}
     # Clamp limit to prevent abuse

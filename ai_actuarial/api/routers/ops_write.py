@@ -62,6 +62,25 @@ def api_config_sites_add(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("schedule.write")),
 ):
+    """
+    Add a new site (data source) to the sites configuration.
+
+    The payload should conform to the site schema (name, url, crawl_rules,
+    schedule, category, etc.).
+
+    Args:
+        payload: A dictionary containing the new site's configuration.
+
+    Returns:
+        The result of the site creation, including the site name and
+        confirmation of addition to sites.yaml.
+
+    Raises:
+        400: If the payload is malformed or validation fails.
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``schedule.write`` permission.
+        409: If a site with the same name already exists.
+    """
     try:
         return add_site(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
@@ -329,6 +348,28 @@ def api_scheduled_tasks_add(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("schedule.write")),
 ):
+    """
+    Register a new scheduled task for periodic collections.
+
+    The task will be queued with the built-in scheduler and executed
+    automatically at the configured interval.
+
+    Args:
+        payload: A dict with ``name`` (task name), ``interval`` (one of
+            ``daily`` or ``weekly``), and optionally ``task_type``,
+            ``site_names``, and other runtime options.
+
+    Returns:
+        The created task record including its name, interval, and
+        next-run timestamp.
+
+    Raises:
+        400: If the payload is invalid or the interval value is not
+            one of the allowed values.
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``schedule.write`` permission.
+        409: If a scheduled task with the same name already exists.
+    """
     try:
         return add_scheduled_task(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
@@ -376,6 +417,23 @@ def api_tasks_stop(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.stop")),
 ):
+    """
+    Gracefully request termination of a running task.
+
+    The task is asked to stop; cleanup is performed asynchronously.
+    Use ``GET /api/tasks/active`` to confirm the task has exited.
+
+    Args:
+        task_id: The unique identifier of the task to stop.
+
+    Returns:
+        A dict confirming the stop request was accepted.
+
+    Raises:
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``tasks.stop`` permission.
+        404: If no active task with the given ID exists.
+    """
     try:
         return request_task_stop(task_id, bridge=_bridge(request))
     except OpsWriteError as exc:
@@ -388,6 +446,32 @@ def api_collections_run(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
+    """
+    Trigger an immediate on-demand collection (crawl + ingestion) for one
+    or more sites, bypassing the schedule.
+
+    This is the primary endpoint for manually running a document collection
+    task. The collection runs asynchronously; check ``GET /api/tasks/active``
+    for progress.
+
+    Args:
+        payload: A dict that must include ``name`` (site name) and ``type``
+            (e.g. ``url``, ``file``, ``catalog``). Type-specific fields are
+            also required: for ``url`` type, include ``urls`` (list of URLs);
+            for ``markdown_conversion`` or ``chunk_generation`` types, include
+            ``file_urls`` and/or ``scan_count``. Optional: ``force`` (bool),
+            ``depth`` (int).
+
+    Returns:
+        A dict with ``success`` flag, a ``message``, and a ``job_id``
+        for the enqueued collection task.
+
+    Raises:
+        400: If the payload is invalid, the type is not recognized,
+            or the named site does not exist.
+        401: If the request is not authenticated.
+        403: If the caller lacks the ``tasks.run`` permission.
+    """
     try:
         return start_collection(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
