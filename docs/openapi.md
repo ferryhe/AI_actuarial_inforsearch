@@ -87,7 +87,7 @@ curl http://localhost:5000/openapi.json | jq '.paths["/api/chat/query"]'
 
 ## Endpoint Groups
 
-### Meta (`/api/meta`)
+### Meta (`/api`)
 System information and health checks.
 
 | Method | Path | Description |
@@ -142,6 +142,10 @@ Administrative read operations.
 | GET | `/config/search-engines` | Search engine config |
 | GET | `/config/categories` | Categories config |
 | GET | `/search` | Search endpoint |
+| GET | `/utils/browse-folder` | Browse folder |
+| GET | `/catalog/stats` | Catalog statistics |
+| GET | `/markdown_conversion/stats` | Markdown conversion stats |
+| GET | `/chunk_generation/stats` | Chunk generation stats |
 
 ### Ops-Write (`/api/ops-write`)
 Administrative write operations.
@@ -171,10 +175,6 @@ Administrative write operations.
 | POST | `/schedule/reinit` | Reinitialize scheduler |
 | POST | `/tasks/stop/{task_id}` | Stop a task |
 | POST | `/collections/run` | Trigger on-demand collection |
-| GET | `/utils/browse-folder` | Browse folder |
-| GET | `/catalog/stats` | Catalog statistics |
-| GET | `/markdown_conversion/stats` | Markdown conversion stats |
-| GET | `/chunk_generation/stats` | Chunk generation stats |
 
 ### Files-Write (`/api/files-write`)
 File upload and management.

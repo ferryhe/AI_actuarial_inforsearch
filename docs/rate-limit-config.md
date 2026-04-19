@@ -34,7 +34,7 @@ Rate limits are applied per-user based on authenticated role:
 | `registered` | 30 req | 60s |
 | `premium` | 60 req | 60s |
 | `operator` | 200 req | 60s |
-| `admin` | unlimited | — |
+| `admin` | 999,999 req | — |
 
 Rate limiting is applied to these endpoints only: `/api/search`, `/api/chat/query`, `/api/chat/conversations`, `/api/collections/run`.
 

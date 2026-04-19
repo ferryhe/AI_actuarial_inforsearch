@@ -259,6 +259,7 @@ docker compose build
 # Restart
 docker compose up -d
 
-# Run any DB migrations
-docker compose exec api python -m ai_actuarial db migrate  # if applicable
+# Note: Database schema migrations are applied automatically on startup.
+# There is no separate `db migrate` command; the application handles schema
+# upgrades internally via the db_backend module when it starts.
 ```
