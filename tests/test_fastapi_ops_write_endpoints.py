@@ -11,7 +11,7 @@ from cryptography.fernet import Fernet
 
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
-from test_fastapi_ops_read_endpoints import (
+from tests.test_fastapi_ops_read_endpoints import (
     _build_test_client,
     _make_session_cookie,
     _patch_available_models,
@@ -107,9 +107,9 @@ class _BridgeRecorder:
 
 
 def _install_bridge(app, recorder: _BridgeRecorder) -> None:
-    app.state.legacy_start_background_task = recorder.start_background_task
-    app.state.legacy_init_scheduler = recorder.init_scheduler
-    app.state.legacy_set_site_config = recorder.set_site_config
+    app.state.start_background_task = recorder.start_background_task
+    app.state.init_scheduler = recorder.init_scheduler
+    app.state.set_site_config = recorder.set_site_config
     app.state.schedule_ref = SimpleNamespace(jobs=[object(), object()])
 
 
@@ -140,6 +140,7 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
             "max_pages": 25,
             "keywords": "ai, actuarial",
         },
+        headers=headers,
     )
     assert add_response.status_code == 200, add_response.text
     assert any(site["name"] == "SOA AI Bulletin" for site in _read_sites(config_path))
@@ -220,9 +221,9 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
 
 def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
-    app.state.legacy_set_site_config = None
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     config_path = Path(os.environ["CONFIG_PATH"])
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     update_response = client.post(
         "/api/config/backend-settings",
@@ -253,6 +254,7 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
             },
             "system": {"file_deletion_enabled": False},
         },
+        headers=headers,
     )
     assert update_response.status_code == 200, update_response.text
     body = update_response.json()
@@ -274,7 +276,6 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     nested_categories_path = tmp_path / "nested" / "config" / "categories.yaml"
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(nested_categories_path))
-    app.state.legacy_set_site_config = None
     config_path = Path(os.environ["CONFIG_PATH"])
     categories_path = nested_categories_path
 
@@ -325,23 +326,26 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
 
 def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
     config_path = Path(os.environ["CONFIG_PATH"])
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     add_response = client.post(
         "/api/scheduled-tasks/add",
         json={
             "name": "Weekly Chunk",
             "type": "chunk_generation",
-            "interval": "weekly",
+            "interval": "daily at 02:00",
             "enabled": True,
             "params": {"category": "AI"},
         },
+        headers=headers,
     )
     assert add_response.status_code == 200, add_response.text
-    assert any(task["name"] == "Weekly Chunk" for task in _read_scheduled_tasks(config_path))
+    written_task = next(task for task in _read_scheduled_tasks(config_path) if task["name"] == "Weekly Chunk")
+    assert written_task["interval"] == "daily at 02:00"
 
     update_response = client.post(
         "/api/scheduled-tasks/update",
@@ -353,18 +357,19 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
             "enabled": False,
             "params": {"category": "Pricing"},
         },
+        headers=headers,
     )
     assert update_response.status_code == 200, update_response.text
     updated_task = next(task for task in _read_scheduled_tasks(config_path) if task["name"] == "Weekly Chunk")
     assert updated_task["interval"] == "daily"
     assert updated_task["enabled"] is False
 
-    reinit_response = client.post("/api/schedule/reinit")
+    reinit_response = client.post("/api/schedule/reinit", headers=headers)
     assert reinit_response.status_code == 200, reinit_response.text
     assert reinit_response.json()["job_count"] == 2
     assert recorder.reinit_calls == 1
 
-    delete_response = client.post("/api/scheduled-tasks/delete", json={"name": "Weekly Chunk"})
+    delete_response = client.post("/api/scheduled-tasks/delete", json={"name": "Weekly Chunk"}, headers=headers)
     assert delete_response.status_code == 200, delete_response.text
     assert all(task["name"] != "Weekly Chunk" for task in _read_scheduled_tasks(config_path))
 
@@ -455,13 +460,12 @@ def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, mo
 
 
 
-def test_schedule_reinit_and_file_collection_work_without_legacy_bridge(tmp_path: Path, monkeypatch) -> None:
+def test_schedule_reinit_and_file_collection_work_with_native_bridge(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
-    app.state.legacy_start_background_task = None
-    app.state.legacy_init_scheduler = None
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
-    reinit_response = client.post("/api/schedule/reinit")
+    reinit_response = client.post("/api/schedule/reinit", headers=headers)
     assert reinit_response.status_code == 200, reinit_response.text
     assert reinit_response.json()["job_count"] >= 1
 
@@ -478,6 +482,7 @@ def test_schedule_reinit_and_file_collection_work_without_legacy_bridge(tmp_path
             "extensions": ["pdf"],
             "recursive": True,
         },
+        headers=headers,
     )
     assert run_response.status_code == 200, run_response.text
     run_body = run_response.json()

@@ -40,11 +40,11 @@ def _extract_presented_token(request: Request) -> str | None:
     parts = auth.strip().split(None, 1)
     if len(parts) == 2 and parts[0].lower() == "bearer":
         return parts[1].strip()
-    token = request.headers.get("X-API-Token")
+    token = request.headers.get("X-API-Token") or request.headers.get("X-Auth-Token")
     return token.strip() if token else None
 
 
-def _decode_flask_session(request: Request) -> dict[str, Any]:
+def _decode_signed_session(request: Request) -> dict[str, Any]:
     cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
     cookie_value = request.cookies.get(cookie_name)
     if not cookie_value:
@@ -93,7 +93,7 @@ def _load_auth_context(request: Request) -> AuthContext:
     token: dict[str, Any] | None = None
     storage = Storage(db_path)
     try:
-        session_data = _decode_flask_session(request)
+        session_data = _decode_signed_session(request)
 
         email_user_id = session_data.get("email_user_id")
         if email_user_id is not None:

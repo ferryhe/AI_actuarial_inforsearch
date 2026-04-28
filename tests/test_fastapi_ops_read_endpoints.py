@@ -211,7 +211,7 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
-    monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-ops-read-test-secret")
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-ops-read-test-secret")
     monkeypatch.setenv("OPENAI_API_KEY", "env-openai-key")
     if require_auth:
         monkeypatch.setenv("REQUIRE_AUTH", "true")

@@ -682,8 +682,8 @@ server:
   host: 0.0.0.0
   port: 5000
   max_content_length: 52428800
-  flask_env: production
-  flask_debug: false
+  fastapi_env: production
+  fastapi_debug: false
 database:
   type: sqlite
   path: data/index.db

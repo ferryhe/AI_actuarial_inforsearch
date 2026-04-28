@@ -1,376 +1,178 @@
-﻿# AI Actuarial Info Search
+# AI Actuarial Info Search
 
-AI Actuarial Info Search is a system for discovering, downloading, and cataloging AI-related documents from actuarial organizations worldwide, with a modern web interface, AI chatbot, and RAG-powered Q&A capabilities.
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## Recent Updates (February 2026)
+AI Actuarial Info Search helps actuarial and insurance teams discover, download, catalog, convert, and query AI-related documents from public organizations and local files.
 
-- ✅ **AI Chatbot Implemented** - Full RAG-based chatbot with multi-provider support
-- ✅ **Configuration Migration** - Migrated from `.env` to YAML config with backward compatibility
-- ✅ **Multi-AI Provider Support** - OpenAI, DeepSeek, Mistral, and custom providers
-- ✅ **File Detail Page Improvements** - Enhanced chunk management with dynamic Add/Modify buttons
-- ✅ **Documentation Reorganization** - Consolidated and timestamped all project documentation
+The active product stack is **FastAPI + React**:
 
-## 项目架构说明（前后台组成）
+| Surface | Stack | Local URL | Role |
+| --- | --- | --- | --- |
+| Product API | Python + FastAPI | `http://127.0.0.1:8000/api/*` | Single authority for product APIs |
+| Product UI | React 19 + TypeScript + Vite | `http://127.0.0.1:5173` | Maintained web interface |
 
-本项目当前的正式产品面由两部分组成：
+The old server-rendered HTML runtime and Replit workflow files have been retired. React routes should call native FastAPI endpoints only.
 
-| 组件 | 技术栈 | 访问方式 | 说明 |
-|------|--------|----------|------|
-| **FastAPI 产品 API** | Python + FastAPI | `http://localhost:8000/api/*` | 唯一正式产品 API 权威入口 |
-| **React SPA 界面** | React 19 + TypeScript + Vite | `http://localhost:5173`（开发） | 长期维护的产品前端 |
+## Features
 
-从 API / 运行时架构上，当前已经明确：
-- **FastAPI 是 `/api/*` 的唯一产品权威入口**
-- **FastAPI runtime 已不再挂载 legacy Flask/WSGI 应用**
-- React 前端只允许依赖原生 FastAPI 路由
-- 历史 Flask HTML / Jinja2 界面已从正式运行时中移除
+- Crawl actuarial and insurance organization sites.
+- Expand discovery with optional search providers such as Brave and SerpAPI.
+- Download PDF, Word, PowerPoint, Excel, and HTML sources.
+- Deduplicate files with SHA256.
+- Catalog files incrementally with summaries, keywords, and categories.
+- Convert documents to Markdown with local or API-backed engines.
+- Manage RAG knowledge bases, chunk profiles, and indexing jobs.
+- Chat with documents through retrieval-augmented generation.
+- Configure multiple AI providers, including OpenAI, DeepSeek, Mistral, and compatible providers.
+- Operate through a React UI for dashboard, database, tasks, settings, knowledge, chat, logs, users, and file detail workflows.
 
-相关说明见：
-- `docs/ARCHITECTURE.md`
-- `docs/API_MIGRATION_STATUS.md`
+## Quick Start
 
----
-
-## 快速启动（Getting Started）
-
-### 前提条件
+### Requirements
 
 - Python 3.10+
-- Node.js 18+（含 npm，仅 React 界面需要）
-- （可选）AI 服务的 API Key，配置在 `config/sites.yaml` 或 `.env`
-- 如果要使用数据库里保存的 provider credentials，必须在进程环境或项目 `.env` 中设置固定的 `TOKEN_ENCRYPTION_KEY`
+- Node.js 18+
+- Optional AI/search provider API keys in `.env` or `config/sites.yaml`
+- Stable `TOKEN_ENCRYPTION_KEY` if provider credentials are stored in the database
+- `FASTAPI_SESSION_SECRET` if email/session login is enabled
 
-### 启动 FastAPI 产品 API（推荐）
-
-**终端 1 – FastAPI 产品 API**
+### Start The API
 
 ```bash
-# 安装 Python 依赖
 pip install -r requirements.txt
-
-# 启动 FastAPI 产品 API
 python -m ai_actuarial api --host 127.0.0.1 --port 8000
 ```
 
-**终端 2 – React 开发服务器**
+### Start The React UI
 
 ```bash
-# 安装前端依赖（首次或依赖变更后执行）
 npm install
-
-# 启动 Vite 开发服务器（代理 /api 至 http://127.0.0.1:8000）
 npm run dev
 ```
 
-浏览器访问 `http://localhost:5173` 使用 React SPA，或访问 `http://localhost:8000/api/health` 直接调用 FastAPI 接口。
+Open `http://127.0.0.1:5173`. Vite proxies `/api/*` to `http://127.0.0.1:8000`.
 
-当前 FastAPI 已经是产品 API 的唯一权威入口，运行时不再挂载 legacy Flask HTML/WSGI 应用。
+## Authentication
 
----
+- `REQUIRE_AUTH=true`: users must log in with a session or token.
+- `REQUIRE_AUTH=false`: guests get read-only access.
+- Task execution, schedule management, settings writes, downloads, and deletes require appropriate token permissions.
+- Local admin bootstrap can be configured with `BOOTSTRAP_ADMIN_TOKEN`; do not commit real tokens.
 
-> 完整的部署指南（Linux Docker + Caddy、Windows 本地）请参见：[docs/guides/SERVICE_START_GUIDE.md](docs/guides/SERVICE_START_GUIDE.md)
+## Scheduled Task Parameters
 
----
+In **Tasks -> Configured Tasks**, the `parameters` field must be valid JSON. These values are passed to the native background task when the schedule fires.
 
-## Purpose
+Common examples:
 
-Help actuarial teams stay current on AI/ML developments through reliable discovery, structured cataloging, and a production-ready management UI.
-
-## Key Features
-
-- Web crawling and discovery across actuarial organization sites
-- Optional web search expansion via Brave and SerpAPI
-- Keyword-based filtering with multi-language support
-- Downloads for PDF, Word, PowerPoint, Excel, and HTML sources
-- SHA256-based deduplication to prevent duplicates
-- Incremental cataloging with summaries, keywords, and categories
-- **Markdown content management** - view, edit, and convert documents to markdown
-- **AI Chatbot with RAG** - intelligent Q&A with document retrieval and citations
-- **Multi-AI Provider Support** - configurable providers (OpenAI, DeepSeek, Mistral, etc.)
-- SQLite for local use and PostgreSQL for production
-- Web interface for search, export, and operational management
-- Per-task application logs and global operational logs
-
-## Web Interface Capabilities
-
-- **Dashboard** - overview of collections, tasks, and system status
-- **Database Browser** - search, filter, sort, and export catalog items
-- **Site Management** - configure sites, keywords, and prefix exclusions
-- **Task Center** - run and monitor crawling, cataloging, and conversion tasks
-- **RAG Management** - manage chunk profiles, knowledge bases, and indexing
-- **AI Chat** - interactive chat interface with knowledge base selection
-- **Markdown Conversion** - batch or per-file document to markdown conversion
-- **File Detail Pages** - view, edit, preview markdown, and submit tasks
-- **Settings** - AI provider configuration, model selection, and system settings
-- Global logs and per-task logs for operational visibility
-- Local file import with directory browsing
-- Admin-only catalog CSV export endpoint: `GET /api/export?format=csv`
-
-## Authentication Modes
-
-- `REQUIRE_AUTH=true`: all pages and APIs require login (token or session).
-- `REQUIRE_AUTH=false`（默认）: **guest read-only** mode.
-  - Guests can browse Dashboard and Database (read-only).
-  - Guests cannot download stored files or run/edit tasks.
-  - Tasks / Schedule / Settings and all write operations require a token.
-
-## AI Chatbot with RAG ✅
-
-A comprehensive AI-powered chatbot with RAG (Retrieval-Augmented Generation) capabilities has been implemented:
-
-### Features
-- **Knowledge Base Management**: Create and manage multiple RAG-based knowledge bases from markdown documents
-- **Chunk Management**: Generate and manage document chunks with customizable profiles
-- **Intelligent Q&A**: Ask questions and get accurate answers with citations from source documents
-- **Multiple AI Providers**: Support for OpenAI, DeepSeek, Mistral, and other providers
-- **Conversation History**: Persistent multi-turn conversations with context awareness
-- **Web Interface**: Chat UI with knowledge base selection, conversation management, and settings
-
-### Components
-- **RAG Database**: Vector storage with chunk indexing and similarity search
-- **Chunk Profiles**: Configurable chunking strategies (size, overlap, method)
-- **Knowledge Bases**: Group and organize chunks for domain-specific Q&A
-- **Chat Engine**: Multi-turn conversation with RAG retrieval and response generation
-- **API & UI**: RESTful endpoints and modern chat interface
-
-### Documentation
-- Implementation complete: See `docs/20260212_PHASE2_COMPLETION_SUMMARY.md`
-- Integration summary: See `docs/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md`
-- API documentation: See `docs/API文档-2026-02-12-聊天机器人API接口说明.md`
-- User guide: See `docs/用户指南-2026-02-12-AI聊天机器人使用说明.md`
-
-## Markdown Feature
-
-The system supports viewing, editing, and converting documents to markdown format:
-
-### File Detail Page
-- **View Mode**: Renders markdown content with proper formatting (headings, lists, code blocks, tables)
-- **Edit Mode**: Edit markdown directly in a textarea with monospace font
-- **Manual save**: Markdown edits are saved when you click **Save Markdown**, with timestamp tracking
-- **Source Tracking**: Tracks whether content is manual, converted, or original
-- **Long document UX**: Markdown view is height-capped with an Expand/Collapse toggle
-- **Conversion metadata**: Displays `markdown_source` and `markdown_updated_at` above the markdown section (when available)
-
-### Markdown Conversion Task
-- Batch conversion runs against **local files already downloaded/imported** (uses DB `local_path`, no re-download)
-- Choose conversion engine: `marker`, `docling`, `mistral`, `deepseekocr`
-- Batch window controls: start index (newest first) + scan count
-- Skip already converted files, or overwrite existing markdown
-- Progress tracking, per-task application log, and error reporting
-- Conversion implementation is provided by the local `doc_to_md/` package (adapted from `ferryhe/doc_to_md`)
-
-### Database Storage
-- Markdown content stored in `catalog_items` table
-- Fields: `markdown_content` (TEXT), `markdown_updated_at` (TEXT, SQLite `CURRENT_TIMESTAMP`), `markdown_source` (TEXT)
-- Accessible via Storage API: `get_file_markdown()`, `update_file_markdown()`
-
-## Conversion Engines
-
-The markdown conversion feature supports multiple engines. Some are heavy and/or require API keys.
-
-- `marker` (local PDF): requires `marker-pdf`
-- `docling` (local multi-format): requires `docling`
-- `mistral` (API): requires `MISTRAL_API_KEY`
-- `deepseekocr` (API via SiliconFlow): requires `SILICONFLOW_API_KEY` and optionally `SILICONFLOW_BASE_URL`
-Note: an `auto` mode previously existed but is intentionally disabled in the UI because it can be slow.
-
-## Project Structure (High-Level)
-
-- `ai_actuarial/` core package (FastAPI API, crawler, catalog, storage, collectors, processors)
-- `config/` site/category YAML plus optional python settings package (`config/settings.py` for conversion engines)
-- `data/` downloaded files, catalogs, and database
-- `docs/` implementation notes and operational guidance
-
-## Project Directory Overview
-
+```json
+{}
 ```
+
+Catalog only files from one configured site:
+
+```json
+{
+  "site": "Society of Actuaries (SOA)",
+  "batch": 50,
+  "max_chars": 12000,
+  "retry_errors": false
+}
+```
+
+Run a configured site crawl:
+
+```json
+{
+  "site": "Casualty Actuarial Society (CAS)"
+}
+```
+
+Import local files:
+
+```json
+{
+  "directory_path": "C:/path/to/files",
+  "recursive": true,
+  "extensions": ["pdf", "docx"],
+  "target_subdir": "scheduled-imports"
+}
+```
+
+Collect explicit URLs:
+
+```json
+{
+  "urls": [
+    "https://example.org/report.pdf"
+  ]
+}
+```
+
+Supported intervals include `daily`, `weekly`, `daily at 02:00`, `every 6 hours`, and `every 30 minutes`.
+
+## Project Layout
+
+```text
 AI_actuarial_inforsearch/
-├─ ai_actuarial/           # Core package + FastAPI product API
-├─ client/                 # React + TypeScript frontend (Vite, Tailwind, Wouter)
-│   └─ src/pages/          # Dashboard, Database, Chat, Tasks, Knowledge, Settings, …
-├─ config/                 # Site and category configuration
-├─ data/                   # Downloads, catalog outputs, and database
-├─ docs/                   # Implementation notes and summaries
-├─ scripts/                # Maintenance and helper scripts
-├─ dist/public/            # Built React assets (generated by npm run build)
-├─ vite.config.ts          # Vite build & dev-proxy configuration
-├─ package.json            # Node.js dependencies and npm scripts
-├─ requirements.txt        # Python dependencies
-├─ SERVICE_START_GUIDE.md  # Service start guide (Linux + Windows)
-├─ QUICK_START_NEW_FEATURES.md
-├─ QUICK_REFERENCE.md
-├─ DATABASE_BACKEND_GUIDE.md
-├─ MODULAR_SYSTEM_GUIDE.md
-└─ README.md
+├─ ai_actuarial/           # Core Python package and FastAPI API
+├─ client/                 # React + TypeScript frontend
+├─ config/                 # YAML configuration
+├─ data/                   # Local runtime data, downloads, logs, and SQLite DB
+├─ doc_to_md/              # Document-to-Markdown engines
+├─ docs/                   # Architecture, guides, plans, and reports
+├─ scripts/                # Maintenance scripts
+├─ tests/                  # Python and source-level tests
+├─ vite.config.ts          # Vite dev server and build config
+├─ package.json            # Node dependencies and scripts
+└─ requirements.txt        # Python runtime dependencies
 ```
 
-## Operations Manual
+## Configuration
 
-- Service start guide (Linux + Windows): `SERVICE_START_GUIDE.md`
+Main structured configuration lives in `config/sites.yaml`. Secrets should stay in `.env` or process environment.
 
-## System Architecture
+Important variables:
 
-```mermaid
-flowchart LR
-    subgraph Sources
-        A[Actuarial Sites]
-        B[Web Search APIs]
-    end
-    subgraph Core
-        C[Crawler & Collectors]
-        D[Storage Layer]
-        E[Catalog Processor]
-    end
-    subgraph Data
-        F[(SQLite/PostgreSQL)]
-        G[data/files]
-        H[data/catalog.*]
-    end
-    subgraph UI
-        I[FastAPI Product API :8000]
-        J[React SPA :5173 dev / :8000 prod]
-    end
+- `TOKEN_ENCRYPTION_KEY`: required for database-stored provider credentials.
+- `FASTAPI_SESSION_SECRET`: required for session login.
+- `BOOTSTRAP_ADMIN_TOKEN`: optional local/admin bootstrap token.
+- `REQUIRE_AUTH`: enables full authentication when `true`.
+- `BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`: optional search keys.
+- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`: optional AI/conversion keys.
 
-    A --> C
-    B --> C
-    C --> D
-    C --> G
-    D --> F
-    E --> H
-    D --> E
-    D --> I
-    J -->|/api/*| I
-```
-
-## Runtime Environment
-
-| Component | Supported / Notes |
-| --- | --- |
-| Python | 3.10+ |
-| Web Server | FastAPI (uvicorn) |
-| Database | SQLite (local), PostgreSQL (production) |
-| Deployment | Docker + Docker Compose |
-| Reverse Proxy | Caddy |
-| OS | Windows (local), Linux (server) |
-
-## Configuration Notes
-
-### Environment Variables
-- Web search keys: `BRAVE_API_KEY`, `SERPAPI_API_KEY`
-- Markdown conversion API keys: `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `SILICONFLOW_BASE_URL`
-- Provider credential encryption key: `TOKEN_ENCRYPTION_KEY`（必须稳定；用于解密数据库中保存的 provider credentials）
-- File deletion: set `ENABLE_FILE_DELETION=true` before starting the web service
-- Authentication: `REQUIRE_AUTH=true` (default: false for guest read-only mode)
-
-### Provider Credential Encryption Key
-
-- `TOKEN_ENCRYPTION_KEY` 用于加解密数据库中的 provider credentials。
-- 可以来自：
-  - **进程环境变量**
-  - **项目根目录 `.env`**
-- 当前实现**不会再自动生成 key**，也**不会再使用 key-file fallback**。
-- 如果缺少这个变量，服务会在启动或首次使用加密服务时直接报错。
-- 如果更换了这个 key，历史上已经存入数据库的 provider credentials 将无法解密。
-
-生成示例：
+Generate a Fernet key for `TOKEN_ENCRYPTION_KEY`:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-建议把生成后的值写入项目 `.env`：
+## Build And Test
 
-```dotenv
-TOKEN_ENCRYPTION_KEY=your-generated-fernet-key
+```bash
+npm run build
+python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 ```
 
-### Configuration Migration (2026-02-15)
-The project has migrated from `.env` file configuration to YAML-based configuration with backward compatibility:
+## Deployment
 
-- **New**: AI provider settings in `config/sites.yaml` under `ai_providers` section
-- **Backward Compatible**: `.env` file still supported for API keys and basic settings
-- **Flexible**: Mix and match - use `.env` for secrets (including `TOKEN_ENCRYPTION_KEY`) and `sites.yaml` for structured config
-- **Migration Guide**: See `docs/20260215_CONFIG_MIGRATION_PLAN.md`
+The Docker and Caddy configuration is aligned to the FastAPI + React stack:
 
-### AI Provider Configuration
-Configure AI providers in `config/sites.yaml`:
-```yaml
-ai_providers:
-  openai:
-    enabled: true
-    api_key: "${OPENAI_API_KEY}"  # From environment variable
-    default_model: "gpt-4o-mini"
-    models:
-      - "gpt-4o"
-      - "gpt-4o-mini"
-  deepseek:
-    enabled: true
-    api_key: "${DEEPSEEK_API_KEY}"
-    default_model: "deepseek-chat"
-```
+- API container: FastAPI on port `5000`
+- Frontend container: Vite dev/preview on port `5173`
+- Caddy: `/api/*` to API, all other routes to React
 
-Provider/model binding lives in `config/sites.yaml`, while secrets may still come from `.env`.
+For details, see:
 
-Important for database-backed provider credentials:
-
-- Settings / FastAPI write APIs can persist provider credentials into the database.
-- Those stored credentials require a stable `TOKEN_ENCRYPTION_KEY` to remain readable across restarts and deployments.
-- `.env.example` documents the required variable.
-
-See `.env.example` for all available environment variables.
-
-## Documentation Index
-
-Documentation is organized by category in the `docs/` folder. See [docs/README.md](docs/README.md) for the complete structure.
-
-### Quick Start & Guides
-- Quick start: [docs/guides/QUICK_START_NEW_FEATURES.md](docs/guides/QUICK_START_NEW_FEATURES.md)
-- Quick reference: [docs/guides/QUICK_REFERENCE.md](docs/guides/QUICK_REFERENCE.md)
-- Service start guide: [docs/guides/SERVICE_START_GUIDE.md](docs/guides/SERVICE_START_GUIDE.md)
-- Database backend: [docs/guides/DATABASE_BACKEND_GUIDE.md](docs/guides/DATABASE_BACKEND_GUIDE.md)
-- Modular system: [docs/guides/MODULAR_SYSTEM_GUIDE.md](docs/guides/MODULAR_SYSTEM_GUIDE.md)
-
-### AI Chatbot Documentation
-- Roadmap: [docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md](docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md)
-- Quick start: [docs/guides/AI_CHATBOT_QUICK_START.md](docs/guides/AI_CHATBOT_QUICK_START.md)
-- Implementation plan: [docs/plans/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md](docs/plans/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md)
-- Architecture: [docs/architecture/20260212_PHASE2_1_CHATBOT_ARCHITECTURE_DESIGN.md](docs/architecture/20260212_PHASE2_1_CHATBOT_ARCHITECTURE_DESIGN.md)
-- Completion summary: [docs/implementation/20260212_PHASE2_COMPLETION_SUMMARY.md](docs/implementation/20260212_PHASE2_COMPLETION_SUMMARY.md)
-- Integration summary: [docs/implementation/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md](docs/implementation/20260213_PHASE2_CHATBOT_INTEGRATION_SUMMARY.md)
-- API documentation (中文): [docs/zh-cn/20260212_API_CHATBOT_API_REFERENCE.md](docs/zh-cn/20260212_API_CHATBOT_API_REFERENCE.md)
-- User guide (中文): [docs/zh-cn/20260212_USER_GUIDE_CHATBOT.md](docs/zh-cn/20260212_USER_GUIDE_CHATBOT.md)
-
-### Configuration & Migration
-- Config migration plan: [docs/plans/20260215_CONFIG_MIGRATION_PLAN.md](docs/plans/20260215_CONFIG_MIGRATION_PLAN.md)
-- Implementation report: [docs/implementation/20260215_CONFIG_MIGRATION_IMPLEMENTATION_REPORT.md](docs/implementation/20260215_CONFIG_MIGRATION_IMPLEMENTATION_REPORT.md)
-- Multi-AI provider design: [docs/plans/20260214_MULTI_AI_PROVIDER_DESIGN.md](docs/plans/20260214_MULTI_AI_PROVIDER_DESIGN.md)
-- AI configuration summary (中文): [docs/zh-cn/20260215_AI_CONFIGURATION_SUMMARY_CN.md](docs/zh-cn/20260215_AI_CONFIGURATION_SUMMARY_CN.md)
-
-### Testing & Security
-- Manual testing guide: [docs/testing/20260215_MANUAL_TESTING_GUIDE.md](docs/testing/20260215_MANUAL_TESTING_GUIDE.md)
-- Manual testing checklist: [docs/testing/MANUAL_TESTING_CHECKLIST.md](docs/testing/MANUAL_TESTING_CHECKLIST.md)
-- Phase 2 security: [docs/security/20260213_PHASE2_SECURITY_SUMMARY.md](docs/security/20260213_PHASE2_SECURITY_SUMMARY.md)
-- Security guide: [docs/guides/SECURITY_IMPROVEMENTS_GUIDE.md](docs/guides/SECURITY_IMPROVEMENTS_GUIDE.md)
-
-### Documentation Categories
-- **Plans** (`docs/plans/`) - Planning and design documents
-- **Implementation** (`docs/implementation/`) - Implementation reports and summaries
-- **Architecture** (`docs/architecture/`) - System architecture and technical design
-- **Security** (`docs/security/`) - Security analysis and hardening reports
-- **Testing** (`docs/testing/`) - Testing guides and checklists
-- **Guides** (`docs/guides/`) - User and developer operational guides
-- **Chinese Docs** (`docs/zh-cn/`) - Chinese language documentation
-- **Archive** (`docs/archive/`) - Historical and deprecated documentation
+- [Architecture](docs/ARCHITECTURE.md)
+- [API Migration Status](docs/API_MIGRATION_STATUS.md)
+- [Service Start Guide](docs/guides/SERVICE_START_GUIDE.md)
 
 ## Output Artifacts
 
-- Downloaded files under `data/files/`
-- Index database at `data/index.db` (SQLite) or PostgreSQL backend
-- Incremental catalog outputs: `data/catalog.jsonl` and `data/catalog.md`
-- Update logs under `data/updates/`
-- Global application log: `data/app.log`
-- Per-task logs: `data/task_logs/*.log`
-
----
-
-AI Actuarial Info Search is built to keep actuarial teams current on AI/ML developments with reliable discovery, structured cataloging, and a production-ready management UI.
+- Downloaded files: `data/files/`
+- SQLite database: `data/index.db`
+- Catalog outputs: `data/catalog.jsonl`, `data/catalog.md`
+- Update logs: `data/updates/`
+- Application log: `data/app.log`
+- Task logs: `data/task_logs/*.log`

@@ -61,13 +61,13 @@ def test_fastapi_no_flask_runtime_auth_roundtrip(tmp_path: Path) -> None:
         "from ai_actuarial.api.app import create_app\n"
         "app = create_app()\n"
         "client = TestClient(app)\n"
-        "register = client.post('/api/auth/register', json={'email': 'noflask-auth@example.com', 'password': 'password123', 'display_name': 'No Flask Auth'})\n"
+        "register = client.post('/api/auth/register', json={'email': 'runtime-auth@example.com', 'password': 'password123', 'display_name': 'Runtime Auth'})\n"
         "assert register.status_code == 201, register.text\n"
         "assert client.get('/api/auth/me').json()['data']['authenticated'] is True\n"
         "logout = client.post('/api/auth/logout')\n"
         "assert logout.status_code == 200, logout.text\n"
         "assert client.get('/api/auth/me').json()['data']['authenticated'] is False\n"
-        "login = client.post('/api/auth/login', json={'email': 'noflask-auth@example.com', 'password': 'password123'})\n"
+        "login = client.post('/api/auth/login', json={'email': 'runtime-auth@example.com', 'password': 'password123'})\n"
         "assert login.status_code == 200, login.text\n"
         "assert client.get('/api/auth/me').json()['data']['authenticated'] is True\n"
         "print('ok')\n"
@@ -75,7 +75,7 @@ def test_fastapi_no_flask_runtime_auth_roundtrip(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=temp_root,
-        env={**os.environ, **{"PYTHONPATH": str(temp_root), "FLASK_SECRET_KEY": "no-flask-auth-secret", "REQUIRE_AUTH": "true"}},
+        env={**os.environ, **{"PYTHONPATH": str(temp_root), "FASTAPI_SESSION_SECRET": "runtime-auth-secret", "REQUIRE_AUTH": "true"}},
         capture_output=True,
         text=True,
         check=False,
@@ -102,14 +102,15 @@ def test_fastapi_no_flask_runtime_supports_schedule_reinit_and_file_collection(t
         "(sample_dir / 'native.pdf').write_text('fake pdf', encoding='utf-8')\n"
         "app = create_app()\n"
         "client = TestClient(app)\n"
-        "reinit = client.post('/api/schedule/reinit')\n"
+        "headers = {'X-Auth-Token': 'runtime-admin-token'}\n"
+        "reinit = client.post('/api/schedule/reinit', headers=headers)\n"
         "assert reinit.status_code == 200, reinit.text\n"
         "body = reinit.json()\n"
         "assert body['success'] is True\n"
         "settings = client.post('/api/config/backend-settings', json={\n"
         "    'defaults': {'max_pages': 17, 'schedule_interval': 'weekly'},\n"
         "    'search': {'enabled': False, 'queries': ['native runtime test']},\n"
-        "})\n"
+        "}, headers=headers)\n"
         "assert settings.status_code == 200, settings.text\n"
         "settings_body = settings.json()\n"
         "assert settings_body['success'] is True\n"
@@ -121,7 +122,7 @@ def test_fastapi_no_flask_runtime_supports_schedule_reinit_and_file_collection(t
         "    'directory_path': str(sample_dir.resolve()),\n"
         "    'extensions': ['pdf'],\n"
         "    'recursive': True,\n"
-        "})\n"
+        "}, headers=headers)\n"
         "assert run.status_code == 200, run.text\n"
         "run_body = run.json()\n"
         "assert run_body['success'] is True\n"
@@ -131,7 +132,15 @@ def test_fastapi_no_flask_runtime_supports_schedule_reinit_and_file_collection(t
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=temp_root,
-        env={**os.environ, **{"PYTHONPATH": str(temp_root), "FLASK_SECRET_KEY": "no-flask-runtime-test-secret"}},
+        env={
+            **os.environ,
+            **{
+                "PYTHONPATH": str(temp_root),
+                "FASTAPI_SESSION_SECRET": "runtime-test-secret",
+                "BOOTSTRAP_ADMIN_TOKEN": "runtime-admin-token",
+                "REQUIRE_AUTH": "false",
+            },
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -154,22 +163,31 @@ def test_fastapi_no_flask_runtime_persists_guest_chat_session(tmp_path: Path) ->
         "from ai_actuarial.api.app import create_app\n"
         "app = create_app()\n"
         "client = TestClient(app)\n"
-        "create = client.post('/api/chat/conversations', json={'mode': 'expert'})\n"
+        "headers = {'X-Auth-Token': 'runtime-admin-token'}\n"
+        "create = client.post('/api/chat/conversations', json={'mode': 'expert'}, headers=headers)\n"
         "assert create.status_code == 201, create.text\n"
         "conversation_id = create.json()['data']['conversation_id']\n"
-        "listed = client.get('/api/chat/conversations')\n"
+        "listed = client.get('/api/chat/conversations', headers=headers)\n"
         "assert listed.status_code == 200, listed.text\n"
         "assert any(item['conversation_id'] == conversation_id for item in listed.json()['data']['conversations'])\n"
-        "detail = client.get(f'/api/chat/conversations/{conversation_id}')\n"
+        "detail = client.get(f'/api/chat/conversations/{conversation_id}', headers=headers)\n"
         "assert detail.status_code == 200, detail.text\n"
-        "deleted = client.delete(f'/api/chat/conversations/{conversation_id}')\n"
+        "deleted = client.delete(f'/api/chat/conversations/{conversation_id}', headers=headers)\n"
         "assert deleted.status_code == 200, deleted.text\n"
         "print('ok')\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=temp_root,
-        env={**os.environ, **{"PYTHONPATH": str(temp_root), "FLASK_SECRET_KEY": "no-flask-chat-secret"}},
+        env={
+            **os.environ,
+            **{
+                "PYTHONPATH": str(temp_root),
+                "FASTAPI_SESSION_SECRET": "runtime-chat-secret",
+                "BOOTSTRAP_ADMIN_TOKEN": "runtime-admin-token",
+                "REQUIRE_AUTH": "false",
+            },
+        },
         capture_output=True,
         text=True,
         check=False,

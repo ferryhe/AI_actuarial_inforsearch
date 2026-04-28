@@ -114,7 +114,7 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
-    monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-rag-admin-test-secret")
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-rag-admin-test-secret")
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
     client = TestClient(app)
@@ -358,15 +358,10 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
     assert create_kb.status_code == 201, create_kb.text
     assert create_kb.json()["knowledge_base"]["chunk_overlap"] == 0
 
-    original_bridge = getattr(app.state, "legacy_start_background_task", None)
-    app.state.legacy_start_background_task = None
-    try:
-        index = client.post(
-            "/api/rag/knowledge-bases/kb-zero-overlap/index",
-            json={"force_reindex": True},
-        )
-    finally:
-        app.state.legacy_start_background_task = original_bridge
+    index = client.post(
+        "/api/rag/knowledge-bases/kb-zero-overlap/index",
+        json={"force_reindex": True},
+    )
 
     assert index.status_code == 202, index.text
     assert index.json()["kb_id"] == "kb-zero-overlap"

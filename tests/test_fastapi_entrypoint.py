@@ -71,18 +71,17 @@ def test_unported_legacy_api_fallback_is_blocked_by_default() -> None:
     head_response = client.head("/api/collections/history")
 
     assert response.status_code == 410
-    assert "Legacy Flask /api fallback is disabled" in response.json()["detail"]
+    assert "Legacy /api fallback is disabled" in response.json()["detail"]
     assert head_response.status_code == 410
 
 
-def test_legacy_api_fallback_can_be_reenabled_for_debugging(monkeypatch) -> None:
-    monkeypatch.setenv("FASTAPI_ALLOW_LEGACY_API_FALLBACK", "1")
+def test_retired_api_fallback_stays_blocked(monkeypatch) -> None:
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     client = TestClient(create_app())
 
     response = client.get("/api/files/example/indexes")
 
-    assert response.status_code != 410
+    assert response.status_code == 410
 
 
 def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_path: Path) -> None:
@@ -122,7 +121,7 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
-    monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-entrypoint-test-secret")
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-entrypoint-test-secret")
 
     client = TestClient(create_app())
     response = client.get("/api/tasks/history?limit=5")

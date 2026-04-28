@@ -165,7 +165,7 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
 
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
-    monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-read-test-secret")
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-read-test-secret")
     if require_auth:
         monkeypatch.setenv("REQUIRE_AUTH", "true")
     else:

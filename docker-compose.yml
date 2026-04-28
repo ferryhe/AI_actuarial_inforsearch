@@ -15,9 +15,8 @@ services:
       - "${API_PORT:-5000}:5000"
     environment:
       - ENV=development
-      - FASTAPI_ALLOW_LEGACY_API_FALLBACK=${FASTAPI_ALLOW_LEGACY_API_FALLBACK:-false}
       - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
-      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:-dev-secret-change-in-production}
+      - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:-dev-secret-change-in-production}
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:-}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:-}
       - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}

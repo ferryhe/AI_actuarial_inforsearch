@@ -337,11 +337,11 @@ def _extract_server_config_from_env() -> Dict[str, Any]:
         ValueError: If environment variables contain invalid numeric values
     """
     return {
-        "host": os.getenv("FLASK_HOST", "0.0.0.0"),
-        "port": _safe_int(os.getenv("FLASK_PORT", "5000"), "FLASK_PORT"),
+        "host": os.getenv("FASTAPI_HOST", "0.0.0.0"),
+        "port": _safe_int(os.getenv("FASTAPI_PORT", "5000"), "FASTAPI_PORT"),
         "max_content_length": _safe_int(os.getenv("MAX_CONTENT_LENGTH", "52428800"), "MAX_CONTENT_LENGTH"),
-        "flask_env": os.getenv("FLASK_ENV", "production"),
-        "flask_debug": os.getenv("FLASK_DEBUG", "false").lower() == "true",
+        "fastapi_env": os.getenv("FASTAPI_ENV", "production"),
+        "fastapi_debug": os.getenv("FASTAPI_DEBUG", "false").lower() == "true",
     }
 
 

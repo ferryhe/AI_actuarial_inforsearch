@@ -89,7 +89,7 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
-    monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-file-preview-test-secret")
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-file-preview-test-secret")
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
     client = TestClient(app)

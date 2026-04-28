@@ -89,8 +89,8 @@ class TestYAMLConfigLoader:
                 "host": "0.0.0.0",
                 "port": 5000,
                 "max_content_length": 52428800,
-                "flask_env": "production",
-                "flask_debug": False,
+                "fastapi_env": "production",
+                "fastapi_debug": False,
             },
             "database": {
                 "type": "sqlite",
@@ -164,7 +164,7 @@ class TestYAMLConfigLoader:
             
             assert server["host"] == "0.0.0.0"
             assert server["port"] == 5000
-            assert server["flask_env"] == "production"
+            assert server["fastapi_env"] == "production"
     
     def test_load_database_config_from_yaml(self):
         """Test loading database configuration from YAML."""
@@ -208,11 +208,12 @@ class TestYAMLConfigLoader:
             with open(self.config_path, 'w') as f:
                 yaml.dump(modified_config, f)
             
-            # Without invalidation, should get cached value
+            # File metadata is part of the cache key, so in-process file edits
+            # are visible without an explicit invalidation call.
             config2 = load_yaml_config()
-            assert config2["defaults"]["user_agent"] == "test-agent"
+            assert config2["defaults"]["user_agent"] == "modified-agent"
             
-            # After invalidation, should get new value
+            # Explicit invalidation still forces a reload and keeps the new value.
             invalidate_config_cache()
             config3 = load_yaml_config()
             assert config3["defaults"]["user_agent"] == "modified-agent"

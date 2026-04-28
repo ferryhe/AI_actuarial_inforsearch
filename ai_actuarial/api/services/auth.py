@@ -70,7 +70,7 @@ def _client_ip(request: Request) -> str:
     return client or "unknown"
 
 
-def _legacy_session_cookie_name(request: Request) -> str:
+def _session_cookie_name(request: Request) -> str:
     return str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
 
 
@@ -78,7 +78,7 @@ def _apply_session_mutation(response: Response, request: Request, mutation: Sess
     if mutation is None:
         return
 
-    cookie_name = _legacy_session_cookie_name(request)
+    cookie_name = _session_cookie_name(request)
     if mutation.clear:
         response.delete_cookie(
             cookie_name,

@@ -428,13 +428,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_collect_file.add_argument("--no-db-check", action="store_true", help="Skip database duplicate check")
     p_collect_file.set_defaults(func=cmd_collect_file)
     
-    # Web interface
-    p_web = sub.add_parser("web", help="Start web interface for collection management")
-    p_web.add_argument("--host", default="127.0.0.1", help="Host to bind to")
-    p_web.add_argument("--port", type=int, default=5000, help="Port to bind to")
-    p_web.add_argument("--debug", action="store_true", help="Enable debug mode")
-    p_web.set_defaults(func=cmd_web)
-
     p_api = sub.add_parser("api", help="Start FastAPI gateway for the React frontend")
     p_api.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     p_api.add_argument("--port", type=int, default=5000, help="Port to bind to")
@@ -508,26 +501,6 @@ def cmd_collect_file(args: argparse.Namespace) -> int:
             logger.warning(f"    - {error}")
     
     return 0 if result.success else 1
-
-
-def cmd_web(args: argparse.Namespace) -> int:
-    """Start web interface."""
-    try:
-        from .web.app import run_server
-    except ImportError:
-        logger.warning("Flask is required for the web interface.")
-        logger.warning("Install it with: pip install flask")
-        return 1
-    
-    logger.info(f"Starting web interface on {args.host}:{args.port}")
-    logger.info("Press Ctrl+C to stop")
-    
-    try:
-        run_server(host=args.host, port=args.port, debug=args.debug)
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-    
-    return 0
 
 
 def cmd_api(args: argparse.Namespace) -> int:
