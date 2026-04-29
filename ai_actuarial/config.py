@@ -74,6 +74,8 @@ class Settings:
     # -------------------------------------------------------------------------
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     FASTAPI_SESSION_SECRET: str = os.getenv("FASTAPI_SESSION_SECRET", "")
+    FASTAPI_ENV: str = os.getenv("FASTAPI_ENV", "").strip().lower()
+    FASTAPI_SESSION_COOKIE_SECURE: bool = _env_bool("FASTAPI_SESSION_COOKIE_SECURE", False)
     TOKEN_ENCRYPTION_KEY: str = os.getenv("TOKEN_ENCRYPTION_KEY", "")
     REQUIRE_AUTH: bool = _env_bool("REQUIRE_AUTH", False)
     TRUST_PROXY: bool = _env_bool("TRUST_PROXY", False)

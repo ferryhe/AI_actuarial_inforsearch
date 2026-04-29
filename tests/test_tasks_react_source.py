@@ -23,7 +23,15 @@ def test_scheduled_tasks_section_surfaces_write_errors_instead_of_silently_ignor
     assert "ApiError" in src
     assert "errorMsg" in src
     assert 'data-testid="text-scheduled-error"' in src
+    assert 'aria-label={t("tasks.schedule.dismiss_error")}' in src
     assert "setErrorMsg" in src
+
+
+def test_add_to_schedule_error_dismiss_button_is_accessible():
+    src = SCHEDULE_FROM_TASK_TSX.read_text(encoding="utf-8")
+
+    assert 'data-testid="text-add-schedule-error"' in src
+    assert 'aria-label={t("tasks.schedule.dismiss_error")}' in src
 
 
 def test_layout_no_longer_renders_fastapi_native_mode_badge():

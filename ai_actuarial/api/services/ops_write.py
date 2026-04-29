@@ -87,13 +87,13 @@ def _is_valid_schedule_interval(interval: str) -> bool:
         return 0 <= hour <= 23 and 0 <= minute <= 59
     if normalized.startswith("every "):
         parts = normalized.split()
-        if len(parts) < 3:
+        if len(parts) != 3:
             return False
         try:
             qty = int(parts[1])
         except ValueError:
             return False
-        return qty > 0 and any(unit in parts[2] for unit in ("hour", "minute"))
+        return qty > 0 and parts[2] in {"hour", "hours", "minute", "minutes"}
     return False
 
 _SAMPLE_SITES_YAML = """# AI Actuarial Info Search - Site Configuration Sample

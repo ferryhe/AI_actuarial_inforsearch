@@ -112,6 +112,32 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool = True
     return client, app, seed
 
 
+def test_fastapi_auth_session_cookie_secure_can_be_enabled(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FASTAPI_SESSION_COOKIE_SECURE", "true")
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "secure-cookie@example.com",
+            "password": "password123",
+            "display_name": "Secure Cookie",
+        },
+    )
+
+    assert register.status_code == 201, register.text
+    assert app.state.fastapi_session_cookie_secure is True
+    assert "Secure" in register.headers.get("set-cookie", "")
+
+
+def test_fastapi_auth_session_cookie_secure_defaults_to_secure_for_production_auth(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("FASTAPI_SESSION_COOKIE_SECURE", raising=False)
+    monkeypatch.setenv("FASTAPI_ENV", "production")
+    _client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+
+    assert app.state.fastapi_session_cookie_secure is True
+
+
 def test_fastapi_auth_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 

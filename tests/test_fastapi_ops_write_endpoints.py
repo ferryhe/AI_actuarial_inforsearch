@@ -332,6 +332,21 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     config_path = Path(os.environ["CONFIG_PATH"])
     headers = {"X-Auth-Token": seed["operator_token"]}
 
+    for invalid_interval in ("every 5 hourly", "every 1 hours extra", "every 0 hours"):
+        invalid_response = client.post(
+            "/api/scheduled-tasks/add",
+            json={
+                "name": f"Invalid {invalid_interval}",
+                "type": "chunk_generation",
+                "interval": invalid_interval,
+                "enabled": True,
+                "params": {},
+            },
+            headers=headers,
+        )
+        assert invalid_response.status_code == 400, invalid_response.text
+        assert "Invalid schedule interval" in invalid_response.text
+
     add_response = client.post(
         "/api/scheduled-tasks/add",
         json={

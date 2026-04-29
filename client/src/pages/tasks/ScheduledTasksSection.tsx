@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Clock, Loader2, Plus, Pencil, Trash2, Save, Timer, RefreshCw, ToggleLeft, ToggleRight } from "lucide-react";
+import { Clock, Loader2, Plus, Pencil, Trash2, Save, Timer, RefreshCw, ToggleLeft, ToggleRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
@@ -198,8 +198,13 @@ export function ScheduledTasksSection() {
           {errorMsg && (
             <div className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center justify-between gap-2" data-testid="text-scheduled-error">
               <span>{errorMsg}</span>
-              <button onClick={() => setErrorMsg(null)} className="shrink-0 text-destructive/80 hover:text-destructive">
-                x
+              <button
+                type="button"
+                onClick={() => setErrorMsg(null)}
+                aria-label={t("tasks.schedule.dismiss_error")}
+                className="shrink-0 text-destructive/80 hover:text-destructive"
+              >
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
           )}

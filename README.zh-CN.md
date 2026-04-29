@@ -56,6 +56,7 @@ npm run dev
 
 - `REQUIRE_AUTH=true`：用户必须通过 session 或 token 登录。
 - `REQUIRE_AUTH=false`：访客只读。
+- `FASTAPI_SESSION_COOKIE_SECURE=true`：将 session cookie 标记为仅 HTTPS 可用；如果省略，在 `FASTAPI_ENV=production` 且 `REQUIRE_AUTH=true` 时默认启用。
 - 运行任务、管理 schedule、写 settings、下载和删除文件都需要对应 token 权限。
 - 本地 admin token 可通过 `BOOTSTRAP_ADMIN_TOKEN` 配置；真实 token 不要提交到仓库。
 
@@ -136,6 +137,7 @@ AI_actuarial_inforsearch/
 
 - `TOKEN_ENCRYPTION_KEY`：数据库中保存 provider credential 时必需。
 - `FASTAPI_SESSION_SECRET`：session 登录必需。
+- `FASTAPI_SESSION_COOKIE_SECURE`：HTTPS 部署设为 `true`；`FASTAPI_ENV=production` 且启用鉴权时会默认开启。
 - `BOOTSTRAP_ADMIN_TOKEN`：可选的本地/admin bootstrap token。
 - `REQUIRE_AUTH`：设为 `true` 后启用完整鉴权。
 - `BRAVE_API_KEY`、`SERPAPI_API_KEY`、`SERPER_API_KEY`、`TAVILY_API_KEY`：可选搜索 key。

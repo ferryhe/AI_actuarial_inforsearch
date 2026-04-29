@@ -48,6 +48,12 @@ def _env_bool(key: str, default: bool) -> bool:
     return default
 
 
+def _default_session_cookie_secure() -> bool:
+    fastapi_env = os.getenv("FASTAPI_ENV", settings.FASTAPI_ENV).strip().lower()
+    require_auth = _env_bool("REQUIRE_AUTH", settings.REQUIRE_AUTH)
+    return fastapi_env in {"prod", "production"} and require_auth
+
+
 def _bootstrap_admin_token(db_path: str) -> None:
     token = os.getenv("BOOTSTRAP_ADMIN_TOKEN", "").strip()
     if not token:
@@ -114,7 +120,10 @@ def create_app() -> FastAPI:
     app.state.fastapi_session_cookie_name = "session"
     app.state.fastapi_session_cookie_path = "/"
     app.state.fastapi_session_cookie_domain = None
-    app.state.fastapi_session_cookie_secure = False
+    app.state.fastapi_session_cookie_secure = _env_bool(
+        "FASTAPI_SESSION_COOKIE_SECURE",
+        settings.FASTAPI_SESSION_COOKIE_SECURE or _default_session_cookie_secure(),
+    )
     app.state.fastapi_session_cookie_httponly = True
     app.state.fastapi_session_cookie_samesite = "Lax"
     app.state.db_path = _resolve_db_path()

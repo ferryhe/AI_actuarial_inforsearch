@@ -56,6 +56,7 @@ Open `http://127.0.0.1:5173`. Vite proxies `/api/*` to `http://127.0.0.1:8000`.
 
 - `REQUIRE_AUTH=true`: users must log in with a session or token.
 - `REQUIRE_AUTH=false`: guests get read-only access.
+- `FASTAPI_SESSION_COOKIE_SECURE=true`: mark session cookies as HTTPS-only. If omitted, this defaults to enabled when `FASTAPI_ENV=production` and `REQUIRE_AUTH=true`.
 - Task execution, schedule management, settings writes, downloads, and deletes require appropriate token permissions.
 - Local admin bootstrap can be configured with `BOOTSTRAP_ADMIN_TOKEN`; do not commit real tokens.
 
@@ -136,6 +137,7 @@ Important variables:
 
 - `TOKEN_ENCRYPTION_KEY`: required for database-stored provider credentials.
 - `FASTAPI_SESSION_SECRET`: required for session login.
+- `FASTAPI_SESSION_COOKIE_SECURE`: set to `true` for HTTPS deployments; defaults on when `FASTAPI_ENV=production` and auth is required.
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local/admin bootstrap token.
 - `REQUIRE_AUTH`: enables full authentication when `true`.
 - `BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`: optional search keys.

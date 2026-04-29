@@ -114,7 +114,12 @@ export function ScheduleFromTaskButton({ buildTask, disabled = false }: Schedule
         <div className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center gap-2" data-testid="text-add-schedule-error">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="flex-1">{errorMsg}</span>
-          <button type="button" onClick={() => setErrorMsg(null)} className="shrink-0">
+          <button
+            type="button"
+            onClick={() => setErrorMsg(null)}
+            aria-label={t("tasks.schedule.dismiss_error")}
+            className="shrink-0"
+          >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
