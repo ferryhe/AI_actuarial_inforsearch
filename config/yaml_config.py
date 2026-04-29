@@ -176,6 +176,19 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
     Raises:
         ValueError: If environment variables contain invalid numeric values
     """
+    default_engine = os.getenv("DEFAULT_ENGINE", "local").strip().lower()
+    engine_provider_model = {
+        "opendataloader": ("local", "opendataloader"),
+        "markitdown": ("local", "markitdown"),
+        "docling": ("local", "docling"),
+        "marker": ("local", "marker"),
+        "local": ("local", "docling"),
+        "mistral": ("mistral", os.getenv("MISTRAL_DEFAULT_MODEL", "mistral-ocr-latest")),
+        "deepseekocr": ("siliconflow", os.getenv("SILICONFLOW_DEFAULT_MODEL", "deepseek-ai/DeepSeek-OCR")),
+        "mathpix": ("mathpix", "mathpix"),
+    }
+    ocr_provider, ocr_model = engine_provider_model.get(default_engine, ("local", default_engine or "docling"))
+
     return {
         "catalog": {
             "provider": "openai",
@@ -205,8 +218,8 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
             "max_query_length": _safe_int(os.getenv("CHATBOT_MAX_QUERY_LENGTH", "1000"), "CHATBOT_MAX_QUERY_LENGTH"),
         },
         "ocr": {
-            "provider": os.getenv("DEFAULT_ENGINE", "local"),
-            "model": "docling",  # Default for local provider
+            "provider": ocr_provider,
+            "model": ocr_model,
             "mistral": {
                 "max_pdf_tokens": _safe_int(os.getenv("MISTRAL_MAX_PDF_TOKENS", "9000"), "MISTRAL_MAX_PDF_TOKENS"),
                 "max_pages_per_chunk": _safe_int(os.getenv("MISTRAL_MAX_PAGES_PER_CHUNK", "10"), "MISTRAL_MAX_PAGES_PER_CHUNK"),
@@ -220,6 +233,13 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
                 "chunk_overlap_tokens": _safe_int(os.getenv("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200"), "SILICONFLOW_CHUNK_OVERLAP_TOKENS"),
                 "timeout_seconds": _safe_int(os.getenv("SILICONFLOW_TIMEOUT_SECONDS", "60"), "SILICONFLOW_TIMEOUT_SECONDS"),
                 "retry_attempts": _safe_int(os.getenv("SILICONFLOW_RETRY_ATTEMPTS", "3"), "SILICONFLOW_RETRY_ATTEMPTS"),
+            },
+            "mathpix": {
+                "timeout_seconds": _safe_int(os.getenv("MATHPIX_TIMEOUT_SECONDS", "120"), "MATHPIX_TIMEOUT_SECONDS"),
+                "retry_attempts": _safe_int(os.getenv("MATHPIX_RETRY_ATTEMPTS", "3"), "MATHPIX_RETRY_ATTEMPTS"),
+                "poll_interval_seconds": _safe_float(os.getenv("MATHPIX_POLL_INTERVAL_SECONDS", "5"), "MATHPIX_POLL_INTERVAL_SECONDS"),
+                "output_format": os.getenv("MATHPIX_OUTPUT_FORMAT", "md"),
+                "base_url": os.getenv("MATHPIX_BASE_URL", "https://api.mathpix.com/v3"),
             },
         },
     }

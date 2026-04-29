@@ -4,6 +4,7 @@ export { TaskTable } from "./TaskTable";
 export { Pagination } from "./Pagination";
 export { SiteConfigForm } from "./SiteConfigForm";
 export { ScheduledTasksSection } from "./ScheduledTasksSection";
+export { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 export { WebCrawlForm } from "./WebCrawlForm";
 export { AdhocUrlForm } from "./AdhocUrlForm";
 export { FileImportForm } from "./FileImportForm";

@@ -3,6 +3,7 @@ import { useTranslation } from "@/components/Layout";
 import TagSelect, { PRESET_FILE_EXTENSIONS, PRESET_LANGUAGES, PRESET_COUNTRIES } from "@/components/TagSelect";
 import { useTaskOptions } from "@/hooks/use-task-options";
 import { FormField, InputField, SelectField, CheckboxField, RunButton } from "@/components/FormFields";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
@@ -18,6 +19,22 @@ export function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<s
   const [useDefaults, setUseDefaults] = useState(true);
 
   const engineOptions = dynamicEngines.map((e) => ({ value: e.value, label: e.name + (e.available ? "" : " (unavailable)") }));
+  const buildTask = (): Record<string, unknown> | null => {
+    if (!query.trim()) return null;
+    return {
+      type: "search",
+      name: `Search: ${query}`,
+      query,
+      engine,
+      count: parseInt(count) || 20,
+      site: site || undefined,
+      search_lang: searchLang.length > 0 ? searchLang.join(",") : undefined,
+      search_country: searchCountry.length > 0 ? searchCountry.join(",") : undefined,
+      search_exclude_keywords: excludeKw.length > 0 ? excludeKw : undefined,
+      file_exts: fileExts.length > 0 ? fileExts : undefined,
+      use_search_defaults: useDefaults,
+    };
+  };
 
   return (
     <div className="space-y-4">
@@ -50,14 +67,11 @@ export function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<s
       </FormField>
       <CheckboxField checked={useDefaults} onChange={setUseDefaults} label={t("tasks.form.use_search_defaults")} testId="checkbox-use-defaults" />
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !query.trim()}
-        onClick={() => { if (!query.trim()) return;
-          onSubmit({ type: "search", name: `Search: ${query}`, query, engine, count: parseInt(count) || 20,
-            site: site || undefined, search_lang: searchLang.length > 0 ? searchLang.join(",") : undefined,
-            search_country: searchCountry.length > 0 ? searchCountry.join(",") : undefined,
-            search_exclude_keywords: excludeKw.length > 0 ? excludeKw : undefined,
-            file_exts: fileExts.length > 0 ? fileExts : undefined,
-            use_search_defaults: useDefaults });
+        onClick={() => {
+          const task = buildTask();
+          if (task) onSubmit(task);
         }} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={!query.trim()} />
     </div>
   );
 }

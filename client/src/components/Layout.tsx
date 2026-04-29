@@ -144,9 +144,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </button>
             <div className="flex-1" />
             <div className="flex items-center gap-1.5">
-              <span className="hidden md:inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-[11px] font-medium text-primary">
-                {i18n.t("layout.fastapiNativeMode")}
-              </span>
               {isLoggedIn ? (
                 <>
                   <Link href="/profile">

@@ -4,6 +4,7 @@ import { useTranslation } from "@/components/Layout";
 import { useTaskOptions } from "@/hooks/use-task-options";
 import { apiGet } from "@/lib/api";
 import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
@@ -35,6 +36,24 @@ export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<str
 
   const handleCategoryBlur = () => {
     if (scopeMode === "category" && category.trim()) loadStats(category.trim());
+  };
+
+  const buildTask = (): Record<string, unknown> | null => {
+    if ((scopeMode === "category" && !category.trim()) || catalogProviders.length === 0) return null;
+    return {
+      type: "catalog",
+      name: "AI Catalog",
+      scope_mode: scopeMode,
+      category: scopeMode === "category" ? category : undefined,
+      scan_count: parseInt(scanCount) || 100,
+      scan_start_index: parseInt(startIndex) || 1,
+      input_source: inputSource,
+      retry_errors: retryErrors,
+      skip_existing: skipExisting,
+      overwrite_existing: overwriteExisting,
+      update_title: updateTitle,
+      output_language: outputLanguage,
+    };
   };
 
   return (
@@ -112,11 +131,11 @@ export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<str
         )}
       </div>
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || catalogProviders.length === 0}
-        onClick={() => onSubmit({ type: "catalog", name: "AI Catalog", scope_mode: scopeMode,
-          category: scopeMode === "category" ? category : undefined, scan_count: parseInt(scanCount) || 100,
-          scan_start_index: parseInt(startIndex) || 1, input_source: inputSource,
-          retry_errors: retryErrors, skip_existing: skipExisting, overwrite_existing: overwriteExisting,
-          update_title: updateTitle, output_language: outputLanguage })} />
+        onClick={() => {
+          const task = buildTask();
+          if (task) onSubmit(task);
+        }} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={(scopeMode === "category" && !category.trim()) || catalogProviders.length === 0} />
     </div>
   );
 }

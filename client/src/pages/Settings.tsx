@@ -183,9 +183,12 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
 }
 
 const OCR_ENGINE_DEFS = [
-  { name: "docling", provider: "local", displayName: "Docling", isLocal: true },
-  { name: "marker", provider: "local", displayName: "Marker", isLocal: true },
+  { name: "opendataloader", provider: "local", displayName: "OpenDataLoader", isLocal: true },
+  { name: "markitdown", provider: "local", displayName: "MarkItDown", isLocal: true },
   { name: "mistral", provider: "mistral", displayName: "Mistral OCR", isLocal: false },
+  { name: "docling", provider: "local", displayName: "Docling", isLocal: true },
+  { name: "mathpix", provider: "mathpix", displayName: "Mathpix", isLocal: false },
+  { name: "marker", provider: "local", displayName: "Marker", isLocal: true },
   { name: "deepseekocr", provider: "siliconflow", displayName: "DeepSeek OCR", isLocal: false },
 ];
 
@@ -565,6 +568,9 @@ function AiConfigTab({ lang }: { lang: string }) {
                           {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                         </button>
                       </div>
+                      {provider.provider_id === "mathpix" && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">{t("settings.mathpix_key_hint")}</p>
+                      )}
                     </div>
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>

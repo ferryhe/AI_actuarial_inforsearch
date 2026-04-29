@@ -68,12 +68,13 @@ const FALLBACK_ENGINES: SearchEngine[] = [
   { name: "Tavily", value: "tavily", available: true },
 ];
 
-const FALLBACK_CONVERSION_TOOLS = ["docling", "marker", "mistral", "deepseekocr"];
+const FALLBACK_CONVERSION_TOOLS = ["opendataloader", "markitdown", "mistral", "docling", "mathpix"];
 const FALLBACK_CONVERSION_TOOLS_INFO: ConversionTool[] = [
-  { name: "docling", provider: "local", displayName: "Docling" },
-  { name: "marker", provider: "local", displayName: "Marker" },
+  { name: "opendataloader", provider: "local", displayName: "OpenDataLoader" },
+  { name: "markitdown", provider: "local", displayName: "MarkItDown" },
   { name: "mistral", provider: "mistral", displayName: "Mistral OCR" },
-  { name: "deepseekocr", provider: "siliconflow", displayName: "DeepSeek OCR" },
+  { name: "docling", provider: "local", displayName: "Docling" },
+  { name: "mathpix", provider: "mathpix", displayName: "Mathpix" },
 ];
 
 const cache: {
@@ -93,10 +94,13 @@ function isCacheValid(): boolean {
 }
 
 const ENGINE_DEFS: ConversionTool[] = [
+  { name: "opendataloader", provider: "local", displayName: "OpenDataLoader" },
+  { name: "markitdown", provider: "local", displayName: "MarkItDown" },
+  { name: "mistral", provider: "mistral", displayName: "Mistral OCR" },
   { name: "docling", provider: "local", displayName: "Docling" },
+  { name: "mathpix", provider: "mathpix", displayName: "Mathpix" },
   { name: "marker", provider: "local", displayName: "Marker" },
   { name: "local", provider: "local", displayName: "Local (Basic)" },
-  { name: "mistral", provider: "mistral", displayName: "Mistral OCR" },
   { name: "deepseekocr", provider: "siliconflow", displayName: "DeepSeek OCR" },
 ];
 
@@ -113,11 +117,8 @@ function extractOcrTools(available: Record<string, AvailableModel[]>, configured
       }
     }
   }
-  // Always include local tools (docling, marker, local — no API key required).
-  // Add API-based tools only when their provider has an actual key configured.
-  const localTools = ENGINE_DEFS.filter((e) => e.provider === "local");
-  const apiTools = ENGINE_DEFS.filter((e) => e.provider !== "local" && providersWithOcr.has(e.provider));
-  return [...localTools, ...apiTools];
+  // Always include local tools. Add API tools only when their provider key is configured.
+  return ENGINE_DEFS.filter((engine) => engine.provider === "local" || providersWithOcr.has(engine.provider));
 }
 
 function extractCatalogProviders(available: Record<string, AvailableModel[]>, configuredProviders: Set<string>): string[] {

@@ -4,6 +4,7 @@ import { useTranslation } from "@/components/Layout";
 import { useTaskOptions } from "@/hooks/use-task-options";
 import { apiGet } from "@/lib/api";
 import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
@@ -42,6 +43,24 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
 
   const handleCategoryBlur = () => {
     if (scopeMode === "category" && category.trim()) loadStats(category.trim());
+  };
+
+  const buildTask = (): Record<string, unknown> | null => {
+    if (scopeMode === "category" && !category.trim()) return null;
+    return {
+      type: "chunk_generation",
+      name: "Chunk Generation",
+      scope_mode: scopeMode,
+      category: scopeMode === "category" ? category : undefined,
+      scan_count: parseInt(scanCount) || 50,
+      scan_start_index: startIndex ? parseInt(startIndex) : undefined,
+      chunk_size: parseInt(chunkSize) || 800,
+      chunk_overlap: parseInt(chunkOverlap) || 100,
+      splitter,
+      tokenizer,
+      profile_name: profileName || undefined,
+      overwrite_same_profile: overwriteSameProfile,
+    };
   };
 
   return (
@@ -111,12 +130,11 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
       <CheckboxField checked={overwriteSameProfile} onChange={setOverwriteSameProfile}
         label={t("tasks.form.overwrite_same_profile")} testId="checkbox-overwrite-profile" />
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
-        onClick={() => onSubmit({ type: "chunk_generation", name: "Chunk Generation", scope_mode: scopeMode,
-          category: scopeMode === "category" ? category : undefined, scan_count: parseInt(scanCount) || 50,
-          scan_start_index: startIndex ? parseInt(startIndex) : undefined,
-          chunk_size: parseInt(chunkSize) || 800, chunk_overlap: parseInt(chunkOverlap) || 100,
-          splitter, tokenizer, profile_name: profileName || undefined,
-          overwrite_same_profile: overwriteSameProfile })} />
+        onClick={() => {
+          const task = buildTask();
+          if (task) onSubmit(task);
+        }} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={scopeMode === "category" && !category.trim()} />
     </div>
   );
 }

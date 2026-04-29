@@ -294,6 +294,7 @@ class TestDefaultModels:
         assert 'mistral' in DEFAULT_MODELS
         assert 'siliconflow' in DEFAULT_MODELS
         assert 'local' in DEFAULT_MODELS
+        assert 'mathpix' in DEFAULT_MODELS
         
         for provider, models in DEFAULT_MODELS.items():
             assert isinstance(models, list)
@@ -303,3 +304,10 @@ class TestDefaultModels:
                 assert 'types' in model
                 assert isinstance(model['types'], list)
                 assert len(model['types']) > 0
+
+    def test_recommended_markdown_tools_are_available_as_ocr_models(self):
+        local_ocr_names = {model["name"] for model in DEFAULT_MODELS["local"] if "ocr" in model["types"]}
+        mathpix_ocr_names = {model["name"] for model in DEFAULT_MODELS["mathpix"] if "ocr" in model["types"]}
+
+        assert {"opendataloader", "markitdown", "docling"}.issubset(local_ocr_names)
+        assert "mathpix" in mathpix_ocr_names

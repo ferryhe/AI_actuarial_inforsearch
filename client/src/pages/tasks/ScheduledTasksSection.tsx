@@ -63,6 +63,12 @@ export function ScheduledTasksSection() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const refresh = () => { void fetchData(); };
+    window.addEventListener("scheduled-tasks:changed", refresh);
+    return () => window.removeEventListener("scheduled-tasks:changed", refresh);
+  }, [fetchData]);
 
   const resetForm = () => {
     setFormName("");

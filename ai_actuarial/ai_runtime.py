@@ -39,6 +39,7 @@ AI_SUPPORTED_PROVIDERS = {
     "fish_audio",
     "mineru",
     "paddleocr",
+    "mathpix",
     "local",
 }
 
@@ -173,6 +174,11 @@ KNOWN_LLM_PROVIDERS = {
         "default_base_url": "",
         "api_key_hint": "optional",
     },
+    "mathpix": {
+        "display_name": "Mathpix",
+        "default_base_url": "https://api.mathpix.com/v3",
+        "api_key_hint": "app_key",
+    },
     "brave_search": {
         "display_name": "Brave Search",
         "default_base_url": "",
@@ -226,6 +232,7 @@ PROVIDER_STARTUP_ENV_MAP = {
     "fish_audio": ("FISH_AUDIO_API_KEY", "FISH_AUDIO_BASE_URL"),
     "mineru": ("MINERU_API_KEY", "MINERU_BASE_URL"),
     "paddleocr": ("PADDLEOCR_API_KEY", "PADDLEOCR_BASE_URL"),
+    "mathpix": ("MATHPIX_APP_KEY", "MATHPIX_BASE_URL"),
     "brave_search": ("BRAVE_API_KEY", None),
     "serpapi": ("SERPAPI_API_KEY", None),
     "serper": ("SERPER_API_KEY", None),
@@ -320,11 +327,14 @@ KNOWN_EMBEDDING_MODEL_PROVIDERS = {
 }
 
 OCR_ENGINE_PROVIDER_MAP = {
+    "opendataloader": "local",
+    "markitdown": "local",
     "docling": "local",
     "marker": "local",
     "local": "local",
     "mistral": "mistral",
     "deepseekocr": "siliconflow",
+    "mathpix": "mathpix",
 }
 
 OCR_PROVIDER_ENGINE_MAP = {
@@ -333,6 +343,7 @@ OCR_PROVIDER_ENGINE_MAP = {
     "siliconflow": "deepseekocr",
     "mineru": "mineru",
     "paddleocr": "paddleocr",
+    "mathpix": "mathpix",
 }
 
 FUNCTION_BINDING_TO_SECTION = {
@@ -653,7 +664,7 @@ def resolve_ocr_runtime(
     provider_override = OCR_ENGINE_PROVIDER_MAP.get(engine) if engine else None
     effective_model_override = model_override
     if effective_model_override is None and engine:
-        if engine in {"docling", "marker"}:
+        if engine in {"opendataloader", "markitdown", "docling", "marker", "mathpix"}:
             effective_model_override = engine
         elif engine in {"mistral", "deepseekocr"}:
             effective_model_override = ""
@@ -841,7 +852,7 @@ def _resolve_ocr_engine(provider: str, model: str, *, engine_override: str | Non
     normalized_provider = _normalize_provider(provider, default="local")
     if normalized_provider == "local":
         normalized_model = str(model or "").strip().lower()
-        if normalized_model in {"docling", "marker"}:
+        if normalized_model in {"opendataloader", "markitdown", "docling", "marker"}:
             return normalized_model
         return OCR_PROVIDER_ENGINE_MAP["local"]
     return OCR_PROVIDER_ENGINE_MAP.get(normalized_provider, OCR_PROVIDER_ENGINE_MAP["local"])
@@ -856,7 +867,7 @@ def _resolve_ocr_model(provider: str, model: str, engine: str) -> str:
         return "mistral-ocr-latest"
     if normalized_provider == "siliconflow":
         return "deepseek-ai/DeepSeek-OCR"
-    if engine in {"docling", "marker"}:
+    if engine in {"opendataloader", "markitdown", "docling", "marker", "mathpix"}:
         return engine
     return DEFAULT_AI_FUNCTION_CONFIG["ocr"]["model"]
 

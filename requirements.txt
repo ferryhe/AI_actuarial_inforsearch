@@ -18,11 +18,14 @@ curl_cffi>=0.7.0
 pydantic-settings>=2.0.0
 openai>=1.68.0
 mistralai==1.0.0
+requests>=2.31.0
 tiktoken>=0.5.0
 pypdfium2>=4.0.0
 Pillow>=10.2.0
 
 # Heavy optional engines (install when you want these conversion backends)
+opendataloader-pdf>=2.0.0
+markitdown[pdf]>=0.1.3
 docling>=2.0.0
 marker-pdf>=1.0.0
 
