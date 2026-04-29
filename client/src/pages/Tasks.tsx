@@ -56,6 +56,7 @@ export default function Tasks() {
   const [sites, setSites] = useState<SiteConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeForm, setActiveForm] = useState<string | null>(null);
+  const [taskView, setTaskView] = useState<"run" | "scheduled">("run");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
@@ -194,6 +195,37 @@ export default function Tasks() {
         <p className="text-muted-foreground mt-1.5 text-sm max-w-2xl leading-relaxed">{t("tasks.subtitle")}</p>
       </motion.div>
 
+      <div className="inline-flex rounded-lg border border-border bg-muted/40 p-1" data-testid="tasks-view-tabs">
+        <button
+          type="button"
+          onClick={() => setTaskView("run")}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            taskView === "run" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+          )}
+          data-testid="tab-run-tasks"
+        >
+          <Play className="w-4 h-4" />
+          {t("tasks.view.run_tasks")}
+        </button>
+        <button
+          type="button"
+          onClick={() => setTaskView("scheduled")}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            taskView === "scheduled" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+          )}
+          data-testid="tab-scheduled-tasks"
+        >
+          <Clock className="w-4 h-4" />
+          {t("tasks.view.scheduled_tasks")}
+        </button>
+      </div>
+
+      {taskView === "scheduled" ? (
+        <ScheduledTasksSection />
+      ) : (
+        <>
       {/* 1. All Tasks (task type selection grid) */}
       <div>
         <h2 className="text-lg font-semibold mb-3">{t("tasks.new_task")}</h2>
@@ -302,7 +334,8 @@ export default function Tasks() {
         )}
       </div>
 
-      <ScheduledTasksSection />
+        </>
+      )}
 
       {/* Log Modal */}
       <AnimatePresence>

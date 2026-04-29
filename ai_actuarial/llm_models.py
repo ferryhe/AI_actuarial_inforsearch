@@ -95,8 +95,13 @@ DEFAULT_MODELS = {
         {"name": "command-r", "display_name": "Command R", "types": ["chatbot", "catalog"]},
         {"name": "embed-multilingual-v3.0", "display_name": "Embed Multilingual v3", "types": ["embeddings"]},
     ],
+    "mathpix": [
+        {"name": "mathpix", "display_name": "Mathpix", "types": ["ocr"]},
+    ],
     "local": [
         {"name": "sentence-transformers", "display_name": "Sentence Transformers", "types": ["embeddings"]},
+        {"name": "opendataloader", "display_name": "OpenDataLoader", "types": ["ocr"]},
+        {"name": "markitdown", "display_name": "MarkItDown", "types": ["ocr"]},
         {"name": "docling", "display_name": "Docling", "types": ["ocr"]},
         {"name": "marker", "display_name": "Marker", "types": ["ocr"]},
     ],
@@ -168,6 +173,7 @@ class ModelCache:
         new_models["siliconflow"] = self._fetch_siliconflow_models()
         new_models["anthropic"] = DEFAULT_MODELS["anthropic"]  # Static known models
         new_models["local"] = DEFAULT_MODELS["local"]  # Local models are static
+        new_models["mathpix"] = DEFAULT_MODELS["mathpix"]  # Mathpix has no model-list API in this app
         # Additional providers with static model lists (no live discovery API yet)
         for _provider in ("google", "deepseek", "zhipuai", "moonshot", "kimi", "minimax", "qwen", "cohere"):
             new_models[_provider] = DEFAULT_MODELS[_provider]

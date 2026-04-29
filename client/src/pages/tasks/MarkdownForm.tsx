@@ -4,6 +4,7 @@ import { useTranslation } from "@/components/Layout";
 import { useTaskOptions } from "@/hooks/use-task-options";
 import { apiGet } from "@/lib/api";
 import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
@@ -12,7 +13,7 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
   const [category, setCategory] = useState("");
   const [scanCount, setScanCount] = useState("50");
   const [startIndex, setStartIndex] = useState("");
-  const [tool, setTool] = useState("docling");
+  const [tool, setTool] = useState("opendataloader");
   const [skipExisting, setSkipExisting] = useState(true);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
@@ -20,7 +21,13 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
 
   const tools = conversionTools.length > 0
     ? conversionTools.map((t) => ({ value: t, label: t.charAt(0).toUpperCase() + t.slice(1) }))
-    : [{ value: "docling", label: "Docling" }, { value: "marker", label: "Marker" }, { value: "mistral", label: "Mistral OCR" }, { value: "auto", label: "Auto" }];
+    : [
+        { value: "opendataloader", label: "OpenDataLoader" },
+        { value: "markitdown", label: "MarkItDown" },
+        { value: "mistral", label: "Mistral OCR" },
+        { value: "docling", label: "Docling" },
+        { value: "mathpix", label: "Mathpix" },
+      ];
 
   const loadStats = useCallback(async (cat?: string) => {
     setStatsLoading(true);
@@ -43,6 +50,21 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
 
   const handleCategoryBlur = () => {
     if (scopeMode === "category" && category.trim()) loadStats(category.trim());
+  };
+
+  const buildTask = (): Record<string, unknown> | null => {
+    if (scopeMode === "category" && !category.trim()) return null;
+    return {
+      type: "markdown_conversion",
+      name: `Markdown (${tool})`,
+      conversion_tool: tool,
+      scope_mode: scopeMode,
+      category: scopeMode === "category" ? category : undefined,
+      scan_count: parseInt(scanCount) || 50,
+      scan_start_index: startIndex ? parseInt(startIndex) : undefined,
+      skip_existing: skipExisting,
+      overwrite_existing: overwriteExisting,
+    };
   };
 
   return (
@@ -90,10 +112,11 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
           label={t("tasks.form.overwrite_existing")} testId="checkbox-md-overwrite" />
       </div>
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
-        onClick={() => onSubmit({ type: "markdown_conversion", name: `Markdown (${tool})`, conversion_tool: tool,
-          scope_mode: scopeMode, category: scopeMode === "category" ? category : undefined,
-          scan_count: parseInt(scanCount) || 50, scan_start_index: startIndex ? parseInt(startIndex) : undefined,
-          skip_existing: skipExisting, overwrite_existing: overwriteExisting })} />
+        onClick={() => {
+          const task = buildTask();
+          if (task) onSubmit(task);
+        }} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={scopeMode === "category" && !category.trim()} />
     </div>
   );
 }

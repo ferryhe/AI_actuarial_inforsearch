@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
-import { Clock, Loader2, Plus, Pencil, Trash2, Save, Timer, RefreshCw, ToggleLeft, ToggleRight } from "lucide-react";
+import { Clock, Loader2, Plus, Pencil, Trash2, Save, Timer, RefreshCw, ToggleLeft, ToggleRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { apiGet, apiPost } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
+import { ApiError, apiGet, apiPost } from "@/lib/api";
 import { FormField, InputField, SelectField } from "@/components/FormFields";
 
 interface ScheduledTask {
@@ -14,8 +15,9 @@ interface ScheduledTask {
 }
 
 interface ScheduleJob {
-  tag: string;
-  interval: string;
+  label?: string;
+  tag?: string;
+  interval?: string;
   next_run?: string;
   last_run?: string;
 }
@@ -24,10 +26,13 @@ interface ScheduleStatus {
   jobs: ScheduleJob[];
   global_schedule?: string;
   job_count?: number;
+  count?: number;
 }
 
 export function ScheduledTasksSection() {
   const { t } = useTranslation();
+  const { permissions } = useAuth();
+  const canManageSchedule = permissions.includes("schedule.write");
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,6 +41,7 @@ export function ScheduledTasksSection() {
   const [deletingTask, setDeletingTask] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reinitMsg, setReinitMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState("catalog");
@@ -57,6 +63,12 @@ export function ScheduledTasksSection() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const refresh = () => { void fetchData(); };
+    window.addEventListener("scheduled-tasks:changed", refresh);
+    return () => window.removeEventListener("scheduled-tasks:changed", refresh);
+  }, [fetchData]);
 
   const resetForm = () => {
     setFormName("");
@@ -68,7 +80,22 @@ export function ScheduledTasksSection() {
     setEditingTask(null);
   };
 
+  const formatError = (error: unknown, fallbackKey: string) => {
+    if (error instanceof ApiError) {
+      return error.detail || error.message;
+    }
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return t(fallbackKey);
+  };
+
   const openEditForm = (task: ScheduledTask) => {
+    if (!canManageSchedule) {
+      setErrorMsg(t("tasks.sched.write_access_required"));
+      return;
+    }
+    setErrorMsg(null);
     setEditingTask(task);
     setFormName(task.name);
     setFormType(task.type);
@@ -80,10 +107,15 @@ export function ScheduledTasksSection() {
 
   const handleSave = async () => {
     if (!formName.trim() || !formType || !formInterval.trim()) return;
+    if (!canManageSchedule) {
+      setErrorMsg(t("tasks.sched.write_access_required"));
+      return;
+    }
     setSaving(true);
+    setErrorMsg(null);
     try {
       let params = {};
-      try { params = JSON.parse(formParams); } catch { /* keep empty */ }
+      try { params = JSON.parse(formParams); } catch { throw new Error(t("tasks.sched.invalid_params")); }
 
       if (editingTask) {
         await apiPost("/api/scheduled-tasks/update", {
@@ -98,26 +130,45 @@ export function ScheduledTasksSection() {
       }
       resetForm();
       await fetchData();
-    } catch { /* ignore */ }
+    } catch (error) { setErrorMsg(formatError(error, "tasks.sched.save_fail")); }
     finally { setSaving(false); }
   };
 
   const handleDelete = async (name: string) => {
+    if (!canManageSchedule) {
+      setErrorMsg(t("tasks.sched.write_access_required"));
+      return;
+    }
     setSaving(true);
+    setErrorMsg(null);
     try {
       await apiPost("/api/scheduled-tasks/delete", { name });
       setDeletingTask(null);
       await fetchData();
-    } catch { /* ignore */ }
+    } catch (error) { setErrorMsg(formatError(error, "tasks.sched.delete_fail")); }
     finally { setSaving(false); }
   };
 
   const handleReinit = async () => {
+    if (!canManageSchedule) {
+      setErrorMsg(t("tasks.sched.write_access_required"));
+      return;
+    }
+    setErrorMsg(null);
     try {
       const res = await apiPost<{ success?: boolean; job_count?: number }>("/api/schedule/reinit");
-      setReinitMsg(res.success ? `${t("tasks.sched.reinit_success")} (${res.job_count || 0} jobs)` : t("tasks.sched.reinit_fail"));
+      if (res.success) {
+        setReinitMsg(`${t("tasks.sched.reinit_success")} (${res.job_count || 0} jobs)`);
+      } else {
+        setReinitMsg(null);
+        setErrorMsg(t("tasks.sched.reinit_fail"));
+      }
       await fetchData();
-    } catch { setReinitMsg(t("tasks.sched.reinit_fail")); }
+    } catch (error) {
+      const message = formatError(error, "tasks.sched.reinit_fail");
+      setReinitMsg(null);
+      setErrorMsg(message);
+    }
     setTimeout(() => setReinitMsg(null), 3000);
   };
 
@@ -131,6 +182,7 @@ export function ScheduledTasksSection() {
     { value: "search", label: t("tasks.type.web_search") },
     { value: "url", label: t("tasks.type.adhoc_url") },
   ];
+  const jobCount = scheduleStatus ? (scheduleStatus.job_count ?? scheduleStatus.count ?? scheduleStatus.jobs?.length ?? 0) : 0;
 
   return (
     <div className="space-y-5">
@@ -143,6 +195,26 @@ export function ScheduledTasksSection() {
         <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-16 rounded-lg bg-muted animate-pulse" />)}</div>
       ) : (
         <>
+          {errorMsg && (
+            <div className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-xs flex items-center justify-between gap-2" data-testid="text-scheduled-error">
+              <span>{errorMsg}</span>
+              <button
+                type="button"
+                onClick={() => setErrorMsg(null)}
+                aria-label={t("tasks.schedule.dismiss_error")}
+                className="shrink-0 text-destructive/80 hover:text-destructive"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {!canManageSchedule && (
+            <div className="px-3 py-2 rounded-lg border border-border bg-muted/40 text-xs text-muted-foreground">
+              {t("tasks.sched.write_access_required")}
+            </div>
+          )}
+
           {scheduleStatus && (
             <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -150,11 +222,12 @@ export function ScheduledTasksSection() {
                   <Timer className="w-4 h-4 text-primary" />
                   <span className="text-sm font-medium">{t("tasks.sched.scheduler_jobs")}</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
-                    {scheduleStatus.job_count || scheduleStatus.jobs?.length || 0} {t("tasks.sched.job_count").toLowerCase()}
+                    {jobCount} {t("tasks.sched.job_count").toLowerCase()}
                   </span>
                 </div>
                 <button onClick={handleReinit}
-                  className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+                  disabled={!canManageSchedule}
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="button-reinit-scheduler">
                   <RefreshCw className="w-3 h-3" />{t("tasks.sched.reinit")}
                 </button>
@@ -175,9 +248,9 @@ export function ScheduledTasksSection() {
                 <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
                   {scheduleStatus.jobs.map((job, i) => (
                     <div key={i} className="flex items-center justify-between text-xs px-2.5 py-2 rounded bg-background border border-border">
-                      <span className="font-medium truncate flex-1">{job.tag || `Job ${i + 1}`}</span>
+                      <span className="font-medium truncate flex-1">{job.label || job.tag || `Job ${i + 1}`}</span>
                       <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
-                        <span>{job.interval}</span>
+                        {job.interval && <span>{job.interval}</span>}
                         {job.last_run && <span>{t("tasks.sched.last_run")}: {job.last_run}</span>}
                         {job.next_run && <span>{t("tasks.sched.next_run")}: {job.next_run}</span>}
                       </div>
@@ -194,8 +267,9 @@ export function ScheduledTasksSection() {
                 <h4 className="text-sm font-medium">{t("tasks.sched.configured_tasks")}</h4>
                 <p className="text-[11px] text-muted-foreground">{t("tasks.sched.configured_tasks_desc")}</p>
               </div>
-              <button onClick={() => { resetForm(); setShowAddForm(true); }}
-                className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+              <button onClick={() => { resetForm(); setErrorMsg(null); setShowAddForm(true); }}
+                disabled={!canManageSchedule}
+                className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="button-add-scheduled-task">
                 <Plus className="w-3 h-3" />{t("tasks.sched.add_task")}
               </button>
@@ -268,6 +342,7 @@ export function ScheduledTasksSection() {
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button onClick={() => openEditForm(task)}
+                        disabled={!canManageSchedule}
                         className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
                         data-testid={`button-edit-sched-${task.name}`}><Pencil className="w-3.5 h-3.5" /></button>
                       {deletingTask === task.name ? (
@@ -283,7 +358,8 @@ export function ScheduledTasksSection() {
                         </div>
                       ) : (
                         <button onClick={() => setDeletingTask(task.name)}
-                          className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600"
+                          disabled={!canManageSchedule}
+                          className="p-1.5 rounded hover:bg-red-500/10 transition-colors text-muted-foreground hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
                           data-testid={`button-delete-sched-${task.name}`}><Trash2 className="w-3.5 h-3.5" /></button>
                       )}
                     </div>

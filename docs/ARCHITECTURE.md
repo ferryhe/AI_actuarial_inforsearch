@@ -1,10 +1,18 @@
 # Architecture
 
-## Current product posture
+## Current Product Posture
 
-`AI_actuarial_inforsearch` is a document-intelligence platform for actuarial/insurance research workflows.
+`AI_actuarial_inforsearch` is a document-intelligence platform for actuarial and insurance research workflows.
 
-Core system chain:
+The active product stack is:
+
+```text
+React SPA -> FastAPI /api -> native FastAPI routers
+```
+
+The legacy server-rendered web assets have been removed from the runtime tree. New product behavior should be implemented in `client/` and `ai_actuarial/api/`.
+
+## Core System Chain
 
 ```text
 site config
@@ -14,76 +22,56 @@ site config
 -> semantic chunking + embeddings
 -> knowledge base indexing
 -> RAG retrieval + chat
--> web operations UI
+-> React operations UI
 ```
 
-## Frontend / backend split
+## Frontend / Backend Split
 
-### Frontend surfaces
-- **React SPA** (`client/`) — long-term primary product UI
-- **Flask template UI** (`ai_actuarial/web/app.py`) — legacy server-rendered UI retained for compatibility
+### Frontend Surface
 
-### Backend surfaces
-- **FastAPI gateway** (`ai_actuarial/api/`) — the **only long-term and current product API authority** for `/api/*`, and able to start independently of `ai_actuarial.web`
-- **Flask web app** (`ai_actuarial/web/`) — optional legacy HTML/runtime compatibility layer; mounted only when present for historical pages and debugging/reference
+- **React SPA** (`client/`) is the only maintained product UI.
+- Vite proxies `/api/*` to FastAPI during local development.
 
-## Architectural rule
+### Backend Surface
 
-### API authority rule
+- **FastAPI** (`ai_actuarial/api/`) is the only product API authority for `/api/*`.
+- Unmatched `/api/*` requests return `410` until a native FastAPI route is added.
 
-**FastAPI is the only long-term authority for `/api/*` routes.**
+## Architectural Rule
 
-That means:
-1. New product APIs must be added under `ai_actuarial/api/routers/`
-2. Flask `/api/*` routes are temporary historical surfaces only
-3. Routed React product paths must depend only on native FastAPI routes
-4. Unmatched `/api/*` requests should be blocked by the FastAPI authority guard unless debugging explicitly enables fallback
-5. FastAPI native `/api/*` must remain startup-safe even if `ai_actuarial.web` is unavailable
-6. Flask should continue to serve legacy HTML pages only when that optional layer is installed and intentionally used
+1. New product APIs go under `ai_actuarial/api/routers/`.
+2. Routed React product paths must depend only on native FastAPI routes.
+3. Do not add product UI code under `ai_actuarial/web`; that tree has been retired.
+4. Do not add direct non-API route proxies for auth pages; `/login` and `/register` are React routes using `/api/auth/*`.
+5. Keep deployment config aligned with FastAPI + React only.
 
-## Runtime composition today
+## Key Subsystems
 
-```text
-React SPA -> FastAPI /api -> native FastAPI routers
-                         -> authority guard blocks unported /api fallback by default
+### Collection and Cataloging
 
-Legacy HTML UI -> Flask directly
-```
-
-## Migration target
-
-Target steady state:
-
-```text
-React SPA -> FastAPI only
-Legacy HTML UI -> Flask pages only (or later retired)
-Flask /api remains only as non-product historical code until fully removed
-```
-
-## Key subsystems
-
-### 1. Collection and cataloging
 - `ai_actuarial/cli.py`
 - `ai_actuarial/crawler.py`
 - `ai_actuarial/collectors/*`
 - `ai_actuarial/catalog.py`
 - `ai_actuarial/catalog_incremental.py`
 
-### 2. Storage and database
+### Storage and Database
+
 - `ai_actuarial/storage.py`
 - `ai_actuarial/storage_v2.py`
 - `ai_actuarial/storage_v2_full.py`
 - `ai_actuarial/storage_factory.py`
 - `ai_actuarial/db_models.py`
 
-### 3. Web and API
-- `ai_actuarial/web/app.py`
-- `ai_actuarial/web/chat_routes.py`
-- `ai_actuarial/web/rag_routes.py`
+### Web and API
+
+- `client/`
 - `ai_actuarial/api/app.py`
 - `ai_actuarial/api/routers/*`
+- `ai_actuarial/api/services/*`
 
-### 4. RAG and chat
+### RAG and Chat
+
 - `ai_actuarial/rag/knowledge_base.py`
 - `ai_actuarial/rag/semantic_chunking.py`
 - `ai_actuarial/rag/indexing.py`
@@ -92,18 +80,21 @@ Flask /api remains only as non-product historical code until fully removed
 - `ai_actuarial/chatbot/retrieval.py`
 - `ai_actuarial/chatbot/conversation.py`
 
-### 5. Document conversion
+### Document Conversion
+
 - `doc_to_md/registry.py`
 - `doc_to_md/engines/*`
 - `doc_to_md/pipeline/text_extraction.py`
 
-## Current migration guidance
+## Runtime Verification
 
-For route-level status, see:
-- `docs/API_MIGRATION_STATUS.md`
-- runtime endpoint: `GET /api/migration/status`
-- runtime inventory endpoint: `GET /api/migration/inventory` (ops/debug only, enable with `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`)
+- `GET /api/health`
+- `GET /api/migration/status`
+- `GET /api/migration/inventory` when `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`
 
-Operational note:
-- unmatched `/api/*` requests are blocked by default in FastAPI-authority mode
-- set `FASTAPI_ALLOW_LEGACY_API_FALLBACK=1` only when you intentionally need to debug an unported historical Flask endpoint
+Expected local development:
+
+```bash
+python -m ai_actuarial api --host 127.0.0.1 --port 8000
+npm run dev
+```

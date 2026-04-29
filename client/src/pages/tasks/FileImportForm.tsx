@@ -5,6 +5,7 @@ import { useTranslation } from "@/components/Layout";
 import TagSelect, { PRESET_FILE_EXTENSIONS } from "@/components/TagSelect";
 import { FormField, InputField, CheckboxField, RunButton } from "@/components/FormFields";
 import { FolderBrowser } from "./FolderBrowser";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
@@ -12,6 +13,17 @@ export function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<
   const [extensions, setExtensions] = useState<string[]>([".pdf", ".docx", ".pptx"]);
   const [recursive, setRecursive] = useState(true);
   const [showBrowser, setShowBrowser] = useState(false);
+
+  const buildTask = (): Record<string, unknown> | null => {
+    if (!dirPath.trim()) return null;
+    return {
+      type: "file",
+      name: `File Import: ${dirPath}`,
+      directory_path: dirPath,
+      extensions: extensions.length > 0 ? extensions : undefined,
+      recursive,
+    };
+  };
 
   return (
     <div className="space-y-4">
@@ -40,10 +52,11 @@ export function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<
       </FormField>
       <CheckboxField checked={recursive} onChange={setRecursive} label={t("tasks.form.recursive")} testId="checkbox-recursive" />
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !dirPath.trim()}
-        onClick={() => { if (!dirPath.trim()) return;
-          onSubmit({ type: "file", name: `File Import: ${dirPath}`, directory_path: dirPath,
-            extensions: extensions.length > 0 ? extensions : undefined, recursive });
+        onClick={() => {
+          const task = buildTask();
+          if (task) onSubmit(task);
         }} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={!dirPath.trim()} />
     </div>
   );
 }

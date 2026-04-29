@@ -7,6 +7,7 @@ import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
 import { getStoredAuthToken } from "@/lib/api";
 import { FormField, InputField } from "@/components/FormFields";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 interface SiteConfig {
   name: string;
@@ -175,6 +176,14 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
     } catch { /* ignore */ }
   };
 
+  const buildCollectionTask = (): Record<string, unknown> => ({
+    type: "scheduled",
+    name: site ? `Scheduled: ${site}` : "Scheduled Collection",
+    site: site || undefined,
+    max_pages: maxPages ? parseInt(maxPages) : undefined,
+    max_depth: maxDepth ? parseInt(maxDepth) : undefined,
+  });
+
   return (
     <div className="space-y-5">
       <input ref={fileInputRef} type="file" accept=".yaml,.yml" className="hidden" onChange={handleFileSelect} data-testid="input-import-file" />
@@ -282,14 +291,14 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
             <InputField value={maxDepth} onChange={setMaxDepth} placeholder="2" type="number" testId="input-max-depth" />
           </FormField>
         </div>
-        <button onClick={() => onSubmit({ type: "scheduled", name: site ? `Scheduled: ${site}` : "Scheduled Collection",
-            site: site || undefined, max_pages: maxPages ? parseInt(maxPages) : undefined, max_depth: maxDepth ? parseInt(maxDepth) : undefined })}
+        <button onClick={() => onSubmit(buildCollectionTask())}
           disabled={submitting}
           className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           data-testid="button-run-task">
           {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
           {t("tasks.form.run")}
         </button>
+        <ScheduleFromTaskButton buildTask={buildCollectionTask} />
       </div>
 
       <div className="border-t border-border pt-4 space-y-3">

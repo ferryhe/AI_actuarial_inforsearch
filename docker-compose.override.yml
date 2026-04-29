@@ -2,7 +2,7 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 #
 # Set required environment variables:
-#   export FLASK_SECRET_KEY=<strong-random-key>
+#   export FASTAPI_SESSION_SECRET=<strong-random-key>
 #   export LOGS_READ_AUTH_TOKEN=<strong-random-token>
 #   export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
 #   export CADDY_DOMAIN=aiinforsearch.com
@@ -15,9 +15,8 @@ services:
     restart: on-failure
     environment:
       - ENV=production
-      - FASTAPI_ALLOW_LEGACY_API_FALLBACK=${FASTAPI_ALLOW_LEGACY_API_FALLBACK:-false}
       - REQUIRE_AUTH=true
-      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY:?FLASK_SECRET_KEY is required in production}
+      - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:?FASTAPI_SESSION_SECRET is required in production}
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:?LOGS_READ_AUTH_TOKEN is required}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:?CONFIG_WRITE_AUTH_TOKEN is required}
       - RATE_LIMIT_ENABLED=true

@@ -11,7 +11,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-EngineName = Literal["auto", "marker", "docling", "mistral", "deepseekocr", "local"]
+EngineName = Literal[
+    "auto",
+    "opendataloader",
+    "markitdown",
+    "mistral",
+    "docling",
+    "mathpix",
+    "marker",
+    "deepseekocr",
+    "local",
+]
 
 
 @dataclass(slots=True)
@@ -23,6 +33,14 @@ class ConversionOutput:
 
 def _import_engine(engine: str):
     engine = engine.lower()
+    if engine == "opendataloader":
+        from doc_to_md.engines.opendataloader import OpenDataLoaderEngine
+
+        return OpenDataLoaderEngine
+    if engine == "markitdown":
+        from doc_to_md.engines.markitdown import MarkItDownEngine
+
+        return MarkItDownEngine
     if engine == "marker":
         from doc_to_md.engines.marker import MarkerEngine
 
@@ -39,6 +57,10 @@ def _import_engine(engine: str):
         from doc_to_md.engines.deepseekocr import DeepSeekOCREngine
 
         return DeepSeekOCREngine
+    if engine == "mathpix":
+        from doc_to_md.engines.mathpix import MathpixEngine
+
+        return MathpixEngine
     if engine == "local":
         from doc_to_md.engines.local import LocalEngine
 
@@ -54,24 +76,32 @@ Conservative default: prefer local tools first to avoid unexpected paid API call
 
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return "marker"
+        return "opendataloader"
     if suffix in {".docx", ".pptx"}:
-        return "docling"
+        return "markitdown"
     if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
         return "deepseekocr"
-    return "docling"
+    return "markitdown"
 
 
 def _auto_candidates(path: Path) -> list[str]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        # Prefer local tools first; fall back to API engines if configured.
-        return ["marker", "docling", "mistral", "deepseekocr", "local"]
+        return [
+            "opendataloader",
+            "markitdown",
+            "mistral",
+            "docling",
+            "mathpix",
+            "marker",
+            "deepseekocr",
+            "local",
+        ]
     if suffix in {".docx", ".pptx"}:
-        return ["docling", "mistral", "deepseekocr", "local"]
+        return ["markitdown", "docling", "mistral", "mathpix", "local"]
     if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
-        return ["deepseekocr", "mistral", "local"]
-    return ["docling", "mistral", "deepseekocr", "local"]
+        return ["mathpix", "deepseekocr", "mistral", "local"]
+    return ["markitdown", "docling", "mistral", "local"]
 
 
 def convert_path(

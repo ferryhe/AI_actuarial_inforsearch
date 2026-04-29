@@ -2,12 +2,25 @@ import { useState } from "react";
 import { useTranslation } from "@/components/Layout";
 import TagSelect, { PRESET_FILE_EXTENSIONS } from "@/components/TagSelect";
 import { FormField, CheckboxField, RunButton } from "@/components/FormFields";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function AdhocUrlForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
   const [urls, setUrls] = useState("");
   const [fileExts, setFileExts] = useState<string[]>([".pdf", ".docx", ".pptx"]);
   const [checkDb, setCheckDb] = useState(true);
+
+  const buildTask = (): Record<string, unknown> | null => {
+    const urlList = urls.split("\n").map((u) => u.trim()).filter(Boolean);
+    if (!urlList.length) return null;
+    return {
+      type: "url",
+      name: `URL Collection (${urlList.length})`,
+      urls: urlList,
+      file_exts: fileExts.length > 0 ? fileExts : undefined,
+      check_database: checkDb,
+    };
+  };
 
   return (
     <div className="space-y-4">
@@ -23,11 +36,10 @@ export function AdhocUrlForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
       <CheckboxField checked={checkDb} onChange={setCheckDb} label={t("tasks.form.check_database")} testId="checkbox-check-db" />
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !urls.trim()}
         onClick={() => {
-          const urlList = urls.split("\n").map((u) => u.trim()).filter(Boolean);
-          if (!urlList.length) return;
-          onSubmit({ type: "url", name: `URL Collection (${urlList.length})`, urls: urlList,
-            file_exts: fileExts.length > 0 ? fileExts : undefined, check_database: checkDb });
+          const task = buildTask();
+          if (task) onSubmit(task);
         }} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={!urls.trim()} />
     </div>
   );
 }

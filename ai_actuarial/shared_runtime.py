@@ -121,7 +121,7 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "config_path": get_sites_config_path(),
             "categories_config_path": get_categories_config_path(),
             "require_auth": env_flag("REQUIRE_AUTH", False),
-            "flask_secret_key_set": bool(os.getenv("FLASK_SECRET_KEY")),
+            "session_secret_key_set": bool(os.getenv("FASTAPI_SESSION_SECRET")),
             "bootstrap_admin_token_set": bool(os.getenv("BOOTSTRAP_ADMIN_TOKEN")),
             "file_deletion_enabled": bool(file_deletion_enabled),
             "file_deletion_auth_required": bool(os.getenv("FILE_DELETION_AUTH_TOKEN")),

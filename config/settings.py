@@ -22,11 +22,14 @@ DEFAULT_INPUT_DIR = PROJECT_ROOT / "data" / "input"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "output"
 
 EngineName = Literal[
+    "opendataloader",
+    "markitdown",
     "mistral",
+    "docling",
+    "mathpix",
+    "marker",
     "deepseekocr",
     "local",
-    "docling",
-    "marker",
 ]
 
 
@@ -35,6 +38,8 @@ class Settings(BaseSettings):
     mistral_api_key: str | None = Field(default=None, alias="MISTRAL_API_KEY")
     siliconflow_api_key: str | None = Field(default=None, alias="SILICONFLOW_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    mathpix_app_id: str | None = Field(default=None, alias="MATHPIX_APP_ID")
+    mathpix_app_key: str | None = Field(default=None, alias="MATHPIX_APP_KEY")
 
     # Engine defaults
     default_engine: EngineName = Field(default="local", alias="DEFAULT_ENGINE")
@@ -66,6 +71,21 @@ class Settings(BaseSettings):
     siliconflow_retry_attempts: int = Field(default=3, alias="SILICONFLOW_RETRY_ATTEMPTS")
     siliconflow_max_input_tokens: int = Field(default=3500, alias="SILICONFLOW_MAX_INPUT_TOKENS")
     siliconflow_chunk_overlap_tokens: int = Field(default=200, alias="SILICONFLOW_CHUNK_OVERLAP_TOKENS")
+
+    # Mathpix tuning
+    mathpix_timeout_seconds: float = Field(default=120.0, alias="MATHPIX_TIMEOUT_SECONDS")
+    mathpix_retry_attempts: int = Field(default=3, alias="MATHPIX_RETRY_ATTEMPTS")
+    mathpix_poll_interval_seconds: float = Field(default=5.0, alias="MATHPIX_POLL_INTERVAL_SECONDS")
+    mathpix_output_format: str = Field(default="md", alias="MATHPIX_OUTPUT_FORMAT")
+    mathpix_base_url: str = Field(default="https://api.mathpix.com/v3", alias="MATHPIX_BASE_URL")
+
+    # MarkItDown tuning
+    markitdown_enable_plugins: bool | None = Field(default=True, alias="MARKITDOWN_ENABLE_PLUGINS")
+    markitdown_enable_builtins: bool | None = Field(default=True, alias="MARKITDOWN_ENABLE_BUILTINS")
+
+    # OpenDataLoader tuning
+    opendataloader_hybrid: str | None = Field(default=None, alias="OPENDATALOADER_HYBRID")
+    opendataloader_use_struct_tree: bool = Field(default=False, alias="OPENDATALOADER_USE_STRUCT_TREE")
 
     # Docling tuning
     docling_max_pages: int | None = Field(default=None, alias="DOCLING_MAX_PAGES")
@@ -102,10 +122,19 @@ class Settings(BaseSettings):
         if self.siliconflow_chunk_overlap_tokens >= self.siliconflow_max_input_tokens:
             raise ValueError("SILICONFLOW_CHUNK_OVERLAP_TOKENS must be smaller than SILICONFLOW_MAX_INPUT_TOKENS")
 
-        for field_name in ("mistral_retry_attempts", "siliconflow_retry_attempts"):
+        for field_name in ("mistral_retry_attempts", "siliconflow_retry_attempts", "mathpix_retry_attempts"):
             value = getattr(self, field_name)
             if value < 1:
                 raise ValueError(f"{field_name.upper()} must be at least 1")
+
+        if self.mathpix_timeout_seconds <= 0:
+            raise ValueError("MATHPIX_TIMEOUT_SECONDS must be greater than 0")
+
+        if self.mathpix_poll_interval_seconds <= 0:
+            raise ValueError("MATHPIX_POLL_INTERVAL_SECONDS must be greater than 0")
+
+        if self.mathpix_output_format.lower() not in {"md", "mmd"}:
+            raise ValueError("MATHPIX_OUTPUT_FORMAT must be either 'md' or 'mmd'")
 
         if self.docling_max_pages is not None and self.docling_max_pages < 1:
             raise ValueError("DOCLING_MAX_PAGES must be at least 1 when provided")
@@ -126,11 +155,18 @@ class Settings(BaseSettings):
 
         return self
 
-    @field_validator("docling_max_pages", mode="before")
+    @field_validator("docling_max_pages", "mathpix_app_id", "mathpix_app_key", "opendataloader_hybrid", mode="before")
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("mathpix_base_url", mode="before")
+    @classmethod
+    def _blank_mathpix_base_url_to_default(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return "https://api.mathpix.com/v3"
         return value
 
 

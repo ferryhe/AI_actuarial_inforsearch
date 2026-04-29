@@ -54,7 +54,7 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "kb_index_build",
 ]
 
-_VALID_INTERVALS = ["daily", "weekly"]
+_VALID_INTERVALS = ["daily", "weekly", "daily at HH:MM", "every N hours", "every N minutes"]
 
 _VALID_COLLECTION_TYPES = {
     "scheduled",
@@ -69,6 +69,32 @@ _VALID_COLLECTION_TYPES = {
     "rag_indexing",
     "kb_index_build",
 }
+
+
+def _is_valid_schedule_interval(interval: str) -> bool:
+    normalized = str(interval or "").strip().lower()
+    if normalized in {"daily", "weekly"}:
+        return True
+    if normalized.startswith("daily at "):
+        parts = normalized.replace("daily at ", "", 1).strip().split(":", 1)
+        if len(parts) != 2:
+            return False
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError:
+            return False
+        return 0 <= hour <= 23 and 0 <= minute <= 59
+    if normalized.startswith("every "):
+        parts = normalized.split()
+        if len(parts) != 3:
+            return False
+        try:
+            qty = int(parts[1])
+        except ValueError:
+            return False
+        return qty > 0 and parts[2] in {"hour", "hours", "minute", "minutes"}
+    return False
 
 _SAMPLE_SITES_YAML = """# AI Actuarial Info Search - Site Configuration Sample
 # Import this file to add sites for document crawling.
@@ -129,18 +155,9 @@ class BridgeState:
         self.task_history_ref = getattr(app_state, "task_history_ref", []) or []
         self.task_lock = getattr(app_state, "task_lock", None)
         self.schedule_ref = getattr(app_state, "schedule_ref", None)
-        self.start_background_task = (
-            getattr(app_state, "legacy_start_background_task", None)
-            or getattr(app_state, "start_background_task", None)
-        )
-        self.init_scheduler = (
-            getattr(app_state, "legacy_init_scheduler", None)
-            or getattr(app_state, "init_scheduler", None)
-        )
-        self.set_site_config = (
-            getattr(app_state, "legacy_set_site_config", None)
-            or getattr(app_state, "set_site_config", None)
-        )
+        self.start_background_task = getattr(app_state, "start_background_task", None)
+        self.init_scheduler = getattr(app_state, "init_scheduler", None)
+        self.set_site_config = getattr(app_state, "set_site_config", None)
 
 
 def _load_config_data() -> dict[str, Any]:
@@ -1160,7 +1177,7 @@ def add_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = Non
         raise OpsWriteError(f"Invalid task type: {task_type}")
     if not interval:
         raise OpsWriteError("Schedule interval is required")
-    if interval not in _VALID_INTERVALS:
+    if not _is_valid_schedule_interval(interval):
         raise OpsWriteError(f"Invalid schedule interval: {interval}. Valid values: {', '.join(_VALID_INTERVALS)}")
 
     config_data = _load_config_data()
@@ -1202,7 +1219,7 @@ def update_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = 
             task["type"] = new_type
         if "interval" in data:
             new_interval = str(data.get("interval") or "").strip()
-            if new_interval not in _VALID_INTERVALS:
+            if not _is_valid_schedule_interval(new_interval):
                 raise OpsWriteError(f"Invalid schedule interval: {new_interval}. Valid values: {', '.join(_VALID_INTERVALS)}")
             task["interval"] = new_interval
         if "enabled" in data:

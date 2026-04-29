@@ -26,26 +26,6 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
-      "/email-login": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/login": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-        bypass(req: { method?: string }) {
-          // Only proxy POST (token login API call); GET navigates to React SPA
-          if (req.method !== "POST") return "/index.html";
-        },
-      },
-      "/register": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
-      "/logout": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-      },
     },
   },
 });

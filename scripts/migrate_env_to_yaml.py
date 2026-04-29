@@ -53,6 +53,19 @@ def extract_ai_config() -> dict:
         ValueError: If environment variables contain invalid values with context about which section failed
     """
     try:
+        default_engine = os.getenv("DEFAULT_ENGINE", "local").strip().lower()
+        engine_provider_model = {
+            "opendataloader": ("local", "opendataloader"),
+            "markitdown": ("local", "markitdown"),
+            "docling": ("local", "docling"),
+            "marker": ("local", "marker"),
+            "local": ("local", "docling"),
+            "mistral": ("mistral", os.getenv("MISTRAL_DEFAULT_MODEL", "mistral-ocr-latest")),
+            "deepseekocr": ("siliconflow", os.getenv("SILICONFLOW_DEFAULT_MODEL", "deepseek-ai/DeepSeek-OCR")),
+            "mathpix": ("mathpix", "mathpix"),
+        }
+        ocr_provider, ocr_model = engine_provider_model.get(default_engine, ("local", default_engine or "docling"))
+
         return {
             "catalog": {
                 "provider": "openai",
@@ -83,8 +96,8 @@ def extract_ai_config() -> dict:
                 "max_query_length": get_int_env("CHATBOT_MAX_QUERY_LENGTH", "1000"),
             },
             "ocr": {
-                "provider": os.getenv("DEFAULT_ENGINE", "local"),
-                "model": "docling",
+                "provider": ocr_provider,
+                "model": ocr_model,
                 "mistral": {
                     "max_pdf_tokens": get_int_env("MISTRAL_MAX_PDF_TOKENS", "9000"),
                     "max_pages_per_chunk": get_int_env("MISTRAL_MAX_PAGES_PER_CHUNK", "10"),
@@ -98,6 +111,13 @@ def extract_ai_config() -> dict:
                     "chunk_overlap_tokens": get_int_env("SILICONFLOW_CHUNK_OVERLAP_TOKENS", "200"),
                     "timeout_seconds": get_int_env("SILICONFLOW_TIMEOUT_SECONDS", "60"),
                     "retry_attempts": get_int_env("SILICONFLOW_RETRY_ATTEMPTS", "3"),
+                },
+                "mathpix": {
+                    "timeout_seconds": get_int_env("MATHPIX_TIMEOUT_SECONDS", "120"),
+                    "retry_attempts": get_int_env("MATHPIX_RETRY_ATTEMPTS", "3"),
+                    "poll_interval_seconds": get_float_env("MATHPIX_POLL_INTERVAL_SECONDS", "5"),
+                    "output_format": os.getenv("MATHPIX_OUTPUT_FORMAT", "md"),
+                    "base_url": os.getenv("MATHPIX_BASE_URL", "https://api.mathpix.com/v3"),
                 },
             },
         }

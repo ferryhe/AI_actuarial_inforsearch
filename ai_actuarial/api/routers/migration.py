@@ -27,8 +27,8 @@ async def api_migration_status(request: Request) -> dict[str, object]:
         "migration_inventory_enabled": inventory_enabled,
         "notes": [
             "FastAPI is the current product API authority for /api routes.",
-            "The FastAPI runtime no longer mounts the legacy Flask application.",
-            "Legacy Flask /api fallback is blocked by default; enable FASTAPI_ALLOW_LEGACY_API_FALLBACK=1 only for historical debugging.",
+            "The FastAPI runtime no longer mounts a legacy WSGI application.",
+            "Legacy /api fallback is retired; add native routers before exposing new React calls.",
         ],
     }
 

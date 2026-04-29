@@ -1,16 +1,9 @@
 www.aiinforsearch.com, aiinforsearch.com {
-    # 前端静态文件
-    reverse_proxy 172.18.0.3:5173
-}
+    handle /api/* {
+        reverse_proxy 172.18.0.2:5000
+    }
 
-www.aiinforsearch.com/api/*, aiinforsearch.com/api/* {
-    reverse_proxy 172.18.0.2:5000
-}
-
-www.aiinforsearch.com/login, aiinforsearch.com/login {
-    reverse_proxy 172.18.0.2:5000
-}
-
-www.aiinforsearch.com/email-login, aiinforsearch.com/email-login {
-    reverse_proxy 172.18.0.2:5000
+    handle {
+        reverse_proxy 172.18.0.3:5173
+    }
 }

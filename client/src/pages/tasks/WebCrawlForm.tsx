@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "@/components/Layout";
 import TagSelect, { PRESET_FILE_EXTENSIONS } from "@/components/TagSelect";
 import { FormField, InputField, SelectField, CheckboxField, RunButton } from "@/components/FormFields";
+import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
@@ -12,6 +13,20 @@ export function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
   const [keywords, setKeywords] = useState<string[]>([]);
   const [fileExts, setFileExts] = useState<string[]>([]);
   const [checkDb, setCheckDb] = useState(false);
+
+  const buildTask = (): Record<string, unknown> | null => {
+    if (!url.trim()) return null;
+    return {
+      type: "quick_check",
+      name: name || "Quick Check",
+      url: url.trim(),
+      max_pages: parseInt(maxPages) || 10,
+      max_depth: parseInt(maxDepth) || 1,
+      keywords: keywords.length > 0 ? keywords : [],
+      file_exts: fileExts.length > 0 ? fileExts : undefined,
+      check_database: checkDb,
+    };
+  };
 
   return (
     <div className="space-y-4">
@@ -38,13 +53,11 @@ export function WebCrawlForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
       </FormField>
       <CheckboxField checked={checkDb} onChange={setCheckDb} label={t("tasks.form.check_database")} testId="checkbox-crawl-check-db" />
       <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !url.trim()}
-        onClick={() => { if (!url.trim()) return;
-          onSubmit({ type: "quick_check", name: name || "Quick Check", url: url.trim(),
-            max_pages: parseInt(maxPages) || 10, max_depth: parseInt(maxDepth) || 1,
-            keywords: keywords.length > 0 ? keywords : [],
-            file_exts: fileExts.length > 0 ? fileExts : undefined,
-            check_database: checkDb });
+        onClick={() => {
+          const task = buildTask();
+          if (task) onSubmit(task);
         }} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={!url.trim()} />
     </div>
   );
 }

@@ -104,12 +104,38 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool = True
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
-    monkeypatch.setenv("FLASK_SECRET_KEY", "fastapi-auth-test-secret")
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-auth-test-secret")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("REQUIRE_AUTH", "1" if require_auth else "0")
     app = create_app()
     client = TestClient(app)
     return client, app, seed
+
+
+def test_fastapi_auth_session_cookie_secure_can_be_enabled(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("FASTAPI_SESSION_COOKIE_SECURE", "true")
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+
+    register = client.post(
+        "/api/auth/register",
+        json={
+            "email": "secure-cookie@example.com",
+            "password": "password123",
+            "display_name": "Secure Cookie",
+        },
+    )
+
+    assert register.status_code == 201, register.text
+    assert app.state.fastapi_session_cookie_secure is True
+    assert "Secure" in register.headers.get("set-cookie", "")
+
+
+def test_fastapi_auth_session_cookie_secure_defaults_to_secure_for_production_auth(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("FASTAPI_SESSION_COOKIE_SECURE", raising=False)
+    monkeypatch.setenv("FASTAPI_ENV", "production")
+    _client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+
+    assert app.state.fastapi_session_cookie_secure is True
 
 
 def test_fastapi_auth_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
@@ -129,6 +155,47 @@ def test_fastapi_auth_routes_are_listed_in_native_inventory(tmp_path: Path, monk
     assert "/api/admin/users/{user_id}/disable" in body["native_paths"]
     assert "/api/admin/users/{user_id}/reset-quota" in body["native_paths"]
     assert "/api/admin/users/{user_id}/activity" in body["native_paths"]
+
+
+def test_bootstrap_admin_token_supports_x_auth_token_header(tmp_path: Path, monkeypatch) -> None:
+    bootstrap_token = "bootstrap-admin-token"
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", bootstrap_token)
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_SUBJECT", "local-bootstrap")
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    auth_me = client.get("/api/auth/me", headers={"X-Auth-Token": bootstrap_token})
+    assert auth_me.status_code == 200, auth_me.text
+    body = auth_me.json()
+    assert body["data"]["authenticated"] is True
+    assert body["data"]["user"]["role"] == "admin"
+    assert "schedule.write" in body["data"]["permissions"]
+
+    reinit = client.post("/api/schedule/reinit", headers={"X-Auth-Token": bootstrap_token})
+    assert reinit.status_code == 200, reinit.text
+
+    add = client.post(
+        "/api/scheduled-tasks/add",
+        json={
+            "name": "Bootstrap Smoke Schedule",
+            "type": "catalog",
+            "interval": "daily",
+            "enabled": True,
+            "params": {},
+        },
+        headers={"X-Auth-Token": bootstrap_token},
+    )
+    assert add.status_code == 200, add.text
+
+    scheduled_tasks = client.get("/api/scheduled-tasks", headers={"X-Auth-Token": bootstrap_token})
+    assert scheduled_tasks.status_code == 200, scheduled_tasks.text
+    assert any(task["name"] == "Bootstrap Smoke Schedule" for task in scheduled_tasks.json()["tasks"])
+
+    delete = client.post(
+        "/api/scheduled-tasks/delete",
+        json={"name": "Bootstrap Smoke Schedule"},
+        headers={"X-Auth-Token": bootstrap_token},
+    )
+    assert delete.status_code == 200, delete.text
 
 
 def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(tmp_path: Path, monkeypatch) -> None:

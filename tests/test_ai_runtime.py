@@ -130,6 +130,47 @@ class TestAiRuntime(unittest.TestCase):
         self.assertEqual(runtime.engine, "marker")
         self.assertEqual(runtime.model, "marker")
 
+    def test_resolve_ocr_runtime_supports_recommended_local_pdf_engines(self):
+        """OpenDataLoader and MarkItDown should behave as local OCR engines."""
+        yaml_config = {
+            "ai_config": {
+                "ocr": {
+                    "provider": "mistral",
+                    "model": "mistral-ocr-latest",
+                }
+            }
+        }
+
+        opendataloader = resolve_ocr_runtime(
+            storage=self.storage,
+            yaml_config=yaml_config,
+            engine_override="opendataloader",
+        )
+        markitdown = resolve_ocr_runtime(
+            storage=self.storage,
+            yaml_config=yaml_config,
+            engine_override="markitdown",
+        )
+
+        self.assertEqual(opendataloader.provider, "local")
+        self.assertEqual(opendataloader.engine, "opendataloader")
+        self.assertEqual(opendataloader.model, "opendataloader")
+        self.assertEqual(markitdown.provider, "local")
+        self.assertEqual(markitdown.engine, "markitdown")
+        self.assertEqual(markitdown.model, "markitdown")
+
+    def test_resolve_ocr_runtime_supports_mathpix_engine_override(self):
+        """Mathpix should resolve to the Mathpix OCR provider and model."""
+        runtime = resolve_ocr_runtime(
+            storage=self.storage,
+            yaml_config={"ai_config": {"ocr": {"provider": "local", "model": "docling"}}},
+            engine_override="mathpix",
+        )
+
+        self.assertEqual(runtime.provider, "mathpix")
+        self.assertEqual(runtime.engine, "mathpix")
+        self.assertEqual(runtime.model, "mathpix")
+
     def test_resolve_provider_credentials_invalid_db_credential_id_does_not_fall_back(self):
         """Unknown bound credential ids should be treated as missing instead of silently using the default."""
         encrypted = TokenEncryption().encrypt("db-openai-key")

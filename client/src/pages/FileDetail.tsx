@@ -127,7 +127,10 @@ function mapMarkdownSourceLabel(source: string | undefined, t: (key: string) => 
   if (lower.startsWith("converted_")) {
     const engine = raw.slice("converted_".length).toLowerCase();
     const engineLabel = ({
+      opendataloader: t("fv.markdownSource.engine.opendataloader"),
+      markitdown: t("fv.markdownSource.engine.markitdown"),
       docling: t("fv.markdownSource.engine.docling"),
+      mathpix: t("fv.markdownSource.engine.mathpix"),
       marker: t("fv.markdownSource.engine.marker"),
       mistral: t("fv.markdownSource.engine.mistral"),
       deepseekocr: t("fv.markdownSource.engine.deepseekocr"),
