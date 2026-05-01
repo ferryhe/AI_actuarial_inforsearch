@@ -143,7 +143,7 @@ Important variables:
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local/admin bootstrap token.
 - `REQUIRE_AUTH`: enables full authentication when `true`.
 - `BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`: optional search keys.
-- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `OPENROUTER_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `ZHIPUAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `COHERE_API_KEY`, `MINIMAX_API_KEY`: optional AI/conversion keys. Providers with a model-list API also use these environment keys for live catalog discovery.
+- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `OPENROUTER_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `ZHIPUAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CLOUD_API_KEY`, `COHERE_API_KEY`, `MINIMAX_API_KEY`, `HUGGINGFACE_API_KEY`: optional AI/conversion keys. Providers with a model-list API also use these environment keys for live catalog discovery.
 
 Generate a Fernet key for `TOKEN_ENCRYPTION_KEY`:
 

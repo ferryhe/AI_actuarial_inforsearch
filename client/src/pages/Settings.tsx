@@ -749,7 +749,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {credential && !isEditing && (
+                    {credential?.source === "db" && !isEditing && (
                       <button onClick={() => deleteProvider(provider.provider_id)} disabled={savingProvider === provider.provider_id}
                         className="text-xs px-2 py-1 rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
                         data-testid={`button-delete-provider-${provider.provider_id}`}>

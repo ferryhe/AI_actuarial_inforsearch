@@ -16,7 +16,7 @@ The current live discovery path supports:
 - OpenAI through `OPENAI_API_KEY` and optional `OPENAI_BASE_URL`.
 - Mistral through `MISTRAL_API_KEY`.
 - SiliconFlow through `SILICONFLOW_API_KEY` and optional `SILICONFLOW_BASE_URL`.
-- OpenAI-compatible providers when their environment key is set, including OpenRouter, DeepSeek, ZhipuAI, Moonshot/Kimi, Qwen/DashScope, MiniMax, VolcEngine, Tencent Cloud, BaiduYiyan, XunFei Spark, Google Cloud, and Hugging Face.
+- OpenAI-compatible providers when their environment key is set, including OpenRouter, DeepSeek, ZhipuAI, Moonshot/Kimi, Qwen/DashScope, MiniMax, VolcEngine, Tencent Cloud, BaiduYiyan, XunFei Spark, Google Cloud (`GOOGLE_CLOUD_API_KEY`), and Hugging Face (`HUGGINGFACE_API_KEY`).
 - Local OpenAI-compatible servers (`vllm`, `localai`) only when `VLLM_BASE_URL` or `LOCALAI_BASE_URL` is explicitly set.
 
 Live discovery classifies returned model ids into app capabilities:
