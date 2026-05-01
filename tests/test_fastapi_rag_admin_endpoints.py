@@ -196,7 +196,9 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
 
     list_kbs = client.get("/api/rag/knowledge-bases")
     assert list_kbs.status_code == 200, list_kbs.text
-    listed_kb = next(item for item in list_kbs.json()["knowledge_bases"] if item["kb_id"] == "kb-pr4-test")
+    list_body = list_kbs.json()
+    assert list_body["current_embeddings"]["stable_credential_id"] == "openai:llm:env"
+    listed_kb = next(item for item in list_body["knowledge_bases"] if item["kb_id"] == "kb-pr4-test")
     assert listed_kb["current_embeddings"]["provider"] == "openai"
     assert listed_kb["current_embeddings"]["configured"] is True
     assert listed_kb["current_embeddings"]["credential_source"] == "env"

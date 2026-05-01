@@ -338,7 +338,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
                     current_embeddings=current_embeddings,
                 )
             )
-        return {"knowledge_bases": kbs}
+        return {"knowledge_bases": kbs, "current_embeddings": current_embeddings}
     finally:
         storage.close()
 
