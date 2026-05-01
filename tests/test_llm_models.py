@@ -16,6 +16,7 @@ from ai_actuarial.llm_models import (
     refresh_models,
     initialize_models,
     DEFAULT_MODELS,
+    _build_models_from_ids,
 )
 
 
@@ -36,7 +37,8 @@ class TestModelCache:
         # Mock the fetch methods to return defaults
         with patch.object(cache, '_fetch_openai_models', return_value=DEFAULT_MODELS['openai']), \
              patch.object(cache, '_fetch_mistral_models', return_value=DEFAULT_MODELS['mistral']), \
-             patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']):
+             patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']), \
+             patch.object(cache, '_fetch_openai_compatible_models', side_effect=lambda provider, **kwargs: DEFAULT_MODELS.get(provider, [])):
             
             models = cache.get_models()
             
@@ -53,7 +55,8 @@ class TestModelCache:
         
         with patch.object(cache, '_fetch_openai_models', return_value=DEFAULT_MODELS['openai']), \
              patch.object(cache, '_fetch_mistral_models', return_value=DEFAULT_MODELS['mistral']), \
-             patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']):
+             patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']), \
+             patch.object(cache, '_fetch_openai_compatible_models', side_effect=lambda provider, **kwargs: DEFAULT_MODELS.get(provider, [])):
             
             models = cache.get_models(provider='openai')
             
@@ -81,7 +84,8 @@ class TestModelCache:
         # Patch fetch methods once, outside the threads
         with patch.object(cache, '_fetch_openai_models', return_value=DEFAULT_MODELS['openai']), \
              patch.object(cache, '_fetch_mistral_models', return_value=DEFAULT_MODELS['mistral']), \
-             patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']):
+             patch.object(cache, '_fetch_siliconflow_models', return_value=DEFAULT_MODELS['siliconflow']), \
+             patch.object(cache, '_fetch_openai_compatible_models', side_effect=lambda provider, **kwargs: DEFAULT_MODELS.get(provider, [])):
             
             threads = [threading.Thread(target=get_models) for _ in range(5)]
             for t in threads:
@@ -121,6 +125,37 @@ class TestOpenAIModelFetching:
             
             assert len(models) > 0
             assert any(m['name'] == 'gpt-4o' for m in models)
+
+    def test_fetch_openai_models_classifies_live_ids(self):
+        """OpenAI discovery should include new text/embedding models and skip non-app modalities."""
+        cache = ModelCache()
+
+        mock_models = []
+        for model_id in ["gpt-5.5", "gpt-5.4-mini", "text-embedding-3-large", "omni-moderation-latest", "gpt-realtime"]:
+            mock_model = Mock()
+            mock_model.id = model_id
+            mock_models.append(mock_model)
+
+        mock_response = Mock()
+        mock_response.data = mock_models
+
+        mock_client = Mock()
+        mock_client.models.list.return_value = mock_response
+
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}), \
+             patch.dict(sys.modules, {'openai': mock_openai}):
+
+            models = cache._fetch_openai_models()
+
+        model_map = {m['name']: m for m in models}
+        assert model_map["gpt-5.5"]["types"] == ["chatbot", "catalog"]
+        assert model_map["gpt-5.4-mini"]["types"] == ["chatbot", "catalog"]
+        assert model_map["text-embedding-3-large"]["types"] == ["embeddings"]
+        assert "omni-moderation-latest" not in model_map
+        assert "gpt-realtime" not in model_map
     
     def test_fetch_openai_models_no_api_key(self):
         """Test OpenAI fetching with no API key."""
@@ -178,6 +213,35 @@ class TestMistralModelFetching:
             
             assert len(models) > 0
             assert any(m['name'] == 'pixtral-12b-2409' for m in models)
+
+    def test_fetch_mistral_models_classifies_live_ids(self):
+        """Mistral discovery should classify chat, embedding, and OCR models."""
+        cache = ModelCache()
+
+        mock_models = []
+        for model_id in ["mistral-small-latest", "codestral-embed-latest", "mistral-ocr-latest"]:
+            mock_model = Mock()
+            mock_model.id = model_id
+            mock_models.append(mock_model)
+
+        mock_response = Mock()
+        mock_response.data = mock_models
+
+        mock_client = Mock()
+        mock_client.models.list.return_value = mock_response
+
+        mock_mistral = MagicMock()
+        mock_mistral.Mistral.return_value = mock_client
+
+        with patch.dict(os.environ, {'MISTRAL_API_KEY': 'test-key'}), \
+             patch.dict(sys.modules, {'mistralai': mock_mistral}):
+
+            models = cache._fetch_mistral_models()
+
+        model_map = {m['name']: m for m in models}
+        assert model_map["mistral-small-latest"]["types"] == ["chatbot", "catalog"]
+        assert model_map["codestral-embed-latest"]["types"] == ["embeddings"]
+        assert model_map["mistral-ocr-latest"]["types"] == ["ocr"]
     
     def test_fetch_mistral_models_no_api_key(self):
         """Test Mistral fetching with no API key."""
@@ -217,16 +281,94 @@ class TestSiliconFlowModelFetching:
             
             assert len(models) > 0
             assert any(m['name'] == 'deepseek-ai/DeepSeek-OCR' for m in models)
-    
+
+    def test_fetch_siliconflow_models_classifies_and_filters_live_ids(self):
+        """SiliconFlow discovery should keep LLM/embedding/OCR ids and skip image ids."""
+        cache = ModelCache()
+
+        mock_models = []
+        for model_id in [
+            "deepseek-ai/DeepSeek-V3.2",
+            "BAAI/bge-m3",
+            "Qwen/Qwen3-Embedding-8B",
+            "deepseek-ai/DeepSeek-OCR",
+            "black-forest-labs/FLUX.1-dev",
+        ]:
+            mock_model = Mock()
+            mock_model.id = model_id
+            mock_models.append(mock_model)
+
+        mock_response = Mock()
+        mock_response.data = mock_models
+
+        mock_client = Mock()
+        mock_client.models.list.return_value = mock_response
+
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+
+        with patch.dict(os.environ, {'SILICONFLOW_API_KEY': 'test-key'}), \
+             patch.dict(sys.modules, {'openai': mock_openai}):
+
+            models = cache._fetch_siliconflow_models()
+
+        model_map = {m['name']: m for m in models}
+        assert model_map["deepseek-ai/DeepSeek-V3.2"]["types"] == ["chatbot", "catalog"]
+        assert model_map["BAAI/bge-m3"]["types"] == ["embeddings"]
+        assert model_map["Qwen/Qwen3-Embedding-8B"]["types"] == ["embeddings"]
+        assert model_map["deepseek-ai/DeepSeek-OCR"]["types"] == ["ocr"]
+        assert "black-forest-labs/FLUX.1-dev" not in model_map
+
     def test_fetch_siliconflow_models_no_api_key(self):
         """Test SiliconFlow fetching with no API key."""
         cache = ModelCache()
-        
+
         with patch.dict(os.environ, {}, clear=True):
             models = cache._fetch_siliconflow_models()
-            
+
             # Should return defaults
             assert models == DEFAULT_MODELS['siliconflow']
+
+
+class TestGenericOpenAICompatibleFetching:
+    """Test generic OpenAI-compatible model discovery."""
+
+    def test_fetch_openrouter_models_when_key_is_configured(self):
+        cache = ModelCache()
+        mock_model = Mock()
+        mock_model.id = "anthropic/claude-sonnet-4.6"
+        mock_response = Mock()
+        mock_response.data = [mock_model]
+        mock_client = Mock()
+        mock_client.models.list.return_value = mock_response
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+
+        with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'test-key'}), \
+             patch.dict(sys.modules, {'openai': mock_openai}):
+            models = cache._fetch_openai_compatible_models(
+                "openrouter",
+                api_key_env="OPENROUTER_API_KEY",
+                base_url_env="OPENROUTER_BASE_URL",
+                default_base_url="https://openrouter.ai/api/v1",
+                api_key_required=True,
+            )
+
+        assert any(m["name"] == "anthropic/claude-sonnet-4.6" for m in models)
+
+    def test_fetch_local_openai_compatible_skips_without_explicit_base_url(self):
+        cache = ModelCache()
+
+        with patch.dict(os.environ, {}, clear=True):
+            models = cache._fetch_openai_compatible_models(
+                "vllm",
+                api_key_env="VLLM_API_KEY",
+                base_url_env="VLLM_BASE_URL",
+                default_base_url="http://localhost:8001/v1",
+                api_key_required=False,
+            )
+
+        assert models == DEFAULT_MODELS.get("vllm", [])
 
 
 class TestGlobalAPI:
@@ -293,6 +435,7 @@ class TestDefaultModels:
         assert 'openai' in DEFAULT_MODELS
         assert 'mistral' in DEFAULT_MODELS
         assert 'siliconflow' in DEFAULT_MODELS
+        assert 'openrouter' in DEFAULT_MODELS
         assert 'local' in DEFAULT_MODELS
         assert 'mathpix' in DEFAULT_MODELS
         
@@ -311,3 +454,7 @@ class TestDefaultModels:
 
         assert {"opendataloader", "markitdown", "docling"}.issubset(local_ocr_names)
         assert "mathpix" in mathpix_ocr_names
+
+    def test_build_models_from_ids_falls_back_for_unknown_modalities(self):
+        models = _build_models_from_ids("openai", {"omni-moderation-latest"}, DEFAULT_MODELS["openai"])
+        assert models == DEFAULT_MODELS["openai"]

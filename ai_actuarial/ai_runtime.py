@@ -600,7 +600,9 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
     return {"credentials": credentials}
 
 
-def get_model_catalog() -> dict[str, Any]:
+def get_model_catalog(*, refresh: bool = False) -> dict[str, Any]:
+    if refresh:
+        llm_models.refresh_models()
     return {
         "available": llm_models.get_available_models(),
         "providers": list_provider_registry()["providers"],

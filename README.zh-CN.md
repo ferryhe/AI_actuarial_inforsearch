@@ -133,6 +133,7 @@ AI_actuarial_inforsearch/
 
 主要结构化配置在 `config/sites.yaml`。密钥应放在 `.env`、进程环境变量或数据库加密 credential 中。
 运行时使用的 provider API key 建议保存为数据库中的加密 credential；`sites.yaml` 只绑定 AI 功能使用的 provider/model，以及可选 credential id，例如 `openai:llm:instance:default`。
+Settings 中的模型目录有离线兜底列表，也会用环境变量配置的 provider API 每 24 小时自动刷新一次在线模型列表。
 
 重要变量：
 
@@ -142,7 +143,7 @@ AI_actuarial_inforsearch/
 - `BOOTSTRAP_ADMIN_TOKEN`：可选的本地/admin bootstrap token。
 - `REQUIRE_AUTH`：设为 `true` 后启用完整鉴权。
 - `BRAVE_API_KEY`、`SERPAPI_API_KEY`、`SERPER_API_KEY`、`TAVILY_API_KEY`：可选搜索 key。
-- `OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`MISTRAL_API_KEY`、`SILICONFLOW_API_KEY`：可选 AI/转换 key。
+- `OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`MISTRAL_API_KEY`、`SILICONFLOW_API_KEY`、`OPENROUTER_API_KEY`、`DASHSCOPE_API_KEY`、`MOONSHOT_API_KEY`、`KIMI_API_KEY`、`ZHIPUAI_API_KEY`、`ANTHROPIC_API_KEY`、`GOOGLE_API_KEY`、`COHERE_API_KEY`、`MINIMAX_API_KEY`：可选 AI/转换 key；支持模型列表 API 的 provider 也会用这些环境变量做在线发现。
 
 生成 `TOKEN_ENCRYPTION_KEY`：
 
@@ -159,6 +160,7 @@ python scripts/diagnose_embedding_runtime.py --config config/sites.yaml --json
 更多说明：
 
 - [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
+- [AI Model Catalog](docs/guides/AI_MODEL_CATALOG.md)
 - [RAG Embeddings Runtime](docs/guides/RAG_EMBEDDINGS_RUNTIME.md)
 
 ## 构建和测试

@@ -13,6 +13,7 @@ This directory keeps current operational documentation first, with dated plans a
 
 - [Service Start Guide](guides/SERVICE_START_GUIDE.md): local and Docker startup commands.
 - [AI Provider Credentials](guides/AI_PROVIDER_CREDENTIALS.md): provider credential storage and binding contract.
+- [AI Model Catalog](guides/AI_MODEL_CATALOG.md): model dropdown sources, cache refresh, and live discovery behavior.
 - [RAG Embeddings Runtime](guides/RAG_EMBEDDINGS_RUNTIME.md): embeddings runtime resolution and diagnostics.
 - [Troubleshooting Model Fetching](guides/TROUBLESHOOTING_MODEL_FETCHING.md): model registry troubleshooting.
 - [Database Backend Guide](guides/DATABASE_BACKEND_GUIDE.md): database backend notes.

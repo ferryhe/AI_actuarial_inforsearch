@@ -218,9 +218,10 @@ def api_config_provider_credentials(
 @router.get("/config/model-catalog")
 def api_config_model_catalog(
     request: Request,
+    refresh: bool = False,
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
-    return get_model_catalog()
+    return get_model_catalog(refresh=refresh)
 
 
 @router.get("/config/ai-routing")
@@ -238,9 +239,10 @@ def api_config_ai_routing(
 @router.get("/config/ai-models")
 def api_config_ai_models(
     request: Request,
+    refresh: bool = False,
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
-    return get_ai_models()
+    return get_ai_models(refresh=refresh)
 
 
 @router.get("/config/search-engines")
