@@ -1,7 +1,7 @@
 # Embedding 配置收敛单 PR 开发计划
 
 日期：2026-05-01  
-来源：`c:\Users\ferry\Downloads\AI_actuarial_inforsearch：Embedding 配置收敛开发计划.docx`  
+来源：`Embedding 配置收敛开发计划.docx`  
 执行方式：单 PR，主题为 `Embedding credential binding contract + RAG diagnostics`
 
 ## Summary

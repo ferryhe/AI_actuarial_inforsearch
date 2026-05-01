@@ -1015,6 +1015,7 @@ def _resolve_provider_credentials_from_storage(
     row_credential_id = f"{row_provider}:{row_category}:db:{row.get('id')}"
     stable_credential_id = build_stable_credential_id(row_provider, row_category, instance_id)
     label = str(row.get("label") or f"{row_provider} ({row_category})").strip()
+    base_url = str(row.get("api_base_url") or "").strip() or _get_effective_base_url(provider)
 
     encrypted_key = str(row.get("api_key_encrypted") or "").strip()
     if not encrypted_key:
@@ -1023,6 +1024,7 @@ def _resolve_provider_credentials_from_storage(
             category=category,
             credential_id=row_credential_id,
             stable_credential_id=stable_credential_id,
+            base_url=base_url,
             label=label,
             instance_id=instance_id,
             error="credential_key_missing",
@@ -1044,12 +1046,12 @@ def _resolve_provider_credentials_from_storage(
             category=category,
             credential_id=row_credential_id,
             stable_credential_id=stable_credential_id,
+            base_url=base_url,
             label=label,
             instance_id=instance_id,
             error="decrypt_failed",
         )
 
-    base_url = str(row.get("api_base_url") or "").strip() or _get_effective_base_url(provider)
     provider_info = KNOWN_LLM_PROVIDERS.get(provider) or {}
     api_key_optional = str(provider_info.get("api_key_hint") or "").strip().lower() == "optional"
     configured = bool(api_key) or api_key_optional

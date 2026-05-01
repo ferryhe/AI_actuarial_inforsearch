@@ -19,6 +19,16 @@ from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
 from ai_actuarial.storage import Storage
 
 
+def _token_encryption_key_configured() -> bool:
+    try:
+        from ai_actuarial.services.token_encryption import TokenEncryption
+
+        TokenEncryption()
+    except Exception:
+        return False
+    return True
+
+
 def _resolve_config_path(raw_path: str | None) -> str:
     if raw_path:
         return str(Path(raw_path).expanduser())
@@ -46,7 +56,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     config_path = _resolve_config_path(args.config)
     config = load_yaml(config_path, default={})
     db_path = _resolve_db_path(config, args.db)
-    token_key_configured = bool(os.getenv("TOKEN_ENCRYPTION_KEY"))
+    token_key_configured = _token_encryption_key_configured()
 
     storage = Storage(db_path)
     try:
