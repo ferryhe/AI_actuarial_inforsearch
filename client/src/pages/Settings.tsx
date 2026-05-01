@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings as SettingsIcon,
@@ -111,6 +111,9 @@ interface ApiToken {
 
 const AI_FUNCTIONS = ["catalog", "embeddings", "chatbot", "ocr"] as const;
 type AiFunction = (typeof AI_FUNCTIONS)[number];
+type AiRoutingKey = "chat" | "embeddings" | "catalog" | "ocr";
+type RoutingCapability = "chat" | "embeddings" | "catalog" | "ocr";
+type ModelEdit = { provider: string; model: string; credential_id?: string };
 
 const FUNCTION_LABELS: Record<AiFunction, { en: string; zh: string }> = {
   catalog: { en: "Cataloging", zh: "编目" },
@@ -206,7 +209,7 @@ function OcrEnginesRow({
   configuredNames: Set<string>;
   known: Record<string, KnownProvider>;
   currentModels: AiModelsCurrent | null;
-  modelEdits: Record<string, { provider: string; model: string }>;
+  modelEdits: Record<string, ModelEdit>;
   updateModelEdit: (fn: AiFunction, field: "provider" | "model", value: string) => void;
   lang: string;
   t: (key: string) => string;
@@ -346,7 +349,13 @@ function AiConfigTab({ lang }: { lang: string }) {
   const [showKey, setShowKey] = useState(false);
   const [savingProvider, setSavingProvider] = useState<string | null>(null);
 
-  const [modelEdits, setModelEdits] = useState<Record<string, { provider: string; model: string; credential_id?: string }>>({});
+  const [addingProvider, setAddingProvider] = useState(false);
+  const [providerAddId, setProviderAddId] = useState("");
+
+  const [modelEdits, setModelEdits] = useState<Record<string, ModelEdit>>({});
+  const [addingRouting, setAddingRouting] = useState(false);
+  const [routingAddKey, setRoutingAddKey] = useState<AiRoutingKey>("chat");
+  const [routingAddDraft, setRoutingAddDraft] = useState<ModelEdit>({ provider: "", model: "", credential_id: "" });
   const [savingRouting, setSavingRouting] = useState(false);
   const [routingWarning, setRoutingWarning] = useState<{ affected_kb_count: number; affected_kb_ids: string[]; embedding_fingerprint?: string } | null>(null);
 
@@ -398,12 +407,45 @@ function AiConfigTab({ lang }: { lang: string }) {
     return credential.status || credential.source || t("settings.status_active");
   }
 
-  function startEditProvider(providerId: string) {
-    setEditingProvider(providerId);
-    setApiKeyInput("");
+  function setProviderFormDefaults(providerId: string) {
     const provider = llmProviders.find((item) => item.provider_id === providerId);
     const currentCredential = providerCredential(providerId);
     setBaseUrlInput(String(currentCredential?.api_base_url || provider?.default_base_url || ""));
+  }
+
+  function startAddProvider() {
+    const firstProvider = llmProviders.find((item) => !providerCredential(item.provider_id)) || llmProviders[0];
+    const providerId = firstProvider?.provider_id || "";
+    setAddingProvider(true);
+    setEditingProvider(null);
+    setProviderAddId(providerId);
+    setApiKeyInput("");
+    setProviderFormDefaults(providerId);
+    setShowKey(false);
+  }
+
+  function changeAddProvider(providerId: string) {
+    setProviderAddId(providerId);
+    setApiKeyInput("");
+    setProviderFormDefaults(providerId);
+    setShowKey(false);
+  }
+
+  function cancelProviderEdit() {
+    setAddingProvider(false);
+    setProviderAddId("");
+    setEditingProvider(null);
+    setApiKeyInput("");
+    setBaseUrlInput("");
+    setShowKey(false);
+  }
+
+  function startEditProvider(providerId: string) {
+    setAddingProvider(false);
+    setProviderAddId("");
+    setEditingProvider(providerId);
+    setApiKeyInput("");
+    setProviderFormDefaults(providerId);
     setShowKey(false);
   }
 
@@ -419,6 +461,8 @@ function AiConfigTab({ lang }: { lang: string }) {
       });
       setToast({ message: t("settings.provider_saved"), type: "success" });
       setEditingProvider(null);
+      setAddingProvider(false);
+      setProviderAddId("");
       setApiKeyInput("");
       setBaseUrlInput("");
       await fetchData();
@@ -487,34 +531,201 @@ function AiConfigTab({ lang }: { lang: string }) {
     }
   }
 
-  if (loading) {
-    return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
-  }
-
-  const routingCards = [
+  const routingCards: Array<{ key: AiRoutingKey; label: string; capability: RoutingCapability }> = [
     { key: "chat", label: t("settings.routing_chat"), capability: "chat" },
     { key: "embeddings", label: t("settings.routing_embeddings"), capability: "embeddings" },
     { key: "catalog", label: t("settings.routing_catalog"), capability: "catalog" },
     { key: "ocr", label: t("settings.routing_ocr"), capability: "ocr" },
-  ] as const;
+  ];
+
+  function modelCapability(capability: RoutingCapability) {
+    return capability === "chat" ? "chatbot" : capability;
+  }
+
+  function routingProviderOptions(card: { key: AiRoutingKey; capability: RoutingCapability }) {
+    return llmProviders
+      .filter((provider) => Boolean(provider.supports?.[card.capability]))
+      .filter((provider) => card.key === "ocr" || providerCredentials(provider.provider_id).length > 0);
+  }
+
+  function routingModelOptions(providerId: string, capability: RoutingCapability) {
+    return (available[providerId] || []).filter((model) => (model.types || []).includes(modelCapability(capability)));
+  }
+
+  function defaultCredentialId(providerId: string) {
+    const credential = providerCredential(providerId);
+    return credential?.stable_credential_id || credential?.credential_id || "";
+  }
+
+  function makeRoutingDraft(card: { key: AiRoutingKey; capability: RoutingCapability }, providerId?: string): ModelEdit {
+    const selectedProvider = providerId || routingProviderOptions(card)[0]?.provider_id || "";
+    return {
+      provider: selectedProvider,
+      credential_id: defaultCredentialId(selectedProvider),
+      model: routingModelOptions(selectedProvider, card.capability)[0]?.name || "",
+    };
+  }
+
+  function routingIsConfigured(functionName: AiRoutingKey) {
+    return Boolean(routing[functionName]?.configured);
+  }
+
+  function currentRoutingDraft(functionName: AiRoutingKey): ModelEdit {
+    return modelEdits[functionName] || {
+      provider: routing[functionName]?.provider || "",
+      model: routing[functionName]?.model || "",
+      credential_id: routing[functionName]?.stable_credential_id || routing[functionName]?.credential_id || "",
+    };
+  }
+
+  function startAddRouting() {
+    const firstCard = routingCards.find((card) => !routingIsConfigured(card.key) && !modelEdits[card.key]) || routingCards[0];
+    setAddingRouting(true);
+    setRoutingAddKey(firstCard.key);
+    setRoutingAddDraft(makeRoutingDraft(firstCard));
+  }
+
+  function changeRoutingAddFunction(functionName: AiRoutingKey) {
+    const card = routingCards.find((item) => item.key === functionName) || routingCards[0];
+    setRoutingAddKey(card.key);
+    setRoutingAddDraft(makeRoutingDraft(card));
+  }
+
+  function updateRoutingDraft(
+    setDraft: Dispatch<SetStateAction<ModelEdit>>,
+    card: { key: AiRoutingKey; capability: RoutingCapability },
+    field: "provider" | "model" | "credential_id",
+    value: string,
+  ) {
+    setDraft((prev) => {
+      if (field !== "provider") return { ...prev, [field]: value };
+      return makeRoutingDraft(card, value);
+    });
+  }
+
+  function stageRoutingAdd() {
+    if (!routingAddDraft.provider || !routingAddDraft.model) return;
+    setModelEdits((prev) => ({ ...prev, [routingAddKey]: routingAddDraft }));
+    setAddingRouting(false);
+  }
+
+  function editRouting(card: { key: AiRoutingKey; capability: RoutingCapability }) {
+    setAddingRouting(false);
+    setModelEdits((prev) => ({ ...prev, [card.key]: currentRoutingDraft(card.key) }));
+  }
+
+  function cancelRoutingEdit(functionName: AiRoutingKey) {
+    setModelEdits((prev) => {
+      const next = { ...prev };
+      delete next[functionName];
+      return next;
+    });
+  }
+
+  if (loading) {
+    return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  }
+  const configuredProviders = llmProviders.filter((provider) => Boolean(providerCredential(provider.provider_id)));
+  const configuredRoutingCount = routingCards.filter((card) => routingIsConfigured(card.key)).length;
+  const configuredRoutingCards = routingCards.filter((card) => routingIsConfigured(card.key) || Boolean(modelEdits[card.key]));
 
   return (
     <div className="space-y-8">
       <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
 
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-border bg-card overflow-hidden">
-        <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center gap-2">
-          <Key className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold">{t("settings.model_providers")}</h3>
-          <span className="text-xs text-muted-foreground ml-auto">{llmProviders.length} {t("settings.providers_label")}</span>
+        <div className="px-5 py-4 border-b border-border bg-muted/30 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Key className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold">{t("settings.model_providers")}</h3>
+            <span className="text-xs text-muted-foreground">{configuredProviders.length}/{llmProviders.length} {t("settings.configured")}</span>
+          </div>
+          <button
+            onClick={startAddProvider}
+            disabled={llmProviders.length === 0 || addingProvider}
+            className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+            data-testid="button-add-provider"
+          >
+            <Plus className="w-3 h-3" />
+            {t("settings.add_key")}
+          </button>
         </div>
         <div className="divide-y divide-border">
+          {addingProvider && (() => {
+            const provider = llmProviders.find((item) => item.provider_id === providerAddId);
+            return (
+              <div className="px-5 py-4 bg-muted/10" data-testid="provider-add-panel">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
+                    <select
+                      value={providerAddId}
+                      onChange={(e) => changeAddProvider(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      data-testid="select-add-provider"
+                    >
+                      {llmProviders.map((item) => (
+                        <option key={item.provider_id} value={item.provider_id}>{item.display_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.api_key_label")}</label>
+                    <div className="relative">
+                      <input
+                        type={showKey ? "text" : "password"}
+                        value={apiKeyInput}
+                        onChange={(e) => setApiKeyInput(e.target.value)}
+                        placeholder={provider?.api_key_hint || "sk-..."}
+                        className="w-full px-3 py-2 pr-10 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        data-testid="input-add-provider-api-key"
+                      />
+                      <button onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground">
+                        {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.base_url_label")} ({t("settings.optional")})</label>
+                    <input
+                      type="text"
+                      value={baseUrlInput}
+                      onChange={(e) => setBaseUrlInput(e.target.value)}
+                      placeholder={provider?.default_base_url || "https://..."}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      data-testid="input-add-provider-base-url"
+                    />
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    onClick={() => saveProvider(providerAddId)}
+                    disabled={!providerAddId || (!apiKeyInput.trim() && !providerAllowsEmptyApiKey(providerAddId)) || savingProvider === providerAddId}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                    data-testid="button-save-add-provider"
+                  >
+                    {savingProvider === providerAddId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    {t("settings.save")}
+                  </button>
+                  <button onClick={cancelProviderEdit}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
+                    {t("settings.cancel")}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
           {llmProviders.length === 0 ? (
             <div className="text-center py-10" data-testid="text-no-providers">
               <Bot className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
               <p className="text-sm text-muted-foreground">{t("settings.no_providers")}</p>
             </div>
-          ) : llmProviders.map((provider) => {
+          ) : configuredProviders.length === 0 && !addingProvider ? (
+            <div className="text-center py-10" data-testid="text-no-configured-providers">
+              <Key className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">{t("settings.no_configured_providers")}</p>
+            </div>
+          ) : configuredProviders.map((provider) => {
             const credential = providerCredential(provider.provider_id);
             const isConfigured = Boolean(credential && (credential.status === "active" || credential.decrypt_ok));
             const isEditing = editingProvider === provider.provider_id;
@@ -538,7 +749,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {isConfigured && !isEditing && (
+                    {credential && !isEditing && (
                       <button onClick={() => deleteProvider(provider.provider_id)} disabled={savingProvider === provider.provider_id}
                         className="text-xs px-2 py-1 rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
                         data-testid={`button-delete-provider-${provider.provider_id}`}>
@@ -547,9 +758,10 @@ function AiConfigTab({ lang }: { lang: string }) {
                     )}
                     {!isEditing && (
                       <button onClick={() => startEditProvider(provider.provider_id)}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                        className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
                         data-testid={`button-edit-provider-${provider.provider_id}`}>
-                        {isConfigured ? t("settings.update_key") : t("settings.add_key")}
+                        <Pencil className="w-3 h-3" />
+                        {credential ? t("settings.update_key") : t("settings.add_key")}
                       </button>
                     )}
                   </div>
@@ -593,7 +805,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                         {savingProvider === provider.provider_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                         {t("settings.save")}
                       </button>
-                      <button onClick={() => { setEditingProvider(null); setApiKeyInput(""); setBaseUrlInput(""); }}
+                      <button onClick={cancelProviderEdit}
                         className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
                         {t("settings.cancel")}
                       </button>
@@ -611,15 +823,27 @@ function AiConfigTab({ lang }: { lang: string }) {
           <div className="flex items-center gap-2">
             <Cpu className="w-4 h-4 text-primary" />
             <h3 className="text-sm font-semibold">{t("settings.model_routing")}</h3>
+            <span className="text-xs text-muted-foreground">{configuredRoutingCount}/{routingCards.length} {t("settings.configured")}</span>
           </div>
-          {Object.keys(modelEdits).length > 0 && (
-            <button onClick={saveRouting} disabled={savingRouting}
-              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-              data-testid="button-save-models">
-              {savingRouting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-              {t("settings.save_model_config")}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={startAddRouting}
+              disabled={addingRouting}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-add-model-route"
+            >
+              <Plus className="w-3 h-3" />
+              {t("settings.add_model_config")}
             </button>
-          )}
+            {Object.keys(modelEdits).length > 0 && (
+              <button onClick={saveRouting} disabled={savingRouting}
+                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                data-testid="button-save-models">
+                {savingRouting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                {t("settings.save_model_config")}
+              </button>
+            )}
+          </div>
         </div>
         <div className="divide-y divide-border">
           {routingWarning && (
@@ -636,27 +860,35 @@ function AiConfigTab({ lang }: { lang: string }) {
               )}
             </div>
           )}
-          {routingCards.map((card) => {
-            const current = modelEdits[card.key] || {
-              provider: routing[card.key]?.provider || "",
-              model: routing[card.key]?.model || "",
-              credential_id: routing[card.key]?.stable_credential_id || routing[card.key]?.credential_id || "",
-            };
-            const filteredProviders = llmProviders
-              .filter((provider) => Boolean(provider.supports?.[card.capability]))
-              .filter((provider) => card.key === "ocr" || providerCredentials(provider.provider_id).length > 0);
-            const filteredCredentials = current.provider ? providerCredentials(current.provider) : [];
-            const modelTypeCapability = card.capability === "chat" ? "chatbot" : card.capability;
-            const filteredModels = (available[current.provider] || []).filter((model) => (model.types || []).includes(modelTypeCapability));
+          {addingRouting && (() => {
+            const card = routingCards.find((item) => item.key === routingAddKey) || routingCards[0];
+            const filteredProviders = routingProviderOptions(card);
+            const filteredCredentials = routingAddDraft.provider ? providerCredentials(routingAddDraft.provider) : [];
+            const filteredModels = routingModelOptions(routingAddDraft.provider, card.capability);
             return (
-              <div key={card.key} className="px-5 py-4" data-testid={`model-row-${card.key}`}>
-                <label className="text-xs font-semibold text-muted-foreground mb-2 block">{card.label}</label>
+              <div className="px-5 py-4 bg-muted/10" data-testid="model-add-panel">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
-                    <select value={current.provider} onChange={(e) => updateModelEdit(card.key, "provider", e.target.value)}
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.function")}</label>
+                    <select
+                      value={routingAddKey}
+                      onChange={(e) => changeRoutingAddFunction(e.target.value as AiRoutingKey)}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                      data-testid={`select-provider-${card.key}`}>
+                      data-testid="select-add-model-function"
+                    >
+                      {routingCards.map((item) => (
+                        <option key={item.key} value={item.key}>{item.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
+                    <select
+                      value={routingAddDraft.provider}
+                      onChange={(e) => updateRoutingDraft(setRoutingAddDraft, card, "provider", e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      data-testid="select-add-model-provider"
+                    >
                       <option value="">—</option>
                       {filteredProviders.map((provider) => (
                         <option key={provider.provider_id} value={provider.provider_id}>{provider.display_name}</option>
@@ -664,21 +896,13 @@ function AiConfigTab({ lang }: { lang: string }) {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
-                    <select value={current.credential_id || ""} onChange={(e) => updateModelEdit(card.key, "credential_id", e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                      data-testid={`select-credential-${card.key}`}>
-                      <option value="">—</option>
-                      {filteredCredentials.map((credential) => (
-                        <option key={credential.credential_id} value={credential.stable_credential_id || credential.credential_id}>{credential.label}{credential.is_default ? ` (${t("settings.default")})` : ""}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
                     <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
-                    <select value={current.model} onChange={(e) => updateModelEdit(card.key, "model", e.target.value)}
+                    <select
+                      value={routingAddDraft.model}
+                      onChange={(e) => updateRoutingDraft(setRoutingAddDraft, card, "model", e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                      data-testid={`select-model-${card.key}`}>
+                      data-testid="select-add-model-name"
+                    >
                       <option value="">—</option>
                       {filteredModels.map((model) => (
                         <option key={model.name} value={model.name}>{model.display_name || model.name}</option>
@@ -686,15 +910,132 @@ function AiConfigTab({ lang }: { lang: string }) {
                     </select>
                   </div>
                 </div>
-                <div className="mt-2 text-[11px] text-muted-foreground space-y-1">
-                  <p>{t("settings.status")}: {routing[card.key]?.configured ? t("settings.status_configured") : t("settings.missing")}</p>
-                  <p>{t("settings.credential_source_label")}: {routing[card.key]?.credential_source || t("settings.missing")}</p>
-                  {routing[card.key]?.credential_label && <p>{t("settings.credential")}: {routing[card.key]?.credential_label}</p>}
-                  {routing[card.key]?.credential_error && <p>{t("settings.error")}: {routing[card.key]?.credential_error}</p>}
-                  {card.key === "embeddings" && routing[card.key]?.embedding_fingerprint && (
-                    <p className="font-mono break-all">{t("settings.embedding_fingerprint_label")}: {routing[card.key]?.embedding_fingerprint}</p>
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
+                  <div>
+                    <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
+                    <select
+                      value={routingAddDraft.credential_id || ""}
+                      onChange={(e) => updateRoutingDraft(setRoutingAddDraft, card, "credential_id", e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      data-testid="select-add-model-credential"
+                    >
+                      <option value="">—</option>
+                      {filteredCredentials.map((credential) => (
+                        <option key={credential.credential_id} value={credential.stable_credential_id || credential.credential_id}>{credential.label}{credential.is_default ? ` (${t("settings.default")})` : ""}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={stageRoutingAdd}
+                      disabled={!routingAddDraft.provider || !routingAddDraft.model}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                      data-testid="button-stage-model-route"
+                    >
+                      <Plus className="w-3 h-3" />
+                      {t("settings.add")}
+                    </button>
+                    <button
+                      onClick={() => setAddingRouting(false)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                    >
+                      {t("settings.cancel")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          {configuredRoutingCards.length === 0 && !addingRouting ? (
+            <div className="text-center py-10" data-testid="text-no-model-routes">
+              <Cpu className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">{t("settings.no_model_routes")}</p>
+            </div>
+          ) : configuredRoutingCards.map((card) => {
+            const current = currentRoutingDraft(card.key);
+            const isEditing = Boolean(modelEdits[card.key]);
+            const filteredProviders = routingProviderOptions(card);
+            const filteredCredentials = current.provider ? providerCredentials(current.provider) : [];
+            const filteredModels = routingModelOptions(current.provider, card.capability);
+            const providerLabel = llmProviders.find((provider) => provider.provider_id === current.provider)?.display_name || current.provider || "—";
+            const credentialLabel = routing[card.key]?.credential_label || filteredCredentials.find((credential) => (credential.stable_credential_id || credential.credential_id) === current.credential_id)?.label;
+            return (
+              <div key={card.key} className="px-5 py-4" data-testid={`model-row-${card.key}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <StatusBadge configured={Boolean(routing[card.key]?.configured)} />
+                      <span className="text-xs font-semibold text-muted-foreground">{card.label}</span>
+                      <span className="text-sm font-semibold break-all">{providerLabel}</span>
+                      <span className="text-sm text-muted-foreground break-all">/ {current.model || "—"}</span>
+                    </div>
+                    <div className="mt-2 text-[11px] text-muted-foreground space-y-1">
+                      <p>{t("settings.status")}: {routing[card.key]?.configured ? t("settings.status_configured") : t("settings.missing")}</p>
+                      <p>{t("settings.credential_source_label")}: {routing[card.key]?.credential_source || t("settings.missing")}</p>
+                      {credentialLabel && <p>{t("settings.credential")}: {credentialLabel}</p>}
+                      {routing[card.key]?.credential_error && <p>{t("settings.error")}: {routing[card.key]?.credential_error}</p>}
+                      {card.key === "embeddings" && routing[card.key]?.embedding_fingerprint && (
+                        <p className="font-mono break-all">{t("settings.embedding_fingerprint_label")}: {routing[card.key]?.embedding_fingerprint}</p>
+                      )}
+                    </div>
+                  </div>
+                  {!isEditing && (
+                    <button
+                      onClick={() => editRouting(card)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors shrink-0 flex items-center gap-1.5"
+                      data-testid={`button-edit-model-${card.key}`}
+                    >
+                      <Pencil className="w-3 h-3" />
+                      {t("settings.edit")}
+                    </button>
                   )}
                 </div>
+                {isEditing && (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.provider")}</label>
+                        <select value={current.provider} onChange={(e) => updateModelEdit(card.key, "provider", e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                          data-testid={`select-provider-${card.key}`}>
+                          <option value="">—</option>
+                          {filteredProviders.map((provider) => (
+                            <option key={provider.provider_id} value={provider.provider_id}>{provider.display_name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.credential")}</label>
+                        <select value={current.credential_id || ""} onChange={(e) => updateModelEdit(card.key, "credential_id", e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                          data-testid={`select-credential-${card.key}`}>
+                          <option value="">—</option>
+                          {filteredCredentials.map((credential) => (
+                            <option key={credential.credential_id} value={credential.stable_credential_id || credential.credential_id}>{credential.label}{credential.is_default ? ` (${t("settings.default")})` : ""}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.model")}</label>
+                        <select value={current.model} onChange={(e) => updateModelEdit(card.key, "model", e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                          data-testid={`select-model-${card.key}`}>
+                          <option value="">—</option>
+                          {filteredModels.map((model) => (
+                            <option key={model.name} value={model.name}>{model.display_name || model.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => cancelRoutingEdit(card.key)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors flex items-center gap-1.5"
+                    >
+                      <X className="w-3 h-3" />
+                      {t("settings.cancel")}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
