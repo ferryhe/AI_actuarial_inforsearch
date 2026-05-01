@@ -317,6 +317,7 @@ def _patch_available_models(monkeypatch) -> None:
     import ai_actuarial.llm_models as llm_models
 
     monkeypatch.setattr(llm_models, "get_available_models", lambda provider=None: fake_models, raising=True)
+    monkeypatch.setattr(llm_models, "refresh_models", lambda: None, raising=True)
 
 
 def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path: Path, monkeypatch) -> None:
@@ -445,6 +446,10 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert bindings["embeddings"]["credential_error"] is None
     assert bindings["embeddings"]["embedding_dimension"] == 3072
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
+
+    refreshed_catalog = client.get("/api/config/model-catalog?refresh=true", headers=headers)
+    assert refreshed_catalog.status_code == 200, refreshed_catalog.text
+    assert "openai" in refreshed_catalog.json()["available"]
 
 def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)

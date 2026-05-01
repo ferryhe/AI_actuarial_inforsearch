@@ -285,7 +285,9 @@ def get_llm_providers(*, db_path: str) -> dict[str, object]:
         storage.close()
 
 
-def get_ai_models() -> dict[str, object]:
+def get_ai_models(*, refresh: bool = False) -> dict[str, object]:
+    if refresh:
+        llm_models.refresh_models()
     config_data = load_yaml(get_sites_config_path(), default={})
     ai_config = config_data.get("ai_config") or {}
     chatbot_cfg = ai_config.get("chatbot", {})

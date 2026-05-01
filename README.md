@@ -133,6 +133,7 @@ AI_actuarial_inforsearch/
 
 Main structured configuration lives in `config/sites.yaml`. Secrets should stay in `.env`, process environment, or encrypted DB credentials.
 Provider API keys used at runtime should be saved as encrypted database credentials; `sites.yaml` should bind AI functions to provider/model and an optional credential id such as `openai:llm:instance:default`.
+The Settings model catalog also has curated fallback lists and can refresh live provider model ids from environment-configured provider APIs every 24 hours.
 
 Important variables:
 
@@ -142,7 +143,7 @@ Important variables:
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local/admin bootstrap token.
 - `REQUIRE_AUTH`: enables full authentication when `true`.
 - `BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`: optional search keys.
-- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`: optional AI/conversion keys.
+- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `OPENROUTER_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `ZHIPUAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CLOUD_API_KEY`, `COHERE_API_KEY`, `MINIMAX_API_KEY`, `HUGGINGFACE_API_KEY`: optional AI/conversion keys. Providers with a model-list API also use these environment keys for live catalog discovery.
 
 Generate a Fernet key for `TOKEN_ENCRYPTION_KEY`:
 
@@ -159,6 +160,7 @@ python scripts/diagnose_embedding_runtime.py --config config/sites.yaml --json
 More details:
 
 - [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
+- [AI Model Catalog](docs/guides/AI_MODEL_CATALOG.md)
 - [RAG Embeddings Runtime](docs/guides/RAG_EMBEDDINGS_RUNTIME.md)
 
 ## Build And Test

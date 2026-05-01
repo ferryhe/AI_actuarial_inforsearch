@@ -23,6 +23,9 @@
 echo $OPENAI_API_KEY
 echo $MISTRAL_API_KEY
 echo $SILICONFLOW_API_KEY
+echo $OPENROUTER_API_KEY
+echo $DASHSCOPE_API_KEY
+echo $MINIMAX_API_KEY
 
 # 2. Verify API key permissions
 # OpenAI: https://platform.openai.com/api-keys
@@ -44,9 +47,9 @@ print(client.models.list())
 ```
 INFO: Initializing model cache on startup...
 INFO: Refreshing model cache from providers...
-INFO: Fetched 8 OpenAI models from API
-INFO: Fetched 2 Mistral models from API
-INFO: Model cache initialized successfully
+INFO: Fetched 17 OpenAI models from API
+INFO: Fetched 14 Mistral models from API
+INFO: Model cache initialization complete
 ```
 
 ### Issue 2: Stale models in cache / 问题2：缓存中的模型过时
@@ -68,13 +71,20 @@ Force refresh the cache:
 from ai_actuarial.llm_models import refresh_models
 refresh_models()
 
-# Method 2: Restart the application
+# Method 2: HTTP read endpoint
+# Requires the same config.read access as the model catalog endpoint
+curl "http://127.0.0.1:8000/api/config/model-catalog?refresh=true"
+curl "http://127.0.0.1:8000/api/config/ai-models?refresh=true"
+
+# Method 3: Restart the application
 # The cache will refresh on startup
 ```
 
 Or wait for automatic refresh (24 hours).
 
 或等待自动刷新（24小时）。
+
+More details: [AI Model Catalog](AI_MODEL_CATALOG.md).
 
 ### Issue 3: Slow model loading / 问题3：模型加载缓慢
 
@@ -132,9 +142,9 @@ initialize_models()
 
 **Automatic Fallback / 自动回退**:
 
-Good news: The system automatically falls back to default models, so the app continues to work!
+Good news: The system automatically falls back to curated default models, so the app continues to work.
 
-好消息：系统自动回退到默认模型，所以应用继续工作！
+好消息：系统自动回退到维护过的默认模型，所以应用继续工作！
 
 ### Issue 5: Thread safety issues / 问题5：线程安全问题
 
