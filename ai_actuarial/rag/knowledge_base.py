@@ -135,9 +135,22 @@ class KnowledgeBaseManager:
         
         try:
             self.embedding_generator = EmbeddingGenerator(self.config)
+            self.embedding_init_error = ""
         except Exception as exc:
             logger.warning("EmbeddingGenerator init failed: %s", exc)
             self.embedding_generator = None
+            self.embedding_init_error = str(exc)
+        self.embedding_runtime_status = {
+            "provider": self.config.embedding_provider,
+            "model": self.config.embedding_model,
+            "credential_source": self.config.credential_source,
+            "credential_id": self.config.credential_id,
+            "stable_credential_id": self.config.stable_credential_id,
+            "credential_label": self.config.credential_label,
+            "configured": bool(self.embedding_generator) or self.config.embedding_provider == "local",
+            "credential_error": self.config.credential_error or self.embedding_init_error,
+            "has_base_url": bool(self.config.api_base_url),
+        }
     
     def _ensure_rag_tables(self) -> None:
         """Create RAG-specific tables if they don't exist."""

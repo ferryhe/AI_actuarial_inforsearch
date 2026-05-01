@@ -102,8 +102,17 @@ class EmbeddingGenerator:
         if self.provider != "local":
             api_key = self.config.api_key or self.config.openai_api_key
             if not api_key:
+                credential_id = self.config.stable_credential_id or self.config.credential_id or "(default credential)"
+                reason = self.config.credential_error or "missing_api_key"
                 raise EmbeddingException(
-                    f"API key required for embedding provider '{self.provider}' but not provided"
+                    "API key required for embedding provider "
+                    f"'{self.provider}' but not provided "
+                    f"(model='{self.config.embedding_model}', "
+                    f"credential_source='{self.config.credential_source}', "
+                    f"credential_id='{credential_id}', "
+                    f"credential_label='{self.config.credential_label or ''}', "
+                    f"has_base_url={bool(self.config.api_base_url)}, "
+                    f"reason='{reason}')"
                 )
 
             client_kwargs = {

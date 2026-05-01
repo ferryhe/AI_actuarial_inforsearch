@@ -32,7 +32,7 @@ The old server-rendered HTML runtime and Replit workflow files have been retired
 
 - Python 3.10+
 - Node.js 18+
-- Optional AI/search provider API keys in `.env` or `config/sites.yaml`
+- Optional AI/search provider API keys in environment variables or encrypted DB credentials
 - Stable `TOKEN_ENCRYPTION_KEY` if provider credentials are stored in the database
 - `FASTAPI_SESSION_SECRET` if email/session login is enabled
 
@@ -131,7 +131,8 @@ AI_actuarial_inforsearch/
 
 ## Configuration
 
-Main structured configuration lives in `config/sites.yaml`. Secrets should stay in `.env` or process environment.
+Main structured configuration lives in `config/sites.yaml`. Secrets should stay in `.env`, process environment, or encrypted DB credentials.
+Provider API keys used at runtime should be saved as encrypted database credentials; `sites.yaml` should bind AI functions to provider/model and an optional credential id such as `openai:llm:instance:default`.
 
 Important variables:
 
@@ -148,6 +149,17 @@ Generate a Fernet key for `TOKEN_ENCRYPTION_KEY`:
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+Diagnose the active embedding runtime without printing secrets:
+
+```bash
+python scripts/diagnose_embedding_runtime.py --config config/sites.yaml --json
+```
+
+More details:
+
+- [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
+- [RAG Embeddings Runtime](docs/guides/RAG_EMBEDDINGS_RUNTIME.md)
 
 ## Build And Test
 

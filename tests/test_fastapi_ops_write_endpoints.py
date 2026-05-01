@@ -127,10 +127,11 @@ def test_ops_write_routes_are_listed_in_native_inventory(tmp_path: Path, monkeyp
 
 def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
     config_path = Path(os.environ["CONFIG_PATH"])
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     add_response = client.post(
         "/api/config/sites/add",
@@ -155,6 +156,7 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
             "max_pages": 30,
             "exclude_keywords": "archive, curriculum",
         },
+        headers=headers,
     )
     assert update_response.status_code == 200, update_response.text
     updated_site = next(site for site in _read_sites(config_path) if site["name"] == "SOA AI Bulletin")
@@ -167,6 +169,7 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
             "preview": True,
             "yaml_text": "sites:\n  - name: Preview Site\n    url: https://preview.example\n",
         },
+        headers=headers,
     )
     assert preview_response.status_code == 200, preview_response.text
     assert preview_response.json()["count"] == 1
@@ -183,38 +186,39 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
                 "    url: https://duplicate.example\n"
             ),
         },
+        headers=headers,
     )
     assert import_response.status_code == 200, import_response.text
     import_body = import_response.json()
     assert import_body["imported"] == 1
     assert import_body["skipped"] == 1
 
-    export_response = client.get("/api/config/sites/export")
+    export_response = client.get("/api/config/sites/export", headers=headers)
     assert export_response.status_code == 200
     assert "attachment; filename=sites_export_" in export_response.headers["content-disposition"]
     assert yaml.safe_load(export_response.text)["sites"]
 
-    sample_response = client.get("/api/config/sites/sample")
+    sample_response = client.get("/api/config/sites/sample", headers=headers)
     assert sample_response.status_code == 200
     assert "sites_sample.yaml" in sample_response.headers["content-disposition"]
     assert "Society of Actuaries (SOA)" in sample_response.text
 
-    delete_site_response = client.post("/api/config/sites/delete", json={"name": "Import Site"})
+    delete_site_response = client.post("/api/config/sites/delete", json={"name": "Import Site"}, headers=headers)
     assert delete_site_response.status_code == 200, delete_site_response.text
     assert all(site["name"] != "Import Site" for site in _read_sites(config_path))
 
-    backups_response = client.get("/api/config/backups")
+    backups_response = client.get("/api/config/backups", headers=headers)
     assert backups_response.status_code == 200
     backups = backups_response.json()["backups"]
     assert backups, backups_response.text
     backup_filename = backups[0]["filename"]
 
-    delete_backup_response = client.post("/api/config/backups/delete", json={"filename": backup_filename})
+    delete_backup_response = client.post("/api/config/backups/delete", json={"filename": backup_filename}, headers=headers)
     assert delete_backup_response.status_code == 200, delete_backup_response.text
 
-    restore_source = client.get("/api/config/backups")
+    restore_source = client.get("/api/config/backups", headers=headers)
     restore_filename = restore_source.json()["backups"][0]["filename"]
-    restore_response = client.post("/api/config/backups/restore", json={"filename": restore_filename})
+    restore_response = client.post("/api/config/backups/restore", json={"filename": restore_filename}, headers=headers)
     assert restore_response.status_code == 200, restore_response.text
 
 
@@ -273,11 +277,12 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
 
 def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     nested_categories_path = tmp_path / "nested" / "config" / "categories.yaml"
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(nested_categories_path))
     config_path = Path(os.environ["CONFIG_PATH"])
     categories_path = nested_categories_path
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     categories_response = client.post(
         "/api/config/categories",
@@ -288,6 +293,7 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
             },
             "ai_filter_keywords": ["artificial intelligence", "large language model"],
         },
+        headers=headers,
     )
     assert categories_response.status_code == 200, categories_response.text
     categories_body = categories_response.json()
@@ -309,6 +315,7 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
                 "summarization_prompt": "native summarize prompt",
             },
         },
+        headers=headers,
     )
     assert ai_models_response.status_code == 200, ai_models_response.text
     ai_models_body = ai_models_response.json()
@@ -392,24 +399,25 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
 
 def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
     db_path = Path(app.state.db_path)
     _seed_stats_data(db_path)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     allowed_root = tmp_path / "files"
     nested = allowed_root / "nested"
     nested.mkdir(parents=True, exist_ok=True)
     (nested / "sample.pdf").write_text("pdf", encoding="utf-8")
 
-    browse_response = client.get(f"/api/utils/browse-folder?path={nested}")
+    browse_response = client.get(f"/api/utils/browse-folder?path={nested}", headers=headers)
     assert browse_response.status_code == 200, browse_response.text
     browse_body = browse_response.json()
     assert browse_body["path"] == str(nested.resolve())
     assert any(entry["name"] == "sample.pdf" for entry in browse_body["entries"])
 
-    denied_response = client.get("/api/utils/browse-folder", params={"path": str(Path("/").resolve())})
+    denied_response = client.get("/api/utils/browse-folder", params={"path": str(Path("/").resolve())}, headers=headers)
     assert denied_response.status_code == 403, denied_response.text
 
     catalog_stats = client.get("/api/catalog/stats")
@@ -430,9 +438,10 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
 
 def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     active_tasks = {
         "task-live": {
@@ -445,11 +454,11 @@ def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, mo
     }
     app.state.active_tasks_ref = active_tasks
 
-    stop_response = client.post("/api/tasks/stop/task-live")
+    stop_response = client.post("/api/tasks/stop/task-live", headers=headers)
     assert stop_response.status_code == 200, stop_response.text
     assert active_tasks["task-live"]["stop_requested"] is True
 
-    invalid_response = client.post("/api/collections/run", json={"type": "file", "directory_path": "/does/not/exist"})
+    invalid_response = client.post("/api/collections/run", json={"type": "file", "directory_path": "/does/not/exist"}, headers=headers)
     assert invalid_response.status_code == 400
     assert invalid_response.json()["error"] == "Invalid directory path"
 
@@ -465,6 +474,7 @@ def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, mo
             "extensions": ["pdf"],
             "recursive": True,
         },
+        headers=headers,
     )
     assert run_response.status_code == 200, run_response.text
     run_body = run_response.json()
@@ -537,9 +547,10 @@ def test_ops_write_routes_require_operator_when_auth_enabled(tmp_path: Path, mon
 
 def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     credential_upsert = client.post(
         "/api/config/provider-credentials",
@@ -550,8 +561,10 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
             "api_key": "***",
             "api_base_url": "https://api.mistral.ai/v1",
         },
+        headers=headers,
     )
     assert credential_upsert.status_code == 200, credential_upsert.text
+    assert credential_upsert.json()["stable_credential_id"] == "mistral:llm:instance:primary"
     backup_upsert = client.post(
         "/api/config/provider-credentials",
         json={
@@ -562,10 +575,13 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
             "api_base_url": "https://backup.mistral.ai/v1",
             "is_default": False,
         },
+        headers=headers,
     )
     assert backup_upsert.status_code == 200, backup_upsert.text
     backup_credential_id = backup_upsert.json()["credential_id"]
-    credentials = client.get("/api/config/provider-credentials")
+    backup_stable_credential_id = backup_upsert.json()["stable_credential_id"]
+    assert backup_stable_credential_id == "mistral:llm:instance:backup"
+    credentials = client.get("/api/config/provider-credentials", headers=headers)
     rows = credentials.json()["credentials"]
     assert any(row["provider_id"] == "mistral" and row["instance_id"] == "primary" and row["source"] == "db" for row in rows)
     assert any(row["provider_id"] == "mistral" and row["instance_id"] == "backup" and row["source"] == "db" for row in rows)
@@ -576,9 +592,10 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
             "bindings": [
                 {"function_name": "chat", "provider": "openai", "model": "gpt-4o-mini"},
                 {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"},
-                {"function_name": "catalog", "provider": "mistral", "credential_id": backup_credential_id, "model": "mistral-small-latest"},
+                {"function_name": "catalog", "provider": "mistral", "credential_id": backup_stable_credential_id, "model": "mistral-small-latest"},
             ]
         },
+        headers=headers,
     )
     assert routing_update.status_code == 200, routing_update.text
     routing_body = routing_update.json()
@@ -592,19 +609,39 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-small:")
     assert bindings["catalog"]["provider"] == "mistral"
     assert bindings["catalog"]["credential_id"] == backup_credential_id
+    assert bindings["catalog"]["stable_credential_id"] == backup_stable_credential_id
+    assert bindings["catalog"]["configured"] is True
+    assert bindings["catalog"]["credential_error"] is None
 
-    credential_delete = client.delete("/api/config/provider-credentials/mistral?instance_id=backup")
+    invalid_routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {
+                    "function_name": "catalog",
+                    "provider": "openai",
+                    "credential_id": backup_stable_credential_id,
+                    "model": "gpt-4o-mini",
+                },
+            ]
+        },
+        headers=headers,
+    )
+    assert invalid_routing_update.status_code == 400
+
+    credential_delete = client.delete("/api/config/provider-credentials/mistral?instance_id=backup", headers=headers)
     assert credential_delete.status_code == 200, credential_delete.text
-    remaining = client.get("/api/config/provider-credentials").json()["credentials"]
+    remaining = client.get("/api/config/provider-credentials", headers=headers).json()["credentials"]
     assert any(row["provider_id"] == "mistral" and row["instance_id"] == "primary" and row["source"] == "db" for row in remaining)
     assert not any(row["provider_id"] == "mistral" and row["instance_id"] == "backup" and row["source"] == "db" for row in remaining)
 
 
 def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     mistral = client.post(
         "/api/config/provider-credentials",
@@ -615,9 +652,10 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
             "api_key": "***",
             "api_base_url": "https://api.mistral.ai/v1",
         },
+        headers=headers,
     )
     assert mistral.status_code == 200, mistral.text
-    mistral_credential_id = mistral.json()["credential_id"]
+    mistral_credential_id = mistral.json()["stable_credential_id"]
 
     first_update = client.post(
         "/api/config/ai-routing",
@@ -626,6 +664,7 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
                 {"function_name": "catalog", "provider": "mistral", "credential_id": mistral_credential_id, "model": "mistral-small-latest"},
             ]
         },
+        headers=headers,
     )
     assert first_update.status_code == 200, first_update.text
 
@@ -636,6 +675,7 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
                 {"function_name": "catalog", "provider": "openai", "model": "gpt-4o-mini"},
             ]
         },
+        headers=headers,
     )
     assert second_update.status_code == 200, second_update.text
     catalog_binding = next(item for item in second_update.json()["bindings"] if item["function_name"] == "catalog")
@@ -648,13 +688,15 @@ def test_provider_credentials_import_env_bootstraps_default_instance(tmp_path: P
     TokenEncryption._instance = None
     monkeypatch.setenv("MISTRAL_API_KEY", "env-mistral-key")
     monkeypatch.setenv("MISTRAL_BASE_URL", "https://env.mistral.example/v1")
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     response = client.post(
         "/api/config/provider-credentials/import-env",
         json={"providers": ["mistral"]},
+        headers=headers,
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -663,9 +705,10 @@ def test_provider_credentials_import_env_bootstraps_default_instance(tmp_path: P
     assert body["skipped_count"] == 0
     assert body["imported"][0]["provider_id"] == "mistral"
 
-    rows = client.get("/api/config/provider-credentials").json()["credentials"]
+    rows = client.get("/api/config/provider-credentials", headers=headers).json()["credentials"]
     imported = next(row for row in rows if row["provider_id"] == "mistral" and row["source"] == "db")
     assert imported["instance_id"] == "default"
+    assert imported["stable_credential_id"] == "mistral:llm:instance:default"
     assert imported["is_default"] is True
     assert imported["api_base_url"] == "https://env.mistral.example/v1"
     TokenEncryption._instance = None
@@ -677,9 +720,10 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
     old_key = Fernet.generate_key().decode()
     new_key = Fernet.generate_key().decode()
     TokenEncryption._instance = None
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": seed["operator_token"]}
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", old_key)
     TokenEncryption._instance = None
 
@@ -692,6 +736,7 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
             "api_key": "rotate-me",
             "api_base_url": "https://api.mistral.ai/v1",
         },
+        headers=headers,
     )
     assert create.status_code == 200, create.text
 
@@ -705,6 +750,7 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
     rotate = client.post(
         "/api/config/provider-credentials/re-encrypt",
         json={"old_key": old_key, "new_key": new_key, "category": "llm", "providers": ["mistral"]},
+        headers=headers,
     )
     assert rotate.status_code == 200, rotate.text
     rotate_body = rotate.json()
@@ -727,9 +773,10 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
 
 def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     credential_upsert = client.post(
         "/api/config/provider-credentials",
@@ -738,9 +785,10 @@ def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp
             "api_key": "",
             "api_base_url": "http://localhost:8001/v1",
         },
+        headers=headers,
     )
     assert credential_upsert.status_code == 200, credential_upsert.text
-    rows = client.get("/api/config/provider-credentials").json()["credentials"]
+    rows = client.get("/api/config/provider-credentials", headers=headers).json()["credentials"]
     assert any(row["provider_id"] == "vllm" and row["source"] == "db" for row in rows)
 
     routing_update = client.post(
@@ -750,6 +798,7 @@ def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp
                 {"function_name": "chatbot", "provider": "openai", "model": "gpt-4o-mini", "temperature": 0.2},
             ]
         },
+        headers=headers,
     )
     assert routing_update.status_code == 200, routing_update.text
 

@@ -108,7 +108,10 @@ def _current_embeddings_payload(*, storage: Storage) -> dict[str, Any]:
         "dimension": infer_embedding_dimension(runtime.model),
         "credential_source": runtime.credential_source,
         "credential_id": runtime.credential_id,
+        "stable_credential_id": runtime.stable_credential_id,
         "credential_label": runtime.credential_label,
+        "configured": runtime.configured,
+        "credential_error": runtime.credential_error,
         "embedding_fingerprint": build_embedding_fingerprint(runtime.provider, runtime.model),
     }
 
@@ -335,7 +338,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
                     current_embeddings=current_embeddings,
                 )
             )
-        return {"knowledge_bases": kbs}
+        return {"knowledge_bases": kbs, "current_embeddings": current_embeddings}
     finally:
         storage.close()
 

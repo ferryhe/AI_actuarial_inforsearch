@@ -311,6 +311,7 @@ function AiConfigTab({ lang }: { lang: string }) {
   }>>([]);
   const [credentials, setCredentials] = useState<Array<{
     credential_id: string;
+    stable_credential_id?: string | null;
     provider_id: string;
     instance_id: string;
     label: string;
@@ -330,7 +331,9 @@ function AiConfigTab({ lang }: { lang: string }) {
     model: string;
     credential_source: string;
     credential_id?: string | null;
+    stable_credential_id?: string | null;
     credential_label?: string | null;
+    credential_error?: string | null;
     configured: boolean;
     api_base_url?: string | null;
     embedding_dimension?: number;
@@ -445,7 +448,7 @@ function AiConfigTab({ lang }: { lang: string }) {
       const current = prev[functionName] || {
         provider: routing[functionName]?.provider || "",
         model: routing[functionName]?.model || "",
-        credential_id: routing[functionName]?.credential_id || "",
+        credential_id: routing[functionName]?.stable_credential_id || routing[functionName]?.credential_id || "",
       };
       const next = { ...current, [field]: value };
       if (field === "provider") {
@@ -637,7 +640,7 @@ function AiConfigTab({ lang }: { lang: string }) {
             const current = modelEdits[card.key] || {
               provider: routing[card.key]?.provider || "",
               model: routing[card.key]?.model || "",
-              credential_id: routing[card.key]?.credential_id || "",
+              credential_id: routing[card.key]?.stable_credential_id || routing[card.key]?.credential_id || "",
             };
             const filteredProviders = llmProviders
               .filter((provider) => Boolean(provider.supports?.[card.capability]))
@@ -667,7 +670,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                       data-testid={`select-credential-${card.key}`}>
                       <option value="">—</option>
                       {filteredCredentials.map((credential) => (
-                        <option key={credential.credential_id} value={credential.credential_id}>{credential.label}{credential.is_default ? ` (${t("settings.default")})` : ""}</option>
+                        <option key={credential.credential_id} value={credential.stable_credential_id || credential.credential_id}>{credential.label}{credential.is_default ? ` (${t("settings.default")})` : ""}</option>
                       ))}
                     </select>
                   </div>
@@ -687,6 +690,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                   <p>{t("settings.status")}: {routing[card.key]?.configured ? t("settings.status_configured") : t("settings.missing")}</p>
                   <p>{t("settings.credential_source_label")}: {routing[card.key]?.credential_source || t("settings.missing")}</p>
                   {routing[card.key]?.credential_label && <p>{t("settings.credential")}: {routing[card.key]?.credential_label}</p>}
+                  {routing[card.key]?.credential_error && <p>{t("settings.error")}: {routing[card.key]?.credential_error}</p>}
                   {card.key === "embeddings" && routing[card.key]?.embedding_fingerprint && (
                     <p className="font-mono break-all">{t("settings.embedding_fingerprint_label")}: {routing[card.key]?.embedding_fingerprint}</p>
                   )}

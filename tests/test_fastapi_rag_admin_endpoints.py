@@ -102,10 +102,17 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
         )
         storage.update_file_markdown(alpha_url, "# Alpha\n\nAlpha markdown.", "manual")
         storage.update_file_markdown(beta_url, "# Beta\n\nBeta markdown.", "manual")
+        operator_token = "operator-token"
+        storage.upsert_auth_token_by_hash(
+            subject="operator-token",
+            group_name="operator",
+            token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
     finally:
         storage.close()
 
-    return {"alpha_url": alpha_url, "beta_url": beta_url}
+    return {"alpha_url": alpha_url, "beta_url": beta_url, "operator_token": operator_token}
 
 
 
@@ -115,9 +122,11 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-rag-admin-test-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
     client = TestClient(app)
+    client.headers.update({"X-Auth-Token": seed["operator_token"]})
     return client, app, seed
 
 
@@ -187,8 +196,14 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
 
     list_kbs = client.get("/api/rag/knowledge-bases")
     assert list_kbs.status_code == 200, list_kbs.text
-    listed_kb = next(item for item in list_kbs.json()["knowledge_bases"] if item["kb_id"] == "kb-pr4-test")
+    list_body = list_kbs.json()
+    assert list_body["current_embeddings"]["stable_credential_id"] == "openai:llm:env"
+    listed_kb = next(item for item in list_body["knowledge_bases"] if item["kb_id"] == "kb-pr4-test")
     assert listed_kb["current_embeddings"]["provider"] == "openai"
+    assert listed_kb["current_embeddings"]["configured"] is True
+    assert listed_kb["current_embeddings"]["credential_source"] == "env"
+    assert listed_kb["current_embeddings"]["stable_credential_id"] == "openai:llm:env"
+    assert listed_kb["current_embeddings"]["credential_error"] is None
     assert listed_kb["embedding_compatible"] is True
     assert listed_kb["availability"] in {"building", "ready"}
 
@@ -197,6 +212,7 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
     detail_body = get_kb.json()["knowledge_base"]
     assert detail_body["name"] == "PR4 Test KB"
     assert detail_body["current_embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
+    assert detail_body["current_embeddings"]["configured"] is True
 
     update_kb = client.put(
         "/api/rag/knowledge-bases/kb-pr4-test",

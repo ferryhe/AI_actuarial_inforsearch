@@ -384,6 +384,11 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
             "model": embeddings_runtime.model,
             "dimension": infer_embedding_dimension(embeddings_runtime.model),
             "credential_source": embeddings_runtime.credential_source,
+            "credential_id": embeddings_runtime.credential_id,
+            "stable_credential_id": embeddings_runtime.stable_credential_id,
+            "credential_label": embeddings_runtime.credential_label,
+            "configured": embeddings_runtime.configured,
+            "credential_error": embeddings_runtime.credential_error,
         }
         knowledge_bases: list[dict[str, Any]] = []
         rows = storage._conn.execute(
