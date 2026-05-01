@@ -193,6 +193,59 @@ class TestAiRuntime(unittest.TestCase):
         self.assertFalse(credentials.configured)
         self.assertEqual(credentials.source, "missing")
 
+    def test_resolve_provider_credentials_supports_stable_instance_id(self):
+        encrypted = TokenEncryption().encrypt("db-openai-key")
+        self.storage.upsert_llm_provider(
+            provider="openai",
+            api_key_encrypted=encrypted,
+            base_url="https://api.openai.example/v1",
+            instance_id="default",
+            label="OpenAI Default",
+        )
+
+        credentials = resolve_provider_credentials(
+            "openai",
+            storage=self.storage,
+            credential_id="openai:llm:instance:default",
+        )
+
+        self.assertEqual(credentials.source, "db")
+        self.assertEqual(credentials.api_key, "db-openai-key")
+        self.assertEqual(credentials.stable_credential_id, "openai:llm:instance:default")
+        self.assertTrue(str(credentials.credential_id).startswith("openai:llm:db:"))
+
+    def test_resolve_provider_credentials_rejects_category_mismatch(self):
+        encrypted = TokenEncryption().encrypt("search-key")
+        self.storage.upsert_llm_provider(
+            provider="openai",
+            api_key_encrypted=encrypted,
+            category="search",
+            instance_id="default",
+        )
+
+        credentials = resolve_provider_credentials(
+            "openai",
+            storage=self.storage,
+            credential_id="openai:search:instance:default",
+        )
+
+        self.assertIsNone(credentials.api_key)
+        self.assertEqual(credentials.source, "missing")
+        self.assertEqual(credentials.error, "credential_binding_mismatch")
+
+    def test_resolve_provider_credentials_explicit_env_id(self):
+        os.environ["OPENAI_API_KEY"] = "env-openai-key"
+
+        credentials = resolve_provider_credentials(
+            "openai",
+            storage=self.storage,
+            credential_id="openai:llm:env",
+        )
+
+        self.assertEqual(credentials.source, "env")
+        self.assertEqual(credentials.api_key, "env-openai-key")
+        self.assertEqual(credentials.stable_credential_id, "openai:llm:env")
+
     def test_resolve_provider_credentials_unknown_provider_does_not_crash(self):
         """Unknown provider names should return an unconfigured runtime instead of crashing."""
         credentials = resolve_provider_credentials("unknown-provider", storage=self.storage)

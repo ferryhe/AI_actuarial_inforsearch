@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from cryptography.fernet import Fernet
+
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
 from ai_actuarial.services.token_encryption import TokenEncryption
@@ -20,11 +22,14 @@ class TestRagRuntime(unittest.TestCase):
         self.original_env = dict(os.environ)
         self.temp_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.temp_dir, "test.db")
+        os.environ["TOKEN_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+        TokenEncryption._instance = None
         self.storage = Storage(self.db_path)
 
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self.original_env)
+        TokenEncryption._instance = None
         self.storage.close()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
@@ -63,6 +68,9 @@ class TestRagRuntime(unittest.TestCase):
         self.assertEqual(config.api_key, "db-siliconflow-key")
         self.assertEqual(config.api_base_url, "https://custom.siliconflow.test/v1")
         self.assertEqual(config.openai_api_key, "db-siliconflow-key")
+        self.assertEqual(config.credential_source, "db")
+        self.assertTrue(config.credential_configured)
+        self.assertEqual(config.credential_error, "")
 
     def test_rag_config_from_env_uses_provider_default_base_url(self):
         os.environ["RAG_EMBEDDING_PROVIDER"] = "siliconflow"
@@ -73,6 +81,8 @@ class TestRagRuntime(unittest.TestCase):
         self.assertEqual(config.embedding_provider, "siliconflow")
         self.assertEqual(config.api_key, "env-siliconflow-key")
         self.assertEqual(config.api_base_url, "https://api.siliconflow.cn/v1")
+        self.assertEqual(config.credential_source, "env")
+        self.assertTrue(config.credential_configured)
 
     @patch("ai_actuarial.rag.embeddings.OpenAI")
     def test_embedding_generator_uses_openai_compatible_runtime(self, mock_openai):
@@ -92,6 +102,20 @@ class TestRagRuntime(unittest.TestCase):
             timeout=45,
         )
         self.assertIsNotNone(generator.openai_client)
+
+    def test_embedding_generator_missing_key_reports_runtime_context(self):
+        config = RAGConfig(
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            credential_source="missing",
+            credential_id="openai:llm:instance:missing",
+            stable_credential_id="openai:llm:instance:missing",
+            credential_label="Missing OpenAI",
+            credential_error="credential_not_found",
+        )
+
+        with self.assertRaisesRegex(Exception, "credential_not_found"):
+            EmbeddingGenerator(config)
 
     def test_embedding_generator_normalizes_local_provider(self):
         config = RAGConfig(

@@ -50,6 +50,14 @@ class RAGConfig:
     openai_max_retries: int = 3
     openai_timeout: int = 60
 
+    # Non-sensitive credential runtime metadata
+    credential_source: str = "none"
+    credential_id: str = ""
+    stable_credential_id: str = ""
+    credential_label: str = ""
+    credential_configured: bool = False
+    credential_error: str = ""
+
     # Storage paths
     data_dir: str = "data/rag"
 
@@ -63,6 +71,22 @@ class RAGConfig:
         api_base_url = str(os.getenv(base_url_env) or "").strip() if base_url_env else ""
         if not api_base_url:
             api_base_url = str(get_provider_default_base_url(provider) or "").strip()
+        if provider == "local":
+            credential_source = "local"
+            credential_id = ""
+            credential_configured = True
+            credential_error = ""
+        elif api_key:
+            category = "llm"
+            credential_source = "env"
+            credential_id = f"{provider}:{category}:env"
+            credential_configured = True
+            credential_error = ""
+        else:
+            credential_source = "missing"
+            credential_id = ""
+            credential_configured = False
+            credential_error = "env_api_key_missing"
         return cls(
             chunk_strategy=os.getenv("RAG_CHUNK_STRATEGY", "semantic_structure"),
             max_chunk_tokens=int(os.getenv("RAG_MAX_CHUNK_TOKENS", "800")),
@@ -81,6 +105,12 @@ class RAGConfig:
             openai_api_key=api_key,
             openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
             openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "60")),
+            credential_source=credential_source,
+            credential_id=credential_id,
+            stable_credential_id=credential_id,
+            credential_label=f"{provider} (llm)" if credential_id else "",
+            credential_configured=credential_configured,
+            credential_error=credential_error,
             data_dir=os.getenv("RAG_DATA_DIR", "data/rag"),
         )
 
@@ -188,6 +218,12 @@ class RAGConfig:
                 openai_api_key=api_key,
                 openai_max_retries=int(os.getenv("OPENAI_MAX_RETRIES", "3")),
                 openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "60")),
+                credential_source=runtime.credential_source,
+                credential_id=runtime.credential_id or "",
+                stable_credential_id=runtime.stable_credential_id or "",
+                credential_label=runtime.credential_label or "",
+                credential_configured=runtime.configured,
+                credential_error=runtime.credential_error or "",
                 data_dir=os.getenv("RAG_DATA_DIR", "data/rag"),
             )
         except ValueError:
@@ -239,9 +275,14 @@ class RAGConfig:
             )
 
         if provider != "local" and not self.api_key:
-            env_var = get_provider_api_key_env_var(provider) or "API_KEY"
+            credential_hint = self.stable_credential_id or self.credential_id or "(default credential)"
+            reason = self.credential_error or "missing_api_key"
             raise ValueError(
-                f"{env_var} is required when using {provider} embeddings"
+                "Embedding credentials are not configured for "
+                f"provider='{provider}', model='{self.embedding_model}', "
+                f"credential_source='{self.credential_source}', credential_id='{credential_hint}'. "
+                "Check provider credentials in the database, TOKEN_ENCRYPTION_KEY, "
+                f"and ai_config.embeddings.credential_id. Reason: {reason}"
             )
 
         if self.max_chunk_tokens <= self.min_chunk_tokens:

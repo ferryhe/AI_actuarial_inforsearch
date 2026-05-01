@@ -114,6 +114,7 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
 def _seed_storage(db_path: Path) -> dict[str, object]:
     storage = Storage(str(db_path))
     try:
+        token_encryption = TokenEncryption()
         storage.insert_file(
             url="https://alpha.example/doc-a.pdf",
             sha256="hash-alpha",
@@ -166,7 +167,7 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
         )
         storage.upsert_llm_provider(
             provider="openai",
-            api_key_encrypted="not-a-real-key",
+            api_key_encrypted=token_encryption.encrypt("not-a-real-key"),
             base_url="https://api.openai.example/v1",
             notes="test provider",
             category="llm",
@@ -176,7 +177,7 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
         )
         storage.upsert_llm_provider(
             provider="openai",
-            api_key_encrypted="not-a-real-backup-key",
+            api_key_encrypted=token_encryption.encrypt("not-a-real-backup-key"),
             base_url="https://backup.openai.example/v1",
             notes="backup provider",
             category="llm",
@@ -186,7 +187,7 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
         )
         storage.upsert_llm_provider(
             provider="serper",
-            api_key_encrypted="not-a-real-search-key",
+            api_key_encrypted=token_encryption.encrypt("not-a-real-search-key"),
             base_url="https://google.serper.dev",
             notes="test search provider",
             category="search",
@@ -204,11 +205,11 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
 
 def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path = _write_config_files(tmp_path)
+    TokenEncryption._instance = None
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     seed = _seed_storage(db_path)
 
     monkeypatch.chdir(tmp_path)
-    TokenEncryption._instance = None
-    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-ops-read-test-secret")
@@ -320,8 +321,9 @@ def _patch_available_models(monkeypatch) -> None:
 
 def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     _install_runtime_state(monkeypatch, app)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
     endpoints = [
         "/api/config/sites",
@@ -338,7 +340,7 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
     ]
 
     for endpoint in endpoints:
-        fast = client.get(endpoint)
+        fast = client.get(endpoint, headers=headers)
         assert fast.status_code == 200, endpoint
         body = fast.json()
         if endpoint == "/api/config/sites":
@@ -381,7 +383,7 @@ def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(tmp_p
     assert unauthorized.status_code == 401
 
     forbidden = client.get(
-        "/api/config/sites",
+        "/api/config/backend-settings",
         headers={"Authorization": f"Bearer {seed['reader_token']}"},
     )
     assert forbidden.status_code == 403
@@ -404,10 +406,11 @@ def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(tmp_p
 
 def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     _install_runtime_state(monkeypatch, app)
+    headers = {"X-Auth-Token": seed["operator_token"]}
 
-    providers = client.get("/api/config/providers")
+    providers = client.get("/api/config/providers", headers=headers)
     assert providers.status_code == 200, providers.text
     provider_rows = providers.json()["providers"]
     provider_ids = {row["provider_id"] for row in provider_rows}
@@ -417,7 +420,7 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert openai_row["supports"]["chat"] is True
     assert openai_row["supports"]["embeddings"] is True
 
-    credentials = client.get("/api/config/provider-credentials")
+    credentials = client.get("/api/config/provider-credentials", headers=headers)
     assert credentials.status_code == 200, credentials.text
     credential_rows = credentials.json()["credentials"]
     openai_credentials = [row for row in credential_rows if row["provider_id"] == "openai" and row["source"] == "db"]
@@ -426,18 +429,20 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert any(row["instance_id"] == "backup" and row["is_default"] is False for row in openai_credentials)
     assert any(row["provider_id"] == "serper" and row["category"] == "search" for row in credential_rows)
 
-    catalog = client.get("/api/config/model-catalog")
+    catalog = client.get("/api/config/model-catalog", headers=headers)
     assert catalog.status_code == 200, catalog.text
     catalog_body = catalog.json()
     assert "openai" in catalog_body["available"]
 
-    routing = client.get("/api/config/ai-routing")
+    routing = client.get("/api/config/ai-routing", headers=headers)
     assert routing.status_code == 200, routing.text
     bindings = {item["function_name"]: item for item in routing.json()["bindings"]}
     assert bindings["chat"]["config_section"] == "chatbot"
     assert bindings["embeddings"]["provider"] == "openai"
     assert bindings["embeddings"]["credential_id"]
+    assert bindings["embeddings"]["stable_credential_id"] == "openai:llm:instance:primary"
     assert bindings["embeddings"]["configured"] is True
+    assert bindings["embeddings"]["credential_error"] is None
     assert bindings["embeddings"]["embedding_dimension"] == 3072
     assert bindings["embeddings"]["embedding_fingerprint"].startswith("openai:text-embedding-3-large:")
 
@@ -445,7 +450,9 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("ENABLE_GLOBAL_LOGS_API", "1")
+    import ai_actuarial.api.services.ops_read as ops_read_service
+
+    monkeypatch.setattr(ops_read_service.settings, "ENABLE_GLOBAL_LOGS_API", True)
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "app.log").write_text(

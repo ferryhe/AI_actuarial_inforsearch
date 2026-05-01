@@ -22,11 +22,14 @@ from ai_actuarial.ai_runtime import (
     SECTION_TO_FUNCTION_BINDING,
     binding_to_section_name,
     build_embedding_fingerprint,
+    build_stable_credential_id,
     get_ai_routing,
     is_catalog_provider_supported,
     is_chat_provider_supported,
     is_embedding_provider_supported,
     normalize_binding_function_name,
+    parse_provider_credential_id,
+    resolve_provider_credentials,
 )
 from ai_actuarial.shared_runtime import (
     append_task_log,
@@ -877,6 +880,7 @@ def import_provider_credentials_from_env(data: dict[str, Any] | None, *, db_path
                     "provider_id": provider,
                     "category": category,
                     "credential_id": f"{provider}:{category}:db:{token_id}",
+                    "stable_credential_id": build_stable_credential_id(provider, category, "default"),
                     "api_base_url": (default_row or {}).get("api_base_url"),
                 }
             )
@@ -1024,6 +1028,7 @@ def upsert_provider_credential(data: dict[str, Any], *, db_path: str) -> dict[st
     return {
         "success": True,
         "credential_id": f"{provider}:{category}:db:{token_id}",
+        "stable_credential_id": build_stable_credential_id(provider, category, instance_id),
         "instance_id": instance_id,
         "label": label,
         "is_default": is_default,
@@ -1103,10 +1108,31 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
             if credential_id:
                 if not provider_norm:
                     raise OpsWriteError(f"Provider is required when credential_id is set for binding '{binding_name}'")
-                expected_prefix = f"{provider_norm}:"
-                if not credential_id.startswith(expected_prefix):
+                try:
+                    parsed_credential = parse_provider_credential_id(credential_id)
+                except ValueError as exc:
+                    raise OpsWriteError(str(exc)) from exc
+                if not parsed_credential:
+                    raise OpsWriteError(f"Credential id is required for binding '{binding_name}'")
+                if parsed_credential.provider != provider_norm:
                     raise OpsWriteError(f"Credential '{credential_id}' does not belong to provider '{provider_norm}'")
-                section["credential_id"] = credential_id
+                if parsed_credential.category != "llm":
+                    raise OpsWriteError(
+                        f"Credential '{credential_id}' has category '{parsed_credential.category}', expected 'llm'"
+                    )
+                credential_storage = Storage(db_path)
+                try:
+                    resolved_credential = resolve_provider_credentials(
+                        provider_norm,
+                        storage=credential_storage,
+                        credential_id=credential_id,
+                    )
+                finally:
+                    credential_storage.close()
+                if not resolved_credential.configured:
+                    reason = resolved_credential.error or "credential_not_configured"
+                    raise OpsWriteError(f"Credential '{credential_id}' is not usable: {reason}")
+                section["credential_id"] = resolved_credential.stable_credential_id or credential_id
             else:
                 section.pop("credential_id", None)
         elif provider_changed:

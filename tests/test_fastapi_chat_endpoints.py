@@ -105,10 +105,17 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
         )
         storage.update_file_markdown(alpha_url, "# Alpha\n\nAlpha markdown.", "manual")
         storage.update_file_markdown(beta_url, "# Beta\n\nBeta markdown.", "manual")
+        operator_token = "operator-token"
+        storage.upsert_auth_token_by_hash(
+            subject="operator-token",
+            group_name="operator",
+            token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
     finally:
         storage.close()
 
-    return {"alpha_url": alpha_url, "beta_url": beta_url}
+    return {"alpha_url": alpha_url, "beta_url": beta_url, "operator_token": operator_token}
 
 
 
@@ -139,6 +146,7 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
     client = TestClient(app)
+    client.headers.update({"X-Auth-Token": seed["operator_token"]})
     _seed_knowledge_bases(client)
     return client, app, seed
 
@@ -178,6 +186,11 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
     kbs = client.get("/api/chat/knowledge-bases")
     assert kbs.status_code == 200, kbs.text
     kb_payload = kbs.json()["data"]
+    current = kb_payload["current_embeddings"]
+    assert current["configured"] is True
+    assert current["credential_source"] == "env"
+    assert current["stable_credential_id"] == "openai:llm:env"
+    assert current["credential_error"] is None
     kb_ids = {item["kb_id"] for item in kb_payload["knowledge_bases"]}
     assert {"chat-kb-a", "chat-kb-b"}.issubset(kb_ids)
     first_kb = next(item for item in kb_payload["knowledge_bases"] if item["kb_id"] == "chat-kb-a")
@@ -219,6 +232,9 @@ def test_fastapi_chat_knowledge_bases_reads_current_embeddings_from_ai_config(tm
     current = response.json()["data"]["current_embeddings"]
     assert current["provider"] == "mistral"
     assert current["model"] == "mistral-embed"
+    assert current["configured"] is False
+    assert current["credential_source"] == "missing"
+    assert current["credential_id"] is None
 
 
 def test_fastapi_chat_knowledge_bases_marks_embedding_mismatch_for_reindex(tmp_path: Path, monkeypatch) -> None:
@@ -265,6 +281,11 @@ def test_fastapi_chat_query_flow_works_with_native_service_contract(tmp_path: Pa
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     import ai_actuarial.api.services.chat as chat_service
+    monkeypatch.setattr(
+        chat_service,
+        "AI_CHAT_QUOTA",
+        {**chat_service.AI_CHAT_QUOTA, "anonymous": 2, "guest": 2},
+    )
 
     class FakeConversationManager:
         def __init__(self, storage, config):
@@ -695,8 +716,10 @@ def test_fastapi_chat_guest_session_persists_with_fastapi_native_session(tmp_pat
 def test_fastapi_chat_query_enforces_anonymous_ip_quota(tmp_path: Path, monkeypatch) -> None:
     client, app, _seed = _build_test_client(tmp_path, monkeypatch)
     app.state.require_auth = True
+    client = TestClient(app)
 
     import ai_actuarial.api.services.chat as chat_service
+    monkeypatch.setattr(chat_service.settings, "TRUST_PROXY", True)
 
     class FakeConversationManager:
         def __init__(self, storage, config):
@@ -782,11 +805,13 @@ def test_fastapi_chat_query_enforces_anonymous_ip_quota(tmp_path: Path, monkeypa
     monkeypatch.setattr(chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None))
 
     payload = {"message": "hello", "kb_ids": ["chat-kb-a"], "mode": "expert"}
-    first = client.post("/api/chat/query", json=payload)
-    second = client.post("/api/chat/query", json=payload)
-    third = client.post("/api/chat/query", json=payload)
+    quota_headers = {"X-Forwarded-For": "203.0.113.10"}
+    limit = chat_service.AI_CHAT_QUOTA["anonymous"]
+    responses = [
+        client.post("/api/chat/query", json=payload, headers=quota_headers)
+        for _ in range(limit + 1)
+    ]
 
-    assert first.status_code == 200, first.text
-    assert second.status_code == 200, second.text
-    assert third.status_code == 429, third.text
-    assert "Daily AI chat limit reached (2/day)" in third.text
+    assert all(response.status_code == 200 for response in responses[:limit])
+    assert responses[-1].status_code == 429, responses[-1].text
+    assert f"Daily AI chat limit reached ({limit}/day)" in responses[-1].text

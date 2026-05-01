@@ -132,6 +132,7 @@ AI_actuarial_inforsearch/
 ## Configuration
 
 Main structured configuration lives in `config/sites.yaml`. Secrets should stay in `.env` or process environment.
+Provider API keys used at runtime should be saved as encrypted database credentials; `sites.yaml` should bind AI functions to provider/model and an optional credential id such as `openai:llm:instance:default`.
 
 Important variables:
 
@@ -148,6 +149,17 @@ Generate a Fernet key for `TOKEN_ENCRYPTION_KEY`:
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+Diagnose the active embedding runtime without printing secrets:
+
+```bash
+python scripts/diagnose_embedding_runtime.py --config config/sites.yaml --json
+```
+
+More details:
+
+- [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
+- [RAG Embeddings Runtime](docs/guides/RAG_EMBEDDINGS_RUNTIME.md)
 
 ## Build And Test
 

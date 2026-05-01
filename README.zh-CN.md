@@ -132,6 +132,7 @@ AI_actuarial_inforsearch/
 ## 配置
 
 主要结构化配置在 `config/sites.yaml`。密钥应放在 `.env` 或进程环境变量里。
+运行时使用的 provider API key 建议保存为数据库中的加密 credential；`sites.yaml` 只绑定 AI 功能使用的 provider/model，以及可选 credential id，例如 `openai:llm:instance:default`。
 
 重要变量：
 
@@ -148,6 +149,17 @@ AI_actuarial_inforsearch/
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+诊断当前 embedding runtime，且不输出明文密钥：
+
+```bash
+python scripts/diagnose_embedding_runtime.py --config config/sites.yaml --json
+```
+
+更多说明：
+
+- [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
+- [RAG Embeddings Runtime](docs/guides/RAG_EMBEDDINGS_RUNTIME.md)
 
 ## 构建和测试
 
