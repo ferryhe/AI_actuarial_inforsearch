@@ -3,16 +3,15 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(pwd)}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-APP_SERVICE_NAME="${APP_SERVICE_NAME:-ai-actuarial}"
-CADDY_CONTAINER="${CADDY_CONTAINER:-caddy}"
+APP_SERVICE_NAME="${APP_SERVICE_NAME:-api}"
+CADDY_CONTAINER="${CADDY_CONTAINER:-ai-caddy}"
 RELOAD_CADDY="${RELOAD_CADDY:-false}"
 
 cd "$REPO_DIR"
 
 echo "[1/4] Git pull"
-git restore .
 git fetch
-git pull
+git pull --ff-only
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
   echo "docker-compose.yml not found at $REPO_DIR/$COMPOSE_FILE"
