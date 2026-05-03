@@ -682,7 +682,7 @@ features:
   require_auth: true
   enable_csrf: false
   enable_security_headers: true
-  expose_error_details: true
+  expose_error_details: false
   enable_global_logs_api: true
   enable_rate_limiting: true
   rate_limit_defaults: 200 per hour, 50 per minute

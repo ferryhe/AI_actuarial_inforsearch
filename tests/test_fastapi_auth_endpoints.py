@@ -144,6 +144,26 @@ def test_fastapi_auth_session_cookie_secure_defaults_to_secure_for_production_au
     assert app.state.fastapi_session_cookie_secure is True
 
 
+def test_fastapi_auth_session_cookie_secure_uses_yaml_fastapi_env(tmp_path: Path, monkeypatch) -> None:
+    db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
+    _seed_storage(db_path, files_dir)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["server"] = {"fastapi_env": "production"}
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-auth-test-secret")
+    monkeypatch.setenv("REQUIRE_AUTH", "1")
+    monkeypatch.delenv("FASTAPI_ENV", raising=False)
+    monkeypatch.delenv("FASTAPI_SESSION_COOKIE_SECURE", raising=False)
+
+    app = create_app()
+
+    assert app.state.fastapi_env == "production"
+    assert app.state.fastapi_env_source == "yaml"
+    assert app.state.fastapi_session_cookie_secure is True
+
+
 def test_fastapi_auth_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 

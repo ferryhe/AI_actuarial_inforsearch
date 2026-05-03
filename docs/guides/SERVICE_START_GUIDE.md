@@ -97,6 +97,7 @@ RELOAD_CADDY=true CADDY_CONTAINER=ai-caddy APP_SERVICE_NAME=api bash scripts/dep
 - `FASTAPI_SESSION_SECRET`: required for session login.
 - `TOKEN_ENCRYPTION_KEY`: required for decrypting database-stored provider credentials.
 - `features.require_auth` in `config/sites.yaml`: set to `true` to require authentication.
+- `FASTAPI_ENV`: optional deployment override. If unset, FastAPI uses `config/sites.yaml -> server.fastapi_env`.
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local admin bootstrap token.
 - Provider credentials: create them from Settings so they are stored encrypted in the DB.
 

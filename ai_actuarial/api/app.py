@@ -26,7 +26,7 @@ from .routers.read import router as read_router
 from .routers.metrics import router as metrics_router
 from ai_actuarial.config import settings
 from ai_actuarial.shared_auth import hash_token
-from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, resolve_runtime_features
+from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, resolve_fastapi_env, resolve_runtime_features
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
@@ -90,8 +90,10 @@ def _valid_csrf_token(request, token: str) -> bool:
     return isinstance(data, dict) and isinstance(data.get("nonce"), str) and bool(data.get("nonce"))
 
 
-def _default_session_cookie_secure(require_auth: bool) -> bool:
-    fastapi_env = os.getenv("FASTAPI_ENV", settings.FASTAPI_ENV).strip().lower()
+def _default_session_cookie_secure(require_auth: bool, config_data: dict[str, object]) -> bool:
+    fastapi_env, _source = resolve_fastapi_env(config_data)
+    if not fastapi_env:
+        fastapi_env = settings.FASTAPI_ENV
     return fastapi_env in {"prod", "production"} and require_auth
 
 
@@ -236,9 +238,11 @@ def create_app() -> FastAPI:
     app.state.fastapi_session_cookie_name = "session"
     app.state.fastapi_session_cookie_path = "/"
     app.state.fastapi_session_cookie_domain = None
+    app.state.fastapi_env, app.state.fastapi_env_source = resolve_fastapi_env(config_data)
     app.state.fastapi_session_cookie_secure = _env_bool(
         "FASTAPI_SESSION_COOKIE_SECURE",
-        settings.FASTAPI_SESSION_COOKIE_SECURE or _default_session_cookie_secure(bool(runtime_features["require_auth"])),
+        settings.FASTAPI_SESSION_COOKIE_SECURE
+        or _default_session_cookie_secure(bool(runtime_features["require_auth"]), config_data),
     )
     app.state.fastapi_session_cookie_httponly = True
     app.state.fastapi_session_cookie_samesite = "Lax"

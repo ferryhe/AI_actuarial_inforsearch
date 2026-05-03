@@ -115,6 +115,21 @@ def resolve_runtime_features(config_data: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+def resolve_fastapi_env(config_data: dict[str, Any]) -> tuple[str, str]:
+    """Resolve FastAPI environment from env override, then sites.yaml server config."""
+    raw_env = os.getenv("FASTAPI_ENV")
+    if raw_env is not None and raw_env.strip():
+        return raw_env.strip().lower(), "env"
+
+    raw_server = config_data.get("server") or {}
+    server_cfg = raw_server if isinstance(raw_server, dict) else {}
+    yaml_value = str(server_cfg.get("fastapi_env") or "").strip().lower()
+    if yaml_value:
+        return yaml_value, "yaml"
+
+    return "", "default"
+
+
 def parse_int_clamped(
     value: object,
     *,
@@ -186,6 +201,7 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
     paths = config_data.get("paths") or {}
     search = config_data.get("search") or {}
     features = resolve_runtime_features(config_data)
+    fastapi_env, fastapi_env_source = resolve_fastapi_env(config_data)
     return {
         "defaults": {
             "user_agent": defaults.get("user_agent", ""),
@@ -245,5 +261,7 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "rate_limit_storage_uri": features["rate_limit_storage_uri"],
             "content_security_policy": features["content_security_policy"],
             "feature_sources": dict(features["feature_sources"]),
+            "fastapi_env": fastapi_env,
+            "fastapi_env_source": fastapi_env_source,
         },
     }

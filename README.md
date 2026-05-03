@@ -77,7 +77,7 @@ The canonical SQLite path is `config/sites.yaml -> paths.db`. `DB_PATH` is only 
 
 - `features.require_auth=true`: users must log in with a session or token.
 - `features.require_auth=false`: guests get read-only access.
-- `FASTAPI_SESSION_COOKIE_SECURE=true`: marks session cookies as HTTPS-only. If omitted, this defaults to enabled when `FASTAPI_ENV=production` and auth is required.
+- `FASTAPI_SESSION_COOKIE_SECURE=true`: marks session cookies as HTTPS-only. If omitted, this defaults to enabled when the effective FastAPI environment is production and auth is required. `FASTAPI_ENV` overrides `config/sites.yaml -> server.fastapi_env`.
 - Task execution, schedule management, settings writes, downloads, and deletes require appropriate permissions.
 - Local admin recovery can be configured with `BOOTSTRAP_ADMIN_TOKEN`; do not commit real tokens.
 

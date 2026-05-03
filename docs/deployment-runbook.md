@@ -84,13 +84,14 @@ Provider API keys should be created from Settings and stored as encrypted DB cre
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `FASTAPI_ENV` | `config/sites.yaml -> server.fastapi_env` | Deployment environment override. Use `production` in production; if unset, the YAML server value is used. |
 | `DB_PATH` | `./data/index.db` | Legacy fallback SQLite path when `config/sites.yaml -> paths.db` is absent |
 
 ## Configuration Files
 
 ### `config/sites.yaml`
 
-Most runtime configuration is in `config/sites.yaml` (AI models, RAG settings, feature flags, server settings). Edit via the Web UI Settings page or directly. Changes to Settings-managed values are applied to the running FastAPI process; a restart is still needed after changing process environment variables such as `TOKEN_ENCRYPTION_KEY` or `FASTAPI_SESSION_SECRET`.
+Most runtime configuration is in `config/sites.yaml` (AI models, RAG settings, feature flags, server settings). Edit via the Web UI Settings page or directly. `server.fastapi_env` is used as the default FastAPI environment when `FASTAPI_ENV` is not set. Changes to Settings-managed values are applied to the running FastAPI process; a restart is still needed after changing process environment variables such as `TOKEN_ENCRYPTION_KEY`, `FASTAPI_SESSION_SECRET`, or `FASTAPI_ENV`.
 
 ### `config/sites.yaml` Structure
 

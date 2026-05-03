@@ -19,7 +19,7 @@ services:
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:-}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:-}
       - FILE_DELETION_AUTH_TOKEN=${FILE_DELETION_AUTH_TOKEN:-}
-      - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:-["http://localhost:5173","http://localhost:3000"]}
+      - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
     volumes:
       - ai-data:/app/data
       - ./config/sites.yaml:/app/config/sites.yaml
