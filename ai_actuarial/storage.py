@@ -47,6 +47,7 @@ class Storage:
             "kb_chunk_bindings",
             "kb_index_versions",
             "kb_index_items",
+            "rag_knowledge_bases",
             "users",
             "user_quotas",
             "user_activity_logs",
@@ -554,6 +555,7 @@ class Storage:
                 "target_profile_id": "TEXT",
             },
         )
+        self._ensure_rag_kb_embedding_columns()
         self._conn.commit()
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
@@ -567,6 +569,55 @@ class Storage:
                     f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"
                 )
         self._conn.commit()
+
+    def _ensure_rag_kb_embedding_columns(self) -> None:
+        cur = self._conn.execute("PRAGMA table_info(rag_knowledge_bases)")
+        existing = {row[1] for row in cur.fetchall()}
+        if not existing:
+            return
+        changed = False
+        if "embedding_provider" not in existing:
+            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_provider TEXT NOT NULL DEFAULT 'openai'")
+            changed = True
+        if "embedding_dimension" not in existing:
+            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_dimension INTEGER")
+            changed = True
+        rows = self._conn.execute(
+            """
+            SELECT kb_id, embedding_provider, embedding_model, embedding_dimension
+            FROM rag_knowledge_bases
+            """
+        ).fetchall()
+        for kb_id, provider, model, dimension in rows:
+            resolved_provider = (
+                str(provider or "").strip().lower()
+                or infer_embedding_provider(model, fallback="openai")
+                or "openai"
+            )
+            resolved_dimension = (
+                int(dimension)
+                if dimension not in (None, "")
+                else infer_embedding_dimension(model)
+            )
+            if resolved_provider != str(provider or "").strip().lower() or resolved_dimension != dimension:
+                self._conn.execute(
+                    """
+                    UPDATE rag_knowledge_bases
+                    SET embedding_provider = ?, embedding_dimension = ?
+                    WHERE kb_id = ?
+                    """,
+                    (resolved_provider, resolved_dimension, kb_id),
+                )
+                changed = True
+        if changed:
+            self._conn.commit()
+
+    def _table_exists(self, table: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table,),
+        ).fetchone()
+        return row is not None
 
     def _maybe_commit(self) -> None:
         if self._tx_depth == 0:
@@ -2464,6 +2515,7 @@ class Storage:
         return out
 
     def get_kb_composition_status(self, kb_id: str) -> dict[str, Any]:
+        self._ensure_rag_kb_embedding_columns()
         binding_file_count = int(
             self._conn.execute(
                 "SELECT COUNT(DISTINCT file_url) FROM kb_chunk_bindings WHERE kb_id = ?",
@@ -2531,7 +2583,7 @@ class Storage:
         )
         kb_row = self._conn.execute(
             """
-            SELECT embedding_provider, embedding_model, embedding_dimension, chunk_count, updated_at
+            SELECT embedding_provider, embedding_model, embedding_dimension, chunk_count, file_count, updated_at
             FROM rag_knowledge_bases
             WHERE kb_id = ?
             """,
@@ -2541,51 +2593,58 @@ class Storage:
         kb_model = ""
         kb_dimension = None
         kb_chunk_count = 0
+        kb_file_count = 0
         kb_updated_at = None
         if kb_row:
             kb_provider = kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
             kb_model = kb_row[1] or ""
             kb_dimension = kb_row[2] if kb_row[2] not in (None, "") else infer_embedding_dimension(kb_row[1])
             kb_chunk_count = int((kb_row[3] or 0) or 0)
-            kb_updated_at = kb_row[4]
+            kb_file_count = int((kb_row[4] or 0) or 0)
+            kb_updated_at = kb_row[5]
 
-        kb_file_count_row = self._conn.execute(
-            "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
-            (kb_id,),
-        ).fetchone()
-        kb_file_count = int((kb_file_count_row[0] if kb_file_count_row else 0) or 0)
+        if self._table_exists("rag_kb_files"):
+            kb_file_count_row = self._conn.execute(
+                "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()
+            kb_file_count = int((kb_file_count_row[0] if kb_file_count_row else 0) or kb_file_count)
 
-        indexed_stats = self._conn.execute(
-            """
-            SELECT
-                SUM(CASE WHEN indexed_at IS NOT NULL AND indexed_at != '' THEN 1 ELSE 0 END),
-                MAX(indexed_at)
-            FROM rag_kb_files
-            WHERE kb_id = ?
-            """,
-            (kb_id,),
-        ).fetchone()
-        indexed_file_count = int((indexed_stats[0] or 0) if indexed_stats else 0)
-        legacy_index_time = indexed_stats[1] if indexed_stats else None
+            indexed_stats = self._conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN indexed_at IS NOT NULL AND indexed_at != '' THEN 1 ELSE 0 END),
+                    MAX(indexed_at)
+                FROM rag_kb_files
+                WHERE kb_id = ?
+                """,
+                (kb_id,),
+            ).fetchone()
+            indexed_file_count = int((indexed_stats[0] or 0) if indexed_stats else 0)
+            legacy_index_time = indexed_stats[1] if indexed_stats else None
 
-        pending_file_count_row = self._conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM rag_kb_files kf
-            LEFT JOIN catalog_items c ON c.file_url = kf.file_url
-            WHERE kf.kb_id = ?
-              AND (
-                kf.indexed_at IS NULL
-                OR kf.indexed_at = ''
-                OR (
-                    c.markdown_updated_at IS NOT NULL
-                    AND c.markdown_updated_at > kf.indexed_at
-                )
-              )
-            """,
-            (kb_id,),
-        ).fetchone()
-        pending_file_count = int((pending_file_count_row[0] if pending_file_count_row else 0) or 0)
+            pending_file_count_row = self._conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM rag_kb_files kf
+                LEFT JOIN catalog_items c ON c.file_url = kf.file_url
+                WHERE kf.kb_id = ?
+                  AND (
+                    kf.indexed_at IS NULL
+                    OR kf.indexed_at = ''
+                    OR (
+                        c.markdown_updated_at IS NOT NULL
+                        AND c.markdown_updated_at > kf.indexed_at
+                    )
+                  )
+                """,
+                (kb_id,),
+            ).fetchone()
+            pending_file_count = int((pending_file_count_row[0] if pending_file_count_row else 0) or 0)
+        else:
+            indexed_file_count = kb_file_count if kb_chunk_count > 0 else 0
+            legacy_index_time = kb_updated_at
+            pending_file_count = 0
 
         has_index = bool(latest)
         latest_index_time = (latest[6] or latest[7]) if latest else None

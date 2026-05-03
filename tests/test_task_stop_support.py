@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -428,3 +429,251 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(tmp
     assert kwargs["limit"] == 12
     assert kwargs["candidate_offset"] == 2
     assert kwargs["skip_existing"] is False
+
+
+def test_native_task_runtime_quick_check_uses_submitted_url_config(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-quick.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "defaults:",
+                "  user_agent: test-agent/1.0",
+                "  max_pages: 20",
+                "  max_depth: 4",
+                "  file_exts: ['.pdf']",
+                "sites:",
+                "  - name: Configured Site",
+                "    url: https://configured.example",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.crawl_site.return_value = [{"local_path": str(tmp_path / "report.pdf")}]
+
+    runtime = NativeTaskRuntime()
+    with patch("ai_actuarial.task_runtime.Crawler", return_value=fake_crawler):
+        result = runtime._run_collection(
+            "task-quick",
+            "quick_check",
+            {
+                "name": "Quick URL",
+                "url": "https://submitted.example/start",
+                "max_pages": "3",
+                "max_depth": "2",
+                "keywords": ["risk"],
+                "file_exts": [".docx"],
+                "check_database": False,
+            },
+        )
+
+    assert result.success is True
+    site_cfg = fake_crawler.crawl_site.call_args.args[0]
+    assert site_cfg.url == "https://submitted.example/start"
+    assert site_cfg.max_pages == 3
+    assert site_cfg.max_depth == 2
+    assert site_cfg.keywords == ["risk"]
+    assert site_cfg.file_exts == [".docx"]
+    assert site_cfg.check_database is False
+
+
+def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-search.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "defaults:",
+                "  user_agent: test-agent/1.0",
+                "  keywords: [actuarial]",
+                "  file_exts: ['.pdf']",
+                "search:",
+                "  max_results: 5",
+                "  languages: [en]",
+                "  country: us",
+                "  exclude_keywords: [newsletter]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.scan_page_for_files.return_value = [{"local_path": str(tmp_path / "report.pdf")}]
+    runtime = NativeTaskRuntime()
+    search_result = SimpleNamespace(url="https://example.com/report", source="Search")
+    with patch(
+        "ai_actuarial.task_runtime.get_search_runtime_credentials",
+        return_value={"brave": "brave-key", "google": "google-key", "serper": None, "tavily": None},
+    ), patch("ai_actuarial.task_runtime.search_all", return_value=[search_result]) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection(
+            "task-search",
+            "search",
+            {
+                "query": "actuarial AI",
+                "engine": "brave",
+                "count": "7",
+                "site": "example.com",
+                "search_lang": "zh",
+                "file_exts": [".pdf"],
+                "use_search_defaults": True,
+            },
+        )
+
+    assert result.success is True
+    args = mock_search.call_args.args
+    assert args[0] == ["actuarial AI site:example.com"]
+    assert args[1] == 7
+    assert args[2] == "brave-key"
+    assert args[3] is None
+    assert mock_search.call_args.kwargs["languages"] == ["zh"]
+    assert mock_search.call_args.kwargs["country"] == "us"
+    site_cfg = fake_crawler.scan_page_for_files.call_args.args[1]
+    assert site_cfg.file_exts == [".pdf"]
+    assert site_cfg.exclude_keywords == ["newsletter"]
+
+
+def test_native_task_runtime_markdown_conversion_writes_db_markdown(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-markdown.db"
+    download_dir = tmp_path / "files"
+    source_file = tmp_path / "source.pdf"
+    source_file.write_bytes(b"%PDF-1.4\n")
+    file_url = "https://example.com/source.pdf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "ai_config:",
+                "  ocr:",
+                "    provider: local",
+                "    model: docling",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-md",
+            title="Source",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="source.pdf",
+            local_path=str(source_file),
+            bytes=source_file.stat().st_size,
+            content_type="application/pdf",
+        )
+    finally:
+        storage.close()
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime._convert_document_path",
+        return_value=SimpleNamespace(markdown="# Converted", engine="docling", model="docling"),
+    ) as mock_convert:
+        result = runtime._run_collection(
+            "task-md",
+            "markdown_conversion",
+            {"file_urls": [file_url], "conversion_tool": "docling", "overwrite_existing": True},
+        )
+
+    assert result.success is True
+    mock_convert.assert_called_once()
+    storage = Storage(str(db_path))
+    try:
+        markdown = storage.get_file_markdown(file_url)
+    finally:
+        storage.close()
+    assert markdown["markdown_content"] == "# Converted"
+    assert markdown["markdown_source"] == "docling:docling"
+
+
+def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-chunk.db"
+    download_dir = tmp_path / "files"
+    file_url = "https://example.com/source.pdf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-chunk",
+            title="Source",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="source.pdf",
+            local_path=str(tmp_path / "source.pdf"),
+            bytes=12,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(file_url, "# Markdown", "manual")
+    finally:
+        storage.close()
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime.generate_file_chunk_sets",
+        return_value={"chunk_set_id": "cs-test", "chunk_count": 3, "reused_existing": False},
+    ) as mock_generate:
+        result = runtime._run_collection(
+            "task-chunk",
+            "chunk_generation",
+            {
+                "file_urls": [file_url],
+                "profile_name": "Task Profile",
+                "chunk_size": "120",
+                "chunk_overlap": "20",
+                "overwrite_same_profile": True,
+            },
+        )
+
+    assert result.success is True
+    assert result.metadata["total_chunks"] == 3
+    kwargs = mock_generate.call_args.kwargs
+    assert Path(kwargs["db_path"]) == db_path.resolve()
+    assert kwargs["file_url"] == file_url
+    assert kwargs["payload"]["name"] == "Task Profile"
+    assert kwargs["payload"]["chunk_size"] == 120
+    assert kwargs["payload"]["chunk_overlap"] == 20

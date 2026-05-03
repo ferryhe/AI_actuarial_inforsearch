@@ -692,5 +692,5 @@ server:
   host: 0.0.0.0
   port: 5000
   max_content_length: 52428800
-  fastapi_env: production
+  fastapi_env: development
   fastapi_debug: false

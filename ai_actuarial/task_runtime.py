@@ -11,9 +11,12 @@ from dataclasses import dataclass
 from datetime import datetime, time as datetime_time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import schedule
 
+from ai_actuarial.ai_runtime import get_search_runtime_credentials, resolve_ocr_runtime
+from ai_actuarial.api.services.files_write import generate_file_chunk_sets
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
 from ai_actuarial.collectors.file import FileCollector
@@ -22,10 +25,38 @@ from ai_actuarial.collectors.url import URLCollector
 from ai_actuarial.crawler import Crawler, SiteConfig
 from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.search import search_all
 from ai_actuarial.shared_runtime import append_task_log, get_sites_config_path, load_yaml, task_log_path
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+_CONVERTIBLE_MARKDOWN_PREDICATE = """
+    f.local_path IS NOT NULL AND f.local_path != ''
+    AND f.deleted_at IS NULL
+    AND (
+        LOWER(IFNULL(f.content_type,'')) LIKE '%pdf%'
+        OR LOWER(IFNULL(f.content_type,'')) LIKE '%word%'
+        OR LOWER(IFNULL(f.content_type,'')) LIKE '%powerpoint%'
+        OR LOWER(IFNULL(f.content_type,'')) LIKE '%presentation%'
+        OR LOWER(IFNULL(f.content_type,'')) LIKE '%document%'
+        OR LOWER(IFNULL(f.content_type,'')) LIKE '%image%'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pdf'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.docx'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.pptx'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.png'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpg'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.jpeg'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.webp'
+        OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
+    )
+"""
+
+
+def _convert_document_path(path: Path, **kwargs: Any) -> Any:
+    from doc_to_md.registry import convert_path
+
+    return convert_path(path, **kwargs)
 
 
 class _FallbackScheduleJob:
@@ -338,26 +369,46 @@ class NativeTaskRuntime:
                 return collector.collect(cfg, progress_callback=self._progress_callback(task_id))
 
             if collection_type == "url":
-                crawler = Crawler(storage, download_dir, str((config.get("defaults") or {}).get("user_agent") or "AI-Actuarial/1.0"))
+                crawler = Crawler(
+                    storage,
+                    download_dir,
+                    str((config.get("defaults") or {}).get("user_agent") or "AI-Actuarial/1.0"),
+                    stop_check=lambda: self._stop_requested(task_id),
+                )
                 collector = URLCollector(storage, crawler)
+                defaults = dict(config.get("defaults") or {})
                 cfg = CollectionConfig(
                     name=str(data.get("name") or "URL Collection"),
                     source_type="url",
-                    check_database=True,
-                    keywords=list((config.get("defaults") or {}).get("keywords") or []),
-                    file_exts=list((config.get("defaults") or {}).get("file_exts") or []),
-                    metadata={"urls": list(data.get("urls") or [])},
+                    check_database=bool(data.get("check_database", True)),
+                    keywords=self._coerce_list(data.get("keywords")) or list(defaults.get("keywords") or []),
+                    file_exts=self._coerce_list(data.get("file_exts")) or list(defaults.get("file_exts") or []),
+                    exclude_keywords=self._coerce_list(data.get("exclude_keywords")) or list(defaults.get("exclude_keywords") or []),
+                    metadata={"urls": self._coerce_list(data.get("urls"))},
                 )
                 return collector.collect(cfg, progress_callback=self._progress_callback(task_id))
 
+            if collection_type == "search":
+                return self._run_search_task(task_id, storage, config, download_dir, data)
+
             if collection_type in {"scheduled", "adhoc", "quick_check"}:
-                crawler = Crawler(storage, download_dir, str((config.get("defaults") or {}).get("user_agent") or "AI-Actuarial/1.0"))
+                crawler = Crawler(
+                    storage,
+                    download_dir,
+                    str((config.get("defaults") or {}).get("user_agent") or "AI-Actuarial/1.0"),
+                    stop_check=lambda: self._stop_requested(task_id),
+                )
                 collector = ScheduledCollector(storage, crawler)
+                site_configs = (
+                    [self._quick_check_site_config(config, data)]
+                    if collection_type == "quick_check" and str(data.get("url") or "").strip()
+                    else self._site_configs_for_run(config, data)
+                )
                 cfg = CollectionConfig(
                     name=str(data.get("name") or f"{collection_type.capitalize()} Run"),
                     source_type=collection_type,
-                    check_database=True,
-                    metadata={"site_configs": self._site_configs_for_run(config, data)},
+                    check_database=bool(data.get("check_database", True)),
+                    metadata={"site_configs": site_configs},
                 )
                 return collector.collect(cfg, progress_callback=self._progress_callback(task_id))
 
@@ -438,6 +489,12 @@ class NativeTaskRuntime:
 
             if collection_type in {"rag_indexing", "kb_index_build"}:
                 return self._run_rag_indexing(task_id, storage, data)
+
+            if collection_type == "markdown_conversion":
+                return self._run_markdown_conversion(task_id, storage, config, download_dir, data)
+
+            if collection_type == "chunk_generation":
+                return self._run_chunk_generation(task_id, storage, db_path, data)
 
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
@@ -520,6 +577,277 @@ class NativeTaskRuntime:
             },
         )
 
+    def _run_search_task(
+        self,
+        task_id: str,
+        storage: Storage,
+        config: dict[str, Any],
+        download_dir: str,
+        data: dict[str, Any],
+    ) -> CollectionResult:
+        query = str(data.get("query") or "").strip()
+        if not query:
+            raise RuntimeError("query is required for search tasks")
+
+        defaults = dict(config.get("defaults") or {})
+        search_cfg = dict(config.get("search") or {})
+        user_agent = str(defaults.get("user_agent") or "AI-Actuarial/1.0")
+        use_defaults = bool(data.get("use_search_defaults", True))
+
+        site_filter = str(data.get("site") or "").strip()
+        search_query = self._query_with_site_filter(query, site_filter)
+        max_results = self._positive_int(data.get("count"), self._positive_int(search_cfg.get("max_results"), 5))
+
+        languages = self._coerce_list(data.get("search_lang"))
+        if not languages and use_defaults:
+            languages = self._coerce_list(search_cfg.get("languages"))
+        if not languages:
+            languages = ["en"]
+
+        countries = self._coerce_list(data.get("search_country"))
+        country = countries[0] if countries else (str(search_cfg.get("country") or "").strip() if use_defaults else "")
+        country = country or None
+
+        file_exts = self._coerce_list(data.get("file_exts"))
+        if not file_exts and use_defaults:
+            file_exts = self._coerce_list(defaults.get("file_exts"))
+
+        keywords = self._coerce_list(data.get("keywords"))
+        if not keywords and use_defaults:
+            keywords = self._coerce_list(defaults.get("keywords"))
+
+        exclude_keywords = self._coerce_list(data.get("search_exclude_keywords")) or self._coerce_list(data.get("exclude_keywords"))
+        if use_defaults:
+            exclude_keywords = self._dedupe_list(exclude_keywords + self._coerce_list(search_cfg.get("exclude_keywords")))
+
+        credentials = get_search_runtime_credentials(storage=storage)
+        engine = str(data.get("engine") or "auto").strip().lower() or "auto"
+        if engine in {"all", "auto"}:
+            selected_credentials = dict(credentials)
+        else:
+            if engine not in {"brave", "google", "serper", "tavily"}:
+                raise RuntimeError(f"Unsupported search engine: {engine}")
+            if not credentials.get(engine):
+                raise RuntimeError(f"Search engine '{engine}' is not configured")
+            selected_credentials = {key: value if key == engine else None for key, value in credentials.items()}
+
+        progress = self._progress_callback(task_id)
+        progress(0, max_results, f"Searching: {query}")
+        results = search_all(
+            [search_query],
+            max_results,
+            selected_credentials.get("brave"),
+            selected_credentials.get("google"),
+            user_agent,
+            languages=languages,
+            country=country,
+            serper_key=selected_credentials.get("serper"),
+            tavily_key=selected_credentials.get("tavily"),
+        )
+        unique_results = self._dedupe_search_results(results, site_filter=site_filter)
+
+        crawler = Crawler(storage, download_dir, user_agent, stop_check=lambda: self._stop_requested(task_id))
+        errors: list[str] = []
+        items_found = 0
+        items_downloaded = 0
+        items_skipped = 0
+        total = len(unique_results)
+        progress(0, total, f"Scanning {total} search results")
+        for index, result in enumerate(unique_results, start=1):
+            if self._stop_requested(task_id):
+                errors.append("Task stopped by user")
+                break
+            try:
+                site_config = SiteConfig(
+                    name=str(data.get("name") or "Search Result"),
+                    url=result.url,
+                    max_pages=1,
+                    max_depth=1,
+                    delay_seconds=float(search_cfg.get("delay_seconds") or defaults.get("delay_seconds") or 0.5),
+                    keywords=keywords,
+                    file_exts=file_exts,
+                    exclude_keywords=exclude_keywords,
+                    check_database=True,
+                )
+                new_items = crawler.scan_page_for_files(result.url, site_config, source_site=result.source)
+                items_found += len(new_items)
+                for item in new_items:
+                    if item.get("local_path"):
+                        items_downloaded += 1
+                    else:
+                        items_skipped += 1
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"Error scanning search result {result.url}: {exc}")
+            progress(index, total, f"Scanned search result {index}/{total}")
+
+        return CollectionResult(
+            success=(not errors or items_found > 0),
+            items_found=items_found,
+            items_downloaded=items_downloaded,
+            items_skipped=items_skipped,
+            errors=errors,
+            metadata={
+                "source_type": "search",
+                "engine": engine,
+                "query": query,
+                "search_results": total,
+                "site_filter": site_filter,
+            },
+        )
+
+    def _run_markdown_conversion(
+        self,
+        task_id: str,
+        storage: Storage,
+        config: dict[str, Any],
+        download_dir: str,
+        data: dict[str, Any],
+    ) -> CollectionResult:
+        file_rows = self._markdown_candidate_files(storage, data)
+        if not file_rows:
+            return CollectionResult(
+                success=True,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=[],
+                metadata={"source_type": "markdown_conversion"},
+            )
+
+        conversion_tool = str(data.get("conversion_tool") or "opendataloader").strip().lower()
+        ocr_runtime = resolve_ocr_runtime(storage=storage, yaml_config=config, engine_override=conversion_tool)
+        if ocr_runtime.provider != "local" and not ocr_runtime.api_key:
+            raise RuntimeError(f"OCR provider '{ocr_runtime.provider}' is not configured")
+
+        overwrite_existing = bool(data.get("overwrite_existing", False))
+        skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
+        progress = self._progress_callback(task_id)
+        errors: list[str] = []
+        converted = 0
+        skipped = 0
+        total = len(file_rows)
+        progress(0, total, "Starting markdown conversion")
+
+        for index, row in enumerate(file_rows, start=1):
+            file_url = str(row.get("url") or "").strip()
+            if self._stop_requested(task_id):
+                errors.append("Task stopped by user")
+                break
+            if skip_existing and str(row.get("markdown_content") or "").strip():
+                skipped += 1
+                progress(index, total, f"Skipped existing markdown {index}/{total}")
+                continue
+            local_path = self._resolve_file_path(row.get("local_path"), download_dir)
+            if not local_path.exists():
+                errors.append(f"{file_url}: local file not found ({row.get('local_path')})")
+                progress(index, total, f"Missing file {index}/{total}")
+                continue
+            try:
+                output = _convert_document_path(
+                    local_path,
+                    engine=ocr_runtime.engine,  # type: ignore[arg-type]
+                    model=ocr_runtime.model,
+                    api_key=ocr_runtime.api_key,
+                    base_url=ocr_runtime.base_url,
+                )
+                ok, reason = storage.update_file_markdown(
+                    file_url,
+                    output.markdown,
+                    markdown_source=f"{output.engine}:{output.model}".strip(":"),
+                )
+                if ok:
+                    converted += 1
+                else:
+                    errors.append(f"{file_url}: {reason or 'markdown update failed'}")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{file_url}: {exc}")
+            progress(index, total, f"Converted markdown {index}/{total}")
+
+        return CollectionResult(
+            success=(not errors or converted > 0),
+            items_found=total,
+            items_downloaded=converted,
+            items_skipped=skipped,
+            errors=errors,
+            metadata={
+                "source_type": "markdown_conversion",
+                "conversion_tool": conversion_tool,
+                "resolved_engine": ocr_runtime.engine,
+                "provider": ocr_runtime.provider,
+            },
+        )
+
+    def _run_chunk_generation(
+        self,
+        task_id: str,
+        storage: Storage,
+        db_path: str,
+        data: dict[str, Any],
+    ) -> CollectionResult:
+        file_urls = self._chunk_candidate_file_urls(storage, data)
+        if not file_urls:
+            return CollectionResult(
+                success=True,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=[],
+                metadata={"source_type": "chunk_generation"},
+            )
+
+        chunk_size = self._positive_int(data.get("chunk_size"), 800)
+        chunk_overlap = self._positive_int(data.get("chunk_overlap"), 100, min_value=0)
+        if chunk_overlap >= chunk_size:
+            chunk_overlap = max(0, chunk_size - 1)
+        payload = {
+            "profile_id": str(data.get("profile_id") or "").strip(),
+            "name": str(data.get("profile_name") or data.get("chunk_profile_name") or "").strip()
+            or f"default-{chunk_size}-{chunk_overlap}",
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+            "splitter": str(data.get("splitter") or "semantic").strip(),
+            "tokenizer": str(data.get("tokenizer") or "cl100k_base").strip(),
+            "version": str(data.get("version") or "v1").strip(),
+            "overwrite_same_profile": bool(data.get("overwrite_same_profile", False)),
+        }
+
+        progress = self._progress_callback(task_id)
+        errors: list[str] = []
+        generated = 0
+        skipped = 0
+        total_chunks = 0
+        total = len(file_urls)
+        progress(0, total, "Starting chunk generation")
+        for index, file_url in enumerate(file_urls, start=1):
+            if self._stop_requested(task_id):
+                errors.append("Task stopped by user")
+                break
+            try:
+                result = generate_file_chunk_sets(db_path=db_path, file_url=file_url, payload=payload)
+                if result.get("reused_existing") and not result.get("overwrote_existing"):
+                    skipped += 1
+                else:
+                    generated += 1
+                total_chunks += int(result.get("chunk_count") or 0)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{file_url}: {exc}")
+            progress(index, total, f"Generated chunks {index}/{total}")
+
+        return CollectionResult(
+            success=(not errors or generated > 0),
+            items_found=total,
+            items_downloaded=generated,
+            items_skipped=skipped,
+            errors=errors,
+            metadata={
+                "source_type": "chunk_generation",
+                "profile_name": payload["name"],
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "total_chunks": total_chunks,
+            },
+        )
+
     def _collect_file_paths(self, data: dict[str, Any]) -> list[str]:
         directory = Path(str(data.get("directory_path") or "")).resolve()
         recursive = bool(data.get("recursive", False))
@@ -540,34 +868,255 @@ class NativeTaskRuntime:
         sites = list(config.get("sites") or [])
         selected_site = str(data.get("site") or "").strip()
         site_rows = [row for row in sites if not selected_site or str(row.get("name") or "") == selected_site]
+        default_exclude_keywords = self._coerce_list(defaults.get("exclude_keywords"))
+        default_exclude_prefixes = self._coerce_list(defaults.get("exclude_prefixes"))
         return [
             SiteConfig(
                 name=str(row.get("name") or "Unnamed Site"),
                 url=str(row.get("url") or ""),
-                max_pages=int(row.get("max_pages") or defaults.get("max_pages") or 200),
-                max_depth=int(row.get("max_depth") or defaults.get("max_depth") or 2),
+                max_pages=self._positive_int(data.get("max_pages"), self._positive_int(row.get("max_pages"), self._positive_int(defaults.get("max_pages"), 200))),
+                max_depth=self._positive_int(data.get("max_depth"), self._positive_int(row.get("max_depth"), self._positive_int(defaults.get("max_depth"), 2))),
                 delay_seconds=float(row.get("delay_seconds") or defaults.get("delay_seconds") or 0.5),
                 keywords=list(row.get("keywords") or defaults.get("keywords") or []),
                 file_exts=list(row.get("file_exts") or defaults.get("file_exts") or []),
-                exclude_keywords=list(row.get("exclude_keywords") or defaults.get("exclude_keywords") or []),
-                exclude_prefixes=list(row.get("exclude_prefixes") or defaults.get("exclude_prefixes") or []),
+                exclude_keywords=self._dedupe_list(default_exclude_keywords + self._coerce_list(row.get("exclude_keywords"))),
+                exclude_prefixes=self._dedupe_list(default_exclude_prefixes + self._coerce_list(row.get("exclude_prefixes"))),
                 content_selector=str(row.get("content_selector") or "").strip() or None,
+                allow_url_patterns=self._coerce_list(row.get("allow_url_patterns")),
                 queries=list(row.get("queries") or []),
+                check_database=bool(data.get("check_database", True)),
             )
             for row in site_rows
             if str(row.get("url") or "").strip()
         ]
 
+    def _quick_check_site_config(self, config: dict[str, Any], data: dict[str, Any]) -> SiteConfig:
+        defaults = dict(config.get("defaults") or {})
+        search_cfg = dict(config.get("search") or {})
+        return SiteConfig(
+            name=str(data.get("name") or "Quick Check"),
+            url=str(data.get("url") or "").strip(),
+            max_pages=self._positive_int(data.get("max_pages"), self._positive_int(defaults.get("max_pages"), 10)),
+            max_depth=self._positive_int(data.get("max_depth"), self._positive_int(defaults.get("max_depth"), 1)),
+            delay_seconds=float(data.get("delay_seconds") or defaults.get("delay_seconds") or 0.5),
+            keywords=self._coerce_list(data.get("keywords")) or self._coerce_list(defaults.get("keywords")),
+            file_exts=self._coerce_list(data.get("file_exts")) or self._coerce_list(defaults.get("file_exts")),
+            exclude_keywords=self._dedupe_list(
+                self._coerce_list(data.get("exclude_keywords"))
+                + self._coerce_list(defaults.get("exclude_keywords"))
+                + self._coerce_list(search_cfg.get("exclude_keywords"))
+            ),
+            exclude_prefixes=self._coerce_list(defaults.get("exclude_prefixes")),
+            check_database=bool(data.get("check_database", True)),
+        )
+
+    def _markdown_candidate_files(self, storage: Storage, data: dict[str, Any]) -> list[dict[str, Any]]:
+        explicit_urls = self._explicit_file_urls(data)
+        overwrite_existing = bool(data.get("overwrite_existing", False))
+        skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
+        conn = storage._conn
+        if explicit_urls:
+            placeholders = ",".join("?" for _ in explicit_urls)
+            rows = conn.execute(
+                f"""
+                SELECT f.url, f.local_path, f.original_filename, f.content_type, c.markdown_content
+                FROM files f
+                LEFT JOIN catalog_items c ON c.file_url = f.url
+                WHERE f.url IN ({placeholders})
+                  AND f.deleted_at IS NULL
+                """,
+                tuple(explicit_urls),
+            ).fetchall()
+            by_url = {
+                str(row[0]): {
+                    "url": row[0],
+                    "local_path": row[1],
+                    "original_filename": row[2],
+                    "content_type": row[3],
+                    "markdown_content": row[4],
+                }
+                for row in rows
+            }
+            return [by_url[url] for url in explicit_urls if url in by_url]
+
+        category_sql, params = self._category_sql(str(data.get("category") or "").strip(), alias="c")
+        where = _CONVERTIBLE_MARKDOWN_PREDICATE + category_sql
+        if skip_existing:
+            where += " AND (c.markdown_content IS NULL OR c.markdown_content = '')"
+        limit = self._positive_int(data.get("scan_count"), 50)
+        offset = max(0, self._positive_int(data.get("scan_start_index"), 1) - 1)
+        rows = conn.execute(
+            f"""
+            SELECT f.url, f.local_path, f.original_filename, f.content_type, c.markdown_content
+            FROM files f
+            LEFT JOIN catalog_items c ON c.file_url = f.url
+            WHERE {where}
+            ORDER BY f.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params + [limit, offset]),
+        ).fetchall()
+        return [
+            {
+                "url": row[0],
+                "local_path": row[1],
+                "original_filename": row[2],
+                "content_type": row[3],
+                "markdown_content": row[4],
+            }
+            for row in rows
+        ]
+
+    def _chunk_candidate_file_urls(self, storage: Storage, data: dict[str, Any]) -> list[str]:
+        explicit_urls = self._explicit_file_urls(data)
+        if explicit_urls:
+            return [
+                str(row[0])
+                for row in storage._conn.execute(
+                    f"""
+                    SELECT f.url
+                    FROM files f
+                    JOIN catalog_items c ON c.file_url = f.url
+                    WHERE f.url IN ({",".join("?" for _ in explicit_urls)})
+                      AND f.deleted_at IS NULL
+                      AND c.markdown_content IS NOT NULL
+                      AND c.markdown_content != ''
+                    """,
+                    tuple(explicit_urls),
+                ).fetchall()
+            ]
+
+        category_sql, params = self._category_sql(str(data.get("category") or "").strip(), alias="c")
+        where = """
+            f.deleted_at IS NULL
+            AND c.markdown_content IS NOT NULL
+            AND c.markdown_content != ''
+        """ + category_sql
+        if not bool(data.get("overwrite_same_profile", False)):
+            where += " AND NOT EXISTS (SELECT 1 FROM file_chunk_sets s WHERE s.file_url = f.url)"
+        limit = self._positive_int(data.get("scan_count"), 50)
+        offset = max(0, self._positive_int(data.get("scan_start_index"), 1) - 1)
+        rows = storage._conn.execute(
+            f"""
+            SELECT f.url
+            FROM files f
+            JOIN catalog_items c ON c.file_url = f.url
+            WHERE {where}
+            ORDER BY f.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params + [limit, offset]),
+        ).fetchall()
+        return [str(row[0]) for row in rows if row and row[0]]
+
+    def _explicit_file_urls(self, data: dict[str, Any]) -> list[str]:
+        return [value for value in self._coerce_list(data.get("file_urls")) if value]
+
+    def _resolve_file_path(self, raw_path: Any, download_dir: str) -> Path:
+        raw = str(raw_path or "").strip()
+        path = Path(raw)
+        candidates: list[Path] = []
+        if path.is_absolute():
+            candidates.append(path)
+        else:
+            candidates.extend(
+                [
+                    Path.cwd() / path,
+                    Path(download_dir).parent / path,
+                    Path(download_dir) / path,
+                ]
+            )
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate.resolve()
+        return candidates[0].resolve() if candidates else path.resolve()
+
+    def _category_sql(self, category_filter: str, *, alias: str) -> tuple[str, list[Any]]:
+        category_name = str(category_filter or "").strip()
+        if not category_name:
+            return "", []
+        return (
+            f" AND ({alias}.category = ? OR {alias}.category LIKE ? OR {alias}.category LIKE ? OR {alias}.category LIKE ?)",
+            [
+                category_name,
+                f"{category_name};%",
+                f"%; {category_name}",
+                f"%; {category_name};%",
+            ],
+        )
+
+    def _query_with_site_filter(self, query: str, site_filter: str) -> str:
+        site = str(site_filter or "").strip()
+        if not site or "site:" in query.lower():
+            return query
+        return f"{query} site:{site}"
+
+    def _dedupe_search_results(self, results: list[Any], *, site_filter: str = "") -> list[Any]:
+        seen: set[str] = set()
+        out: list[Any] = []
+        site = str(site_filter or "").strip().lower().removeprefix("site:")
+        for result in results:
+            url = str(getattr(result, "url", "") or "").strip()
+            if not url or url in seen:
+                continue
+            if site:
+                host = urlparse(url).netloc.lower()
+                if site not in host and not host.endswith(site.lstrip(".")):
+                    continue
+            seen.add(url)
+            out.append(result)
+        return out
+
+    def _coerce_list(self, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.replace("\r\n", "\n").replace(",", "\n").split("\n") if part.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [str(value).strip()] if str(value).strip() else []
+
+    def _dedupe_list(self, values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for value in values:
+            key = value.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(value.strip())
+        return out
+
+    def _positive_int(self, value: Any, default: int, *, min_value: int = 1) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = default
+        return max(min_value, parsed)
+
+    def _stop_requested(self, task_id: str) -> bool:
+        with self.task_lock:
+            task = self.active_tasks.get(task_id)
+            return bool(task and task.get("stop_requested"))
+
     def _progress_callback(self, task_id: str) -> Callable[[int, int, str], None]:
         def callback(current: int, total: int, message: str) -> None:
+            try:
+                current_int = int(current or 0)
+            except (TypeError, ValueError):
+                current_int = 0
+            try:
+                total_int = int(total or 0)
+            except (TypeError, ValueError):
+                total_int = 0
             progress = 0
-            if total > 0:
-                progress = min(100, max(0, int((current / total) * 100)))
+            if total_int > 0:
+                progress = min(100, max(0, int((current_int / total_int) * 100)))
             self._update_task(
                 task_id,
                 progress=progress,
-                items_processed=current,
-                items_total=total,
+                items_processed=current_int,
+                items_total=total_int,
                 current_activity=message,
             )
             append_task_log(task_id, "INFO", message)

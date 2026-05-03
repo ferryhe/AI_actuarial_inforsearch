@@ -70,6 +70,7 @@ class URLCollector(BaseCollector):
                         keywords=config.keywords,
                         file_exts=config.file_exts,
                         exclude_keywords=config.exclude_keywords,
+                        check_database=config.check_database,
                     )
                     
                     new_items = self.crawler.scan_page_for_files(

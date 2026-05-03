@@ -85,7 +85,8 @@ Provider API keys should be created from Settings and stored as encrypted DB cre
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FASTAPI_ENV` | `config/sites.yaml -> server.fastapi_env` | Deployment environment override. Use `production` in production; if unset, the YAML server value is used. |
-| `DB_PATH` | `./data/index.db` | Legacy fallback SQLite path when `config/sites.yaml -> paths.db` is absent |
+
+`config/sites.yaml -> paths.db` is the canonical SQLite path. `DB_PATH` remains supported only as a legacy fallback when that YAML value is absent; do not set both for normal deployments.
 
 ## Configuration Files
 

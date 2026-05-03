@@ -50,6 +50,7 @@ class SiteConfig:
     content_selector: str | None = None  # CSS selector to narrow link extraction to content area
     allow_url_patterns: list[str] | None = None  # Regex allow-list for sub-page URLs (Scrapy-style); if set, only matching sub-pages are queued
     queries: list[str] | None = None  # Site-specific search queries to supplement or bypass direct crawling (useful for anti-bot-protected sites)
+    check_database: bool = True
 
 
 class Crawler:
@@ -370,7 +371,7 @@ class Crawler:
                 continue
 
             if self._is_file_url(final_url, exts):
-                if self.storage.file_exists(final_url):
+                if cfg.check_database and self.storage.file_exists(final_url):
                     sleep_with_jitter(cfg.delay_seconds)
                     continue
                 parsed = urlparse(final_url)
@@ -434,7 +435,7 @@ class Crawler:
                     if not allow_patterns and keywords:
                         if not (is_relevant or self._link_matches_keywords(link, link_text, keywords)):
                             continue
-                    if self.storage.file_exists(link):
+                    if cfg.check_database and self.storage.file_exists(link):
                         continue
                     try:
                         parsed = urlparse(link)
@@ -547,7 +548,7 @@ class Crawler:
             File-metadata dict on success, or ``None`` if the page should be
             skipped (already stored, content too short, etc.).
         """
-        if self.storage.file_exists(url):
+        if cfg.check_database and self.storage.file_exists(url):
             return None
 
         text_content = self._extract_text_from_html(html, url)
@@ -558,7 +559,7 @@ class Crawler:
             text_content = f"# {page_title}\n\n{text_content}"
 
         sha256 = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
-        if self.storage.file_exists_by_hash(sha256):
+        if cfg.check_database and self.storage.file_exists_by_hash(sha256):
             logger.debug(
                 "Skipping page %s: same content already stored (sha256=%s)", url, sha256
             )
@@ -808,7 +809,7 @@ class Crawler:
             return []
 
         if self._is_file_url(final_url, exts):
-            if self.storage.file_exists(final_url):
+            if cfg.check_database and self.storage.file_exists(final_url):
                 return []
             parsed = urlparse(final_url)
             domain = parsed.netloc.replace(":", "_")
@@ -858,7 +859,7 @@ class Crawler:
                 continue
             if keywords and not (page_relevant or self._link_matches_keywords(link, link_text, keywords)):
                 continue
-            if self.storage.file_exists(link):
+            if cfg.check_database and self.storage.file_exists(link):
                 continue
             try:
                 parsed = urlparse(link)
