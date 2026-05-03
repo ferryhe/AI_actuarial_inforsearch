@@ -66,12 +66,18 @@ def create_storage_from_config(config: dict[str, Any]) -> Union[Storage, "Storag
     # Check for storage version preference
     storage_version = config.get("storage_version", "v1").lower()
     
+    paths_db = ""
+    if isinstance(config.get("paths"), dict):
+        paths_db = str(config["paths"].get("db") or "").strip()
+
     # Check if new database config is present
     if "database" in config:
-        db_config = config["database"]
+        db_config = dict(config["database"])
         db_type = db_config.get("type", "sqlite").lower()
         
         if db_type == "sqlite":
+            if paths_db:
+                db_config["path"] = paths_db
             db_path = db_config.get("path", "data/index.db")
             
             # Return appropriate storage version
@@ -98,8 +104,8 @@ def create_storage_from_config(config: dict[str, Any]) -> Union[Storage, "Storag
             raise ValueError(f"Unsupported database type: {db_type}")
     
     # Legacy mode: use paths.db
-    elif "paths" in config and "db" in config["paths"]:
-        db_path = config["paths"]["db"]
+    elif paths_db:
+        db_path = paths_db
         return Storage(db_path)
     
     else:

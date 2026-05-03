@@ -256,7 +256,18 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
                 "exclude_keywords": ["jobs", "archive"],
                 "queries": ["actuarial ai", "insurance llm"],
             },
-            "system": {"file_deletion_enabled": False},
+            "features": {
+                "enable_file_deletion": False,
+                "require_auth": True,
+                "enable_global_logs_api": True,
+                "enable_rate_limiting": True,
+                "enable_csrf": False,
+                "enable_security_headers": False,
+                "expose_error_details": True,
+                "rate_limit_defaults": "100 per hour, 20 per minute",
+                "rate_limit_storage_uri": "memory://",
+                "content_security_policy": "default-src 'self'",
+            },
         },
         headers=headers,
     )
@@ -266,12 +277,32 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
     assert body["defaults"]["max_pages"] == 42
     assert body["search"]["enabled"] is False
     assert body["runtime"]["file_deletion_enabled"] is False
+    assert body["runtime"]["require_auth"] is True
+    assert body["runtime"]["enable_global_logs_api"] is True
+    assert body["runtime"]["enable_rate_limiting"] is True
+    assert body["runtime"]["enable_security_headers"] is False
+    assert body["runtime"]["expose_error_details"] is True
+    assert body["runtime"]["rate_limit_defaults"] == "100 per hour, 20 per minute"
+    assert app.state.require_auth is True
+    assert app.state.enable_global_logs_api is True
+    assert app.state.enable_rate_limiting is True
+    assert app.state.enable_security_headers is False
+    assert app.state.expose_error_details is True
+    assert app.state.rate_limit_defaults == "100 per hour, 20 per minute"
+    assert app.state.rate_limit_storage_uri == "memory://"
 
     written = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     assert written["defaults"]["max_pages"] == 42
     assert written["paths"]["download_dir"] == "data/native-files"
     assert written["search"]["queries"] == ["actuarial ai", "insurance llm"]
-    assert written["system"]["file_deletion_enabled"] is False
+    assert written["features"]["enable_file_deletion"] is False
+    assert written["features"]["require_auth"] is True
+    assert written["features"]["enable_global_logs_api"] is True
+    assert written["features"]["enable_rate_limiting"] is True
+    assert written["features"]["enable_security_headers"] is False
+    assert written["features"]["expose_error_details"] is True
+    assert written["features"]["content_security_policy"] == "default-src 'self'"
+    assert "file_deletion_enabled" not in (written.get("system") or {})
 
 
 

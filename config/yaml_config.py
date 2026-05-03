@@ -367,21 +367,37 @@ def _extract_server_config_from_env() -> Dict[str, Any]:
 
 def load_database_config() -> Dict[str, Any]:
     """
-    Load database configuration from sites.yaml with .env fallback.
+    Load database configuration from the canonical sites.yaml paths.db value.
     
     Returns:
         Dict containing database configuration
     """
     yaml_config = load_yaml_config()
-    
-    if "database" in yaml_config:
-        logger.debug("Using database config from sites.yaml")
-        return yaml_config["database"]
-    else:
-        logger.warning(
-            "database config not found in sites.yaml, falling back to environment variables."
-        )
-        return _extract_database_config_from_env()
+    paths_cfg = yaml_config.get("paths") if isinstance(yaml_config.get("paths"), dict) else {}
+    database_cfg = yaml_config.get("database") if isinstance(yaml_config.get("database"), dict) else {}
+
+    paths_db = str((paths_cfg or {}).get("db") or "").strip()
+    if paths_db:
+        logger.debug("Using database path from sites.yaml paths.db")
+        result = dict(database_cfg or {})
+        result["type"] = str(result.get("type") or "sqlite")
+        if result["type"] == "sqlite":
+            result["path"] = paths_db
+        result["source"] = "paths.db"
+        return result
+
+    if database_cfg:
+        logger.debug("Using legacy database config from sites.yaml database")
+        result = dict(database_cfg)
+        result["source"] = "database"
+        return result
+
+    logger.warning(
+        "database config not found in sites.yaml, falling back to environment variables."
+    )
+    result = _extract_database_config_from_env()
+    result["source"] = "env"
+    return result
 
 
 def _extract_database_config_from_env() -> Dict[str, Any]:

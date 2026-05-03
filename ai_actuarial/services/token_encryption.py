@@ -24,8 +24,10 @@ class TokenEncryption:
     instance exists. It uses Fernet symmetric encryption from the cryptography
     library to encrypt/decrypt API tokens.
     
-    The encryption key is read from the TOKEN_ENCRYPTION_KEY environment variable.
-    If not found, a new key is generated (development only - not for production).
+    The encryption key is read from TOKEN_ENCRYPTION_KEY in the process
+    environment or the project .env file. Missing keys fail fast; this service
+    must never auto-generate a replacement key because existing database
+    credentials would become unreadable.
     
     Usage:
         encryption = TokenEncryption()

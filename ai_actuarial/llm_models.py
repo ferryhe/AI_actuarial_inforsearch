@@ -11,7 +11,7 @@ import re
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +220,8 @@ OPENAI_COMPATIBLE_DISCOVERY = {
     "huggingface": ("HUGGINGFACE_API_KEY", "HUGGINGFACE_BASE_URL", "https://api-inference.huggingface.co/v1", True),
 }
 
+ProviderCredentialsMap = Mapping[str, Mapping[str, str | None]]
+
 NON_TEXT_MODEL_PATTERNS = (
     "audio",
     "dall-e",
@@ -266,6 +268,36 @@ OCR_MODEL_PATTERNS = (
 
 def _copy_models(models: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [dict(model) for model in models]
+
+
+def _credential_value(
+    provider_credentials: ProviderCredentialsMap | None,
+    provider: str,
+    field: str,
+) -> str | None:
+    if not provider_credentials:
+        return None
+    value = provider_credentials.get(provider, {}).get(field)
+    value = str(value or "").strip()
+    return value or None
+
+
+def _provider_api_key(
+    provider: str,
+    api_key_env: str,
+    provider_credentials: ProviderCredentialsMap | None = None,
+) -> str | None:
+    return _credential_value(provider_credentials, provider, "api_key") or os.getenv(api_key_env) or None
+
+
+def _provider_base_url(
+    provider: str,
+    base_url_env: str | None,
+    default_base_url: str | None,
+    provider_credentials: ProviderCredentialsMap | None = None,
+) -> str | None:
+    env_base_url = os.getenv(base_url_env) if base_url_env else None
+    return _credential_value(provider_credentials, provider, "base_url") or env_base_url or default_base_url
 
 
 def _model_id(raw_model: Any) -> str | None:
@@ -375,7 +407,12 @@ class ModelCache:
         self._refresh_interval = timedelta(hours=refresh_interval_hours)
         self._initialized = False
     
-    def get_models(self, provider: Optional[str] = None) -> Dict[str, List[Dict]]:
+    def get_models(
+        self,
+        provider: Optional[str] = None,
+        *,
+        provider_credentials: ProviderCredentialsMap | None = None,
+    ) -> Dict[str, List[Dict]]:
         """
         Get cached models, refresh if needed.
         
@@ -395,7 +432,7 @@ class ModelCache:
         
         # Perform refresh outside lock to avoid blocking
         if needs_refresh:
-            self._perform_refresh()
+            self._perform_refresh(provider_credentials=provider_credentials)
         
         # Return cached models (with lock for consistency)
         with self._lock:
@@ -409,19 +446,19 @@ class ModelCache:
                 for prov, models in self._models.items()
             }
     
-    def force_refresh(self):
+    def force_refresh(self, *, provider_credentials: ProviderCredentialsMap | None = None):
         """Force an immediate refresh of the model cache."""
-        self._perform_refresh()
+        self._perform_refresh(provider_credentials=provider_credentials)
     
-    def _perform_refresh(self):
+    def _perform_refresh(self, *, provider_credentials: ProviderCredentialsMap | None = None):
         """Perform model refresh with minimal lock duration."""
         logger.info("Refreshing model cache from providers...")
         
         # Fetch from all providers (without holding lock)
         new_models = {}
-        new_models["openai"] = self._fetch_openai_models()
-        new_models["mistral"] = self._fetch_mistral_models()
-        new_models["siliconflow"] = self._fetch_siliconflow_models()
+        new_models["openai"] = self._fetch_openai_models(provider_credentials=provider_credentials)
+        new_models["mistral"] = self._fetch_mistral_models(provider_credentials=provider_credentials)
+        new_models["siliconflow"] = self._fetch_siliconflow_models(provider_credentials=provider_credentials)
         for provider, discovery in OPENAI_COMPATIBLE_DISCOVERY.items():
             if provider in new_models:
                 continue
@@ -432,6 +469,7 @@ class ModelCache:
                 base_url_env=base_url_env,
                 default_base_url=default_base_url,
                 api_key_required=api_key_required,
+                provider_credentials=provider_credentials,
             )
         for provider, models in DEFAULT_MODELS.items():
             new_models.setdefault(provider, models)
@@ -444,7 +482,11 @@ class ModelCache:
         
         logger.info(f"Model cache refreshed at {self._last_refresh}")
     
-    def _fetch_openai_models(self) -> List[Dict]:
+    def _fetch_openai_models(
+        self,
+        *,
+        provider_credentials: ProviderCredentialsMap | None = None,
+    ) -> List[Dict]:
         """
         Fetch available models from OpenAI API.
         
@@ -454,8 +496,8 @@ class ModelCache:
         try:
             from openai import OpenAI
             
-            api_key = os.getenv("OPENAI_API_KEY")
-            base_url = os.getenv("OPENAI_BASE_URL")
+            api_key = _provider_api_key("openai", "OPENAI_API_KEY", provider_credentials)
+            base_url = _provider_base_url("openai", "OPENAI_BASE_URL", None, provider_credentials)
             if not api_key:
                 logger.warning("OPENAI_API_KEY not set, using default models")
                 return _copy_models(DEFAULT_MODELS["openai"])
@@ -475,7 +517,11 @@ class ModelCache:
             logger.warning(f"Failed to fetch OpenAI models: {e}, using defaults")
             return _copy_models(DEFAULT_MODELS["openai"])
     
-    def _fetch_mistral_models(self) -> List[Dict]:
+    def _fetch_mistral_models(
+        self,
+        *,
+        provider_credentials: ProviderCredentialsMap | None = None,
+    ) -> List[Dict]:
         """
         Fetch available models from Mistral API.
         
@@ -485,7 +531,7 @@ class ModelCache:
         try:
             from mistralai import Mistral
             
-            api_key = os.getenv("MISTRAL_API_KEY")
+            api_key = _provider_api_key("mistral", "MISTRAL_API_KEY", provider_credentials)
             if not api_key:
                 logger.warning("MISTRAL_API_KEY not set, using default models")
                 return _copy_models(DEFAULT_MODELS["mistral"])
@@ -502,7 +548,11 @@ class ModelCache:
             logger.warning(f"Failed to fetch Mistral models: {e}, using defaults")
             return _copy_models(DEFAULT_MODELS["mistral"])
     
-    def _fetch_siliconflow_models(self) -> List[Dict]:
+    def _fetch_siliconflow_models(
+        self,
+        *,
+        provider_credentials: ProviderCredentialsMap | None = None,
+    ) -> List[Dict]:
         """
         Fetch available models from SiliconFlow API.
         
@@ -514,8 +564,13 @@ class ModelCache:
         try:
             from openai import OpenAI
             
-            api_key = os.getenv("SILICONFLOW_API_KEY")
-            base_url = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+            api_key = _provider_api_key("siliconflow", "SILICONFLOW_API_KEY", provider_credentials)
+            base_url = _provider_base_url(
+                "siliconflow",
+                "SILICONFLOW_BASE_URL",
+                "https://api.siliconflow.cn/v1",
+                provider_credentials,
+            )
             
             if not api_key:
                 logger.warning("SILICONFLOW_API_KEY not set, using default models")
@@ -545,6 +600,7 @@ class ModelCache:
         base_url_env: str,
         default_base_url: str,
         api_key_required: bool,
+        provider_credentials: ProviderCredentialsMap | None = None,
     ) -> List[Dict]:
         """
         Fetch available models from an OpenAI-compatible provider.
@@ -556,12 +612,12 @@ class ModelCache:
         try:
             from openai import OpenAI
 
-            api_key = os.getenv(api_key_env)
-            base_url = os.getenv(base_url_env) or default_base_url
+            api_key = _provider_api_key(provider, api_key_env, provider_credentials)
+            base_url = _provider_base_url(provider, base_url_env, default_base_url, provider_credentials)
             if api_key_required and not api_key:
                 logger.debug("%s not set, using default %s models", api_key_env, provider)
                 return _copy_models(fallback)
-            if not api_key_required and not os.getenv(base_url_env):
+            if not api_key_required and not _provider_base_url(provider, base_url_env, None, provider_credentials):
                 logger.debug("%s not set, skipping local model discovery for %s", base_url_env, provider)
                 return _copy_models(fallback)
 
@@ -595,7 +651,11 @@ def get_model_cache() -> ModelCache:
         return _model_cache
 
 
-def get_available_models(provider: Optional[str] = None) -> Dict[str, List[Dict]]:
+def get_available_models(
+    provider: Optional[str] = None,
+    *,
+    provider_credentials: ProviderCredentialsMap | None = None,
+) -> Dict[str, List[Dict]]:
     """
     Get available models from cache.
     
@@ -608,13 +668,13 @@ def get_available_models(provider: Optional[str] = None) -> Dict[str, List[Dict]
         Dictionary of models by provider
     """
     cache = get_model_cache()
-    return cache.get_models(provider)
+    return cache.get_models(provider, provider_credentials=provider_credentials)
 
 
-def refresh_models():
+def refresh_models(*, provider_credentials: ProviderCredentialsMap | None = None):
     """Force refresh of the model cache."""
     cache = get_model_cache()
-    cache.force_refresh()
+    cache.force_refresh(provider_credentials=provider_credentials)
 
 
 def initialize_models():

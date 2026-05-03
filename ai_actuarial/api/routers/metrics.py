@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Request
 
 from ai_actuarial.api.deps import AuthContext, require_permissions
 from ai_actuarial.api.middleware.rate_limit import ROLE_RATE_LIMITS
-from ai_actuarial.config import settings
 
 router = APIRouter()
 
@@ -54,7 +53,9 @@ async def get_metrics(
             "by_endpoint": by_endpoint,
         },
         "rate_limits": {
-            "enabled": settings.RATE_LIMIT_ENABLED,
+            "enabled": bool(getattr(request.app.state, "enable_rate_limiting", False)),
+            "defaults": str(getattr(request.app.state, "rate_limit_defaults", "") or ""),
+            "storage_uri": str(getattr(request.app.state, "rate_limit_storage_uri", "memory://") or "memory://"),
             "tiers": rate_limit_tiers,
         },
         "version": "0.1.0",

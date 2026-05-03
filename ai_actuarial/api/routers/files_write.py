@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -58,7 +59,7 @@ def _json_error(exc: FileWriteError) -> JSONResponse:
 
 
 def _require_config_write_token(request: Request) -> JSONResponse | None:
-    expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+    expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
     if not expected_token:
         return None
     provided_token = request.headers.get("X-Auth-Token")

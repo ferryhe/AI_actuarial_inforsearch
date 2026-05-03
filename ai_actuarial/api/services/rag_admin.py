@@ -4,6 +4,7 @@ import os
 from typing import Any, Mapping
 
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
+from ai_actuarial.config import settings
 from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage
 
@@ -170,7 +171,7 @@ def _build_kb_embedding_status(
 
 
 def _require_config_write_token(headers: Mapping[str, str]) -> None:
-    expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN")
+    expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
     if not expected_token:
         return
     provided_token = headers.get("X-Auth-Token") or headers.get("x-auth-token")

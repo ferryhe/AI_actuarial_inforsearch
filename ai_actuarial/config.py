@@ -65,7 +65,7 @@ class Settings:
     # Paths
     # -------------------------------------------------------------------------
     DATA_DIR: Path = Path("data")
-    DB_PATH: str = "data/index.db"
+    DB_PATH: str = os.getenv("DB_PATH", "data/index.db")
     DOWNLOAD_DIR: str = "data/files"
     LOG_FILE: Path = Path("data/app.log")
 
@@ -149,7 +149,9 @@ class Settings:
     def resolve_db_path(cls, config_data: dict[str, Any] | None = None) -> str:
         """Resolve the database path from config or environment defaults."""
         if config_data:
-            db_path = (config_data.get("paths") or {}).get("db", "data/index.db")
+            paths_cfg = config_data.get("paths") if isinstance(config_data.get("paths"), dict) else {}
+            database_cfg = config_data.get("database") if isinstance(config_data.get("database"), dict) else {}
+            db_path = (paths_cfg or {}).get("db") or (database_cfg or {}).get("path") or cls.DB_PATH
             db_path = str(db_path or "data/index.db")
             if not os.path.isabs(db_path):
                 db_path = os.path.abspath(db_path)

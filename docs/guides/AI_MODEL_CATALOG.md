@@ -11,12 +11,12 @@ It has two layers:
 - Curated fallback lists in `DEFAULT_MODELS`. These are available offline and keep Settings usable when provider APIs are unavailable.
 - Live discovery for providers with a model-list API. The cache refreshes on first access, then again after 24 hours.
 
-The current live discovery path supports:
+The current live discovery path prefers encrypted DB credentials for each provider and falls back to environment variables when a DB credential is not configured. It supports:
 
-- OpenAI through `OPENAI_API_KEY` and optional `OPENAI_BASE_URL`.
-- Mistral through `MISTRAL_API_KEY`.
-- SiliconFlow through `SILICONFLOW_API_KEY` and optional `SILICONFLOW_BASE_URL`.
-- OpenAI-compatible providers when their environment key is set, including OpenRouter, DeepSeek, ZhipuAI, Moonshot/Kimi, Qwen/DashScope, MiniMax, VolcEngine, Tencent Cloud, BaiduYiyan, XunFei Spark, Google Cloud (`GOOGLE_CLOUD_API_KEY`), and Hugging Face (`HUGGINGFACE_API_KEY`).
+- OpenAI through encrypted DB credentials.
+- Mistral through encrypted DB credentials.
+- SiliconFlow through encrypted DB credentials.
+- OpenAI-compatible providers when their DB credential or environment key is set, including OpenRouter, DeepSeek, ZhipuAI, Moonshot/Kimi, Qwen/DashScope, MiniMax, VolcEngine, Tencent Cloud, BaiduYiyan, XunFei Spark, Google Cloud (`GOOGLE_CLOUD_API_KEY`), and Hugging Face (`HUGGINGFACE_API_KEY`).
 - Local OpenAI-compatible servers (`vllm`, `localai`) only when `VLLM_BASE_URL` or `LOCALAI_BASE_URL` is explicitly set.
 
 Live discovery classifies returned model ids into app capabilities:
@@ -53,7 +53,7 @@ refresh_models()
 ## Operational Notes
 
 - The catalog refresh does not write secrets or provider responses to disk; it only updates the process memory cache.
-- Runtime credential binding still comes from `config/sites.yaml`, environment variables, or encrypted DB credentials. The model-list discovery path uses environment variables for provider API calls.
+- Runtime credential binding comes from `config/sites.yaml` plus encrypted DB credentials. Environment provider keys are supported only as temporary bootstrap/fallback values.
 - For production, prefer provider aliases such as `gpt-5.5`, `mistral-small-latest`, or `qwen3-max` only when you accept provider-side alias movement. Use dated or snapshot model ids when deterministic behavior matters.
 
 ## References

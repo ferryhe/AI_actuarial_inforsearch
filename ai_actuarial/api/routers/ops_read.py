@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -168,12 +169,12 @@ def api_logs_global(
     rate_limited = _enforce_global_logs_rate_limit(request, _auth)
     if rate_limited is not None:
         return rate_limited
-    expected_token = settings.LOGS_READ_AUTH_TOKEN
+    expected_token = os.getenv("LOGS_READ_AUTH_TOKEN") or settings.LOGS_READ_AUTH_TOKEN
     if expected_token:
         provided_token = request.headers.get("X-Auth-Token")
         if not provided_token or provided_token != expected_token:
             return JSONResponse(status_code=403, content={"error": "Forbidden"})
-    result = get_global_logs()
+    result = get_global_logs(enabled=bool(getattr(request.app.state, "enable_global_logs_api", False)))
     if result.get("error") == "Forbidden":
         return JSONResponse(status_code=403, content={"error": "Forbidden"})
     return result
@@ -221,7 +222,11 @@ def api_config_model_catalog(
     refresh: bool = False,
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
-    return get_model_catalog(refresh=refresh)
+    storage = Storage(_get_db_path(request))
+    try:
+        return get_model_catalog(refresh=refresh, storage=storage)
+    finally:
+        storage.close()
 
 
 @router.get("/config/ai-routing")
@@ -242,7 +247,11 @@ def api_config_ai_models(
     refresh: bool = False,
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
-    return get_ai_models(refresh=refresh)
+    storage = Storage(_get_db_path(request))
+    try:
+        return get_ai_models(refresh=refresh, storage=storage)
+    finally:
+        storage.close()
 
 
 @router.get("/config/search-engines")
@@ -250,7 +259,11 @@ def api_config_search_engines(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.view")),
 ) -> dict[str, object]:
-    return get_search_engines()
+    storage = Storage(_get_db_path(request))
+    try:
+        return get_search_engines(storage=storage)
+    finally:
+        storage.close()
 
 
 @router.get("/config/categories")

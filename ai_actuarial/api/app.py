@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from itsdangerous import BadSignature, URLSafeSerializer
 
 from .middleware import RateLimitMiddleware
 from .route_inventory import (
@@ -23,11 +26,15 @@ from .routers.read import router as read_router
 from .routers.metrics import router as metrics_router
 from ai_actuarial.config import settings
 from ai_actuarial.shared_auth import hash_token
-from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
+from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, resolve_runtime_features
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
 logger = logging.getLogger(__name__)
+
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_HEADER_NAME = "X-CSRF-Token"
+CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
 
 def _native_paths(app: FastAPI) -> list[str]:
@@ -48,10 +55,56 @@ def _env_bool(key: str, default: bool) -> bool:
     return default
 
 
-def _default_session_cookie_secure() -> bool:
+def _presented_api_token(request) -> bool:
+    auth = request.headers.get("Authorization", "") or ""
+    parts = auth.strip().split(None, 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip():
+        return True
+    return bool((request.headers.get("X-API-Token") or request.headers.get("X-Auth-Token") or "").strip())
+
+
+def _csrf_serializer(request) -> URLSafeSerializer | None:
+    secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
+    if not secret:
+        return None
+    return URLSafeSerializer(secret, salt="fastapi-csrf")
+
+
+def _create_csrf_token(request) -> str:
+    serializer = _csrf_serializer(request)
+    if serializer is None:
+        return ""
+    return serializer.dumps({"nonce": secrets.token_urlsafe(32)})
+
+
+def _valid_csrf_token(request, token: str) -> bool:
+    serializer = _csrf_serializer(request)
+    if serializer is None or not token:
+        return False
+    try:
+        data = serializer.loads(token)
+    except BadSignature:
+        return False
+    except Exception:
+        return False
+    return isinstance(data, dict) and isinstance(data.get("nonce"), str) and bool(data.get("nonce"))
+
+
+def _default_session_cookie_secure(require_auth: bool) -> bool:
     fastapi_env = os.getenv("FASTAPI_ENV", settings.FASTAPI_ENV).strip().lower()
-    require_auth = _env_bool("REQUIRE_AUTH", settings.REQUIRE_AUTH)
     return fastapi_env in {"prod", "production"} and require_auth
+
+
+def _apply_runtime_feature_state(app: FastAPI, features: dict[str, object]) -> None:
+    app.state.require_auth = bool(features.get("require_auth"))
+    app.state.enable_global_logs_api = bool(features.get("enable_global_logs_api"))
+    app.state.enable_rate_limiting = bool(features.get("enable_rate_limiting"))
+    app.state.enable_csrf = bool(features.get("enable_csrf"))
+    app.state.enable_security_headers = bool(features.get("enable_security_headers"))
+    app.state.expose_error_details = bool(features.get("expose_error_details"))
+    app.state.rate_limit_defaults = str(features.get("rate_limit_defaults") or "")
+    app.state.rate_limit_storage_uri = str(features.get("rate_limit_storage_uri") or "memory://")
+    app.state.content_security_policy = str(features.get("content_security_policy") or "")
 
 
 def _bootstrap_admin_token(db_path: str) -> None:
@@ -72,6 +125,8 @@ def _bootstrap_admin_token(db_path: str) -> None:
 
 
 def create_app() -> FastAPI:
+    config_data = load_yaml(get_sites_config_path(), default={})
+    runtime_features = resolve_runtime_features(config_data)
     app = FastAPI(
         title="AI Actuarial Info Search API",
         description=(
@@ -102,8 +157,69 @@ def create_app() -> FastAPI:
     # Rate limiting middleware (applied after CORS)
     app.add_middleware(
         RateLimitMiddleware,
-        enabled=settings.RATE_LIMIT_ENABLED,
+        enabled=None,
     )
+
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            if bool(getattr(request.app.state, "enable_security_headers", False)):
+                response.headers.setdefault("X-Content-Type-Options", "nosniff")
+                response.headers.setdefault("X-Frame-Options", "DENY")
+                response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+                response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+                csp = str(getattr(request.app.state, "content_security_policy", "") or "").strip()
+                if csp:
+                    response.headers.setdefault("Content-Security-Policy", csp)
+            return response
+
+    app.add_middleware(_SecurityHeadersMiddleware)
+
+    class _CsrfProtectionMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            if not bool(getattr(request.app.state, "enable_csrf", False)):
+                return await call_next(request)
+
+            if request.url.path.startswith("/api/"):
+                serializer = _csrf_serializer(request)
+                if serializer is None:
+                    return JSONResponse(
+                        status_code=503,
+                        content={"detail": "FastAPI session secret is required when CSRF protection is enabled"},
+                    )
+
+                unsafe_method = request.method.upper() not in CSRF_SAFE_METHODS
+                if unsafe_method and not _presented_api_token(request):
+                    cookie_token = request.cookies.get(CSRF_COOKIE_NAME) or ""
+                    header_token = request.headers.get(CSRF_HEADER_NAME) or ""
+                    if (
+                        not cookie_token
+                        or not header_token
+                        or not secrets.compare_digest(cookie_token, header_token)
+                        or not _valid_csrf_token(request, cookie_token)
+                    ):
+                        return JSONResponse(
+                            status_code=403,
+                            content={"detail": "CSRF token missing or invalid"},
+                        )
+
+            response = await call_next(request)
+            if request.url.path.startswith("/api/"):
+                current_token = request.cookies.get(CSRF_COOKIE_NAME) or ""
+                if not _valid_csrf_token(request, current_token):
+                    response.set_cookie(
+                        key=CSRF_COOKIE_NAME,
+                        value=_create_csrf_token(request),
+                        path="/",
+                        secure=bool(getattr(request.app.state, "fastapi_session_cookie_secure", False)),
+                        httponly=False,
+                        samesite=getattr(request.app.state, "fastapi_session_cookie_samesite", "Lax") or "Lax",
+                    )
+            return response
+
+    app.add_middleware(_CsrfProtectionMiddleware)
 
     app.include_router(meta_router, prefix="/api", tags=["meta"])
     app.include_router(metrics_router, prefix="/api", tags=["metrics"])
@@ -122,7 +238,7 @@ def create_app() -> FastAPI:
     app.state.fastapi_session_cookie_domain = None
     app.state.fastapi_session_cookie_secure = _env_bool(
         "FASTAPI_SESSION_COOKIE_SECURE",
-        settings.FASTAPI_SESSION_COOKIE_SECURE or _default_session_cookie_secure(),
+        settings.FASTAPI_SESSION_COOKIE_SECURE or _default_session_cookie_secure(bool(runtime_features["require_auth"])),
     )
     app.state.fastapi_session_cookie_httponly = True
     app.state.fastapi_session_cookie_samesite = "Lax"
@@ -131,7 +247,7 @@ def create_app() -> FastAPI:
         _bootstrap_admin_token(app.state.db_path)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to bootstrap admin auth token")
-    app.state.require_auth = _env_bool("REQUIRE_AUTH", settings.REQUIRE_AUTH)
+    _apply_runtime_feature_state(app, runtime_features)
     native_runtime = NativeTaskRuntime()
     native_refs = native_runtime.refs()
     app.state.native_task_runtime = native_runtime
@@ -167,7 +283,6 @@ def create_app() -> FastAPI:
     app.state.native_paths = _native_paths(app)
 
     # Attach metrics tracking to request lifecycle
-    from starlette.middleware.base import BaseHTTPMiddleware
     from .routers.metrics import record_request
 
     class _MetricsMiddleware(BaseHTTPMiddleware):

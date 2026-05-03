@@ -67,37 +67,30 @@ cp data/index.db.backup.20260101_120000 data/index.db
 
 ## Environment Variables
 
-All configuration is via environment variables. Copy `.env.example` to `.env` and configure:
+Use environment variables for deployment secrets and explicit platform overrides. Main non-secret runtime configuration lives in `config/sites.yaml` and can be edited from the Web UI Settings page.
 
 ### Required Variables
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting API credentials in DB | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `FASTAPI_SESSION_SECRET` | Secret for FastAPI browser sessions | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 
-### API Keys
+### Provider Credentials
 
-| Variable | Provider | Get from |
-|----------|----------|----------|
-| `OPENAI_API_KEY` | OpenAI | <https://platform.openai.com/api-keys> |
-| `BRAVE_API_KEY` | Brave Search | <https://brave.com/search/api/> |
-| `SERPAPI_API_KEY` | SerpAPI | <https://serpapi.com/> |
-| `MISTRAL_API_KEY` | Mistral | <https://console.mistral.ai/> |
-| `SILICONFLOW_API_KEY` | SiliconFlow | <https://siliconflow.cn/> |
+Provider API keys should be created from Settings and stored as encrypted DB credentials. Do not put provider keys in `config/sites.yaml`. Environment provider keys are supported only as temporary bootstrap/fallback values.
 
 ### Optional Overrides
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
-| `MISTRAL_BASE_URL` | `https://api.mistral.ai` | Mistral API base URL |
-| `DB_PATH` | `./data/index.db` | SQLite database path |
+| `DB_PATH` | `./data/index.db` | Legacy fallback SQLite path when `config/sites.yaml -> paths.db` is absent |
 
 ## Configuration Files
 
 ### `config/sites.yaml`
 
-Most runtime configuration is in `config/sites.yaml` (AI models, RAG settings, feature flags, server settings). Edit via the Web UI Settings page or directly. Changes take effect immediately without restart.
+Most runtime configuration is in `config/sites.yaml` (AI models, RAG settings, feature flags, server settings). Edit via the Web UI Settings page or directly. Changes to Settings-managed values are applied to the running FastAPI process; a restart is still needed after changing process environment variables such as `TOKEN_ENCRYPTION_KEY` or `FASTAPI_SESSION_SECRET`.
 
 ### `config/sites.yaml` Structure
 
@@ -136,15 +129,18 @@ rag_config:
   index_type: Flat
 features:
   require_auth: false
+  enable_global_logs_api: false
   enable_rate_limiting: true
   rate_limit_defaults: '200 per hour, 50 per minute'
+  rate_limit_storage_uri: memory://
+  enable_csrf: false
+  enable_security_headers: true
+  expose_error_details: false
+  content_security_policy: ''
 server:
   host: 0.0.0.0
   port: 5000
   max_content_length: 52428800
-database:
-  type: sqlite
-  path: data/index.db
 sites:
 - name: Example Site
   url: https://example.com
@@ -162,7 +158,7 @@ sites:
 
 ### Rate limit errors (429)
 
-- Rate limiting is role-based. Adjust in `sites.yaml` or set `RATE_LIMIT_ENABLED=false` for development.
+- Rate limiting is role-based. Adjust `features.enable_rate_limiting` in `sites.yaml` or from Settings.
 - Role-based limits: guest=10/min, registered=30/min, premium=60/min, operator=200/min.
 
 ### Database locked errors

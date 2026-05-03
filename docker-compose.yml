@@ -1,10 +1,9 @@
-# docker-compose.yml — AI Actuarial Info Search
-# Usage: docker compose up (-d for detached)
-#   Development:  docker compose up
-#   Production:  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+# docker-compose.yml - AI Actuarial Info Search
+# Usage:
+#   Development: docker compose up
+#   Production: docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 
 services:
-  # ── API (FastAPI) ────────────────────────────────────────────────────────────
   api:
     build:
       context: .
@@ -14,16 +13,16 @@ services:
     ports:
       - "${API_PORT:-5000}:5000"
     environment:
-      - ENV=development
-      - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
-      - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:-dev-secret-change-in-production}
+      - FASTAPI_ENV=${FASTAPI_ENV:-development}
+      - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:?FASTAPI_SESSION_SECRET is required}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY:?TOKEN_ENCRYPTION_KEY is required}
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:-}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:-}
-      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
+      - FILE_DELETION_AUTH_TOKEN=${FILE_DELETION_AUTH_TOKEN:-}
       - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:-["http://localhost:5173","http://localhost:3000"]}
     volumes:
       - ai-data:/app/data
-      - ./config/sites.yaml:/app/config/sites.yaml:ro
+      - ./config/sites.yaml:/app/config/sites.yaml
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5000/api/health", "-o", "/dev/null"]
       interval: 30s
@@ -41,7 +40,6 @@ services:
     networks:
       - ai-net
 
-  # ── Frontend (Vite dev server in dev, static build in prod) ─────────────────
   frontend:
     image: node:20-alpine
     container_name: ai-frontend
@@ -76,7 +74,6 @@ services:
     networks:
       - ai-net
 
-  # ── Caddy reverse-proxy ───────────────────────────────────────────────────────
   caddy:
     image: caddy:3-alpine
     container_name: ai-caddy

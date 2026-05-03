@@ -15,6 +15,106 @@ def env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_flag_override(*names: str) -> bool | None:
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None or raw.strip() == "":
+            continue
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return None
+
+
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _feature_bool(
+    features: dict[str, Any],
+    key: str,
+    *,
+    default: bool,
+    env_names: tuple[str, ...] = (),
+    fallback_value: object = None,
+    fallback_present: bool = False,
+) -> tuple[bool, str]:
+    env_value = _env_flag_override(*env_names)
+    if env_value is not None:
+        return env_value, "env"
+    if key in features:
+        return _coerce_bool(features.get(key), default), "yaml"
+    if fallback_present:
+        return _coerce_bool(fallback_value, default), "yaml"
+    return default, "default"
+
+
+def resolve_runtime_features(config_data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve non-secret runtime feature switches from sites.yaml with env overrides."""
+    raw_features = config_data.get("features") or {}
+    features = raw_features if isinstance(raw_features, dict) else {}
+    raw_system = config_data.get("system") or {}
+    system_cfg = raw_system if isinstance(raw_system, dict) else {}
+
+    resolved: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+
+    specs: dict[str, tuple[bool, tuple[str, ...]]] = {
+        "require_auth": (False, ("REQUIRE_AUTH",)),
+        "enable_global_logs_api": (False, ("ENABLE_GLOBAL_LOGS_API",)),
+        "enable_rate_limiting": (False, ("ENABLE_RATE_LIMITING", "RATE_LIMIT_ENABLED")),
+        "enable_csrf": (False, ("ENABLE_CSRF",)),
+        "enable_security_headers": (True, ("ENABLE_SECURITY_HEADERS",)),
+        "expose_error_details": (False, ("EXPOSE_ERROR_DETAILS",)),
+    }
+
+    for key, (default, env_names) in specs.items():
+        value, source = _feature_bool(features, key, default=default, env_names=env_names)
+        resolved[key] = value
+        sources[key] = source
+
+    file_deletion, file_deletion_source = _feature_bool(
+        features,
+        "enable_file_deletion",
+        default=False,
+        env_names=("ENABLE_FILE_DELETION",),
+        fallback_value=system_cfg.get("file_deletion_enabled"),
+        fallback_present="file_deletion_enabled" in system_cfg,
+    )
+    resolved["enable_file_deletion"] = file_deletion
+    resolved["file_deletion_enabled"] = file_deletion
+    sources["enable_file_deletion"] = file_deletion_source
+    sources["file_deletion_enabled"] = file_deletion_source
+
+    string_specs: dict[str, tuple[str, str]] = {
+        "rate_limit_defaults": ("RATE_LIMIT_DEFAULTS", "200 per hour, 50 per minute"),
+        "rate_limit_storage_uri": ("RATE_LIMIT_STORAGE_URI", "memory://"),
+        "content_security_policy": ("CONTENT_SECURITY_POLICY", ""),
+    }
+    for key, (env_name, default) in string_specs.items():
+        raw_env = os.getenv(env_name)
+        if raw_env is not None and raw_env.strip() != "":
+            resolved[key] = raw_env.strip()
+            sources[key] = "env"
+        elif key in features:
+            resolved[key] = str(features.get(key) or "").strip()
+            sources[key] = "yaml"
+        else:
+            resolved[key] = default
+            sources[key] = "default"
+
+    resolved["feature_sources"] = sources
+    return resolved
+
+
 def parse_int_clamped(
     value: object,
     *,
@@ -85,11 +185,7 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
     defaults = config_data.get("defaults") or {}
     paths = config_data.get("paths") or {}
     search = config_data.get("search") or {}
-    system_cfg = config_data.get("system") or {}
-    file_deletion_enabled = system_cfg.get(
-        "file_deletion_enabled",
-        os.getenv("ENABLE_FILE_DELETION") == "true",
-    )
+    features = resolve_runtime_features(config_data)
     return {
         "defaults": {
             "user_agent": defaults.get("user_agent", ""),
@@ -117,19 +213,37 @@ def serialize_backend_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "exclude_keywords": search.get("exclude_keywords", []),
             "queries": search.get("queries", []),
         },
+        "features": {
+            "enable_file_deletion": bool(features["enable_file_deletion"]),
+            "require_auth": bool(features["require_auth"]),
+            "enable_global_logs_api": bool(features["enable_global_logs_api"]),
+            "enable_rate_limiting": bool(features["enable_rate_limiting"]),
+            "enable_csrf": bool(features["enable_csrf"]),
+            "enable_security_headers": bool(features["enable_security_headers"]),
+            "expose_error_details": bool(features["expose_error_details"]),
+            "rate_limit_defaults": features["rate_limit_defaults"],
+            "rate_limit_storage_uri": features["rate_limit_storage_uri"],
+            "content_security_policy": features["content_security_policy"],
+            "sources": dict(features["feature_sources"]),
+        },
         "runtime": {
             "config_path": get_sites_config_path(),
             "categories_config_path": get_categories_config_path(),
-            "require_auth": env_flag("REQUIRE_AUTH", False),
+            "require_auth": bool(features["require_auth"]),
             "session_secret_key_set": bool(os.getenv("FASTAPI_SESSION_SECRET")),
             "bootstrap_admin_token_set": bool(os.getenv("BOOTSTRAP_ADMIN_TOKEN")),
-            "file_deletion_enabled": bool(file_deletion_enabled),
+            "file_deletion_enabled": bool(features["enable_file_deletion"]),
             "file_deletion_auth_required": bool(os.getenv("FILE_DELETION_AUTH_TOKEN")),
             "config_write_auth_required": bool(os.getenv("CONFIG_WRITE_AUTH_TOKEN")),
-            "enable_global_logs_api": env_flag("ENABLE_GLOBAL_LOGS_API", False),
+            "enable_global_logs_api": bool(features["enable_global_logs_api"]),
             "logs_read_auth_required": bool(os.getenv("LOGS_READ_AUTH_TOKEN")),
-            "enable_rate_limiting": env_flag("ENABLE_RATE_LIMITING", False),
-            "enable_csrf": env_flag("ENABLE_CSRF", False),
-            "enable_security_headers": env_flag("ENABLE_SECURITY_HEADERS", True),
+            "enable_rate_limiting": bool(features["enable_rate_limiting"]),
+            "enable_csrf": bool(features["enable_csrf"]),
+            "enable_security_headers": bool(features["enable_security_headers"]),
+            "expose_error_details": bool(features["expose_error_details"]),
+            "rate_limit_defaults": features["rate_limit_defaults"],
+            "rate_limit_storage_uri": features["rate_limit_storage_uri"],
+            "content_security_policy": features["content_security_policy"],
+            "feature_sources": dict(features["feature_sources"]),
         },
     }

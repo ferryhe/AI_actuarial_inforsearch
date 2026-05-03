@@ -29,16 +29,19 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 'navigate("/login")' in app_src
 
     assert 'apiPost("/api/auth/login"' in login_src
+    assert 'setStoredAuthToken(token.trim(), false)' in login_src
+    assert 'setStoredAuthToken("", true)' in login_src
     assert 'apiPost("/api/auth/register"' in register_src
     assert 'href="/login"' in profile_src
     assert 'button-logout' in layout_src
-    assert 'i18n.t("layout.fastapiNativeMode")' in layout_src
     assert 'i18n.t("nav.users")' in layout_src
     assert 'i18n.t("auth.signIn")' in layout_src
     assert 'i18n.t("auth.register")' in layout_src
     assert 'apiGet<AuthMeResponse>("/api/auth/me")' in auth_ctx_src
     assert 'apiPost("/api/auth/logout")' in auth_ctx_src
+    assert 'setStoredAuthToken("", true)' in auth_ctx_src
     assert 'credentials: options?.credentials ?? "include"' in api_src
-    assert '"layout.fastapiNativeMode"' in i18n_src
+    assert 'readCookie("csrf_token")' in api_src
+    assert 'headers["X-CSRF-Token"] = csrfToken' in api_src
     assert '"auth.signIn"' in i18n_src
     assert '"auth.register"' in i18n_src
