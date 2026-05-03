@@ -96,11 +96,28 @@ def test_indexing_pipeline_stops_before_second_file(tmp_path) -> None:
         config=SimpleNamespace(data_dir=str(tmp_path)),
         chunker=object(),
         embedding_generator=embedding_generator,
+        get_current_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
+        sync_kb_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
         get_kb=MagicMock(
             return_value=SimpleNamespace(
                 name="Stop Test KB",
                 embedding_model="text-embedding-3-small",
+                embedding_provider="openai",
+                embedding_dimension=3,
                 index_type="Flat",
+                chunk_count=2,
             )
         ),
     )
@@ -146,11 +163,28 @@ def test_indexing_pipeline_immediate_stop_preserves_existing_index(tmp_path) -> 
         config=SimpleNamespace(data_dir=str(tmp_path)),
         chunker=object(),
         embedding_generator=embedding_generator,
+        get_current_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
+        sync_kb_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
         get_kb=MagicMock(
             return_value=SimpleNamespace(
                 name="Stop Test KB",
                 embedding_model="text-embedding-3-small",
+                embedding_provider="openai",
+                embedding_dimension=3,
                 index_type="Flat",
+                chunk_count=0,
             )
         ),
     )
@@ -166,3 +200,124 @@ def test_indexing_pipeline_immediate_stop_preserves_existing_index(tmp_path) -> 
     assert stats["stopped"] is True
     assert index_path.read_text(encoding="utf-8") == "existing-index"
     mock_vector_store.assert_not_called()
+
+
+def test_indexing_pipeline_records_current_embedding_index_version(tmp_path) -> None:
+    kb_id = "kb-index-version"
+    storage = SimpleNamespace(create_kb_index_version=MagicMock())
+    embedding_generator = MagicMock()
+    embedding_generator.get_embedding_dimension.return_value = 3
+    kb = SimpleNamespace(
+        name="Versioned KB",
+        embedding_provider="openai",
+        embedding_model="text-embedding-3-small",
+        embedding_dimension=3,
+        index_type="Flat",
+        chunk_count=4,
+    )
+    kb_manager = SimpleNamespace(
+        storage=storage,
+        config=SimpleNamespace(data_dir=str(tmp_path)),
+        chunker=object(),
+        embedding_generator=embedding_generator,
+        get_current_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
+        sync_kb_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
+        get_kb=MagicMock(return_value=kb),
+    )
+
+    with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
+        IndexingPipeline,
+        "_index_single_file",
+        return_value={"success": True, "chunk_count": 4},
+    ), patch.object(IndexingPipeline, "_update_kb_stats"):
+        pipeline = IndexingPipeline(kb_manager)
+        stats = pipeline.index_files(
+            kb_id=kb_id,
+            file_urls=["file-1"],
+            force_reindex=True,
+        )
+
+    assert stats["indexed_files"] == 1
+    mock_vector_store.return_value.save_index.assert_called_once()
+    storage.create_kb_index_version.assert_called_once_with(
+        kb_id=kb_id,
+        embedding_provider="openai",
+        embedding_model="text-embedding-3-small",
+        embedding_dimension=3,
+        index_type="Flat",
+        chunk_count=4,
+        status="ready",
+        artifact_path=str(tmp_path / kb_id / "index.faiss"),
+    )
+
+
+def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-rag.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_manager = MagicMock()
+    fake_manager.get_kb.return_value = SimpleNamespace(name="Runtime RAG KB")
+    fake_manager.get_kb_files.return_value = [
+        {"file_url": "file-1"},
+        {"file_url": "file-2"},
+    ]
+    fake_pipeline = MagicMock()
+    fake_pipeline.index_files.return_value = {
+        "total_files": 2,
+        "indexed_files": 2,
+        "skipped_files": 0,
+        "error_files": 0,
+        "total_chunks": 6,
+        "errors": [],
+        "stopped": False,
+    }
+
+    runtime = NativeTaskRuntime()
+    with patch("ai_actuarial.task_runtime.KnowledgeBaseManager", return_value=fake_manager), patch(
+        "ai_actuarial.task_runtime.IndexingPipeline",
+        return_value=fake_pipeline,
+    ):
+        result = runtime._run_collection(
+            "task-rag",
+            "rag_indexing",
+            {"kb_id": "kb-runtime", "force_reindex": True},
+        )
+
+    assert result.success is True
+    assert result.items_found == 2
+    assert result.items_downloaded == 2
+    assert result.items_skipped == 0
+    assert result.metadata["kb_id"] == "kb-runtime"
+    assert result.metadata["total_chunks"] == 6
+    fake_pipeline.index_files.assert_called_once_with(
+        "kb-runtime",
+        ["file-1", "file-2"],
+        force_reindex=True,
+    )

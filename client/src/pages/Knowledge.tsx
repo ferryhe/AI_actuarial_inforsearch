@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   FolderOpen,
   Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -31,8 +32,17 @@ interface KnowledgeBase {
   file_count?: number;
   chunk_count?: number;
   status?: string;
+  availability?: string;
   categories?: string[];
   embedding_model?: string;
+  index_embedding_model?: string;
+  needs_reindex?: boolean;
+  embedding_compatible?: boolean;
+  current_embeddings?: {
+    provider?: string;
+    model?: string;
+    dimension?: number;
+  };
   kb_mode?: string;
 }
 
@@ -103,6 +113,7 @@ export default function Knowledge() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleteProfileConfirm, setDeleteProfileConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [indexingKb, setIndexingKb] = useState<string | null>(null);
 
   const [embeddingModels, setEmbeddingModels] = useState<{provider: string; name: string; display_name: string}[]>([]);
   const [defaultEmbedding, setDefaultEmbedding] = useState("text-embedding-3-large");
@@ -221,6 +232,20 @@ export default function Knowledge() {
       console.error("Failed to delete KB:", err);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleReembedKB = async (kbId: string) => {
+    setIndexingKb(kbId);
+    try {
+      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`, {
+        force_reindex: true,
+      });
+      loadData();
+    } catch (err) {
+      console.error("Failed to re-embed KB:", err);
+    } finally {
+      setIndexingKb(null);
     }
   };
 
@@ -529,6 +554,9 @@ export default function Knowledge() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {kbs.map((kb, i) => {
             const kbId = getKbId(kb);
+            const needsReembed = kb.needs_reindex || kb.embedding_compatible === false;
+            const status = kb.availability || kb.status;
+            const currentEmbeddingLabel = kb.current_embeddings?.model || defaultEmbedding;
             return (
               <motion.div
                 key={kbId}
@@ -546,7 +574,7 @@ export default function Knowledge() {
                     </div>
                     <div className="flex items-center gap-1.5">
                       <ModeBadge mode={kb.kb_mode} />
-                      <StatusBadge status={kb.status} />
+                      <StatusBadge status={status} />
                     </div>
                   </div>
                   <h3 className="font-semibold text-sm mb-1" data-testid={`text-kb-name-${kbId}`}>
@@ -565,6 +593,33 @@ export default function Knowledge() {
                     <p className="text-[10px] text-muted-foreground/70 mb-2 font-mono truncate">
                       {kb.embedding_model}
                     </p>
+                  )}
+                  {needsReembed && (
+                    <div
+                      className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+                      data-testid={`banner-reembed-kb-${kbId}`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                            {t("knowledge.needs_reembed")}
+                          </p>
+                          <p className="text-[10px] text-amber-700/80 dark:text-amber-300/80 mt-0.5 font-mono truncate">
+                            {currentEmbeddingLabel}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleReembedKB(kbId)}
+                        disabled={indexingKb === kbId}
+                        className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                        data-testid={`button-reembed-kb-${kbId}`}
+                      >
+                        <RefreshCw className={cn("w-3.5 h-3.5", indexingKb === kbId && "animate-spin")} />
+                        {t("knowledge.reembed")}
+                      </button>
+                    </div>
                   )}
                   <div className="flex items-center gap-4 text-xs text-muted-foreground pt-3 border-t border-border">
                     <span className="flex items-center gap-1" data-testid={`text-kb-docs-${kbId}`}>

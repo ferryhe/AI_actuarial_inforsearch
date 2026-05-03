@@ -32,7 +32,19 @@ interface KBMeta {
   name: string;
   description?: string;
   kb_mode?: string;
+  embedding_provider?: string;
   embedding_model?: string;
+  embedding_dimension?: number;
+  index_embedding_provider?: string;
+  index_embedding_model?: string;
+  index_embedding_dimension?: number;
+  needs_reindex?: boolean;
+  embedding_compatible?: boolean;
+  current_embeddings?: {
+    provider?: string;
+    model?: string;
+    dimension?: number;
+  };
   chunk_size?: number;
   chunk_overlap?: number;
   status?: string;
@@ -255,7 +267,7 @@ export default function KBDetail() {
     try {
       const endpoint = `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`;
       await apiPost(endpoint, force ? { force_reindex: true } : { incremental: true });
-      await loadStats();
+      await Promise.all([loadMeta(), loadStats(), loadFiles()]);
     } catch (err) {
       console.error("Failed to build index:", err);
     } finally {
@@ -369,6 +381,15 @@ export default function KBDetail() {
   });
 
   const pendingCount = stats?.pending_count ?? stats?.pending_files ?? 0;
+  const needsEmbeddingRebuild = meta.needs_reindex || meta.embedding_compatible === false;
+  const currentEmbeddingLabel = [
+    meta.current_embeddings?.provider,
+    meta.current_embeddings?.model,
+  ].filter(Boolean).join(" / ") || meta.embedding_model || "";
+  const indexEmbeddingLabel = [
+    meta.index_embedding_provider || meta.embedding_provider,
+    meta.index_embedding_model || meta.embedding_model,
+  ].filter(Boolean).join(" / ");
 
   return (
     <div className="space-y-6">
@@ -453,6 +474,42 @@ export default function KBDetail() {
         </div>
       </motion.div>
 
+      {needsEmbeddingRebuild && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.12, duration: 0.35 }}
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
+          data-testid="banner-embedding-mismatch"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3 min-w-0">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  {t("kb.embedding_mismatch_title")}
+                </p>
+                <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mt-1">
+                  {t("kb.embedding_mismatch_desc")}
+                </p>
+                <p className="text-[10px] text-amber-800/70 dark:text-amber-200/70 mt-1 font-mono truncate">
+                  {indexEmbeddingLabel} -&gt; {currentEmbeddingLabel}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => handleBuildIndex(true)}
+              disabled={indexing}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+              data-testid="button-reembed-current-embedding"
+            >
+              <RefreshCw className={cn("w-4 h-4", indexing && "animate-spin")} />
+              {t("kb.reembed_current")}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
@@ -493,11 +550,16 @@ export default function KBDetail() {
         <button
           onClick={() => handleBuildIndex(true)}
           disabled={indexing}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50"
+          className={cn(
+            "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors disabled:opacity-50",
+            needsEmbeddingRebuild
+              ? "border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10"
+              : "border-border hover:bg-muted"
+          )}
           data-testid="button-index-rebuild"
         >
           <RefreshCw className={cn("w-4 h-4", indexing && "animate-spin")} />
-          {t("kb.rebuild_index")}
+          {needsEmbeddingRebuild ? t("kb.reembed_current") : t("kb.rebuild_index")}
         </button>
         {pendingCount > 0 && (
           <button

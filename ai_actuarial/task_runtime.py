@@ -8,7 +8,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time as datetime_time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,10 +20,99 @@ from ai_actuarial.collectors.file import FileCollector
 from ai_actuarial.collectors.scheduled import ScheduledCollector
 from ai_actuarial.collectors.url import URLCollector
 from ai_actuarial.crawler import Crawler, SiteConfig
+from ai_actuarial.rag.indexing import IndexingPipeline
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.shared_runtime import append_task_log, get_sites_config_path, load_yaml, task_log_path
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+
+class _FallbackScheduleJob:
+    def __init__(
+        self,
+        *,
+        job_func: Callable[[], None],
+        interval: int,
+        unit: str,
+        at_time: datetime_time | None = None,
+        start_day: str | None = None,
+    ) -> None:
+        self.job_func = job_func
+        self.interval = interval
+        self.unit = unit
+        self.at_time = at_time
+        self.start_day = start_day
+        self.next_run = None
+        self.last_run = None
+
+
+class _FallbackScheduleBuilder:
+    def __init__(self, scheduler: "_FallbackScheduler", interval: int) -> None:
+        self.scheduler = scheduler
+        self.interval = interval
+        self.unit = "days"
+        self.at_time: datetime_time | None = None
+        self.start_day: str | None = None
+
+    @property
+    def day(self) -> "_FallbackScheduleBuilder":
+        self.unit = "days"
+        return self
+
+    @property
+    def monday(self) -> "_FallbackScheduleBuilder":
+        self.unit = "weeks"
+        self.start_day = "monday"
+        return self
+
+    @property
+    def hours(self) -> "_FallbackScheduleBuilder":
+        self.unit = "hours"
+        return self
+
+    @property
+    def minutes(self) -> "_FallbackScheduleBuilder":
+        self.unit = "minutes"
+        return self
+
+    def at(self, value: str) -> "_FallbackScheduleBuilder":
+        parts = str(value or "").split(":")
+        if len(parts) >= 2:
+            self.at_time = datetime_time(int(parts[0]), int(parts[1]))
+        return self
+
+    def do(self, job_func: Callable[[], None]) -> _FallbackScheduleJob:
+        job = _FallbackScheduleJob(
+            job_func=job_func,
+            interval=self.interval,
+            unit=self.unit,
+            at_time=self.at_time,
+            start_day=self.start_day,
+        )
+        self.scheduler.jobs.append(job)
+        return job
+
+
+class _FallbackScheduler:
+    def __init__(self) -> None:
+        self.jobs: list[_FallbackScheduleJob] = []
+
+    def clear(self) -> None:
+        self.jobs.clear()
+
+    def every(self, interval: int = 1) -> _FallbackScheduleBuilder:
+        return _FallbackScheduleBuilder(self, interval)
+
+    def run_pending(self) -> None:
+        return None
+
+
+def _new_scheduler() -> Any:
+    scheduler_cls = getattr(schedule, "Scheduler", None)
+    if callable(scheduler_cls):
+        return scheduler_cls()
+    return _FallbackScheduler()
 
 
 @dataclass(slots=True)
@@ -42,7 +131,7 @@ class NativeTaskRuntime:
         self.active_tasks: dict[str, dict[str, Any]] = {}
         self.task_history: list[dict[str, Any]] = self._load_history_from_disk()
         self.task_lock = threading.RLock()
-        self.scheduler = schedule.Scheduler()
+        self.scheduler = _new_scheduler()
         self._scheduler_lock = threading.RLock()
         self._scheduler_loop_started = False
         self._site_config_override: dict[str, Any] | None = None
@@ -299,9 +388,89 @@ class NativeTaskRuntime:
                     metadata={"category": category},
                 )
 
+            if collection_type in {"rag_indexing", "kb_index_build"}:
+                return self._run_rag_indexing(task_id, storage, data)
+
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
             storage.close()
+
+    def _run_rag_indexing(self, task_id: str, storage: Storage, data: dict[str, Any]) -> CollectionResult:
+        kb_id = str(data.get("kb_id") or "").strip()
+        if not kb_id:
+            raise RuntimeError("kb_id is required for RAG indexing")
+
+        manager = KnowledgeBaseManager(storage)
+        kb = manager.get_kb(kb_id)
+        if not kb:
+            raise RuntimeError(f"Knowledge base '{kb_id}' not found")
+
+        force_reindex = bool(data.get("force_reindex", False) or data.get("reindex_all", False))
+        incremental = bool(data.get("incremental", True))
+        file_urls = [
+            str(file_url).strip()
+            for file_url in list(data.get("file_urls") or [])
+            if str(file_url).strip()
+        ]
+        if not file_urls:
+            if force_reindex or not incremental:
+                file_urls = [
+                    str(row.get("file_url") or "").strip()
+                    for row in manager.get_kb_files(kb_id)
+                    if str(row.get("file_url") or "").strip()
+                ]
+            else:
+                file_urls = manager.get_files_needing_index(kb_id)
+
+        if not file_urls:
+            return CollectionResult(
+                success=True,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=[],
+                metadata={
+                    "kb_id": kb_id,
+                    "kb_name": kb.name,
+                    "force_reindex": force_reindex,
+                    "incremental": incremental,
+                    "total_chunks": 0,
+                },
+            )
+
+        progress_callback = self._progress_callback(task_id)
+
+        def rag_progress(message: str, current: int, total: int) -> None:
+            progress_callback(current, total, message)
+
+        pipeline = IndexingPipeline(manager, progress_callback=rag_progress)
+        stats = pipeline.index_files(kb_id, file_urls, force_reindex=force_reindex)
+        errors: list[str] = []
+        for item in list(stats.get("errors") or []):
+            if isinstance(item, dict):
+                file_url = str(item.get("file_url") or "").strip()
+                message = str(item.get("error") or "Unknown indexing error").strip()
+                errors.append(f"{file_url}: {message}" if file_url else message)
+            else:
+                errors.append(str(item))
+
+        stopped = bool(stats.get("stopped", False))
+        return CollectionResult(
+            success=not errors and not stopped,
+            items_found=int(stats.get("total_files") or len(file_urls)),
+            items_downloaded=int(stats.get("indexed_files") or 0),
+            items_skipped=int(stats.get("skipped_files") or 0),
+            errors=errors,
+            metadata={
+                "kb_id": kb_id,
+                "kb_name": kb.name,
+                "force_reindex": force_reindex,
+                "incremental": incremental,
+                "total_chunks": int(stats.get("total_chunks") or 0),
+                "error_files": int(stats.get("error_files") or 0),
+                "stopped": stopped,
+            },
+        )
 
     def _collect_file_paths(self, data: dict[str, Any]) -> list[str]:
         directory = Path(str(data.get("directory_path") or "")).resolve()

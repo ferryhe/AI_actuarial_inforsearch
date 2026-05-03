@@ -617,7 +617,13 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
-scheduled_tasks: []
+scheduled_tasks:
+- name: Scheduled Collection
+  type: scheduled
+  interval: daily
+  enabled: true
+  params:
+    name: Scheduled Collection
 ai_config:
   catalog:
     provider: openai
@@ -673,12 +679,12 @@ rag_config:
   index_type: Flat
 features:
   enable_file_deletion: true
-  require_auth: false
+  require_auth: true
   enable_csrf: false
   enable_security_headers: true
-  expose_error_details: false
-  enable_global_logs_api: false
-  enable_rate_limiting: false
+  expose_error_details: true
+  enable_global_logs_api: true
+  enable_rate_limiting: true
   rate_limit_defaults: 200 per hour, 50 per minute
   rate_limit_storage_uri: memory://
   content_security_policy: ''

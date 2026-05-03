@@ -714,6 +714,36 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
     assert catalog_binding.get("credential_id") in (None, "openai:llm:env") or str(catalog_binding.get("credential_id", "")).startswith("openai:")
 
 
+def test_ai_routing_rejects_models_for_wrong_capability(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["operator_token"]}
+
+    chat_with_embedding_model = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chat", "provider": "openai", "model": "text-embedding-3-large"},
+            ]
+        },
+        headers=headers,
+    )
+    assert chat_with_embedding_model.status_code == 400
+    assert "does not support chat" in chat_with_embedding_model.text
+
+    embeddings_with_chat_model = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "embeddings", "provider": "openai", "model": "gpt-4o-mini"},
+            ]
+        },
+        headers=headers,
+    )
+    assert embeddings_with_chat_model.status_code == 400
+    assert "does not support embeddings" in embeddings_with_chat_model.text
+
+
 def test_provider_credentials_import_env_bootstraps_default_instance(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     TokenEncryption._instance = None

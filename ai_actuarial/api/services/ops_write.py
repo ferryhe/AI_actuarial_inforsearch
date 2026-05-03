@@ -61,6 +61,13 @@ _VALID_SCHEDULED_TASK_TYPES = [
 
 _VALID_INTERVALS = ["daily", "weekly", "daily at HH:MM", "every N hours", "every N minutes"]
 
+_BINDING_MODEL_TYPE = {
+    "chat": "chatbot",
+    "catalog": "catalog",
+    "embeddings": "embeddings",
+    "ocr": "ocr",
+}
+
 _VALID_COLLECTION_TYPES = {
     "scheduled",
     "adhoc",
@@ -100,6 +107,19 @@ def _is_valid_schedule_interval(interval: str) -> bool:
             return False
         return qty > 0 and parts[2] in {"hour", "hours", "minute", "minutes"}
     return False
+
+
+def _validate_ai_routing_model(binding_name: str, provider: str, model: str) -> None:
+    expected_type = _BINDING_MODEL_TYPE.get(binding_name)
+    if not expected_type or not provider or not model:
+        return
+    model_types = llm_models.get_model_types(provider, model)
+    if expected_type not in model_types:
+        display_types = ", ".join(model_types) if model_types else "none"
+        raise OpsWriteError(
+            f"Model '{model}' for provider '{provider}' does not support "
+            f"{binding_name} binding (model types: {display_types})"
+        )
 
 _SAMPLE_SITES_YAML = """# AI Actuarial Info Search - Site Configuration Sample
 # Import this file to add sites for document crawling.
@@ -1191,6 +1211,7 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
             model = str(item.get("model") or "").strip()
             if not model:
                 raise OpsWriteError(f"Model for binding '{binding_name}' must be non-empty")
+            _validate_ai_routing_model(binding_name, provider_norm, model)
             section["model"] = model
         if binding_name in {"chat", "catalog"}:
             for field in ["temperature", "max_tokens", "timeout_seconds"]:

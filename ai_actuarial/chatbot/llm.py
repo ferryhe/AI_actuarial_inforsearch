@@ -19,6 +19,23 @@ from ai_actuarial.chatbot.prompts import build_full_prompt
 logger = logging.getLogger(__name__)
 
 
+_OPENAI_MAX_COMPLETION_TOKENS_PREFIXES = (
+    "gpt-5",
+    "o1",
+    "o3",
+    "o4",
+)
+
+
+def _uses_max_completion_tokens(provider: str | None, model: str | None) -> bool:
+    """Return True for OpenAI chat models that reject deprecated max_tokens."""
+    provider_norm = str(provider or "").strip().lower()
+    if provider_norm not in {"openai", "azure_openai"}:
+        return False
+    model_norm = str(model or "").strip().lower().split("/")[-1]
+    return model_norm.startswith(_OPENAI_MAX_COMPLETION_TOKENS_PREFIXES)
+
+
 class LLMClient:
     """
     LLM client with OpenAI integration.
@@ -128,14 +145,19 @@ class LLMClient:
                     f"attempt={attempt+1}"
                 )
                 
-                # Call OpenAI API
-                response = self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=stream
-                )
+                request_kwargs: dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "stream": stream,
+                }
+                if _uses_max_completion_tokens(self.config.llm_provider, model):
+                    request_kwargs["max_completion_tokens"] = max_tokens
+                else:
+                    request_kwargs["max_tokens"] = max_tokens
+
+                # Call OpenAI-compatible API
+                response = self.client.chat.completions.create(**request_kwargs)
                 
                 # Extract content
                 if stream:

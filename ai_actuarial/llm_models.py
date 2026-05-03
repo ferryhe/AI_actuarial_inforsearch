@@ -350,6 +350,18 @@ def _infer_model_types(provider: str, model_id: str) -> List[str]:
     return ["chatbot", "catalog"]
 
 
+def get_model_types(provider: str | None, model_id: str | None) -> List[str]:
+    """Return known or inferred capability types for a provider model."""
+    provider_norm = str(provider or "").strip().lower()
+    model_norm = str(model_id or "").strip()
+    if not model_norm:
+        return []
+    for model in DEFAULT_MODELS.get(provider_norm, []):
+        if str(model.get("name") or "").strip() == model_norm:
+            return list(model.get("types") or [])
+    return _infer_model_types(provider_norm, model_norm)
+
+
 def _dedupe_models(models: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen: Set[str] = set()
     deduped: List[Dict[str, Any]] = []
