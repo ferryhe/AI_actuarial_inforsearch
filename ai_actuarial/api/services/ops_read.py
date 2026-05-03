@@ -10,6 +10,8 @@ from ai_actuarial.ai_runtime import (
     KNOWN_LLM_PROVIDERS,
     PROVIDER_BASE_URL_ENV_VARS,
     PROVIDER_ENV_VARS,
+    build_model_discovery_credentials,
+    resolve_search_engine_credentials,
 )
 from ai_actuarial.config import settings
 from ai_actuarial.services.token_encryption import TokenEncryption
@@ -61,8 +63,10 @@ def get_backend_settings() -> dict[str, Any]:
     return settings
 
 
-def get_global_logs() -> dict[str, str]:
-    if not settings.ENABLE_GLOBAL_LOGS_API:
+def get_global_logs(*, enabled: bool | None = None) -> dict[str, str]:
+    if enabled is None:
+        enabled = bool(settings.ENABLE_GLOBAL_LOGS_API)
+    if not enabled:
         return {"error": "Forbidden"}
 
     log_file = Path("data") / "app.log"
@@ -74,14 +78,17 @@ def get_global_logs() -> dict[str, str]:
     return {"logs": "".join(lines)}
 
 
-def get_search_engines() -> dict[str, list[dict[str, object]]]:
+def get_search_engines(*, storage: Storage | None = None) -> dict[str, list[dict[str, object]]]:
     engines = []
     for engine_id, display_name in _SEARCH_ENGINE_DISPLAY.items():
+        credentials = resolve_search_engine_credentials(engine_id, storage=storage)
         engines.append(
             {
                 "id": engine_id,
                 "name": display_name,
-                "configured": settings.is_search_engine_configured(engine_id),
+                "configured": credentials.configured,
+                "credential_source": credentials.source,
+                "credential_error": credentials.error,
             }
         )
     return {"engines": engines}
@@ -285,9 +292,10 @@ def get_llm_providers(*, db_path: str) -> dict[str, object]:
         storage.close()
 
 
-def get_ai_models(*, refresh: bool = False) -> dict[str, object]:
+def get_ai_models(*, refresh: bool = False, storage: Storage | None = None) -> dict[str, object]:
+    provider_credentials = build_model_discovery_credentials(storage=storage)
     if refresh:
-        llm_models.refresh_models()
+        llm_models.refresh_models(provider_credentials=provider_credentials)
     config_data = load_yaml(get_sites_config_path(), default={})
     ai_config = config_data.get("ai_config") or {}
     chatbot_cfg = ai_config.get("chatbot", {})
@@ -319,7 +327,7 @@ def get_ai_models(*, refresh: bool = False) -> dict[str, object]:
             "model": ai_config.get("ocr", {}).get("model", "docling"),
         },
     }
-    return {"current": current_config, "available": llm_models.get_available_models()}
+    return {"current": current_config, "available": llm_models.get_available_models(provider_credentials=provider_credentials)}
 
 
 def parse_task_history_limit(raw_value: str | None) -> int:

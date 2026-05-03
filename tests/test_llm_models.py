@@ -166,6 +166,36 @@ class TestOpenAIModelFetching:
             
             # Should return defaults
             assert models == DEFAULT_MODELS['openai']
+
+    def test_fetch_openai_models_uses_db_credentials_without_env(self):
+        """OpenAI model discovery should use DB-backed credentials before env fallback."""
+        cache = ModelCache()
+
+        mock_model = Mock()
+        mock_model.id = "gpt-4o"
+        mock_response = Mock()
+        mock_response.data = [mock_model]
+        mock_client = Mock()
+        mock_client.models.list.return_value = mock_response
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.dict(sys.modules, {'openai': mock_openai}):
+            models = cache._fetch_openai_models(
+                provider_credentials={
+                    "openai": {
+                        "api_key": "db-openai-key",
+                        "base_url": "https://db.openai.example/v1",
+                    }
+                }
+            )
+
+        mock_openai.OpenAI.assert_called_once()
+        kwargs = mock_openai.OpenAI.call_args.kwargs
+        assert kwargs["api_key"] == "db-openai-key"
+        assert str(kwargs["base_url"]) == "https://db.openai.example/v1"
+        assert any(m['name'] == 'gpt-4o' for m in models)
     
     def test_fetch_openai_models_api_error(self):
         """Test OpenAI fetching with API error."""
@@ -252,6 +282,29 @@ class TestMistralModelFetching:
             
             # Should return defaults
             assert models == DEFAULT_MODELS['mistral']
+
+    def test_fetch_mistral_models_uses_db_credentials_without_env(self):
+        """Mistral model discovery should use DB-backed credentials before env fallback."""
+        cache = ModelCache()
+
+        mock_model = Mock()
+        mock_model.id = "mistral-small-latest"
+        mock_response = Mock()
+        mock_response.data = [mock_model]
+        mock_client = Mock()
+        mock_client.models.list.return_value = mock_response
+        mock_mistral = MagicMock()
+        mock_mistral.Mistral.return_value = mock_client
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.dict(sys.modules, {'mistralai': mock_mistral}):
+            models = cache._fetch_mistral_models(
+                provider_credentials={"mistral": {"api_key": "db-mistral-key"}}
+            )
+
+        mock_mistral.Mistral.assert_called_once()
+        assert mock_mistral.Mistral.call_args.kwargs["api_key"] == "db-mistral-key"
+        assert any(m['name'] == 'mistral-small-latest' for m in models)
 
 
 class TestSiliconFlowModelFetching:
@@ -369,6 +422,38 @@ class TestGenericOpenAICompatibleFetching:
             )
 
         assert models == DEFAULT_MODELS.get("vllm", [])
+
+    def test_fetch_openai_compatible_models_uses_db_credentials_without_env(self):
+        cache = ModelCache()
+        mock_model = Mock()
+        mock_model.id = "deepseek-chat"
+        mock_response = Mock()
+        mock_response.data = [mock_model]
+        mock_client = Mock()
+        mock_client.models.list.return_value = mock_response
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.dict(sys.modules, {'openai': mock_openai}):
+            models = cache._fetch_openai_compatible_models(
+                "deepseek",
+                api_key_env="DEEPSEEK_API_KEY",
+                base_url_env="DEEPSEEK_BASE_URL",
+                default_base_url="https://api.deepseek.com/v1",
+                api_key_required=True,
+                provider_credentials={
+                    "deepseek": {
+                        "api_key": "db-deepseek-key",
+                        "base_url": "https://db.deepseek.example/v1",
+                    }
+                },
+            )
+
+        kwargs = mock_openai.OpenAI.call_args.kwargs
+        assert kwargs["api_key"] == "db-deepseek-key"
+        assert str(kwargs["base_url"]) == "https://db.deepseek.example/v1"
+        assert any(m["name"] == "deepseek-chat" for m in models)
 
 
 class TestGlobalAPI:

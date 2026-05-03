@@ -3,6 +3,7 @@
 #
 # Set required environment variables:
 #   export FASTAPI_SESSION_SECRET=<strong-random-key>
+#   export TOKEN_ENCRYPTION_KEY=<fernet-key>
 #   export LOGS_READ_AUTH_TOKEN=<strong-random-token>
 #   export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
 #   export CADDY_DOMAIN=aiinforsearch.com
@@ -14,13 +15,11 @@ services:
   api:
     restart: on-failure
     environment:
-      - ENV=production
-      - REQUIRE_AUTH=true
+      - FASTAPI_ENV=production
       - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:?FASTAPI_SESSION_SECRET is required in production}
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:?LOGS_READ_AUTH_TOKEN is required}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:?CONFIG_WRITE_AUTH_TOKEN is required}
-      - RATE_LIMIT_ENABLED=true
-      - FASTAPI_CORS_ORIGINS=${CADDY_DOMAIN:?CADDY_DOMAIN required}
+      - FASTAPI_CORS_ORIGINS=https://${CADDY_DOMAIN:?CADDY_DOMAIN required}
     volumes:
       - ai-data:/app/data:rw
       - /etc/localtime:/etc/localtime:ro

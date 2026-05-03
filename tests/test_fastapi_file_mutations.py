@@ -106,6 +106,13 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             pipeline_version="v1",
             status="ok",
         )
+        operator_token = "operator-token"
+        storage.upsert_auth_token_by_hash(
+            subject="operator-token",
+            group_name="operator",
+            token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
     finally:
         storage.close()
 
@@ -113,6 +120,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
         "alpha_url": "https://alpha.example/doc-a.pdf",
         "beta_url": "https://beta.example/doc-b.docx",
         "alpha_path": str(alpha_path),
+        "operator_token": operator_token,
     }
 
 
@@ -146,6 +154,7 @@ def test_fastapi_file_mutation_routes_are_listed_in_native_inventory(tmp_path: P
 
 def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
 
     update_response = client.post(
         "/api/files/update",
@@ -156,6 +165,7 @@ def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeyp
             "summary": "Updated summary",
             "keywords": ["ai", "preview"],
         },
+        headers=headers,
     )
     assert update_response.status_code == 200, update_response.text
     assert update_response.json()["file"]["title"] == "Alpha Document Updated"
@@ -163,22 +173,23 @@ def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeyp
     markdown_response = client.post(
         f"/api/files/{seed['alpha_url']}/markdown",
         json={"markdown_content": "# Updated\n\nFastAPI markdown.", "markdown_source": "manual"},
+        headers=headers,
     )
     assert markdown_response.status_code == 200, markdown_response.text
     assert markdown_response.json()["markdown"]["markdown_content"].startswith("# Updated")
 
-    download_response = client.get("/api/download", params={"url": seed["alpha_url"]})
+    download_response = client.get("/api/download", params={"url": seed["alpha_url"]}, headers=headers)
     assert download_response.status_code == 200, download_response.text
     assert download_response.content == PDF_BYTES
 
-    export_response = client.get("/api/export", params={"format": "csv"})
+    export_response = client.get("/api/export", params={"format": "csv"}, headers=headers)
     assert export_response.status_code == 200, export_response.text
     assert "attachment; filename=catalog_export.csv" in export_response.headers.get("content-disposition", "")
     assert "Alpha Document Updated" in export_response.content.decode("utf-8-sig")
 
-    delete_response = client.post("/api/files/delete", json={"url": seed["beta_url"], "confirm": "DELETE"})
+    delete_response = client.post("/api/files/delete", json={"url": seed["beta_url"], "confirm": "DELETE"}, headers=headers)
     assert delete_response.status_code == 200, delete_response.text
 
-    files_after_delete = client.get("/api/files?include_deleted=true")
+    files_after_delete = client.get("/api/files?include_deleted=true", headers=headers)
     deleted = next(item for item in files_after_delete.json()["files"] if item["url"] == seed["beta_url"])
     assert deleted["deleted_at"]

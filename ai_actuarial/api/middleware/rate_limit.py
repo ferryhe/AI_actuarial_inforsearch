@@ -11,14 +11,16 @@ Applies to search and chat endpoints by default.
 """
 from __future__ import annotations
 
-import time
 import logging
+import re
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable
 
-from fastapi import Request, HTTPException
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from starlette.responses import Response
 
 from ai_actuarial.api.deps import get_auth_context
@@ -35,7 +37,8 @@ ROLE_RATE_LIMITS: dict[str, int] = {
     "admin": 999999,
 }
 
-# Default rate limit for unknown roles
+# Default rate limit for unknown roles, applied as a role floor. Runtime
+# defaults from config/sites.yaml -> features add an additional global cap.
 DEFAULT_RATE_LIMIT = 10
 
 # Endpoints to apply rate limiting
@@ -52,21 +55,30 @@ class RateLimitBucket:
     """Sliding window rate limit bucket."""
     timestamps: list[float] = field(default_factory=list)
 
-    def is_allowed(self, limit: int, window_seconds: int = 60) -> bool:
-        """Check if a request is allowed under the rate limit."""
-        now = time.time()
-        # Remove timestamps outside the window
+    def prune(self, now: float, window_seconds: int) -> None:
         self.timestamps = [ts for ts in self.timestamps if now - ts < window_seconds]
-        if len(self.timestamps) >= limit:
-            return False
-        self.timestamps.append(now)
-        return True
 
-    def remaining(self, limit: int, window_seconds: int = 60) -> int:
+    def is_allowed(self, limit: int, window_seconds: int, now: float | None = None) -> bool:
+        """Check if a request is allowed under the rate limit."""
+        effective_now = time.time() if now is None else now
+        self.prune(effective_now, window_seconds)
+        return len(self.timestamps) < limit
+
+    def add(self, now: float) -> None:
+        self.timestamps.append(now)
+
+    def remaining(self, limit: int, window_seconds: int = 60, now: float | None = None) -> int:
         """Get remaining requests in the current window."""
-        now = time.time()
-        self.timestamps = [ts for ts in self.timestamps if now - ts < window_seconds]
+        effective_now = time.time() if now is None else now
+        self.prune(effective_now, window_seconds)
         return max(0, limit - len(self.timestamps))
+
+
+@dataclass(frozen=True)
+class RateLimitRule:
+    limit: int
+    window_seconds: int
+    label: str
 
 
 class RateLimitStore:
@@ -74,9 +86,11 @@ class RateLimitStore:
 
     def __init__(self) -> None:
         self._buckets: dict[str, RateLimitBucket] = defaultdict(RateLimitBucket)
+        self._bucket_windows: dict[str, int] = {}
         self._cleanup_thread_started = False
 
-    def get_bucket(self, key: str) -> RateLimitBucket:
+    def get_bucket(self, key: str, window_seconds: int = 60) -> RateLimitBucket:
+        self._bucket_windows[key] = max(int(window_seconds or 60), self._bucket_windows.get(key, 0))
         return self._buckets[key]
 
     def clear_expired(self) -> None:
@@ -84,9 +98,11 @@ class RateLimitStore:
         now = time.time()
         for key in list(self._buckets.keys()):
             bucket = self._buckets[key]
-            bucket.timestamps = [ts for ts in bucket.timestamps if now - ts < 60]
+            window_seconds = self._bucket_windows.get(key, 60)
+            bucket.prune(now, window_seconds)
             if not bucket.timestamps:
                 del self._buckets[key]
+                self._bucket_windows.pop(key, None)
 
     def _start_cleanup_thread(self) -> None:
         """Start background cleanup thread if not already running."""
@@ -104,16 +120,69 @@ class RateLimitStore:
         thread.start()
 
 
-# Global rate limit store
-_rate_limit_store: RateLimitStore | None = None
+_rate_limit_stores: dict[str, RateLimitStore] = {}
+_unsupported_storage_uri_warnings: set[str] = set()
 
 
-def get_rate_limit_store() -> RateLimitStore:
-    global _rate_limit_store
-    if _rate_limit_store is None:
-        _rate_limit_store = RateLimitStore()
-        _rate_limit_store._start_cleanup_thread()
-    return _rate_limit_store
+def _normalize_storage_uri(storage_uri: str | None) -> str:
+    raw = str(storage_uri or "memory://").strip() or "memory://"
+    if raw.startswith("memory://"):
+        return raw
+    if raw not in _unsupported_storage_uri_warnings:
+        logger.warning("Unsupported rate limit storage URI %r; using in-memory store", raw)
+        _unsupported_storage_uri_warnings.add(raw)
+    return "memory://"
+
+
+def get_rate_limit_store(storage_uri: str | None = None) -> RateLimitStore:
+    normalized = _normalize_storage_uri(storage_uri)
+    store = _rate_limit_stores.get(normalized)
+    if store is None:
+        store = RateLimitStore()
+        store._start_cleanup_thread()
+        _rate_limit_stores[normalized] = store
+    return store
+
+
+_RATE_LIMIT_PATTERN = re.compile(
+    r"^\s*(?P<limit>\d+)\s*(?:requests?|reqs?)?\s*(?:/|per)\s*"
+    r"(?P<window>second|minute|hour|day|seconds|minutes|hours|days)\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_rate_limit_rules(raw: str | None) -> list[RateLimitRule]:
+    """Parse strings like '200 per hour, 50 per minute' into runtime rules."""
+    if not raw:
+        return []
+    windows = {
+        "second": 1,
+        "seconds": 1,
+        "minute": 60,
+        "minutes": 60,
+        "hour": 3600,
+        "hours": 3600,
+        "day": 86400,
+        "days": 86400,
+    }
+    labels = {
+        1: "second",
+        60: "minute",
+        3600: "hour",
+        86400: "day",
+    }
+    rules: list[RateLimitRule] = []
+    for part in str(raw).split(","):
+        match = _RATE_LIMIT_PATTERN.match(part)
+        if not match:
+            logger.warning("Ignoring invalid rate limit rule: %r", part.strip())
+            continue
+        limit = int(match.group("limit"))
+        window_seconds = windows[match.group("window").lower()]
+        if limit < 1:
+            continue
+        rules.append(RateLimitRule(limit=limit, window_seconds=window_seconds, label=labels[window_seconds]))
+    return rules
 
 
 def _get_user_role(request: Request) -> str:
@@ -170,42 +239,61 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self,
         app: Callable,
         store: RateLimitStore | None = None,
-        enabled: bool = True,
+        enabled: bool | None = True,
     ) -> None:
         super().__init__(app)
-        self.store = store or get_rate_limit_store()
+        self.store = store
         self.enabled = enabled
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if not self.enabled:
+        enabled = bool(getattr(request.app.state, "enable_rate_limiting", False)) if self.enabled is None else bool(self.enabled)
+        if not enabled:
             return await call_next(request)
 
         if not _should_rate_limit(request):
             return await call_next(request)
 
         role = _get_user_role(request)
-        limit = ROLE_RATE_LIMITS.get(role, DEFAULT_RATE_LIMIT)
+        role_limit = ROLE_RATE_LIMITS.get(role, DEFAULT_RATE_LIMIT)
+        rules = [RateLimitRule(limit=role_limit, window_seconds=60, label="minute")]
+        rules.extend(parse_rate_limit_rules(getattr(request.app.state, "rate_limit_defaults", "")))
         key = _get_rate_limit_key(request)
-        bucket = self.store.get_bucket(key)
+        store = self.store
+        if store is None:
+            store = get_rate_limit_store(getattr(request.app.state, "rate_limit_storage_uri", "memory://"))
+        now = time.time()
 
-        # Calculate remaining BEFORE the request for accurate header
-        remaining = bucket.remaining(limit)
+        buckets: list[tuple[RateLimitRule, RateLimitBucket]] = []
+        for rule in rules:
+            bucket = store.get_bucket(f"{key}:{rule.window_seconds}:{rule.limit}", rule.window_seconds)
+            buckets.append((rule, bucket))
+            if not bucket.is_allowed(rule.limit, rule.window_seconds, now=now):
+                logger.warning("Rate limit exceeded for %s (role: %s)", key, role)
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": f"Rate limit exceeded. Limit: {rule.limit} requests/{rule.label} for {role} role."
+                    },
+                )
 
-        if not bucket.is_allowed(limit):
-            logger.warning(f"Rate limit exceeded for {key} (role: {role})")
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit exceeded. Limit: {limit} requests/minute for {role} role.",
-            )
+        for _rule, bucket in buckets:
+            bucket.add(now)
 
         response = None
         try:
             response = await call_next(request)
         finally:
             if response is not None:
-                # Add rate limit headers (remaining may have changed after request)
-                response.headers["X-RateLimit-Limit"] = str(limit)
-                response.headers["X-RateLimit-Remaining"] = str(bucket.remaining(limit))
-                response.headers["X-RateLimit-Reset"] = "60"
+                remaining_by_rule = [
+                    (
+                        rule,
+                        bucket.remaining(rule.limit, rule.window_seconds, now=now),
+                    )
+                    for rule, bucket in buckets
+                ]
+                active_rule, remaining = min(remaining_by_rule, key=lambda item: item[1])
+                response.headers["X-RateLimit-Limit"] = str(active_rule.limit)
+                response.headers["X-RateLimit-Remaining"] = str(remaining)
+                response.headers["X-RateLimit-Reset"] = str(active_rule.window_seconds)
 
         return response

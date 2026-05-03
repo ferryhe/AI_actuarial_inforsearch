@@ -23,6 +23,7 @@ from .catalog import (
 )
 from .catalog_incremental import run_incremental_catalog
 from .search import search_all
+from .ai_runtime import get_search_runtime_credentials
 from .storage import Storage
 from .collectors import CollectionConfig
 from .collectors.scheduled import ScheduledCollector
@@ -90,6 +91,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
     storage = Storage(cfg["paths"]["db"])
     crawler = Crawler(storage, cfg["paths"]["download_dir"], cfg["defaults"]["user_agent"])
+    search_credentials = get_search_runtime_credentials(storage=storage)
 
     all_new: list[dict] = []
     sites = _site_configs(cfg)
@@ -111,10 +113,10 @@ def cmd_update(args: argparse.Namespace) -> int:
 
         # Run site-specific search queries immediately after crawling the site
         if run_search and site.queries:
-            brave_key = os.getenv("BRAVE_API_KEY")
-            serpapi_key = os.getenv("SERPAPI_API_KEY")
-            serper_key = os.getenv("SERPER_API_KEY")
-            tavily_key = os.getenv("TAVILY_API_KEY")
+            brave_key = search_credentials.get("brave")
+            serpapi_key = search_credentials.get("google")
+            serper_key = search_credentials.get("serper")
+            tavily_key = search_credentials.get("tavily")
             max_results = int(search_cfg.get("max_results", 5))
             languages = search_cfg.get("languages", ["en"])
             country = search_cfg.get("country")
@@ -149,10 +151,10 @@ def cmd_update(args: argparse.Namespace) -> int:
                 all_new.extend(items)
 
     if run_search:
-        brave_key = os.getenv("BRAVE_API_KEY")
-        serpapi_key = os.getenv("SERPAPI_API_KEY")
-        serper_key = os.getenv("SERPER_API_KEY")
-        tavily_key = os.getenv("TAVILY_API_KEY")
+        brave_key = search_credentials.get("brave")
+        serpapi_key = search_credentials.get("google")
+        serper_key = search_credentials.get("serper")
+        tavily_key = search_credentials.get("tavily")
         queries = search_cfg.get("queries", [])
         max_results = int(search_cfg.get("max_results", 5))
         languages = search_cfg.get("languages", ["en"])

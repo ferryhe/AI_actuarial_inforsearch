@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
-import { apiPost, ApiError } from "@/lib/api";
+import { apiPost, ApiError, setStoredAuthToken } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { BookOpen, Eye, EyeOff, Clipboard } from "lucide-react";
 
@@ -27,6 +27,7 @@ export default function Login() {
     setLoading(true);
     try {
       await apiPost("/api/auth/login", { email, password });
+      setStoredAuthToken("", true);
       await refresh();
       navigate("/");
     } catch (err) {
@@ -50,6 +51,7 @@ export default function Login() {
     setLoading(true);
     try {
       await apiPost("/api/auth/login", { token: token.trim() });
+      setStoredAuthToken(token.trim(), false);
       await refresh();
       navigate("/");
     } catch (err) {

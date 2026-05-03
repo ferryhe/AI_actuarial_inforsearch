@@ -6,6 +6,7 @@ from typing import TypedDict
 
 import yaml
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.shared_auth import hash_password
@@ -112,6 +113,11 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool = True
     return client, app, seed
 
 
+def _make_session_cookie(app, payload: dict[str, object]) -> str:
+    serializer = URLSafeSerializer(app.state.fastapi_session_secret, salt="fastapi-session")
+    return serializer.dumps(payload)
+
+
 def test_fastapi_auth_session_cookie_secure_can_be_enabled(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FASTAPI_SESSION_COOKIE_SECURE", "true")
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
@@ -135,6 +141,26 @@ def test_fastapi_auth_session_cookie_secure_defaults_to_secure_for_production_au
     monkeypatch.setenv("FASTAPI_ENV", "production")
     _client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
+    assert app.state.fastapi_session_cookie_secure is True
+
+
+def test_fastapi_auth_session_cookie_secure_uses_yaml_fastapi_env(tmp_path: Path, monkeypatch) -> None:
+    db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
+    _seed_storage(db_path, files_dir)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["server"] = {"fastapi_env": "production"}
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-auth-test-secret")
+    monkeypatch.setenv("REQUIRE_AUTH", "1")
+    monkeypatch.delenv("FASTAPI_ENV", raising=False)
+    monkeypatch.delenv("FASTAPI_SESSION_COOKIE_SECURE", raising=False)
+
+    app = create_app()
+
+    assert app.state.fastapi_env == "production"
+    assert app.state.fastapi_env_source == "yaml"
     assert app.state.fastapi_session_cookie_secure is True
 
 
@@ -196,6 +222,49 @@ def test_bootstrap_admin_token_supports_x_auth_token_header(tmp_path: Path, monk
         headers={"X-Auth-Token": bootstrap_token},
     )
     assert delete.status_code == 200, delete.text
+
+
+def test_csrf_protection_rejects_cookie_mutations_without_matching_token(tmp_path: Path, monkeypatch) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_csrf = True
+    session_cookie = _make_session_cookie(app, {"email_user_id": seed["user_id"]})
+    client.cookies.set("session", session_cookie)
+
+    rejected = client.patch(
+        "/api/user/profile",
+        json={"display_name": "Blocked CSRF"},
+    )
+    assert rejected.status_code == 403, rejected.text
+
+    csrf_seed = client.get("/api/auth/me")
+    assert csrf_seed.status_code == 200, csrf_seed.text
+    csrf_token = csrf_seed.cookies.get("csrf_token")
+    assert csrf_token
+
+    accepted = client.patch(
+        "/api/user/profile",
+        json={"display_name": "Allowed CSRF"},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert accepted.status_code == 200, accepted.text
+
+
+def test_csrf_protection_exempts_api_token_mutations(tmp_path: Path, monkeypatch) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_csrf = True
+
+    add = client.post(
+        "/api/scheduled-tasks/add",
+        json={
+            "name": "Token CSRF Exempt Schedule",
+            "type": "catalog",
+            "interval": "daily",
+            "enabled": True,
+            "params": {},
+        },
+        headers={"X-Auth-Token": seed["admin_token"]},
+    )
+    assert add.status_code == 200, add.text
 
 
 def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(tmp_path: Path, monkeypatch) -> None:

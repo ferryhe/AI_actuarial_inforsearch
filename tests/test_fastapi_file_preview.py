@@ -77,10 +77,17 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             status="ok",
         )
         storage.update_file_markdown(file_url, "# Alpha\n\nPreview markdown.", "manual")
+        operator_token = "operator-token"
+        storage.upsert_auth_token_by_hash(
+            subject="operator-token",
+            group_name="operator",
+            token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
     finally:
         storage.close()
 
-    return {"file_url": "https://alpha.example/doc-a.pdf"}
+    return {"file_url": "https://alpha.example/doc-a.pdf", "operator_token": operator_token}
 
 
 
@@ -112,15 +119,16 @@ def test_fastapi_file_preview_routes_are_listed_in_native_inventory(tmp_path: Pa
 def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
 
-    before_preview = client.get("/api/rag/files/preview", params={"file_url": file_url})
+    before_preview = client.get("/api/rag/files/preview", params={"file_url": file_url}, headers=headers)
     assert before_preview.status_code == 200, before_preview.text
     before_body = before_preview.json()
     assert before_body["file_info"]["url"] == file_url
     assert before_body["markdown"]["content"].startswith("# Alpha")
     assert before_body["chunk_sets"] == []
 
-    list_before = client.get(f"/api/files/{file_url}/chunk-sets")
+    list_before = client.get(f"/api/files/{file_url}/chunk-sets", headers=headers)
     assert list_before.status_code == 200, list_before.text
     assert list_before.json()["chunk_sets"] == []
 
@@ -134,18 +142,19 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
             "tokenizer": "cl100k_base",
             "overwrite_same_profile": True,
         },
+        headers=headers,
     )
     assert generate_response.status_code in {200, 201}, generate_response.text
     generate_body = generate_response.json()
     assert generate_body["chunk_set_id"]
     assert generate_body["chunk_count"] >= 1
 
-    list_after = client.get(f"/api/files/{file_url}/chunk-sets")
+    list_after = client.get(f"/api/files/{file_url}/chunk-sets", headers=headers)
     assert list_after.status_code == 200, list_after.text
     list_body = list_after.json()
     assert list_body["count"] >= 1
 
-    preview_after = client.get("/api/rag/files/preview", params={"file_url": file_url})
+    preview_after = client.get("/api/rag/files/preview", params={"file_url": file_url}, headers=headers)
     assert preview_after.status_code == 200, preview_after.text
     preview_body = preview_after.json()
     assert preview_body["active_chunk_set_id"] == generate_body["chunk_set_id"]
@@ -156,6 +165,7 @@ def test_fastapi_chunk_generation_requires_config_write_token_when_configured(tm
     monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "secret-token")
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
+    auth_headers = {"Authorization": f"Bearer {seed['operator_token']}"}
 
     payload = {
         "name": "preview-profile",
@@ -166,12 +176,12 @@ def test_fastapi_chunk_generation_requires_config_write_token_when_configured(tm
         "overwrite_same_profile": True,
     }
 
-    forbidden = client.post(f"/api/files/{file_url}/chunk-sets/generate", json=payload)
+    forbidden = client.post(f"/api/files/{file_url}/chunk-sets/generate", json=payload, headers=auth_headers)
     assert forbidden.status_code == 403, forbidden.text
 
     allowed = client.post(
         f"/api/files/{file_url}/chunk-sets/generate",
         json=payload,
-        headers={"X-Auth-Token": "secret-token"},
+        headers={**auth_headers, "X-Auth-Token": "secret-token"},
     )
     assert allowed.status_code in {200, 201}, allowed.text

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.middleware.rate_limit import RateLimitStore
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
 
@@ -56,6 +57,18 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
         },
         "system": {
             "file_deletion_enabled": True,
+        },
+        "features": {
+            "enable_file_deletion": True,
+            "require_auth": False,
+            "enable_global_logs_api": False,
+            "enable_rate_limiting": False,
+            "enable_csrf": False,
+            "enable_security_headers": True,
+            "expose_error_details": False,
+            "rate_limit_defaults": "200 per hour, 50 per minute",
+            "rate_limit_storage_uri": "memory://",
+            "content_security_policy": "",
         },
         "ai_config": {
             "catalog": {"provider": "openai", "model": "gpt-4o-mini", "system_prompt": "catalog prompt"},
@@ -214,6 +227,19 @@ def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tu
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-ops-read-test-secret")
     monkeypatch.setenv("OPENAI_API_KEY", "env-openai-key")
+    for feature_env in [
+        "ENABLE_FILE_DELETION",
+        "ENABLE_GLOBAL_LOGS_API",
+        "ENABLE_RATE_LIMITING",
+        "RATE_LIMIT_ENABLED",
+        "ENABLE_CSRF",
+        "ENABLE_SECURITY_HEADERS",
+        "EXPOSE_ERROR_DETAILS",
+        "RATE_LIMIT_DEFAULTS",
+        "RATE_LIMIT_STORAGE_URI",
+        "CONTENT_SECURITY_POLICY",
+    ]:
+        monkeypatch.delenv(feature_env, raising=False)
     if require_auth:
         monkeypatch.setenv("REQUIRE_AUTH", "true")
     else:
@@ -316,8 +342,8 @@ def _patch_available_models(monkeypatch) -> None:
 
     import ai_actuarial.llm_models as llm_models
 
-    monkeypatch.setattr(llm_models, "get_available_models", lambda provider=None: fake_models, raising=True)
-    monkeypatch.setattr(llm_models, "refresh_models", lambda: None, raising=True)
+    monkeypatch.setattr(llm_models, "get_available_models", lambda provider=None, **kwargs: fake_models, raising=True)
+    monkeypatch.setattr(llm_models, "refresh_models", lambda **kwargs: None, raising=True)
 
 
 def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path: Path, monkeypatch) -> None:
@@ -359,6 +385,11 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
             assert "Completed task" in body["log"]
         elif endpoint == "/api/config/backend-settings":
             assert body["defaults"]["max_pages"] == 10
+            assert body["features"]["enable_file_deletion"] is True
+            assert body["features"]["enable_security_headers"] is True
+            assert body["runtime"]["file_deletion_enabled"] is True
+            assert body["runtime"]["enable_security_headers"] is True
+            assert body["runtime"]["feature_sources"]["enable_security_headers"] == "yaml"
         elif endpoint == "/api/config/llm-providers":
             assert any(item["provider"] == "openai" for item in body["providers"])
         elif endpoint == "/api/config/ai-models":
@@ -374,11 +405,16 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
     assert "/api/tasks/active" in body["native_paths"]
     assert "/api/config/backend-settings" in body["native_paths"]
 
+    health = client.get("/api/health")
+    assert health.headers["x-content-type-options"] == "nosniff"
+    assert health.headers["x-frame-options"] == "DENY"
+
 
 def test_fastapi_ops_read_routes_require_operator_access_when_auth_enabled(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     _install_runtime_state(monkeypatch, app)
+    assert app.state.require_auth is True
 
     unauthorized = client.get("/api/config/sites")
     assert unauthorized.status_code == 401
@@ -430,6 +466,11 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     assert any(row["instance_id"] == "backup" and row["is_default"] is False for row in openai_credentials)
     assert any(row["provider_id"] == "serper" and row["category"] == "search" for row in credential_rows)
 
+    search_engines = client.get("/api/config/search-engines", headers=headers)
+    assert search_engines.status_code == 200, search_engines.text
+    search_rows = {row["id"]: row for row in search_engines.json()["engines"]}
+    assert search_rows["serper"]["configured"] is True
+
     catalog = client.get("/api/config/model-catalog", headers=headers)
     assert catalog.status_code == 200, catalog.text
     catalog_body = catalog.json()
@@ -455,9 +496,7 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
     _patch_available_models(monkeypatch)
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     monkeypatch.chdir(tmp_path)
-    import ai_actuarial.api.services.ops_read as ops_read_service
-
-    monkeypatch.setattr(ops_read_service.settings, "ENABLE_GLOBAL_LOGS_API", True)
+    app.state.enable_global_logs_api = True
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "app.log").write_text(
@@ -485,3 +524,37 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
     body = response.json()
     assert body["logs"].splitlines()[0].endswith("ERROR second")
     assert body["logs"].splitlines()[1].endswith("INFO first")
+
+
+def test_rate_limit_defaults_are_enforced_from_runtime_features(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    app.state.enable_rate_limiting = True
+    app.state.rate_limit_defaults = "2 per minute"
+    app.state.rate_limit_storage_uri = f"memory://ops-read-{tmp_path.name}"
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+    payload = {"type": "file", "directory_path": "/does/not/exist"}
+
+    first = client.post("/api/collections/run", json=payload, headers=headers)
+    second = client.post("/api/collections/run", json=payload, headers=headers)
+    third = client.post("/api/collections/run", json=payload, headers=headers)
+
+    assert first.status_code == 400, first.text
+    assert first.headers["x-ratelimit-limit"] == "2"
+    assert second.status_code == 400, second.text
+    assert third.status_code == 429, third.text
+    assert "2 requests/minute" in third.text
+
+
+def test_rate_limit_store_cleanup_respects_bucket_window(monkeypatch) -> None:
+    store = RateLimitStore()
+    bucket = store.get_bucket("ip:127.0.0.1:3600:200", window_seconds=3600)
+    bucket.timestamps = [1000.0]
+
+    monkeypatch.setattr("ai_actuarial.api.middleware.rate_limit.time.time", lambda: 1200.0)
+    store.clear_expired()
+    assert "ip:127.0.0.1:3600:200" in store._buckets
+
+    monkeypatch.setattr("ai_actuarial.api.middleware.rate_limit.time.time", lambda: 5000.0)
+    store.clear_expired()
+    assert "ip:127.0.0.1:3600:200" not in store._buckets

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -50,6 +51,10 @@ def _db_path(request: Request) -> str:
     if not db_path:
         raise OpsWriteError("Database path is unavailable", status_code=500)
     return db_path
+
+
+def _config_write_auth_token() -> str:
+    return os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
 
 
 def _handle_ops_error(exc: OpsWriteError) -> JSONResponse:
@@ -211,7 +216,7 @@ def api_config_backend_settings_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:
@@ -228,7 +233,7 @@ def api_config_categories_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:
@@ -245,7 +250,7 @@ def api_config_ai_models_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:
@@ -262,7 +267,7 @@ def api_config_provider_credentials_upsert(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:
@@ -279,7 +284,7 @@ def api_config_provider_credentials_import_env(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:
@@ -296,7 +301,7 @@ def api_config_provider_credentials_reencrypt(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:
@@ -313,7 +318,7 @@ def api_config_provider_credentials_delete(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:
@@ -332,7 +337,7 @@ def api_config_ai_routing_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = settings.CONFIG_WRITE_AUTH_TOKEN
+        expected_token = _config_write_auth_token()
         if expected_token:
             provided_token = request.headers.get("X-Auth-Token")
             if not provided_token or provided_token != expected_token:

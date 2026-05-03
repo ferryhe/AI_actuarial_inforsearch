@@ -142,6 +142,23 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-chat-test-secret")
+    for provider_key in [
+        "DEEPSEEK_API_KEY",
+        "MISTRAL_API_KEY",
+        "SILICONFLOW_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "MOONSHOT_API_KEY",
+        "KIMI_API_KEY",
+        "ZHIPUAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_CLOUD_API_KEY",
+        "COHERE_API_KEY",
+        "MINIMAX_API_KEY",
+        "HUGGINGFACE_API_KEY",
+    ]:
+        monkeypatch.delenv(provider_key, raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
@@ -465,7 +482,7 @@ def test_fastapi_chat_query_flow_works_with_native_service_contract(tmp_path: Pa
 
 
 def test_fastapi_chat_query_maps_llm_exceptions_to_api_error(tmp_path: Path, monkeypatch) -> None:
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     import ai_actuarial.api.services.chat as chat_service
 
@@ -561,6 +578,11 @@ def test_fastapi_chat_query_maps_llm_exceptions_to_api_error(tmp_path: Path, mon
     response = client.post("/api/chat/query", json={"message": "What is Solvency II?", "kb_ids": ["chat-kb-a"], "mode": "expert"})
     assert response.status_code == 502, response.text
     assert response.json()["error"] == "LLM generation failed"
+
+    app.state.expose_error_details = True
+    detailed = client.post("/api/chat/query", json={"message": "What is Solvency II?", "kb_ids": ["chat-kb-a"], "mode": "expert"})
+    assert detailed.status_code == 502, detailed.text
+    assert detailed.json()["error"] == "LLM generation failed: provider down"
 
 
 

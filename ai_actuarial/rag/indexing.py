@@ -190,6 +190,7 @@ class IndexingPipeline:
         
         # Update KB statistics
         self._update_kb_stats(kb_id)
+        self._record_kb_index_version(kb_id, kb, index_path, stats)
         
         if stats['stopped']:
             self._log_progress(
@@ -386,6 +387,49 @@ class IndexingPipeline:
             ))
         
         conn.commit()
+
+    def _record_kb_index_version(
+        self,
+        kb_id: str,
+        kb: KnowledgeBase,
+        index_path: Path,
+        stats: Dict[str, Any],
+    ) -> None:
+        """Record the embedding runtime used for the current index artifact."""
+        create_index_version = getattr(self.storage, "create_kb_index_version", None)
+        if not callable(create_index_version):
+            return
+
+        current_embedding = self.kb_manager.get_current_embedding_metadata()
+        current_kb = self.kb_manager.get_kb(kb_id) or kb
+        chunk_count = getattr(current_kb, "chunk_count", None)
+        if chunk_count in (None, ""):
+            chunk_count = int(stats.get("total_chunks") or 0)
+
+        if stats.get("stopped"):
+            status = "stopped"
+        elif int(stats.get("error_files") or 0) > 0:
+            status = "error"
+        else:
+            status = "ready"
+
+        try:
+            create_index_version(
+                kb_id=kb_id,
+                embedding_provider=current_embedding["provider"],
+                embedding_model=current_embedding["model"],
+                embedding_dimension=current_embedding["dimension"],
+                index_type=getattr(current_kb, "index_type", None) or kb.index_type,
+                chunk_count=int(chunk_count or 0),
+                status=status,
+                artifact_path=str(index_path),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record KB index version for %s; index artifact was still written",
+                kb_id,
+                exc_info=True,
+            )
     
     def _update_file_index_status(
         self,

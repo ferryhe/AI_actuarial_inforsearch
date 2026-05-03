@@ -249,6 +249,13 @@ PROVIDER_BASE_URL_ENV_VARS = {
     for provider, (_, base_url_env) in PROVIDER_STARTUP_ENV_MAP.items()
 }
 
+SEARCH_ENGINE_PROVIDER_MAP = {
+    "brave": "brave_search",
+    "google": "serpapi",
+    "serper": "serper",
+    "tavily": "tavily",
+}
+
 CHAT_OPENAI_COMPATIBLE_PROVIDERS = {
     "openai",
     "azure_openai",
@@ -600,11 +607,53 @@ def list_provider_credentials(*, storage: Any | None = None) -> dict[str, list[d
     return {"credentials": credentials}
 
 
-def get_model_catalog(*, refresh: bool = False) -> dict[str, Any]:
+def build_model_discovery_credentials(*, storage: Any | None = None) -> dict[str, dict[str, str | None]]:
+    """Return provider credentials for live model discovery, preferring DB rows."""
+    credentials: dict[str, dict[str, str | None]] = {}
+    for provider, info in KNOWN_LLM_PROVIDERS.items():
+        if provider == "local" or bool(info.get("is_search_provider")):
+            continue
+        resolved = resolve_provider_credentials(provider, storage=storage, category="llm")
+        api_key_optional = str(info.get("api_key_hint") or "").strip().lower() == "optional"
+        base_url_env = PROVIDER_BASE_URL_ENV_VARS.get(provider)
+        explicit_env_base_url = str(os.getenv(base_url_env) or "").strip() if base_url_env else ""
+        if not resolved.configured and not (api_key_optional and explicit_env_base_url):
+            continue
+        credentials[provider] = {
+            "api_key": resolved.api_key,
+            "base_url": resolved.base_url if resolved.configured else explicit_env_base_url,
+            "source": resolved.source,
+        }
+    return credentials
+
+
+def resolve_search_engine_credentials(
+    engine_id: str,
+    *,
+    storage: Any | None = None,
+) -> ProviderCredentials:
+    """Resolve search-engine credentials from DB first, then env fallback."""
+    provider = SEARCH_ENGINE_PROVIDER_MAP.get(str(engine_id or "").strip().lower())
+    if not provider:
+        return _missing_credentials(str(engine_id or "").strip().lower(), category="search")
+    return resolve_provider_credentials(provider, storage=storage, category="search")
+
+
+def get_search_runtime_credentials(*, storage: Any | None = None) -> dict[str, str | None]:
+    """Return concrete search API keys keyed by UI/search engine id."""
+    result: dict[str, str | None] = {}
+    for engine_id in SEARCH_ENGINE_PROVIDER_MAP:
+        credentials = resolve_search_engine_credentials(engine_id, storage=storage)
+        result[engine_id] = credentials.api_key if credentials.configured else None
+    return result
+
+
+def get_model_catalog(*, refresh: bool = False, storage: Any | None = None) -> dict[str, Any]:
+    provider_credentials = build_model_discovery_credentials(storage=storage)
     if refresh:
-        llm_models.refresh_models()
+        llm_models.refresh_models(provider_credentials=provider_credentials)
     return {
-        "available": llm_models.get_available_models(),
+        "available": llm_models.get_available_models(provider_credentials=provider_credentials),
         "providers": list_provider_registry()["providers"],
     }
 

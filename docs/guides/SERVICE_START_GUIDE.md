@@ -96,13 +96,13 @@ RELOAD_CADDY=true CADDY_CONTAINER=ai-caddy APP_SERVICE_NAME=api bash scripts/dep
 
 - `FASTAPI_SESSION_SECRET`: required for session login.
 - `TOKEN_ENCRYPTION_KEY`: required for decrypting database-stored provider credentials.
-- `REQUIRE_AUTH`: set to `true` to require authentication.
+- `features.require_auth` in `config/sites.yaml`: set to `true` to require authentication.
+- `FASTAPI_ENV`: optional deployment override. If unset, FastAPI uses `config/sites.yaml -> server.fastapi_env`.
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local admin bootstrap token.
-- `BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`: optional search providers.
-- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`: optional provider env fallback keys.
+- Provider credentials: create them from Settings so they are stored encrypted in the DB.
 
 ## Troubleshooting
 
 - Port in use: change FastAPI with `--port` and keep `vite.config.ts` proxy aligned.
-- Missing provider key: run `python scripts/diagnose_embedding_runtime.py --config config/sites.yaml --json`.
-- Auth issues: check `REQUIRE_AUTH`, `FASTAPI_SESSION_SECRET`, and `BOOTSTRAP_ADMIN_TOKEN`.
+- Missing provider key: add or repair the encrypted provider credential in Settings, then run `python scripts/diagnose_secrets_runtime.py --json`.
+- Auth issues: check `features.require_auth`, `FASTAPI_SESSION_SECRET`, and `BOOTSTRAP_ADMIN_TOKEN`.

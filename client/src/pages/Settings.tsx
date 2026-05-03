@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { ApiError, apiGet, apiPost, apiDelete } from "@/lib/api";
 
 type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts";
 
@@ -76,6 +76,21 @@ interface SearchEngine {
   configured: boolean;
 }
 
+interface ProviderCredential {
+  credential_id: string;
+  stable_credential_id?: string | null;
+  provider_id: string;
+  instance_id: string;
+  label: string;
+  category: string;
+  source: string;
+  api_base_url?: string | null;
+  status?: string;
+  decrypt_ok?: boolean;
+  is_default?: boolean;
+  last_error?: string | null;
+}
+
 interface BackendDefaults {
   max_pages?: number;
   max_depth?: number;
@@ -92,6 +107,7 @@ interface BackendSettings {
   defaults?: BackendDefaults;
   paths?: Record<string, string>;
   search?: Record<string, unknown>;
+  features?: Record<string, unknown>;
   runtime?: Record<string, unknown>;
 }
 
@@ -312,20 +328,7 @@ function AiConfigTab({ lang }: { lang: string }) {
     supports: { chat?: boolean; embeddings?: boolean; catalog?: boolean; ocr?: boolean; search?: boolean };
     status?: string;
   }>>([]);
-  const [credentials, setCredentials] = useState<Array<{
-    credential_id: string;
-    stable_credential_id?: string | null;
-    provider_id: string;
-    instance_id: string;
-    label: string;
-    category: string;
-    source: string;
-    api_base_url?: string | null;
-    status?: string;
-    decrypt_ok?: boolean;
-    is_default?: boolean;
-    last_error?: string | null;
-  }>>([]);
+  const [credentials, setCredentials] = useState<ProviderCredential[]>([]);
   const [available, setAvailable] = useState<Record<string, AvailableModel[]>>({});
   const [routing, setRouting] = useState<Record<string, {
     function_name: string;
@@ -397,6 +400,13 @@ function AiConfigTab({ lang }: { lang: string }) {
 
   function providerCredential(providerId: string, category = "llm") {
     return providerCredentials(providerId, category).find((item) => item.is_default) || providerCredentials(providerId, category)[0];
+  }
+
+  function credentialUsable(credential?: { status?: string; decrypt_ok?: boolean; last_error?: string | null }) {
+    if (!credential) return false;
+    if (credential.decrypt_ok === false || credential.last_error) return false;
+    if (credential.status === "inactive") return false;
+    return true;
   }
 
   function credentialStatusText(credential?: { source: string; status?: string; decrypt_ok?: boolean; last_error?: string | null }) {
@@ -524,8 +534,11 @@ function AiConfigTab({ lang }: { lang: string }) {
       });
       setModelEdits({});
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.models_save_error"), type: "error" });
+    } catch (error) {
+      const message = error instanceof ApiError
+        ? error.detail || error.message || t("settings.models_save_error")
+        : t("settings.models_save_error");
+      setToast({ message, type: "error" });
     } finally {
       setSavingRouting(false);
     }
@@ -553,8 +566,9 @@ function AiConfigTab({ lang }: { lang: string }) {
   }
 
   function defaultCredentialId(providerId: string) {
-    const credential = providerCredential(providerId);
-    return credential?.stable_credential_id || credential?.credential_id || "";
+    const credential = providerCredentials(providerId).find((item) => credentialUsable(item)) || providerCredential(providerId);
+    if (!credentialUsable(credential)) return "";
+    return credential.stable_credential_id || credential.credential_id || "";
   }
 
   function makeRoutingDraft(card: { key: AiRoutingKey; capability: RoutingCapability }, providerId?: string): ModelEdit {
@@ -574,7 +588,7 @@ function AiConfigTab({ lang }: { lang: string }) {
     return modelEdits[functionName] || {
       provider: routing[functionName]?.provider || "",
       model: routing[functionName]?.model || "",
-      credential_id: routing[functionName]?.stable_credential_id || routing[functionName]?.credential_id || "",
+      credential_id: routing[functionName]?.credential_error ? "" : routing[functionName]?.stable_credential_id || routing[functionName]?.credential_id || "",
     };
   }
 
@@ -727,7 +741,7 @@ function AiConfigTab({ lang }: { lang: string }) {
             </div>
           ) : configuredProviders.map((provider) => {
             const credential = providerCredential(provider.provider_id);
-            const isConfigured = Boolean(credential && (credential.status === "active" || credential.decrypt_ok));
+            const isConfigured = credentialUsable(credential);
             const isEditing = editingProvider === provider.provider_id;
             return (
               <div key={provider.provider_id} className="px-5 py-4" data-testid={`provider-row-${provider.provider_id}`}>
@@ -1665,7 +1679,8 @@ function SystemTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const [fileDeletionEnabled, setFileDeletionEnabled] = useState(false);
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
+  const [featureText, setFeatureText] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
   const hasInit = useRef(false);
 
@@ -1675,8 +1690,26 @@ function SystemTab() {
       const res = await apiGet<BackendSettings>("/api/config/backend-settings");
       setSettings(res);
       if (!hasInit.current) {
-        const rt = res.runtime as Record<string, boolean> | undefined;
-        setFileDeletionEnabled(!!rt?.file_deletion_enabled);
+        const features = res.features as Record<string, unknown> | undefined;
+        const rt = res.runtime as Record<string, unknown> | undefined;
+        const readTextFeature = (key: string, fallback = "") => {
+          const value = features?.[key] ?? rt?.[key] ?? fallback;
+          return typeof value === "string" ? value : String(value ?? "");
+        };
+        setFeatureFlags({
+          enable_file_deletion: !!(features?.enable_file_deletion ?? rt?.file_deletion_enabled),
+          require_auth: !!(features?.require_auth ?? rt?.require_auth),
+          enable_global_logs_api: !!(features?.enable_global_logs_api ?? rt?.enable_global_logs_api),
+          enable_rate_limiting: !!(features?.enable_rate_limiting ?? rt?.enable_rate_limiting),
+          enable_csrf: !!(features?.enable_csrf ?? rt?.enable_csrf),
+          enable_security_headers: !!(features?.enable_security_headers ?? rt?.enable_security_headers),
+          expose_error_details: !!(features?.expose_error_details ?? rt?.expose_error_details),
+        });
+        setFeatureText({
+          rate_limit_defaults: readTextFeature("rate_limit_defaults", "200 per hour, 50 per minute"),
+          rate_limit_storage_uri: readTextFeature("rate_limit_storage_uri", "memory://"),
+          content_security_policy: readTextFeature("content_security_policy"),
+        });
         hasInit.current = true;
       }
     } catch {
@@ -1687,20 +1720,42 @@ function SystemTab() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const runtime = settings?.runtime as Record<string, boolean> | undefined;
+  const runtime = settings?.runtime as Record<string, unknown> | undefined;
+  const featureSources = (
+    ((settings?.features as Record<string, unknown> | undefined)?.sources as Record<string, string> | undefined) ??
+    (runtime?.feature_sources as Record<string, string> | undefined)
+  );
 
-  const readOnlyFlags: Array<{ key: string; label: string }> = [
+  const editableFlags: Array<{ key: string; label: string; disabled?: boolean }> = [
+    { key: "enable_file_deletion", label: t("settings.flag_file_deletion") },
     { key: "require_auth", label: t("settings.flag_require_auth") },
     { key: "enable_global_logs_api", label: t("settings.flag_global_logs") },
     { key: "enable_rate_limiting", label: t("settings.flag_rate_limiting") },
     { key: "enable_csrf", label: t("settings.flag_csrf") },
     { key: "enable_security_headers", label: t("settings.flag_security_headers") },
+    { key: "expose_error_details", label: t("settings.flag_expose_error_details") },
   ];
+
+  const featureTextFields: Array<{ key: string; label: string; placeholder: string; multiline?: boolean }> = [
+    { key: "rate_limit_defaults", label: t("settings.rate_limit_defaults"), placeholder: "200 per hour, 50 per minute" },
+    { key: "rate_limit_storage_uri", label: t("settings.rate_limit_storage_uri"), placeholder: "memory://" },
+    { key: "content_security_policy", label: t("settings.content_security_policy"), placeholder: "default-src 'self'", multiline: true },
+  ];
+
+  function toggleFeature(key: string) {
+    setFeatureFlags((current) => ({ ...current, [key]: !current[key] }));
+    setDirty(true);
+  }
+
+  function updateFeatureText(key: string, value: string) {
+    setFeatureText((current) => ({ ...current, [key]: value }));
+    setDirty(true);
+  }
 
   async function saveSystemSettings() {
     setSaving(true);
     try {
-      await apiPost("/api/config/backend-settings", { system: { file_deletion_enabled: fileDeletionEnabled } });
+      await apiPost("/api/config/backend-settings", { features: { ...featureFlags, ...featureText } });
       setToast({ message: t("settings.system_saved"), type: "success" });
       setDirty(false);
       hasInit.current = false;
@@ -1739,46 +1794,82 @@ function SystemTab() {
           <p className="text-xs text-muted-foreground">{t("settings.system_runtime_desc")}</p>
           <div className="divide-y divide-border">
             {/* File deletion — YAML-configurable toggle */}
-            <div className="py-3 flex items-center justify-between" data-testid="system-flag-file_deletion_enabled">
-              <div>
-                <span className="text-sm font-medium">{t("settings.flag_file_deletion")}</span>
-                <span className="ml-2 text-[10px] text-muted-foreground bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                  {t("settings.flag_yaml_hint")}
-                </span>
-              </div>
-              <button
-                onClick={() => { setFileDeletionEnabled((v) => !v); setDirty(true); }}
-                className={cn(
-                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  fileDeletionEnabled ? "bg-emerald-500" : "bg-muted border border-border"
-                )}
-                data-testid="toggle-file-deletion"
-                aria-label={t("settings.flag_file_deletion")}
-              >
-                <span className={cn(
-                  "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform shadow-sm",
-                  fileDeletionEnabled ? "translate-x-4" : "translate-x-1"
-                )} />
-              </button>
-            </div>
-            {/* Read-only env-var flags */}
-            {readOnlyFlags.map(({ key, label }) => {
-              const val = !!runtime?.[key];
+            {editableFlags.map(({ key, label, disabled }) => {
+              const val = !!featureFlags[key];
+              const runtimeKey = key === "enable_file_deletion" ? "file_deletion_enabled" : key;
+              const runtimeVal = !!runtime?.[runtimeKey];
+              const source = featureSources?.[key] || "yaml";
+              const locked = disabled || source === "env";
               return (
                 <div key={key} className="py-3 flex items-center justify-between" data-testid={`system-flag-${key}`}>
                   <div>
                     <span className="text-sm font-medium">{label}</span>
-                    <span className="ml-2 text-[10px] text-muted-foreground">{t("settings.flag_env_hint")}</span>
+                    <span className="ml-2 text-[10px] text-muted-foreground bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                      {t(source === "env" ? "settings.flag_env_hint" : "settings.flag_yaml_hint")}
+                    </span>
                   </div>
-                  <span className={cn(
-                    "text-[11px] font-semibold px-2 py-0.5 rounded-full",
-                    val
-                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                      : "bg-muted text-muted-foreground"
-                  )}>
-                    {val ? t("settings.flag_enabled") : t("settings.flag_disabled")}
-                  </span>
+                  {locked ? (
+                    <span className={cn(
+                      "text-[11px] font-semibold px-2 py-0.5 rounded-full",
+                      runtimeVal
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "bg-muted text-muted-foreground"
+                    )}>
+                      {runtimeVal ? t("settings.flag_enabled") : t("settings.flag_disabled")}
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => toggleFeature(key)}
+                      className={cn(
+                        "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        val ? "bg-emerald-500" : "bg-muted border border-border"
+                      )}
+                      data-testid={`toggle-system-flag-${key}`}
+                      aria-label={label}
+                    >
+                      <span className={cn(
+                        "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform shadow-sm",
+                        val ? "translate-x-4" : "translate-x-1"
+                      )} />
+                    </button>
+                  )}
                 </div>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
+            {featureTextFields.map(({ key, label, placeholder, multiline }) => {
+              const source = featureSources?.[key] || "yaml";
+              const locked = source === "env";
+              return (
+                <label key={key} className={cn("space-y-1.5", multiline && "lg:col-span-2")}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium">{label}</span>
+                    <span className="text-[10px] text-muted-foreground bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                      {t(source === "env" ? "settings.flag_env_hint" : "settings.flag_yaml_hint")}
+                    </span>
+                  </div>
+                  {multiline ? (
+                    <textarea
+                      value={featureText[key] || ""}
+                      onChange={(event) => updateFeatureText(key, event.target.value)}
+                      disabled={locked}
+                      rows={2}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
+                      placeholder={placeholder}
+                      data-testid={`input-${key.replaceAll("_", "-")}`}
+                    />
+                  ) : (
+                    <input
+                      value={featureText[key] || ""}
+                      onChange={(event) => updateFeatureText(key, event.target.value)}
+                      disabled={locked}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
+                      placeholder={placeholder}
+                      data-testid={`input-${key.replaceAll("_", "-")}`}
+                    />
+                  )}
+                </label>
               );
             })}
           </div>

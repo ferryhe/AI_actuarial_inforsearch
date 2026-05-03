@@ -776,7 +776,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         conversation_exc = getattr(exceptions, "ConversationException", None)
         llm_exc = getattr(exceptions, "LLMException", None)
         retrieval_exc = getattr(exceptions, "RetrievalException", None)
-        expose_detail = settings.EXPOSE_ERROR_DETAILS
+        expose_detail = bool(getattr(request.app.state, "expose_error_details", settings.EXPOSE_ERROR_DETAILS))
         if conversation_exc and isinstance(exc, conversation_exc):
             detail = f": {exc}" if expose_detail else ""
             raise ChatApiError(f"Conversation error{detail}", status_code=400) from exc

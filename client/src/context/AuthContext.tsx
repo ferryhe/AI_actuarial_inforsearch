@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useLocation } from "wouter";
-import { apiGet, apiPost, ApiError } from "@/lib/api";
+import { apiGet, apiPost, ApiError, setStoredAuthToken } from "@/lib/api";
 
 export interface AuthUser {
   id: number | null;
@@ -67,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await apiPost("/api/auth/logout");
     } catch {}
+    setStoredAuthToken("", true);
     setUser(null);
     setPermissions([]);
     setRequireAuth(false);

@@ -1,10 +1,10 @@
 # AI Actuarial Info Search
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README.md) | [Simplified Chinese](README.zh-CN.md)
 
 AI Actuarial Info Search helps actuarial and insurance teams discover, download, catalog, convert, and query AI-related documents from public organizations and local files.
 
-The active product stack is **FastAPI + React**:
+The active product stack is FastAPI + React:
 
 | Surface | Stack | Local URL | Role |
 | --- | --- | --- | --- |
@@ -23,27 +23,27 @@ The old server-rendered HTML runtime and Replit workflow files have been retired
 - Convert documents to Markdown with local or API-backed engines.
 - Manage RAG knowledge bases, chunk profiles, and indexing jobs.
 - Chat with documents through retrieval-augmented generation.
-- Configure multiple AI providers, including OpenAI, DeepSeek, Mistral, and compatible providers.
-- Operate through a React UI for dashboard, database, tasks, settings, knowledge, chat, logs, users, and file detail workflows.
+- Configure AI/search provider credentials from Settings.
+- Operate through the React UI for dashboard, database, tasks, settings, knowledge, chat, logs, users, and file detail workflows.
 
 ## Quick Start
 
-### Requirements
+Requirements:
 
 - Python 3.10+
 - Node.js 18+
-- Optional AI/search provider API keys in environment variables or encrypted DB credentials
-- Stable `TOKEN_ENCRYPTION_KEY` if provider credentials are stored in the database
-- `FASTAPI_SESSION_SECRET` if email/session login is enabled
+- `FASTAPI_SESSION_SECRET` in `.env`
+- `TOKEN_ENCRYPTION_KEY` in `.env`
+- Provider credentials saved in Settings as encrypted DB credentials
 
-### Start The API
+Start the API:
 
 ```bash
 pip install -r requirements.txt
 python -m ai_actuarial api --host 127.0.0.1 --port 8000
 ```
 
-### Start The React UI
+Start the React UI:
 
 ```bash
 npm install
@@ -52,17 +52,38 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api/*` to `http://127.0.0.1:8000`.
 
+## Configuration
+
+There are three sources, each with a clear role:
+
+- `config/sites.yaml`: non-secret runtime configuration, including AI routing, paths, RAG settings, search settings, scheduled tasks, and `features`.
+- Encrypted DB credentials: provider API keys and base URLs, managed from Settings.
+- `.env`: process secrets and explicit deployment overrides only.
+
+Provider API keys should not be committed to YAML or kept long term in `.env`. Save them from Settings as encrypted DB credentials, then bind AI routes in `sites.yaml` to stable credential ids such as `openai:llm:instance:default`.
+
+Important `.env` variables:
+
+- `FASTAPI_SESSION_SECRET`: required for browser session login.
+- `TOKEN_ENCRYPTION_KEY`: required to decrypt provider credentials stored in the database. Keep it stable.
+- `BOOTSTRAP_ADMIN_TOKEN`: optional local/admin recovery token.
+- `CONFIG_WRITE_AUTH_TOKEN`, `LOGS_READ_AUTH_TOKEN`, `FILE_DELETION_AUTH_TOKEN`: optional compatibility tokens. Leave unset unless you intentionally require matching `X-Auth-Token`.
+
+Feature switches such as authentication, global logs, file deletion, rate limiting, CSRF protection, error-detail exposure, and security headers live in `config/sites.yaml -> features` and can be changed from Settings. If a matching environment variable is set, it is treated as a deployment override and the Settings page marks that value as locked.
+
+The canonical SQLite path is `config/sites.yaml -> paths.db`. `DB_PATH` is only a fallback when that YAML path is absent.
+
 ## Authentication
 
-- `REQUIRE_AUTH=true`: users must log in with a session or token.
-- `REQUIRE_AUTH=false`: guests get read-only access.
-- `FASTAPI_SESSION_COOKIE_SECURE=true`: mark session cookies as HTTPS-only. If omitted, this defaults to enabled when `FASTAPI_ENV=production` and `REQUIRE_AUTH=true`.
-- Task execution, schedule management, settings writes, downloads, and deletes require appropriate token permissions.
-- Local admin bootstrap can be configured with `BOOTSTRAP_ADMIN_TOKEN`; do not commit real tokens.
+- `features.require_auth=true`: users must log in with a session or token.
+- `features.require_auth=false`: guests get read-only access.
+- `FASTAPI_SESSION_COOKIE_SECURE=true`: marks session cookies as HTTPS-only. If omitted, this defaults to enabled when the effective FastAPI environment is production and auth is required. `FASTAPI_ENV` overrides `config/sites.yaml -> server.fastapi_env`.
+- Task execution, schedule management, settings writes, downloads, and deletes require appropriate permissions.
+- Local admin recovery can be configured with `BOOTSTRAP_ADMIN_TOKEN`; do not commit real tokens.
 
-## Scheduled Task Parameters
+## Scheduled Tasks
 
-In **Tasks -> Configured Tasks**, the `parameters` field must be valid JSON. These values are passed to the native background task when the schedule fires.
+In Tasks -> Configured Tasks, the `parameters` field must be valid JSON. These values are passed to the native background task when the schedule fires.
 
 Common examples:
 
@@ -81,14 +102,6 @@ Catalog only files from one configured site:
 }
 ```
 
-Run a configured site crawl:
-
-```json
-{
-  "site": "Casualty Actuarial Society (CAS)"
-}
-```
-
 Import local files:
 
 ```json
@@ -100,68 +113,38 @@ Import local files:
 }
 ```
 
-Collect explicit URLs:
-
-```json
-{
-  "urls": [
-    "https://example.org/report.pdf"
-  ]
-}
-```
-
 Supported intervals include `daily`, `weekly`, `daily at 02:00`, `every 6 hours`, and `every 30 minutes`.
 
 ## Project Layout
 
 ```text
 AI_actuarial_inforsearch/
-├─ ai_actuarial/           # Core Python package and FastAPI API
-├─ client/                 # React + TypeScript frontend
-├─ config/                 # YAML configuration
-├─ data/                   # Local runtime data, downloads, logs, and SQLite DB
-├─ doc_to_md/              # Document-to-Markdown engines
-├─ docs/                   # Architecture, guides, plans, and reports
-├─ scripts/                # Maintenance scripts
-├─ tests/                  # Python and source-level tests
-├─ vite.config.ts          # Vite dev server and build config
-├─ package.json            # Node dependencies and scripts
-└─ requirements.txt        # Python runtime dependencies
+|-- ai_actuarial/           # Core Python package and FastAPI API
+|-- client/                 # React + TypeScript frontend
+|-- config/                 # YAML configuration
+|-- data/                   # Local runtime data, downloads, logs, and SQLite DB
+|-- doc_to_md/              # Document-to-Markdown engines
+|-- docs/                   # Architecture, guides, plans, and reports
+|-- scripts/                # Maintenance scripts
+|-- tests/                  # Python and source-level tests
+|-- vite.config.ts          # Vite dev server and build config
+|-- package.json            # Node dependencies and scripts
+`-- requirements.txt        # Python runtime dependencies
 ```
 
-## Configuration
+## Diagnostics
 
-Main structured configuration lives in `config/sites.yaml`. Secrets should stay in `.env`, process environment, or encrypted DB credentials.
-Provider API keys used at runtime should be saved as encrypted database credentials; `sites.yaml` should bind AI functions to provider/model and an optional credential id such as `openai:llm:instance:default`.
-The Settings model catalog also has curated fallback lists and can refresh live provider model ids from environment-configured provider APIs every 24 hours.
+Diagnose secret and credential state without printing secret values:
 
-Important variables:
-
-- `TOKEN_ENCRYPTION_KEY`: required for database-stored provider credentials.
-- `FASTAPI_SESSION_SECRET`: required for session login.
-- `FASTAPI_SESSION_COOKIE_SECURE`: set to `true` for HTTPS deployments; defaults on when `FASTAPI_ENV=production` and auth is required.
-- `BOOTSTRAP_ADMIN_TOKEN`: optional local/admin bootstrap token.
-- `REQUIRE_AUTH`: enables full authentication when `true`.
-- `BRAVE_API_KEY`, `SERPAPI_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`: optional search keys.
-- `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `SILICONFLOW_API_KEY`, `OPENROUTER_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `KIMI_API_KEY`, `ZHIPUAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CLOUD_API_KEY`, `COHERE_API_KEY`, `MINIMAX_API_KEY`, `HUGGINGFACE_API_KEY`: optional AI/conversion keys. Providers with a model-list API also use these environment keys for live catalog discovery.
+```bash
+python scripts/diagnose_secrets_runtime.py --json
+```
 
 Generate a Fernet key for `TOKEN_ENCRYPTION_KEY`:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
-
-Diagnose the active embedding runtime without printing secrets:
-
-```bash
-python scripts/diagnose_embedding_runtime.py --config config/sites.yaml --json
-```
-
-More details:
-
-- [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
-- [AI Model Catalog](docs/guides/AI_MODEL_CATALOG.md)
-- [RAG Embeddings Runtime](docs/guides/RAG_EMBEDDINGS_RUNTIME.md)
 
 ## Build And Test
 
@@ -170,25 +153,10 @@ npm run build
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 ```
 
-## Deployment
-
-The Docker and Caddy configuration is aligned to the FastAPI + React stack:
-
-- API container: FastAPI on port `5000`
-- Frontend container: Vite dev/preview on port `5173`
-- Caddy: `/api/*` to API, all other routes to React
-
-For details, see:
+## More Details
 
 - [Architecture](docs/ARCHITECTURE.md)
-- [API Migration Status](docs/API_MIGRATION_STATUS.md)
+- [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
+- [AI Model Catalog](docs/guides/AI_MODEL_CATALOG.md)
+- [Rate Limiting](docs/rate-limit-config.md)
 - [Service Start Guide](docs/guides/SERVICE_START_GUIDE.md)
-
-## Output Artifacts
-
-- Downloaded files: `data/files/`
-- SQLite database: `data/index.db`
-- Catalog outputs: `data/catalog.jsonl`, `data/catalog.md`
-- Update logs: `data/updates/`
-- Application log: `data/app.log`
-- Task logs: `data/task_logs/*.log`

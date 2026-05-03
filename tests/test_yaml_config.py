@@ -38,6 +38,9 @@ class TestYAMLConfigLoader:
                 "user_agent": "test-agent",
                 "max_pages": 100,
             },
+            "paths": {
+                "db": "data/primary-index.db",
+            },
             "ai_config": {
                 "catalog": {
                     "provider": "openai",
@@ -94,7 +97,7 @@ class TestYAMLConfigLoader:
             },
             "database": {
                 "type": "sqlite",
-                "path": "data/index.db",
+                "path": "data/legacy-index.db",
             },
         }
         
@@ -167,12 +170,13 @@ class TestYAMLConfigLoader:
             assert server["fastapi_env"] == "production"
     
     def test_load_database_config_from_yaml(self):
-        """Test loading database configuration from YAML."""
+        """Test loading database configuration from the canonical paths.db YAML value."""
         with patch('config.yaml_config._get_sites_config_path', return_value=self.config_path):
             db_config = load_database_config()
             
             assert db_config["type"] == "sqlite"
-            assert db_config["path"] == "data/index.db"
+            assert db_config["path"] == "data/primary-index.db"
+            assert db_config["source"] == "paths.db"
     
     def test_fallback_to_env_when_yaml_missing(self):
         """Test fallback to environment variables when YAML sections missing."""

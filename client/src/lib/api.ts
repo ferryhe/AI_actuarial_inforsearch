@@ -28,14 +28,33 @@ export function setStoredAuthToken(token: string, persist = false): void {
   }
 }
 
+function readCookie(name: string): string {
+  if (typeof document === "undefined") return "";
+  const prefix = `${name}=`;
+  const parts = document.cookie.split("; ");
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      return decodeURIComponent(part.slice(prefix.length));
+    }
+  }
+  return "";
+}
+
 async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promise<T> {
   const authToken = getStoredAuthToken();
+  const method = (options?.method || "GET").toUpperCase();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string> | undefined),
   };
   if (authToken && !headers["X-Auth-Token"]) {
     headers["X-Auth-Token"] = authToken;
+  }
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method) && !headers["X-CSRF-Token"]) {
+    const csrfToken = readCookie("csrf_token");
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+    }
   }
 
   const res = await fetch(url, {

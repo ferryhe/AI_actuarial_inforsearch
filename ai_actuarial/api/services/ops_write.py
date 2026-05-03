@@ -22,6 +22,7 @@ from ai_actuarial.ai_runtime import (
     SECTION_TO_FUNCTION_BINDING,
     binding_to_section_name,
     build_embedding_fingerprint,
+    build_model_discovery_credentials,
     build_stable_credential_id,
     get_ai_routing,
     is_catalog_provider_supported,
@@ -37,6 +38,7 @@ from ai_actuarial.shared_runtime import (
     get_default_catalog_provider,
     get_sites_config_path,
     load_yaml,
+    resolve_runtime_features,
     serialize_backend_settings,
 )
 from ai_actuarial.config import settings
@@ -58,6 +60,13 @@ _VALID_SCHEDULED_TASK_TYPES = [
 ]
 
 _VALID_INTERVALS = ["daily", "weekly", "daily at HH:MM", "every N hours", "every N minutes"]
+
+_BINDING_MODEL_TYPE = {
+    "chat": "chatbot",
+    "catalog": "catalog",
+    "embeddings": "embeddings",
+    "ocr": "ocr",
+}
 
 _VALID_COLLECTION_TYPES = {
     "scheduled",
@@ -98,6 +107,19 @@ def _is_valid_schedule_interval(interval: str) -> bool:
             return False
         return qty > 0 and parts[2] in {"hour", "hours", "minute", "minutes"}
     return False
+
+
+def _validate_ai_routing_model(binding_name: str, provider: str, model: str) -> None:
+    expected_type = _BINDING_MODEL_TYPE.get(binding_name)
+    if not expected_type or not provider or not model:
+        return
+    model_types = llm_models.get_model_types(provider, model)
+    if expected_type not in model_types:
+        display_types = ", ".join(model_types) if model_types else "none"
+        raise OpsWriteError(
+            f"Model '{model}' for provider '{provider}' does not support "
+            f"{binding_name} binding (model types: {display_types})"
+        )
 
 _SAMPLE_SITES_YAML = """# AI Actuarial Info Search - Site Configuration Sample
 # Import this file to add sites for document crawling.
@@ -154,6 +176,7 @@ class OpsWriteError(Exception):
 
 class BridgeState:
     def __init__(self, app_state: Any) -> None:
+        self.app_state = app_state
         self.active_tasks_ref = getattr(app_state, "active_tasks_ref", {}) or {}
         self.task_history_ref = getattr(app_state, "task_history_ref", []) or []
         self.task_lock = getattr(app_state, "task_lock", None)
@@ -179,6 +202,21 @@ def _notify_site_config_updated(bridge: BridgeState | None, config_data: dict[st
     setter = bridge.set_site_config
     if callable(setter):
         setter(config_data)
+
+
+def _notify_runtime_features_updated(bridge: BridgeState | None, config_data: dict[str, Any]) -> None:
+    if bridge is None or bridge.app_state is None:
+        return
+    features = resolve_runtime_features(config_data)
+    bridge.app_state.require_auth = bool(features.get("require_auth"))
+    bridge.app_state.enable_global_logs_api = bool(features.get("enable_global_logs_api"))
+    bridge.app_state.enable_rate_limiting = bool(features.get("enable_rate_limiting"))
+    bridge.app_state.enable_csrf = bool(features.get("enable_csrf"))
+    bridge.app_state.enable_security_headers = bool(features.get("enable_security_headers"))
+    bridge.app_state.expose_error_details = bool(features.get("expose_error_details"))
+    bridge.app_state.rate_limit_defaults = str(features.get("rate_limit_defaults") or "")
+    bridge.app_state.rate_limit_storage_uri = str(features.get("rate_limit_storage_uri") or "memory://")
+    bridge.app_state.content_security_policy = str(features.get("content_security_policy") or "")
 
 
 def _reload_runtime_caches() -> None:
@@ -563,6 +601,7 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
     config_data.setdefault("defaults", {})
     config_data.setdefault("paths", {})
     config_data.setdefault("search", {})
+    config_data.setdefault("features", {})
 
     defaults_in = payload.get("defaults")
     if isinstance(defaults_in, dict):
@@ -615,17 +654,43 @@ def update_backend_settings(data: dict[str, Any], *, bridge: BridgeState | None 
         if "queries" in search_in:
             search["queries"] = _normalize_list(search_in.get("queries"), field_name="search.queries")
 
+    features_in = payload.get("features")
+    if isinstance(features_in, dict):
+        features_cfg = config_data["features"]
+        for key in [
+            "enable_file_deletion",
+            "require_auth",
+            "enable_global_logs_api",
+            "enable_rate_limiting",
+            "enable_csrf",
+            "enable_security_headers",
+            "expose_error_details",
+        ]:
+            if key in features_in:
+                features_cfg[key] = _coerce_bool_setting(features_in.get(key), field_name=f"features.{key}")
+        if "file_deletion_enabled" in features_in:
+            features_cfg["enable_file_deletion"] = _coerce_bool_setting(
+                features_in.get("file_deletion_enabled"), field_name="features.file_deletion_enabled"
+            )
+        for key in ["rate_limit_defaults", "rate_limit_storage_uri", "content_security_policy"]:
+            if key in features_in:
+                features_cfg[key] = str(features_in.get(key) or "").strip()
+
     system_in = payload.get("system")
     if isinstance(system_in, dict):
-        config_data.setdefault("system", {})
-        system_cfg = config_data["system"]
         if "file_deletion_enabled" in system_in:
-            system_cfg["file_deletion_enabled"] = _coerce_bool_setting(
+            config_data["features"]["enable_file_deletion"] = _coerce_bool_setting(
                 system_in.get("file_deletion_enabled"), field_name="system.file_deletion_enabled"
             )
+    system_cfg = config_data.get("system")
+    if isinstance(system_cfg, dict):
+        system_cfg.pop("file_deletion_enabled", None)
+        if not system_cfg:
+            config_data.pop("system", None)
 
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
+    _notify_runtime_features_updated(bridge, config_data)
     return {"success": True, **serialize_backend_settings(config_data)}
 
 
@@ -669,7 +734,12 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
     config_data = _load_config_data()
     config_data.setdefault("ai_config", {})
     previous_embeddings = dict(config_data["ai_config"].get("embeddings") or {})
-    available_models_map = llm_models.get_available_models()
+    storage = Storage(db_path)
+    try:
+        provider_credentials = build_model_discovery_credentials(storage=storage)
+    finally:
+        storage.close()
+    available_models_map = llm_models.get_available_models(provider_credentials=provider_credentials)
 
     for function in ["catalog", "embeddings", "chatbot", "ocr"]:
         func_cfg = payload.get(function)
@@ -1141,6 +1211,7 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
             model = str(item.get("model") or "").strip()
             if not model:
                 raise OpsWriteError(f"Model for binding '{binding_name}' must be non-empty")
+            _validate_ai_routing_model(binding_name, provider_norm, model)
             section["model"] = model
         if binding_name in {"chat", "catalog"}:
             for field in ["temperature", "max_tokens", "timeout_seconds"]:

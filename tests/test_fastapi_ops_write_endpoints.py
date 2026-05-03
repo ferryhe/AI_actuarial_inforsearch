@@ -256,7 +256,18 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
                 "exclude_keywords": ["jobs", "archive"],
                 "queries": ["actuarial ai", "insurance llm"],
             },
-            "system": {"file_deletion_enabled": False},
+            "features": {
+                "enable_file_deletion": False,
+                "require_auth": True,
+                "enable_global_logs_api": True,
+                "enable_rate_limiting": True,
+                "enable_csrf": False,
+                "enable_security_headers": False,
+                "expose_error_details": True,
+                "rate_limit_defaults": "100 per hour, 20 per minute",
+                "rate_limit_storage_uri": "memory://",
+                "content_security_policy": "default-src 'self'",
+            },
         },
         headers=headers,
     )
@@ -266,12 +277,32 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
     assert body["defaults"]["max_pages"] == 42
     assert body["search"]["enabled"] is False
     assert body["runtime"]["file_deletion_enabled"] is False
+    assert body["runtime"]["require_auth"] is True
+    assert body["runtime"]["enable_global_logs_api"] is True
+    assert body["runtime"]["enable_rate_limiting"] is True
+    assert body["runtime"]["enable_security_headers"] is False
+    assert body["runtime"]["expose_error_details"] is True
+    assert body["runtime"]["rate_limit_defaults"] == "100 per hour, 20 per minute"
+    assert app.state.require_auth is True
+    assert app.state.enable_global_logs_api is True
+    assert app.state.enable_rate_limiting is True
+    assert app.state.enable_security_headers is False
+    assert app.state.expose_error_details is True
+    assert app.state.rate_limit_defaults == "100 per hour, 20 per minute"
+    assert app.state.rate_limit_storage_uri == "memory://"
 
     written = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     assert written["defaults"]["max_pages"] == 42
     assert written["paths"]["download_dir"] == "data/native-files"
     assert written["search"]["queries"] == ["actuarial ai", "insurance llm"]
-    assert written["system"]["file_deletion_enabled"] is False
+    assert written["features"]["enable_file_deletion"] is False
+    assert written["features"]["require_auth"] is True
+    assert written["features"]["enable_global_logs_api"] is True
+    assert written["features"]["enable_rate_limiting"] is True
+    assert written["features"]["enable_security_headers"] is False
+    assert written["features"]["expose_error_details"] is True
+    assert written["features"]["content_security_policy"] == "default-src 'self'"
+    assert "file_deletion_enabled" not in (written.get("system") or {})
 
 
 
@@ -681,6 +712,36 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
     catalog_binding = next(item for item in second_update.json()["bindings"] if item["function_name"] == "catalog")
     assert catalog_binding["provider"] == "openai"
     assert catalog_binding.get("credential_id") in (None, "openai:llm:env") or str(catalog_binding.get("credential_id", "")).startswith("openai:")
+
+
+def test_ai_routing_rejects_models_for_wrong_capability(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["operator_token"]}
+
+    chat_with_embedding_model = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "chat", "provider": "openai", "model": "text-embedding-3-large"},
+            ]
+        },
+        headers=headers,
+    )
+    assert chat_with_embedding_model.status_code == 400
+    assert "does not support chat" in chat_with_embedding_model.text
+
+    embeddings_with_chat_model = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "embeddings", "provider": "openai", "model": "gpt-4o-mini"},
+            ]
+        },
+        headers=headers,
+    )
+    assert embeddings_with_chat_model.status_code == 400
+    assert "does not support embeddings" in embeddings_with_chat_model.text
 
 
 def test_provider_credentials_import_env_bootstraps_default_instance(tmp_path: Path, monkeypatch) -> None:

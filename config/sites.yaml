@@ -617,22 +617,30 @@ sites:
   exclude_keywords:
   - news letter
   - newsletter
-scheduled_tasks: []
+scheduled_tasks:
+- name: Scheduled Collection
+  type: scheduled
+  interval: daily
+  enabled: true
+  params:
+    name: Scheduled Collection
 ai_config:
   catalog:
     provider: openai
-    model: gpt-4o-mini
+    model: gpt-5.4-mini
     temperature: 0.7
     timeout_seconds: 60
+    credential_id: openai:llm:instance:default
   embeddings:
     provider: openai
     model: text-embedding-3-large
     batch_size: 64
     similarity_threshold: 0.4
     cache_enabled: true
+    credential_id: openai:llm:instance:default
   chatbot:
     provider: openai
-    model: gpt-4-turbo
+    model: gpt-5.4-mini
     temperature: 0.7
     max_tokens: 1000
     streaming_enabled: true
@@ -644,6 +652,7 @@ ai_config:
     enable_query_validation: true
     enable_response_validation: true
     max_query_length: 1000
+    credential_id: openai:llm:instance:default
   ocr:
     provider: mistral
     model: mistral-ocr-latest
@@ -659,6 +668,7 @@ ai_config:
       chunk_overlap_tokens: 200
       timeout_seconds: 60
       retry_attempts: 3
+    credential_id: mistral:llm:instance:default
 rag_config:
   chunk_strategy: semantic_structure
   max_chunk_tokens: 800
@@ -669,12 +679,12 @@ rag_config:
   index_type: Flat
 features:
   enable_file_deletion: true
-  require_auth: false
+  require_auth: true
   enable_csrf: false
   enable_security_headers: true
   expose_error_details: false
   enable_global_logs_api: false
-  enable_rate_limiting: false
+  enable_rate_limiting: true
   rate_limit_defaults: 200 per hour, 50 per minute
   rate_limit_storage_uri: memory://
   content_security_policy: ''
@@ -682,8 +692,5 @@ server:
   host: 0.0.0.0
   port: 5000
   max_content_length: 52428800
-  fastapi_env: production
+  fastapi_env: development
   fastapi_debug: false
-database:
-  type: sqlite
-  path: data/index.db

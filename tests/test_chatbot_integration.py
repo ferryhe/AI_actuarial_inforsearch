@@ -344,6 +344,61 @@ class TestChatbotIntegration(unittest.TestCase):
         mock_client.chat.completions.create.assert_called_once()
 
     @patch('openai.OpenAI')
+    def test_llm_generation_uses_max_completion_tokens_for_openai_gpt5(self, mock_openai_class):
+        """OpenAI GPT-5 chat completions should not send deprecated max_tokens."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "GPT-5 response"
+        mock_response.usage.total_tokens = 150
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        config = ChatbotConfig(
+            llm_provider="openai",
+            model="gpt-5.4-mini",
+            api_key="test-key",
+            max_tokens=321,
+            _apply_env_defaults=False,
+        )
+        llm_client = LLMClient(config)
+
+        response = llm_client.generate([{"role": "user", "content": "test"}])
+
+        self.assertEqual(response, "GPT-5 response")
+        _, kwargs = mock_client.chat.completions.create.call_args
+        self.assertEqual(kwargs["max_completion_tokens"], 321)
+        self.assertNotIn("max_tokens", kwargs)
+
+    @patch('openai.OpenAI')
+    def test_llm_generation_keeps_max_tokens_for_openai_compatible_providers(self, mock_openai_class):
+        """Non-OpenAI compatible providers should keep the broadly supported max_tokens parameter."""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "DeepSeek response"
+        mock_response.usage.total_tokens = 100
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai_class.return_value = mock_client
+
+        config = ChatbotConfig(
+            llm_provider="deepseek",
+            model="deepseek-chat",
+            api_key="deepseek-key",
+            base_url="https://api.deepseek.com/v1",
+            max_tokens=222,
+            _apply_env_defaults=False,
+        )
+        llm_client = LLMClient(config)
+
+        response = llm_client.generate([{"role": "user", "content": "test"}])
+
+        self.assertEqual(response, "DeepSeek response")
+        _, kwargs = mock_client.chat.completions.create.call_args
+        self.assertEqual(kwargs["max_tokens"], 222)
+        self.assertNotIn("max_completion_tokens", kwargs)
+
+    @patch('openai.OpenAI')
     def test_llm_client_uses_provider_base_url(self, mock_openai_class):
         """OpenAI-compatible providers should initialize with their own base URL."""
         config = ChatbotConfig(
