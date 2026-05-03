@@ -19,8 +19,10 @@ export function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<s
   const [useDefaults, setUseDefaults] = useState(true);
 
   const engineOptions = dynamicEngines.map((e) => ({ value: e.value, label: e.name + (e.available ? "" : " (unavailable)") }));
+  const selectedEngine = dynamicEngines.find((e) => e.value === engine);
+  const selectedEngineAvailable = selectedEngine ? selectedEngine.available !== false : false;
   const buildTask = (): Record<string, unknown> | null => {
-    if (!query.trim()) return null;
+    if (!query.trim() || !selectedEngineAvailable) return null;
     return {
       type: "search",
       name: `Search: ${query}`,
@@ -66,12 +68,12 @@ export function WebSearchForm({ onSubmit, submitting }: { onSubmit: (d: Record<s
         <TagSelect value={fileExts} onChange={setFileExts} presets={PRESET_FILE_EXTENSIONS} placeholder="Add extension..." testId="input-search-file-exts" />
       </FormField>
       <CheckboxField checked={useDefaults} onChange={setUseDefaults} label={t("tasks.form.use_search_defaults")} testId="checkbox-use-defaults" />
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !query.trim()}
+      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || !query.trim() || !selectedEngineAvailable}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);
         }} />
-      <ScheduleFromTaskButton buildTask={buildTask} disabled={!query.trim()} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={!query.trim() || !selectedEngineAvailable} />
     </div>
   );
 }

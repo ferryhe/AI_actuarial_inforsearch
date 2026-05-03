@@ -321,3 +321,110 @@ def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch)
         ["file-1", "file-2"],
         force_reindex=True,
     )
+
+
+def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-catalog.db"
+    download_dir = tmp_path / "files"
+    updates_dir = tmp_path / "updates"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                f"  updates_dir: {updates_dir.as_posix()}",
+                "ai_config:",
+                "  catalog:",
+                "    provider: openai",
+                "    model: gpt-5.4-mini",
+                "    system_prompt: Custom prompt",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime.run_catalog_for_urls",
+        return_value={"scanned": 1, "processed": 1, "skipped_ai": 0, "errors": 0, "stopped": False},
+    ) as mock_for_urls, patch("ai_actuarial.task_runtime.run_incremental_catalog") as mock_incremental:
+        result = runtime._run_collection(
+            "task-catalog",
+            "catalog",
+            {
+                "file_urls": ["https://example.com/a.pdf"],
+                "input_source": "markdown",
+                "overwrite_existing": True,
+                "update_title": True,
+                "output_language": "zh",
+            },
+        )
+
+    assert result.success is True
+    assert result.metadata["provider"] == "openai"
+    assert result.metadata["catalog_version"] == "v2-keybert:openai:markdown"
+    mock_incremental.assert_not_called()
+    kwargs = mock_for_urls.call_args.kwargs
+    assert kwargs["file_urls"] == ["https://example.com/a.pdf"]
+    assert kwargs["provider"] == "openai"
+    assert kwargs["input_source"] == "markdown"
+    assert kwargs["skip_existing"] is False
+    assert kwargs["update_title"] is True
+    assert kwargs["output_language"] == "zh"
+    assert kwargs["catalog_system_prompt"] == "Custom prompt"
+
+
+def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-catalog-scan.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "ai_config:",
+                "  catalog:",
+                "    provider: mistral",
+                "    model: mistral-small-latest",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime.run_incremental_catalog",
+        return_value={"scanned": 2, "processed": 2, "skipped_ai": 0, "errors": 0, "stopped": False},
+    ) as mock_incremental, patch("ai_actuarial.task_runtime.run_catalog_for_urls") as mock_for_urls:
+        result = runtime._run_collection(
+            "task-catalog-scan",
+            "catalog",
+            {
+                "scan_count": "12",
+                "scan_start_index": "3",
+                "input_source": "source",
+                "skip_existing": False,
+            },
+        )
+
+    assert result.success is True
+    assert result.metadata["provider"] == "mistral"
+    assert result.metadata["catalog_version"] == "v2-keybert:mistral:source"
+    mock_for_urls.assert_not_called()
+    kwargs = mock_incremental.call_args.kwargs
+    assert kwargs["provider"] == "mistral"
+    assert kwargs["limit"] == 12
+    assert kwargs["candidate_offset"] == 2
+    assert kwargs["skip_existing"] is False

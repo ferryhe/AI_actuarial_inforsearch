@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import schedule
 
-from ai_actuarial.catalog_incremental import run_incremental_catalog
+from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
 from ai_actuarial.collectors.file import FileCollector
 from ai_actuarial.collectors.scheduled import ScheduledCollector
@@ -363,29 +363,77 @@ class NativeTaskRuntime:
 
             if collection_type == "catalog":
                 category = str(data.get("category") or "").strip() or None
-                provider = str(data.get("provider") or "").strip() or None
+                catalog_cfg = ((config.get("ai_config") or {}).get("catalog") or {})
+                if not isinstance(catalog_cfg, dict):
+                    catalog_cfg = {}
+                provider = str(data.get("provider") or catalog_cfg.get("provider") or "local").strip().lower() or "local"
                 input_source = str(data.get("input_source") or "source").strip() or "source"
-                version = None
-                if provider:
-                    version = f"v1:{provider}:{input_source}"
-                stats = run_incremental_catalog(
-                    db_path=db_path,
-                    out_jsonl=Path((config.get("paths") or {}).get("updates_dir") or "data/updates") / "catalog_runtime.jsonl",
-                    out_md=Path((config.get("paths") or {}).get("updates_dir") or "data/updates") / "catalog_runtime.md",
-                    batch=int(data.get("batch") or 50),
-                    site_filter=str(data.get("site") or "").strip() or None,
-                    ai_only=False,
-                    catalog_version=version,
-                    max_chars=int(data.get("max_chars") or 12000),
-                    retry_errors=bool(data.get("retry_errors", False)),
-                )
+                catalog_version = str(data.get("catalog_version") or "").strip()
+                if not catalog_version:
+                    from ai_actuarial.catalog import CATALOG_VERSION as base_catalog_version
+
+                    catalog_version = f"{base_catalog_version}:{provider}:{input_source}"
+                skip_existing = bool(data.get("skip_existing", True))
+                if bool(data.get("overwrite_existing", False)):
+                    skip_existing = False
+                raw_start_index = data.get("scan_start_index", data.get("candidate_start_index", 1))
+                try:
+                    candidate_offset = max(0, int(raw_start_index or 1) - 1)
+                except (TypeError, ValueError):
+                    candidate_offset = 0
+                try:
+                    limit = max(0, int(data.get("scan_count") or data.get("limit") or 0))
+                except (TypeError, ValueError):
+                    limit = 0
+                updates_dir = Path((config.get("paths") or {}).get("updates_dir") or "data/updates")
+                common_catalog_kwargs = {
+                    "db_path": db_path,
+                    "out_jsonl": updates_dir / "catalog_runtime.jsonl",
+                    "out_md": updates_dir / "catalog_runtime.md",
+                    "ai_only": False,
+                    "catalog_version": catalog_version,
+                    "max_chars": int(data.get("max_chars") or 12000),
+                    "retry_errors": bool(data.get("retry_errors", False)),
+                    "skip_existing": skip_existing,
+                    "provider": provider,
+                    "input_source": input_source,
+                    "max_workers": int(data.get("max_workers") or 5),
+                    "update_title": bool(data.get("update_title", False)),
+                    "catalog_system_prompt": str(catalog_cfg.get("system_prompt") or "").strip() or None,
+                    "output_language": str(data.get("output_language") or "auto").strip() or "auto",
+                    "progress_callback": self._progress_callback(task_id),
+                }
+                file_urls = [
+                    str(file_url).strip()
+                    for file_url in list(data.get("file_urls") or [])
+                    if str(file_url).strip()
+                ]
+                if file_urls:
+                    stats = run_catalog_for_urls(
+                        file_urls=file_urls,
+                        **common_catalog_kwargs,
+                    )
+                else:
+                    stats = run_incremental_catalog(
+                        batch=int(data.get("batch") or 50),
+                        site_filter=str(data.get("site") or "").strip() or None,
+                        limit=limit,
+                        candidate_offset=candidate_offset,
+                        **common_catalog_kwargs,
+                    )
                 return CollectionResult(
-                    success=True,
+                    success=not int(stats.get("errors", 0)) and not bool(stats.get("stopped", False)),
                     items_found=int(stats.get("scanned", 0)),
                     items_downloaded=int(stats.get("processed", 0)),
                     items_skipped=int(stats.get("skipped_ai", 0)),
                     errors=[] if not int(stats.get("errors", 0)) else [f"Catalog errors: {stats.get('errors', 0)}"],
-                    metadata={"category": category},
+                    metadata={
+                        "category": category,
+                        "provider": provider,
+                        "input_source": input_source,
+                        "catalog_version": catalog_version,
+                        "file_urls": file_urls,
+                    },
                 )
 
             if collection_type in {"rag_indexing", "kb_index_build"}:

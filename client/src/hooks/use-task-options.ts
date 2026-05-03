@@ -26,12 +26,12 @@ interface TaskOptions {
 }
 
 interface EngineResponse {
-  engines?: Array<{ name: string; key?: string; available?: boolean }>;
+  engines?: Array<{ id?: string; name: string; key?: string; value?: string; configured?: boolean; available?: boolean }>;
   [key: string]: unknown;
 }
 
 interface ProviderResponse {
-  providers?: Array<{ name?: string; provider?: string; [key: string]: unknown }> | string[];
+  providers?: Array<{ name?: string; provider?: string; status?: string; decrypt_ok?: boolean; last_error?: string | null; [key: string]: unknown }> | string[];
   known?: Record<string, { display_name?: string; [key: string]: unknown }>;
   [key: string]: unknown;
 }
@@ -178,6 +178,18 @@ function extractConfiguredCatalogSelection(
   return [formatCatalogSelectionLabel(provider, selectedModel || modelName, known)];
 }
 
+function providerName(provider: string | { name?: string; provider?: string; [key: string]: unknown }): string {
+  if (typeof provider === "string") return provider;
+  return String(provider.name || provider.provider || "").trim();
+}
+
+function providerUsable(provider: string | { status?: string; decrypt_ok?: boolean; last_error?: string | null; [key: string]: unknown }): boolean {
+  if (typeof provider === "string") return true;
+  if (provider.decrypt_ok === false || provider.last_error) return false;
+  if (String(provider.status || "").trim().toLowerCase() === "inactive") return false;
+  return true;
+}
+
 export function useTaskOptions(): TaskOptions {
   const [engines, setEngines] = useState<SearchEngine[]>(cache.engines || FALLBACK_ENGINES);
   const [providers, setProviders] = useState<string[]>(cache.providers || []);
@@ -216,8 +228,8 @@ export function useTaskOptions(): TaskOptions {
     if (enginesResult.status === "fulfilled" && enginesResult.value?.engines) {
       fetchedEngines = enginesResult.value.engines.map((e) => ({
         name: e.name,
-        value: e.key || e.name.toLowerCase().replace(/[^a-z0-9]/g, "_"),
-        available: e.available !== false,
+        value: e.id || e.value || e.key || e.name.toLowerCase().replace(/[^a-z0-9]/g, "_"),
+        available: e.configured ?? (e.available !== false),
       }));
       if (fetchedEngines.length === 0) fetchedEngines = FALLBACK_ENGINES;
     }
@@ -226,7 +238,7 @@ export function useTaskOptions(): TaskOptions {
     if (providersResult.status === "fulfilled" && providersResult.value?.providers) {
       const prov = providersResult.value.providers;
       fetchedProviders = Array.isArray(prov)
-        ? prov.map((p) => (typeof p === "string" ? p : p.name || p.provider || "")).filter(Boolean)
+        ? prov.filter(providerUsable).map(providerName).filter(Boolean)
         : [];
     }
 

@@ -87,3 +87,14 @@ def test_recommended_markdown_conversion_tools_are_in_frontend_defaults():
     for tool in ("opendataloader", "markitdown", "mistral", "docling", "mathpix"):
         assert f'"{tool}"' in src
         assert f'name: "{tool}"' in settings_src
+
+
+def test_task_options_uses_native_ai_config_response_contracts():
+    src = (ROOT / "hooks" / "use-task-options.ts").read_text(encoding="utf-8")
+    web_search_src = (ROOT / "pages" / "tasks" / "WebSearchForm.tsx").read_text(encoding="utf-8")
+
+    assert "value: e.id || e.value || e.key" in src
+    assert "available: e.configured ?? (e.available !== false)" in src
+    assert "prov.filter(providerUsable).map(providerName)" in src
+    assert "selectedEngineAvailable" in web_search_src
+    assert "disabled={submitting || !query.trim() || !selectedEngineAvailable}" in web_search_src
