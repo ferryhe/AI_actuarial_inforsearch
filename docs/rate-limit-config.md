@@ -53,6 +53,6 @@ When rate limited, the API returns `429 Too Many Requests`:
 
 ```json
 {
-  "detail": "Rate limit exceeded. Limit: 50 requests/minute."
+  "detail": "Rate limit exceeded. Limit: 50 requests/minute for guest role."
 }
 ```

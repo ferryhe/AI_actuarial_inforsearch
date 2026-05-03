@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.middleware.rate_limit import RateLimitStore
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
 
@@ -543,3 +544,17 @@ def test_rate_limit_defaults_are_enforced_from_runtime_features(tmp_path: Path, 
     assert second.status_code == 400, second.text
     assert third.status_code == 429, third.text
     assert "2 requests/minute" in third.text
+
+
+def test_rate_limit_store_cleanup_respects_bucket_window(monkeypatch) -> None:
+    store = RateLimitStore()
+    bucket = store.get_bucket("ip:127.0.0.1:3600:200", window_seconds=3600)
+    bucket.timestamps = [1000.0]
+
+    monkeypatch.setattr("ai_actuarial.api.middleware.rate_limit.time.time", lambda: 1200.0)
+    store.clear_expired()
+    assert "ip:127.0.0.1:3600:200" in store._buckets
+
+    monkeypatch.setattr("ai_actuarial.api.middleware.rate_limit.time.time", lambda: 5000.0)
+    store.clear_expired()
+    assert "ip:127.0.0.1:3600:200" not in store._buckets

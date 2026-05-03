@@ -86,9 +86,11 @@ class RateLimitStore:
 
     def __init__(self) -> None:
         self._buckets: dict[str, RateLimitBucket] = defaultdict(RateLimitBucket)
+        self._bucket_windows: dict[str, int] = {}
         self._cleanup_thread_started = False
 
-    def get_bucket(self, key: str) -> RateLimitBucket:
+    def get_bucket(self, key: str, window_seconds: int = 60) -> RateLimitBucket:
+        self._bucket_windows[key] = max(int(window_seconds or 60), self._bucket_windows.get(key, 0))
         return self._buckets[key]
 
     def clear_expired(self) -> None:
@@ -96,9 +98,11 @@ class RateLimitStore:
         now = time.time()
         for key in list(self._buckets.keys()):
             bucket = self._buckets[key]
-            bucket.timestamps = [ts for ts in bucket.timestamps if now - ts < 60]
+            window_seconds = self._bucket_windows.get(key, 60)
+            bucket.prune(now, window_seconds)
             if not bucket.timestamps:
                 del self._buckets[key]
+                self._bucket_windows.pop(key, None)
 
     def _start_cleanup_thread(self) -> None:
         """Start background cleanup thread if not already running."""
@@ -261,7 +265,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         buckets: list[tuple[RateLimitRule, RateLimitBucket]] = []
         for rule in rules:
-            bucket = store.get_bucket(f"{key}:{rule.window_seconds}:{rule.limit}")
+            bucket = store.get_bucket(f"{key}:{rule.window_seconds}:{rule.limit}", rule.window_seconds)
             buckets.append((rule, bucket))
             if not bucket.is_allowed(rule.limit, rule.window_seconds, now=now):
                 logger.warning("Rate limit exceeded for %s (role: %s)", key, role)

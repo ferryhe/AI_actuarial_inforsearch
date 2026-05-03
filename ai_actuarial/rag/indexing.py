@@ -413,16 +413,23 @@ class IndexingPipeline:
         else:
             status = "ready"
 
-        create_index_version(
-            kb_id=kb_id,
-            embedding_provider=current_embedding["provider"],
-            embedding_model=current_embedding["model"],
-            embedding_dimension=current_embedding["dimension"],
-            index_type=getattr(current_kb, "index_type", None) or kb.index_type,
-            chunk_count=int(chunk_count or 0),
-            status=status,
-            artifact_path=str(index_path),
-        )
+        try:
+            create_index_version(
+                kb_id=kb_id,
+                embedding_provider=current_embedding["provider"],
+                embedding_model=current_embedding["model"],
+                embedding_dimension=current_embedding["dimension"],
+                index_type=getattr(current_kb, "index_type", None) or kb.index_type,
+                chunk_count=int(chunk_count or 0),
+                status=status,
+                artifact_path=str(index_path),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record KB index version for %s; index artifact was still written",
+                kb_id,
+                exc_info=True,
+            )
     
     def _update_file_index_status(
         self,

@@ -264,6 +264,58 @@ def test_indexing_pipeline_records_current_embedding_index_version(tmp_path) -> 
     )
 
 
+def test_indexing_pipeline_keeps_index_when_version_recording_fails(tmp_path) -> None:
+    kb_id = "kb-index-version-warning"
+    storage = SimpleNamespace(create_kb_index_version=MagicMock(side_effect=RuntimeError("locked database")))
+    embedding_generator = MagicMock()
+    embedding_generator.get_embedding_dimension.return_value = 3
+    kb = SimpleNamespace(
+        name="Versioned KB",
+        embedding_provider="openai",
+        embedding_model="text-embedding-3-small",
+        embedding_dimension=3,
+        index_type="Flat",
+        chunk_count=4,
+    )
+    kb_manager = SimpleNamespace(
+        storage=storage,
+        config=SimpleNamespace(data_dir=str(tmp_path)),
+        chunker=object(),
+        embedding_generator=embedding_generator,
+        get_current_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
+        sync_kb_embedding_metadata=MagicMock(
+            return_value={
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "dimension": 3,
+            }
+        ),
+        get_kb=MagicMock(return_value=kb),
+    )
+
+    with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
+        IndexingPipeline,
+        "_index_single_file",
+        return_value={"success": True, "chunk_count": 4},
+    ), patch.object(IndexingPipeline, "_update_kb_stats"):
+        pipeline = IndexingPipeline(kb_manager)
+        stats = pipeline.index_files(
+            kb_id=kb_id,
+            file_urls=["file-1"],
+            force_reindex=True,
+        )
+
+    assert stats["indexed_files"] == 1
+    mock_vector_store.return_value.save_index.assert_called_once()
+    storage.create_kb_index_version.assert_called_once()
+
+
 def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-rag.db"
@@ -304,7 +356,7 @@ def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch)
     with patch("ai_actuarial.task_runtime.KnowledgeBaseManager", return_value=fake_manager), patch(
         "ai_actuarial.task_runtime.IndexingPipeline",
         return_value=fake_pipeline,
-    ):
+    ) as pipeline_cls:
         result = runtime._run_collection(
             "task-rag",
             "rag_indexing",
@@ -317,6 +369,10 @@ def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch)
     assert result.items_skipped == 0
     assert result.metadata["kb_id"] == "kb-runtime"
     assert result.metadata["total_chunks"] == 6
+    pipeline_cls.assert_called_once()
+    _, pipeline_kwargs = pipeline_cls.call_args
+    assert callable(pipeline_kwargs["stop_check"])
+    assert pipeline_kwargs["stop_check"]() is False
     fake_pipeline.index_files.assert_called_once_with(
         "kb-runtime",
         ["file-1", "file-2"],

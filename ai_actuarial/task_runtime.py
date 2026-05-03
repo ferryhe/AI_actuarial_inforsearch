@@ -548,7 +548,11 @@ class NativeTaskRuntime:
         def rag_progress(message: str, current: int, total: int) -> None:
             progress_callback(current, total, message)
 
-        pipeline = IndexingPipeline(manager, progress_callback=rag_progress)
+        pipeline = IndexingPipeline(
+            manager,
+            progress_callback=rag_progress,
+            stop_check=lambda: self._stop_requested(task_id),
+        )
         stats = pipeline.index_files(kb_id, file_urls, force_reindex=force_reindex)
         errors: list[str] = []
         for item in list(stats.get("errors") or []):

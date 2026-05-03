@@ -683,7 +683,7 @@ features:
   enable_csrf: false
   enable_security_headers: true
   expose_error_details: false
-  enable_global_logs_api: true
+  enable_global_logs_api: false
   enable_rate_limiting: true
   rate_limit_defaults: 200 per hour, 50 per minute
   rate_limit_storage_uri: memory://
