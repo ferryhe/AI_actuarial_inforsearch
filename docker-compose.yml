@@ -75,7 +75,7 @@ services:
       - ai-net
 
   caddy:
-    image: caddy:3-alpine
+    image: caddy:2-alpine
     container_name: ai-caddy
     restart: unless-stopped
     ports:
