@@ -27,11 +27,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4.0"
-          memory: 4G
+          cpus: "2.0"
+          memory: 2G
         reservations:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "0.5"
+          memory: 512M
       restart_policy:
         condition: on-failure
         max_attempts: 5
@@ -45,7 +45,7 @@ services:
   # ── Frontend — Production (static build) ─────────────────────────────────────
   frontend:
     restart: on-failure
-    command: sh -c "npm install --omit=dev && npx vite build && npx vite preview --host 0.0.0.0 --port 5173"
+    command: sh -c "npm install -g serve && serve -s /app/dist/public -l 5173 --no-clipboard"
     environment:
       - VITE_API_BASE_URL=https://${CADDY_DOMAIN:?CADDY_DOMAIN required}/api
       - NODE_ENV=production
