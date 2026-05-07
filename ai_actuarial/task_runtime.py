@@ -543,12 +543,14 @@ class NativeTaskRuntime:
             if not fallback_reason:
                 continue
 
-            for query in queries:
+            total_queries = len(queries)
+            for query_index, query in enumerate(queries, start=1):
                 task_data = self._site_query_search_task_data(site_config, query, config, data)
+                query_label = query if len(query) <= 80 else f"{query[:77]}..."
                 child_task_id = self.start_background_task(
                     "search",
                     task_data,
-                    task_name=f"Search fallback: {site_config.name}",
+                    task_name=f"Search fallback: {site_config.name} ({query_index}/{total_queries}): {query_label}",
                     extra_fields={
                         "parent_task_id": task_id,
                         "trigger": "crawler_fallback",

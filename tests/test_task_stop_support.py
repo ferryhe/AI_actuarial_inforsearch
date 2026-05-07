@@ -869,7 +869,10 @@ def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(
         "search_exclude_keywords": ["draft"],
         "check_database": True,
     }
-    assert runtime.start_background_task.call_args.kwargs["task_name"] == "Search fallback: Anti Bot Site"
+    assert (
+        runtime.start_background_task.call_args.kwargs["task_name"]
+        == "Search fallback: Anti Bot Site (1/1): site:anti.example actuarial report"
+    )
     assert runtime.start_background_task.call_args.kwargs["extra_fields"] == {
         "parent_task_id": "task-scheduled-blocked",
         "trigger": "crawler_fallback",
@@ -1097,6 +1100,11 @@ def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_t
     assert all(payload["count"] == 3 for payload in payloads)
     assert all(payload["file_exts"] == [".pdf"] for payload in payloads)
     assert all(payload["keywords"] == ["solvency"] for payload in payloads)
+    task_names = [call.kwargs["task_name"] for call in runtime.start_background_task.call_args_list]
+    assert task_names == [
+        "Search fallback: Multi Query Site (1/2): actuarial annual report",
+        "Search fallback: Multi Query Site (2/2): solvency filing",
+    ]
     assert [call.kwargs["extra_fields"]["fallback_reason"] for call in runtime.start_background_task.call_args_list] == [
         "zero_results",
         "zero_results",
