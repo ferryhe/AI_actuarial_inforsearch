@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
+from ai_actuarial.collectors.base import CollectionResult
+from ai_actuarial.crawler import SiteConfig
 from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.storage import Storage
 
@@ -607,6 +609,546 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
     site_cfg = fake_crawler.scan_page_for_files.call_args.args[1]
     assert site_cfg.file_exts == [".pdf"]
     assert site_cfg.exclude_keywords == ["newsletter"]
+    assert site_cfg.check_database is True
+
+
+def test_native_task_runtime_search_passes_check_database_false_to_scan_config(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-search-no-db-check.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "search:",
+                "  max_results: 5",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.scan_page_for_files.return_value = [{"local_path": str(tmp_path / "report.pdf")}]
+    runtime = NativeTaskRuntime()
+    search_result = SimpleNamespace(url="https://example.com/report", source="Search")
+    with patch(
+        "ai_actuarial.task_runtime.get_search_runtime_credentials",
+        return_value={"brave": "brave-key", "google": None, "serper": None, "tavily": None},
+    ), patch("ai_actuarial.task_runtime.search_all", return_value=[search_result]), patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection(
+            "task-search-no-db-check",
+            "search",
+            {
+                "query": "actuarial AI",
+                "engine": "brave",
+                "check_database": False,
+            },
+        )
+
+    assert result.success is True
+    site_cfg = fake_crawler.scan_page_for_files.call_args.args[1]
+    assert site_cfg.check_database is False
+
+
+def test_native_task_runtime_missing_site_results_do_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-not-used")
+    result = CollectionResult(
+        success=True,
+        items_found=0,
+        items_downloaded=0,
+        items_skipped=0,
+        errors=[],
+        metadata=None,
+    )
+    site_configs = [
+        SiteConfig(
+            name="Configured Site",
+            url="https://configured.example",
+            queries=["actuarial report"],
+        )
+    ]
+
+    runtime._enqueue_site_query_search_fallbacks(
+        "task-missing-site-results",
+        {"search": {"enabled": True}},
+        result,
+        site_configs,
+        {},
+    )
+
+    assert result.metadata == {
+        "search_fallback_enqueued": 0,
+        "search_fallback_task_ids": [],
+    }
+    runtime.start_background_task.assert_not_called()
+
+
+def test_native_task_runtime_unmatched_site_result_does_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-not-used")
+    result = CollectionResult(
+        success=True,
+        items_found=0,
+        items_downloaded=0,
+        items_skipped=0,
+        errors=[],
+        metadata={
+            "site_results": [
+                {
+                    "name": "Different Site",
+                    "url": "https://different.example",
+                    "items_found": 0,
+                    "success": True,
+                    "fallback_reason": "zero_results",
+                }
+            ]
+        },
+    )
+    site_configs = [
+        SiteConfig(
+            name="Configured Site",
+            url="https://configured.example",
+            queries=["actuarial report"],
+        )
+    ]
+
+    runtime._enqueue_site_query_search_fallbacks(
+        "task-unmatched-site-results",
+        {"search": {"enabled": True}},
+        result,
+        site_configs,
+        {},
+    )
+
+    assert result.metadata["search_fallback_enqueued"] == 0
+    assert result.metadata["search_fallback_task_ids"] == []
+    runtime.start_background_task.assert_not_called()
+
+
+def test_native_task_runtime_scheduled_success_with_queries_does_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-scheduled-success.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "defaults:",
+                "  user_agent: test-agent/1.0",
+                "  keywords: [actuarial]",
+                "  file_exts: ['.pdf']",
+                "  exclude_keywords: [draft]",
+                "search:",
+                "  enabled: true",
+                "  max_results: 4",
+                "sites:",
+                "  - name: Direct Site",
+                "    url: https://direct.example",
+                "    queries:",
+                "      - site:direct.example actuarial report",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.crawl_site.return_value = [{"local_path": str(tmp_path / "direct.pdf")}]
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-not-used")
+
+    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
+        "ai_actuarial.task_runtime.search_all"
+    ) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection("task-scheduled-success", "scheduled", {"check_database": False})
+
+    assert result.success is True
+    assert result.items_found == 1
+    assert result.items_downloaded == 1
+    assert result.metadata["search_fallback_enqueued"] == 0
+    assert result.metadata["search_fallback_task_ids"] == []
+    assert result.metadata["site_results"][0]["fallback_reason"] == "success"
+    runtime.start_background_task.assert_not_called()
+    mock_run_search_task.assert_not_called()
+    mock_search.assert_not_called()
+
+
+def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-scheduled-blocked.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "defaults:",
+                "  user_agent: test-agent/1.0",
+                "  keywords: [actuarial]",
+                "  file_exts: ['.pdf']",
+                "  exclude_keywords: [draft]",
+                "search:",
+                "  enabled: true",
+                "  engine: serper",
+                "  max_results: 4",
+                "sites:",
+                "  - name: Anti Bot Site",
+                "    url: https://anti.example",
+                "    queries: ['site:anti.example actuarial report']",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.crawl_site.side_effect = RuntimeError("403 Forbidden by Cloudflare")
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-search-1")
+
+    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
+        "ai_actuarial.task_runtime.search_all"
+    ) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection("task-scheduled-blocked", "scheduled", {})
+
+    assert result.success is False
+    assert result.items_found == 0
+    assert result.metadata["search_fallback_enqueued"] == 1
+    assert result.metadata["search_fallback_task_ids"] == ["child-search-1"]
+    site_result = result.metadata["site_results"][0]
+    assert site_result["failed"] is True
+    assert site_result["blocked"] is True
+    assert site_result["fallback_reason"] == "http_403"
+    runtime.start_background_task.assert_called_once()
+    collection_type, payload = runtime.start_background_task.call_args.args
+    assert collection_type == "search"
+    assert payload == {
+        "name": "Anti Bot Site",
+        "query": "site:anti.example actuarial report",
+        "site": "anti.example",
+        "engine": "serper",
+        "count": 4,
+        "use_search_defaults": True,
+        "file_exts": [".pdf"],
+        "keywords": ["actuarial"],
+        "search_exclude_keywords": ["draft"],
+        "check_database": True,
+    }
+    assert runtime.start_background_task.call_args.kwargs["task_name"] == "Search fallback: Anti Bot Site"
+    assert runtime.start_background_task.call_args.kwargs["extra_fields"] == {
+        "parent_task_id": "task-scheduled-blocked",
+        "trigger": "crawler_fallback",
+        "fallback_reason": "http_403",
+    }
+    mock_run_search_task.assert_not_called()
+    mock_search.assert_not_called()
+    log_text = (tmp_path / "data" / "task_logs" / "task-scheduled-blocked.log").read_text(encoding="utf-8")
+    assert "enqueued search fallback task child-search-1" in log_text
+
+
+def test_native_task_runtime_scheduled_zero_result_outcome_enqueues_brave_search_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-scheduled-zero.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "defaults:",
+                "  user_agent: test-agent/1.0",
+                "  file_exts: ['.pdf']",
+                "search:",
+                "  enabled: true",
+                "sites:",
+                "  - name: Empty Site",
+                "    url: https://empty.example",
+                "    queries: ['actuarial report']",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.crawl_site.return_value = []
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-search-zero")
+
+    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
+        "ai_actuarial.task_runtime.search_all"
+    ) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection("task-scheduled-zero", "scheduled", {})
+
+    assert result.success is True
+    assert result.items_found == 0
+    assert result.metadata["search_fallback_enqueued"] == 1
+    assert result.metadata["site_results"][0]["fallback_reason"] == "zero_results"
+    collection_type, payload = runtime.start_background_task.call_args.args
+    assert collection_type == "search"
+    assert payload["engine"] == "brave"
+    assert payload["query"] == "actuarial report"
+    assert payload["site"] == "empty.example"
+    assert payload["use_search_defaults"] is True
+    assert payload["check_database"] is True
+    assert runtime.start_background_task.call_args.kwargs["extra_fields"] == {
+        "parent_task_id": "task-scheduled-zero",
+        "trigger": "crawler_fallback",
+        "fallback_reason": "zero_results",
+    }
+    mock_run_search_task.assert_not_called()
+    mock_search.assert_not_called()
+
+
+def test_native_task_runtime_scheduled_search_disabled_does_not_enqueue_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-scheduled-disabled.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "search:",
+                "  enabled: false",
+                "sites:",
+                "  - name: Disabled Fallback Site",
+                "    url: https://disabled.example",
+                "    queries: ['actuarial report']",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.crawl_site.return_value = []
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-not-used")
+
+    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
+        "ai_actuarial.task_runtime.search_all"
+    ) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection("task-scheduled-disabled", "scheduled", {})
+
+    assert result.success is True
+    assert result.items_found == 0
+    assert result.metadata["site_results"][0]["fallback_reason"] == "zero_results"
+    assert result.metadata["search_fallback_enqueued"] == 0
+    assert result.metadata["search_fallback_task_ids"] == []
+    runtime.start_background_task.assert_not_called()
+    mock_run_search_task.assert_not_called()
+    mock_search.assert_not_called()
+
+
+def test_native_task_runtime_scheduled_site_without_queries_does_not_enqueue_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-scheduled-no-queries.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "search:",
+                "  enabled: true",
+                "sites:",
+                "  - name: No Query Site",
+                "    url: https://no-query.example",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.crawl_site.side_effect = RuntimeError("403 Forbidden")
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-not-used")
+
+    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
+        "ai_actuarial.task_runtime.search_all"
+    ) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection("task-scheduled-no-queries", "scheduled", {})
+
+    assert result.success is False
+    assert result.metadata["site_results"][0]["fallback_reason"] == "http_403"
+    assert result.metadata["search_fallback_enqueued"] == 0
+    assert result.metadata["search_fallback_task_ids"] == []
+    runtime.start_background_task.assert_not_called()
+    mock_run_search_task.assert_not_called()
+    mock_search.assert_not_called()
+
+
+def test_native_task_runtime_scheduled_multiple_queries_enqueue_multiple_child_tasks(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-scheduled-multi-query.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "defaults:",
+                "  keywords: [solvency]",
+                "  file_exts: ['.pdf']",
+                "search:",
+                "  enabled: true",
+                "  engine: tavily",
+                "  max_results: 3",
+                "sites:",
+                "  - name: Multi Query Site",
+                "    url: https://multi.example",
+                "    queries:",
+                "      - actuarial annual report",
+                "      - solvency filing",
+                "      - ''",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    fake_crawler = MagicMock()
+    fake_crawler.crawl_site.return_value = []
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(side_effect=["child-search-1", "child-search-2"])
+
+    with patch.object(runtime, "_run_search_task", wraps=runtime._run_search_task) as mock_run_search_task, patch(
+        "ai_actuarial.task_runtime.search_all"
+    ) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler",
+        return_value=fake_crawler,
+    ):
+        result = runtime._run_collection("task-scheduled-multi-query", "scheduled", {})
+
+    assert result.success is True
+    assert result.metadata["search_fallback_enqueued"] == 2
+    assert result.metadata["search_fallback_task_ids"] == ["child-search-1", "child-search-2"]
+    assert runtime.start_background_task.call_count == 2
+    payloads = [call.args[1] for call in runtime.start_background_task.call_args_list]
+    assert [payload["query"] for payload in payloads] == ["actuarial annual report", "solvency filing"]
+    assert all(payload["site"] == "multi.example" for payload in payloads)
+    assert all(payload["engine"] == "tavily" for payload in payloads)
+    assert all(payload["count"] == 3 for payload in payloads)
+    assert all(payload["file_exts"] == [".pdf"] for payload in payloads)
+    assert all(payload["keywords"] == ["solvency"] for payload in payloads)
+    assert [call.kwargs["extra_fields"]["fallback_reason"] for call in runtime.start_background_task.call_args_list] == [
+        "zero_results",
+        "zero_results",
+    ]
+    mock_run_search_task.assert_not_called()
+    mock_search.assert_not_called()
+
+
+def test_native_task_runtime_search_task_does_not_enqueue_recursive_fallback(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-search-no-recursion.db"
+    download_dir = tmp_path / "files"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "search:",
+                "  enabled: true",
+                "  max_results: 5",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-not-used")
+    with patch(
+        "ai_actuarial.task_runtime.get_search_runtime_credentials",
+        return_value={"brave": "brave-key", "google": None, "serper": None, "tavily": None},
+    ), patch("ai_actuarial.task_runtime.search_all", return_value=[]) as mock_search, patch(
+        "ai_actuarial.task_runtime.Crawler"
+    ) as mock_crawler:
+        result = runtime._run_collection(
+            "task-search-no-recursion",
+            "search",
+            {"query": "actuarial report", "engine": "brave", "site": "example.com"},
+        )
+
+    assert result.success is True
+    assert result.items_found == 0
+    assert result.metadata["source_type"] == "search"
+    assert result.metadata["search_results"] == 0
+    assert "search_fallback_enqueued" not in result.metadata
+    runtime.start_background_task.assert_not_called()
+    mock_search.assert_called_once()
+    mock_crawler.return_value.scan_page_for_files.assert_not_called()
 
 
 def test_native_task_runtime_markdown_conversion_writes_db_markdown(tmp_path, monkeypatch) -> None:

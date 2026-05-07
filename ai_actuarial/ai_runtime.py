@@ -256,6 +256,12 @@ SEARCH_ENGINE_PROVIDER_MAP = {
     "tavily": "tavily",
 }
 
+SEARCH_CREDENTIAL_FALLBACK_PROVIDERS = {
+    provider
+    for provider in SEARCH_ENGINE_PROVIDER_MAP.values()
+    if bool(KNOWN_LLM_PROVIDERS.get(provider, {}).get("is_search_provider"))
+}
+
 CHAT_OPENAI_COMPATIBLE_PROVIDERS = {
     "openai",
     "azure_openai",
@@ -636,7 +642,14 @@ def resolve_search_engine_credentials(
     provider = SEARCH_ENGINE_PROVIDER_MAP.get(str(engine_id or "").strip().lower())
     if not provider:
         return _missing_credentials(str(engine_id or "").strip().lower(), category="search")
-    return resolve_provider_credentials(provider, storage=storage, category="search")
+    credentials = resolve_provider_credentials(provider, storage=storage, category="search")
+    if credentials.configured or provider not in SEARCH_CREDENTIAL_FALLBACK_PROVIDERS:
+        return credentials
+
+    legacy_credentials = resolve_provider_credentials(provider, storage=storage, category="llm")
+    if legacy_credentials.source == "db" and legacy_credentials.configured:
+        return legacy_credentials
+    return credentials
 
 
 def get_search_runtime_credentials(*, storage: Any | None = None) -> dict[str, str | None]:

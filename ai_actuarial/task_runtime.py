@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 import schedule
 
 from ai_actuarial.ai_runtime import get_search_runtime_credentials, resolve_ocr_runtime
-from ai_actuarial.api.services.files_write import generate_file_chunk_sets
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
 from ai_actuarial.collectors.file import FileCollector
@@ -51,6 +50,12 @@ _CONVERTIBLE_MARKDOWN_PREDICATE = """
         OR LOWER(IFNULL(f.original_filename,'')) LIKE '%.bmp'
     )
 """
+
+
+def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    from ai_actuarial.api.services.files_write import generate_file_chunk_sets as _generate_file_chunk_sets
+
+    return _generate_file_chunk_sets(db_path=db_path, file_url=file_url, payload=payload)
 
 
 def _convert_document_path(path: Path, **kwargs: Any) -> Any:
@@ -392,10 +397,11 @@ class NativeTaskRuntime:
                 return self._run_search_task(task_id, storage, config, download_dir, data)
 
             if collection_type in {"scheduled", "adhoc", "quick_check"}:
+                defaults = dict(config.get("defaults") or {})
                 crawler = Crawler(
                     storage,
                     download_dir,
-                    str((config.get("defaults") or {}).get("user_agent") or "AI-Actuarial/1.0"),
+                    str(defaults.get("user_agent") or "AI-Actuarial/1.0"),
                     stop_check=lambda: self._stop_requested(task_id),
                 )
                 collector = ScheduledCollector(storage, crawler)
@@ -410,7 +416,16 @@ class NativeTaskRuntime:
                     check_database=bool(data.get("check_database", True)),
                     metadata={"site_configs": site_configs},
                 )
-                return collector.collect(cfg, progress_callback=self._progress_callback(task_id))
+                result = collector.collect(cfg, progress_callback=self._progress_callback(task_id))
+                if collection_type in {"scheduled", "adhoc"}:
+                    self._enqueue_site_query_search_fallbacks(
+                        task_id,
+                        config,
+                        result,
+                        site_configs,
+                        data,
+                    )
+                return result
 
             if collection_type == "catalog":
                 category = str(data.get("category") or "").strip() or None
@@ -499,6 +514,118 @@ class NativeTaskRuntime:
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
             storage.close()
+
+    def _enqueue_site_query_search_fallbacks(
+        self,
+        task_id: str,
+        config: dict[str, Any],
+        result: CollectionResult,
+        site_configs: list[SiteConfig],
+        data: dict[str, Any],
+    ) -> None:
+        search_cfg = dict(config.get("search") or {})
+        if result.metadata is None:
+            result.metadata = {}
+        result.metadata["search_fallback_enqueued"] = 0
+        result.metadata["search_fallback_task_ids"] = []
+        if not bool(search_cfg.get("enabled", False)):
+            return
+
+        site_outcomes = self._site_outcomes_by_key(result)
+        enqueued = 0
+        child_task_ids: list[str] = []
+
+        for site_config in site_configs:
+            queries = [str(query).strip() for query in (site_config.queries or []) if str(query).strip()]
+            if not queries:
+                continue
+            fallback_reason = self._site_search_fallback_reason(site_config, site_outcomes)
+            if not fallback_reason:
+                continue
+
+            for query in queries:
+                task_data = self._site_query_search_task_data(site_config, query, config, data)
+                child_task_id = self.start_background_task(
+                    "search",
+                    task_data,
+                    task_name=f"Search fallback: {site_config.name}",
+                    extra_fields={
+                        "parent_task_id": task_id,
+                        "trigger": "crawler_fallback",
+                        "fallback_reason": fallback_reason,
+                    },
+                )
+                enqueued += 1
+                child_task_ids.append(child_task_id)
+                message = (
+                    f"{site_config.name}: enqueued search fallback task {child_task_id} "
+                    f"(reason={fallback_reason}, query={query})"
+                )
+                logger.info(message)
+                append_task_log(task_id, "INFO", message)
+
+        result.metadata["search_fallback_enqueued"] = enqueued
+        result.metadata["search_fallback_task_ids"] = child_task_ids
+
+    def _site_query_search_task_data(
+        self,
+        site_config: SiteConfig,
+        query: str,
+        config: dict[str, Any],
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        search_cfg = dict(config.get("search") or {})
+        engine = str(data.get("engine") or search_cfg.get("engine") or "brave").strip().lower() or "brave"
+        site_host = urlparse(site_config.url).netloc.strip()
+
+        return {
+            "name": site_config.name,
+            "query": query,
+            "site": site_host,
+            "engine": engine,
+            "count": search_cfg.get("max_results"),
+            "use_search_defaults": True,
+            "file_exts": list(site_config.file_exts or []),
+            "keywords": list(site_config.keywords or []),
+            "search_exclude_keywords": list(site_config.exclude_keywords or []),
+            "check_database": bool(data.get("check_database", True)),
+        }
+
+    def _site_outcomes_by_key(self, result: CollectionResult) -> dict[str, dict[str, Any]]:
+        outcomes: dict[str, dict[str, Any]] = {}
+        for row in list((result.metadata or {}).get("site_results") or []):
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip().lower()
+            url = str(row.get("url") or "").strip().lower()
+            if name:
+                outcomes[f"name:{name}"] = row
+            if url:
+                outcomes[f"url:{url}"] = row
+        return outcomes
+
+    def _site_search_fallback_reason(
+        self,
+        site_config: SiteConfig,
+        site_outcomes: dict[str, dict[str, Any]],
+    ) -> str | None:
+        outcome = site_outcomes.get(f"name:{site_config.name.strip().lower()}") or site_outcomes.get(
+            f"url:{site_config.url.strip().lower()}"
+        )
+        if not outcome:
+            return None
+        reason = str(outcome.get("fallback_reason") or "").strip()
+        if bool(outcome.get("blocked")):
+            return reason or "blocked"
+        if bool(outcome.get("failed")) or not bool(outcome.get("success", True)):
+            return reason or "failed"
+        try:
+            items_found = int(outcome.get("items_found") or 0)
+        except (TypeError, ValueError):
+            items_found = 0
+        if items_found <= 0:
+            return reason or "zero_results"
+        return None
 
     def _run_rag_indexing(self, task_id: str, storage: Storage, data: dict[str, Any]) -> CollectionResult:
         kb_id = str(data.get("kb_id") or "").strip()
@@ -671,7 +798,7 @@ class NativeTaskRuntime:
                     keywords=keywords,
                     file_exts=file_exts,
                     exclude_keywords=exclude_keywords,
-                    check_database=True,
+                    check_database=bool(data.get("check_database", True)),
                 )
                 new_items = crawler.scan_page_for_files(result.url, site_config, source_site=result.source)
                 items_found += len(new_items)
