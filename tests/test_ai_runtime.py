@@ -13,6 +13,9 @@ from cryptography.fernet import Fernet
 
 from ai_actuarial.ai_runtime import (
     get_ai_function_section,
+    get_search_runtime_credentials,
+    list_provider_credentials,
+    resolve_search_engine_credentials,
     resolve_provider_credentials,
     resolve_ai_function_runtime,
     resolve_ocr_runtime,
@@ -246,6 +249,51 @@ class TestAiRuntime(unittest.TestCase):
         self.assertEqual(credentials.source, "env")
         self.assertEqual(credentials.api_key, "env-openai-key")
         self.assertEqual(credentials.stable_credential_id, "openai:llm:env")
+
+    def test_search_runtime_credentials_accept_brave_legacy_llm_token(self):
+        secret = "legacy-brave-search-key"
+        encrypted = TokenEncryption().encrypt(secret)
+        self.storage.upsert_llm_provider(
+            provider="brave_search",
+            api_key_encrypted=encrypted,
+            category="llm",
+            instance_id="default",
+            label="Legacy Brave",
+        )
+
+        credentials = get_search_runtime_credentials(storage=self.storage)
+        brave_credentials = resolve_search_engine_credentials("brave", storage=self.storage)
+        credential_rows = list_provider_credentials(storage=self.storage)["credentials"]
+
+        self.assertEqual(credentials["brave"], secret)
+        self.assertEqual(brave_credentials.provider, "brave_search")
+        self.assertEqual(brave_credentials.source, "db")
+        self.assertEqual(brave_credentials.api_key, secret)
+        self.assertEqual(brave_credentials.stable_credential_id, "brave_search:llm:instance:default")
+        self.assertNotIn(secret, repr(credential_rows))
+
+    def test_search_runtime_credentials_prefer_search_category_over_legacy_llm_token(self):
+        legacy_secret = "legacy-brave-search-key"
+        search_secret = "search-brave-key"
+        self.storage.upsert_llm_provider(
+            provider="brave_search",
+            api_key_encrypted=TokenEncryption().encrypt(legacy_secret),
+            category="llm",
+            instance_id="default",
+        )
+        self.storage.upsert_llm_provider(
+            provider="brave_search",
+            api_key_encrypted=TokenEncryption().encrypt(search_secret),
+            category="search",
+            instance_id="default",
+        )
+
+        credentials = get_search_runtime_credentials(storage=self.storage)
+        brave_credentials = resolve_search_engine_credentials("brave", storage=self.storage)
+
+        self.assertEqual(credentials["brave"], search_secret)
+        self.assertEqual(brave_credentials.source, "db")
+        self.assertEqual(brave_credentials.stable_credential_id, "brave_search:search:instance:default")
 
     def test_resolve_provider_credentials_preserves_base_url_when_key_missing(self):
         self.storage.upsert_llm_provider(
