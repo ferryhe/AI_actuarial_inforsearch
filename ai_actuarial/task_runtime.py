@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -29,6 +30,8 @@ from ai_actuarial.shared_runtime import append_task_log, get_sites_config_path, 
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+_QUERY_SITE_FILTER_RE = re.compile(r"(?:^|\s)site:([^\s)]+)", re.IGNORECASE)
 
 _CONVERTIBLE_MARKDOWN_PREDICATE = """
     f.local_path IS NOT NULL AND f.local_path != ''
@@ -578,7 +581,7 @@ class NativeTaskRuntime:
     ) -> dict[str, Any]:
         search_cfg = dict(config.get("search") or {})
         engine = str(data.get("engine") or search_cfg.get("engine") or "brave").strip().lower() or "brave"
-        site_host = urlparse(site_config.url).netloc.strip()
+        site_host = self._site_filter_for_query(site_config.url, query)
 
         return {
             "name": site_config.name,
@@ -592,6 +595,26 @@ class NativeTaskRuntime:
             "search_exclude_keywords": list(site_config.exclude_keywords or []),
             "check_database": bool(data.get("check_database", True)),
         }
+
+    def _site_filter_for_query(self, site_url: str, query: str) -> str:
+        query_site = self._site_filter_from_query(query)
+        if query_site:
+            return query_site
+        return self._normalized_site_host(urlparse(site_url).netloc)
+
+    def _site_filter_from_query(self, query: str) -> str:
+        match = _QUERY_SITE_FILTER_RE.search(str(query or ""))
+        if not match:
+            return ""
+        return self._normalized_site_host(match.group(1))
+
+    def _normalized_site_host(self, host: str) -> str:
+        site = str(host or "").strip().lower().removeprefix("site:")
+        site = site.removeprefix("http://").removeprefix("https://").split("/", 1)[0]
+        site = site.split(":", 1)[0].strip(".")
+        if site.startswith("www."):
+            return site[4:]
+        return site
 
     def _site_outcomes_by_key(self, result: CollectionResult) -> dict[str, dict[str, Any]]:
         outcomes: dict[str, dict[str, Any]] = {}
@@ -1187,14 +1210,14 @@ class NativeTaskRuntime:
     def _dedupe_search_results(self, results: list[Any], *, site_filter: str = "") -> list[Any]:
         seen: set[str] = set()
         out: list[Any] = []
-        site = str(site_filter or "").strip().lower().removeprefix("site:")
+        site = self._normalized_site_host(site_filter)
         for result in results:
             url = str(getattr(result, "url", "") or "").strip()
             if not url or url in seen:
                 continue
             if site:
-                host = urlparse(url).netloc.lower()
-                if site not in host and not host.endswith(site.lstrip(".")):
+                host = self._normalized_site_host(urlparse(url).netloc)
+                if host != site and not host.endswith(f".{site}"):
                     continue
             seen.add(url)
             out.append(result)

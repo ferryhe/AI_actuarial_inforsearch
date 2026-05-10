@@ -59,7 +59,12 @@ class Crawler:
         self.download_dir = download_dir
         self.user_agent = user_agent
         self.stop_check = stop_check
+        self.last_crawl_diagnostic: dict[str, object] = {}
         self._cleanup_old_temp_files()
+
+    def get_last_crawl_diagnostic(self) -> dict[str, object]:
+        """Return non-contract crawl diagnostics from the most recent site crawl."""
+        return dict(self.last_crawl_diagnostic or {})
 
     def _cleanup_old_temp_files(self, max_age_hours: int = 24) -> None:
         """Clean up stale .part files from previous failed downloads."""
@@ -283,9 +288,20 @@ class Crawler:
         return urls
 
     def crawl_site(self, cfg: SiteConfig, progress_callback=None) -> list[dict]:
+        request_errors: list[str] = []
+        self.last_crawl_diagnostic = {}
+
         # Check stop signal at start
         if self.stop_check and self.stop_check():
             logger.info("Crawl stopped by user signal.")
+            self.last_crawl_diagnostic = {
+                "site_name": cfg.name,
+                "site_url": cfg.url,
+                "pages_visited": 0,
+                "request_errors": [],
+                "error_text": "",
+                "stopped": True,
+            }
             return []
 
         logger.info("Starting crawl of site: %s (max_pages=%d, max_depth=%d)", 
@@ -338,11 +354,13 @@ class Crawler:
 
         seen_pages: set[str] = set()
         pages_fetched = 0
+        stopped = False
 
         while page_queue and pages_fetched < cfg.max_pages:
             # Check stop signal in loop
             if self.stop_check and self.stop_check():
                 logger.info("Crawl stopped by user signal.")
+                stopped = True
                 break
 
             url, depth = page_queue.popleft()
@@ -360,7 +378,8 @@ class Crawler:
 
             try:
                 data, headers, final_url = self._request(url)
-            except Exception:
+            except Exception as exc:
+                request_errors.append(f"{url}: {exc}")
                 continue
 
             pages_fetched += 1
@@ -488,6 +507,14 @@ class Crawler:
 
         logger.info("Crawl completed for %s: %d new files found, %d pages visited", 
                    cfg.name, len(new_items), pages_fetched)
+        self.last_crawl_diagnostic = {
+            "site_name": cfg.name,
+            "site_url": cfg.url,
+            "pages_visited": pages_fetched,
+            "request_errors": request_errors,
+            "error_text": "; ".join(request_errors),
+            "stopped": stopped,
+        }
         return new_items
 
     def _extract_text_from_html(self, html: str, url: str) -> str | None:
