@@ -51,3 +51,31 @@ def test_scheduled_collector_records_site_outcome_metadata_for_zero_and_blocked_
     assert site_results[2]["blocked"] is True
     assert site_results[2]["fallback_reason"] == "http_403"
     assert "403 Forbidden" in site_results[2]["error_text"]
+
+
+def test_scheduled_collector_preserves_crawler_diagnostic_for_swallowed_empty_failure() -> None:
+    storage = MagicMock()
+    crawler = MagicMock()
+    crawler.crawl_site.return_value = []
+    crawler.get_last_crawl_diagnostic.return_value = {
+        "pages_visited": 0,
+        "request_errors": ["https://blocked.example: HTTP Error 429: Too Many Requests"],
+        "error_text": "https://blocked.example: HTTP Error 429: Too Many Requests",
+    }
+    collector = ScheduledCollector(storage, crawler)
+
+    result = collector.collect(
+        CollectionConfig(
+            name="Scheduled",
+            source_type="scheduled",
+            metadata={"site_configs": [SiteConfig(name="Blocked Empty", url="https://blocked.example")]},
+        )
+    )
+
+    site_result = result.metadata["site_results"][0]
+    assert site_result["items_found"] == 0
+    assert site_result["success"] is False
+    assert site_result["failed"] is True
+    assert site_result["blocked"] is True
+    assert site_result["fallback_reason"] == "http_429"
+    assert "HTTP Error 429" in site_result["error_text"]

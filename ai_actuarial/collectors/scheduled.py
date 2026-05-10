@@ -22,6 +22,30 @@ _BLOCKED_ERROR_PATTERNS = (
 )
 
 
+def _crawler_diagnostic_error_text(crawler: Crawler) -> str:
+    diagnostic: dict[str, object] = {}
+    get_diagnostic = getattr(crawler, "get_last_crawl_diagnostic", None)
+    if callable(get_diagnostic):
+        try:
+            raw = get_diagnostic()
+            if isinstance(raw, dict):
+                diagnostic = raw
+        except Exception:  # noqa: BLE001
+            diagnostic = {}
+    if not diagnostic:
+        raw = getattr(crawler, "last_crawl_diagnostic", None)
+        if isinstance(raw, dict):
+            diagnostic = raw
+
+    error_text = str(diagnostic.get("error_text") or "").strip()
+    if error_text:
+        return error_text
+    request_errors = diagnostic.get("request_errors")
+    if isinstance(request_errors, (list, tuple)):
+        return "; ".join(str(error).strip() for error in request_errors if str(error).strip())
+    return ""
+
+
 def _classify_site_outcome(error_text: str, *, items_found: int) -> tuple[str, bool]:
     """Classify direct crawl outcome for later fallback decisions."""
     haystack = str(error_text or "")
@@ -102,7 +126,8 @@ class ScheduledCollector(BaseCollector):
                             site_items_skipped += 1
                             items_skipped += 1
 
-                    reason, blocked = _classify_site_outcome("", items_found=site_items_found)
+                    diagnostic_error_text = _crawler_diagnostic_error_text(self.crawler) if site_items_found <= 0 else ""
+                    reason, blocked = _classify_site_outcome(diagnostic_error_text, items_found=site_items_found)
                     site_results.append(
                         {
                             "name": site_config.name,
@@ -110,10 +135,10 @@ class ScheduledCollector(BaseCollector):
                             "items_found": site_items_found,
                             "items_downloaded": site_items_downloaded,
                             "items_skipped": site_items_skipped,
-                            "success": True,
-                            "failed": False,
-                            "error": "",
-                            "error_text": "",
+                            "success": not blocked,
+                            "failed": blocked,
+                            "error": diagnostic_error_text,
+                            "error_text": diagnostic_error_text,
                             "blocked": blocked,
                             "classification": reason,
                             "fallback_reason": reason,

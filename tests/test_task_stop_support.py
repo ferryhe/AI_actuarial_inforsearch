@@ -884,6 +884,41 @@ def test_native_task_runtime_scheduled_blocked_outcome_enqueues_search_fallback(
     assert "enqueued search fallback task child-search-1" in log_text
 
 
+def test_native_task_runtime_search_fallback_prefers_query_site_domain_for_www_site_config() -> None:
+    from ai_actuarial.search import SearchResult
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    site_config = SiteConfig(
+        name="SOA",
+        url="https://www.soa.org",
+        file_exts=[".pdf"],
+        queries=["site:soa.org actuarial report"],
+    )
+
+    payload = runtime._site_query_search_task_data(
+        site_config,
+        "site:soa.org actuarial report",
+        {"search": {"enabled": True, "max_results": 5}},
+        {},
+    )
+
+    assert payload["site"] == "soa.org"
+    assert payload["query"] == "site:soa.org actuarial report"
+    assert runtime._query_with_site_filter(payload["query"], payload["site"]) == "site:soa.org actuarial report"
+    assert runtime._dedupe_search_results(
+        [
+            SearchResult(url="https://soa.org/resources/research-report.pdf", source="test"),
+            SearchResult(url="https://www.soa.org/news/article", source="test"),
+            SearchResult(url="https://example.com/other.pdf", source="test"),
+        ],
+        site_filter=payload["site"],
+    ) == [
+        SearchResult(url="https://soa.org/resources/research-report.pdf", source="test"),
+        SearchResult(url="https://www.soa.org/news/article", source="test"),
+    ]
+
+
 def test_native_task_runtime_scheduled_zero_result_outcome_enqueues_brave_search_fallback(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "sites.yaml"
