@@ -354,11 +354,13 @@ class Crawler:
 
         seen_pages: set[str] = set()
         pages_fetched = 0
+        stopped = False
 
         while page_queue and pages_fetched < cfg.max_pages:
             # Check stop signal in loop
             if self.stop_check and self.stop_check():
                 logger.info("Crawl stopped by user signal.")
+                stopped = True
                 break
 
             url, depth = page_queue.popleft()
@@ -511,7 +513,7 @@ class Crawler:
             "pages_visited": pages_fetched,
             "request_errors": request_errors,
             "error_text": "; ".join(request_errors),
-            "stopped": False,
+            "stopped": stopped,
         }
         return new_items
 

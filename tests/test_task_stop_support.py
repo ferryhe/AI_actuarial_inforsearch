@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionResult
-from ai_actuarial.crawler import SiteConfig
+from ai_actuarial.crawler import Crawler, SiteConfig
 from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.storage import Storage
 
@@ -203,6 +203,35 @@ def test_indexing_pipeline_immediate_stop_preserves_existing_index(tmp_path) -> 
     assert stats["stopped"] is True
     assert index_path.read_text(encoding="utf-8") == "existing-index"
     mock_vector_store.assert_not_called()
+
+
+def test_crawler_records_mid_crawl_stop_diagnostic(tmp_path) -> None:
+    storage = Storage(str(tmp_path / "crawler-stop.db"))
+    stop_calls = 0
+
+    def stop_check() -> bool:
+        nonlocal stop_calls
+        stop_calls += 1
+        return stop_calls >= 2
+
+    crawler = Crawler(
+        storage=storage,
+        download_dir=str(tmp_path),
+        user_agent="TestAgent/1.0",
+        stop_check=stop_check,
+    )
+    cfg = SiteConfig(name="Stop Site", url="https://example.com", max_pages=5, delay_seconds=0)
+
+    try:
+        with patch.object(crawler, "_load_sitemap", return_value=[]):
+            result = crawler.crawl_site(cfg)
+    finally:
+        storage.close()
+
+    assert result == []
+    diagnostic = crawler.get_last_crawl_diagnostic()
+    assert diagnostic["stopped"] is True
+    assert diagnostic["pages_visited"] == 0
 
 
 def test_indexing_pipeline_records_current_embedding_index_version(tmp_path) -> None:

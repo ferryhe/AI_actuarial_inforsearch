@@ -59,6 +59,10 @@ def _classify_site_outcome(error_text: str, *, items_found: int) -> tuple[str, b
     return "success", False
 
 
+def _site_outcome_failed(reason: str) -> bool:
+    return reason not in {"success", "zero_results"}
+
+
 class ScheduledCollector(BaseCollector):
     """Collector for scheduled/periodic site crawling."""
     
@@ -128,6 +132,9 @@ class ScheduledCollector(BaseCollector):
 
                     diagnostic_error_text = _crawler_diagnostic_error_text(self.crawler) if site_items_found <= 0 else ""
                     reason, blocked = _classify_site_outcome(diagnostic_error_text, items_found=site_items_found)
+                    failed = _site_outcome_failed(reason)
+                    if failed and diagnostic_error_text:
+                        errors.append(f"Error crawling {site_config.name}: {diagnostic_error_text}")
                     site_results.append(
                         {
                             "name": site_config.name,
@@ -135,8 +142,8 @@ class ScheduledCollector(BaseCollector):
                             "items_found": site_items_found,
                             "items_downloaded": site_items_downloaded,
                             "items_skipped": site_items_skipped,
-                            "success": not blocked,
-                            "failed": blocked,
+                            "success": not failed,
+                            "failed": failed,
                             "error": diagnostic_error_text,
                             "error_text": diagnostic_error_text,
                             "blocked": blocked,
@@ -169,7 +176,7 @@ class ScheduledCollector(BaseCollector):
             if progress_callback:
                 progress_callback(total_sites, total_sites, "Completed")
             
-            success = len(errors) == 0 or items_found > 0
+            success = len(errors) == 0
             
             return CollectionResult(
                 success=success,

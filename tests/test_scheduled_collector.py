@@ -73,9 +73,41 @@ def test_scheduled_collector_preserves_crawler_diagnostic_for_swallowed_empty_fa
     )
 
     site_result = result.metadata["site_results"][0]
+    assert result.success is False
+    assert any("HTTP Error 429" in error for error in result.errors)
     assert site_result["items_found"] == 0
     assert site_result["success"] is False
     assert site_result["failed"] is True
     assert site_result["blocked"] is True
     assert site_result["fallback_reason"] == "http_429"
     assert "HTTP Error 429" in site_result["error_text"]
+
+
+def test_scheduled_collector_marks_generic_diagnostic_error_failed() -> None:
+    storage = MagicMock()
+    crawler = MagicMock()
+    crawler.crawl_site.return_value = []
+    crawler.get_last_crawl_diagnostic.return_value = {
+        "pages_visited": 0,
+        "request_errors": ["https://error.example: connection reset by peer"],
+        "error_text": "https://error.example: connection reset by peer",
+    }
+    collector = ScheduledCollector(storage, crawler)
+
+    result = collector.collect(
+        CollectionConfig(
+            name="Scheduled",
+            source_type="scheduled",
+            metadata={"site_configs": [SiteConfig(name="Errored Empty", url="https://error.example")]},
+        )
+    )
+
+    site_result = result.metadata["site_results"][0]
+    assert result.success is False
+    assert any("connection reset" in error for error in result.errors)
+    assert site_result["items_found"] == 0
+    assert site_result["success"] is False
+    assert site_result["failed"] is True
+    assert site_result["blocked"] is False
+    assert site_result["fallback_reason"] == "error"
+    assert "connection reset" in site_result["error_text"]
