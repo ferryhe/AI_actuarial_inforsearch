@@ -43,6 +43,10 @@ Every Codex worker run must:
 - For frontend/API work, run local service/build checks and browser smoke when UI behavior changes.
 - If checks cannot run, record the exact blocker and the next command to run.
 
+## Pre-PR Codex Review Gate
+
+After development and local verification are complete, but before creating or updating a PR, run a separate Codex CLI review of the current branch/diff. Treat this as a mandatory local review gate. Evaluate Codex findings the same way as remote review comments: accept only technically correct, in-scope findings; make the necessary fixes; rerun the focused/full verification; then create or update the PR. If Codex CLI cannot run because of auth or tooling, record the blocker explicitly in the final report before proceeding.
+
 ## Reporting Format
 
 End every run with:
