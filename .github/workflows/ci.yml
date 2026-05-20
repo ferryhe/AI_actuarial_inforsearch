@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            pyproject.toml
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python - <<'PY'
+          from pathlib import Path
+
+          skip = {
+              'opendataloader-pdf',
+              'markitdown[pdf]',
+              'docling',
+              'marker-pdf',
+          }
+          filtered = []
+          for raw in Path('requirements.txt').read_text(encoding='utf-8').splitlines():
+              line = raw.strip()
+              if not line or line.startswith('#'):
+                  continue
+              package = line.split('==', 1)[0].split('>=', 1)[0].strip().lower()
+              if package in skip:
+                  continue
+              filtered.append(line)
+          Path('.github/ci-requirements.txt').write_text('\n'.join(filtered) + '\n', encoding='utf-8')
+          PY
+          python -m pip install -r .github/ci-requirements.txt -r requirements-dev.txt
+
+      - name: Run FastAPI smoke tests
+        env:
+          FASTAPI_SESSION_SECRET: ci-fastapi-session-secret
+          TOKEN_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+        run: >-
+          python -m pytest
+          tests/test_fastapi_entrypoint.py
+          tests/test_fastapi_no_flask_runtime.py
+          tests/test_react_fastapi_authority.py
+          -q
