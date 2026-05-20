@@ -7,6 +7,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   python-smoke:
     runs-on: ubuntu-latest
@@ -52,7 +55,7 @@ jobs:
       - name: Run FastAPI smoke tests
         env:
           FASTAPI_SESSION_SECRET: ci-fastapi-session-secret
-          TOKEN_ENCRYPTION_KEY: ci-token-encryption-key-32-bytes!!
+          TOKEN_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
         run: >-
           python -m pytest
           tests/test_fastapi_entrypoint.py
