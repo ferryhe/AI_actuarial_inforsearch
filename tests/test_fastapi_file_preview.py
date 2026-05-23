@@ -97,6 +97,7 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-file-preview-test-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
     client = TestClient(app)
@@ -159,6 +160,56 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
     preview_body = preview_after.json()
     assert preview_body["active_chunk_set_id"] == generate_body["chunk_set_id"]
     assert len(preview_body["chunks"]) >= 1
+
+
+def test_fastapi_file_chunk_generation_can_bind_generated_chunk_to_kb(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    file_url = seed["file_url"]
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-file-bind",
+            "name": "File Bind KB",
+            "kb_mode": "manual",
+            "chunk_size": 120,
+            "chunk_overlap": 20,
+        },
+        headers=headers,
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    generate_response = client.post(
+        f"/api/files/{file_url}/chunk-sets/generate",
+        json={
+            "name": "file-bind-profile",
+            "chunk_size": 120,
+            "chunk_overlap": 20,
+            "splitter": "semantic",
+            "tokenizer": "cl100k_base",
+            "overwrite_same_profile": True,
+            "kb_id": "kb-file-bind",
+            "binding_mode": "follow_latest",
+        },
+        headers=headers,
+    )
+    assert generate_response.status_code in {200, 201}, generate_response.text
+    generate_body = generate_response.json()
+    assert generate_body["chunk_set_id"]
+    assert generate_body["kb_binding"]["kb_id"] == "kb-file-bind"
+    assert generate_body["kb_binding"]["chunk_set_id"] == generate_body["chunk_set_id"]
+    assert generate_body["kb_binding"]["binding_mode"] == "follow_latest"
+
+    files = client.get("/api/rag/knowledge-bases/kb-file-bind/files", headers=headers)
+    assert files.status_code == 200, files.text
+    assert [item["file_url"] for item in files.json()["files"]] == [file_url]
+
+    bindings = client.get("/api/rag/knowledge-bases/kb-file-bind/bindings", headers=headers)
+    assert bindings.status_code == 200, bindings.text
+    binding = bindings.json()["bindings"][0]
+    assert binding["file_url"] == file_url
+    assert binding["chunk_set_id"] == generate_body["chunk_set_id"]
 
 
 def test_fastapi_chunk_generation_requires_config_write_token_when_configured(tmp_path: Path, monkeypatch) -> None:

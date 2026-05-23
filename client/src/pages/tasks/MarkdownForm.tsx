@@ -18,6 +18,10 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
   const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const categoryOptions = [
+    { value: "", label: t("tasks.form.select_category") },
+    ...dynamicCategories.map((c) => ({ value: c, label: c })),
+  ];
 
   const tools = conversionTools.length > 0
     ? conversionTools.map((t) => ({ value: t, label: t.charAt(0).toUpperCase() + t.slice(1) }))
@@ -48,8 +52,9 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
     }
   }, [stats, startIndex]);
 
-  const handleCategoryBlur = () => {
-    if (scopeMode === "category" && category.trim()) loadStats(category.trim());
+  const changeCategory = (value: string) => {
+    setCategory(value);
+    if (value.trim()) loadStats(value.trim());
   };
 
   const buildTask = (): Record<string, unknown> | null => {
@@ -96,13 +101,12 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
       </FormField>
       {scopeMode === "category" && (
         <FormField label={t("tasks.form.category")}>
-          <input value={category} onChange={(e) => setCategory(e.target.value)} onBlur={handleCategoryBlur} placeholder="SOA, IAA..."
-            list="md-categories-list"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-            data-testid="input-md-category" />
-          <datalist id="md-categories-list">
-            {dynamicCategories.map((c) => <option key={c} value={c} />)}
-          </datalist>
+          <SelectField
+            value={category}
+            onChange={changeCategory}
+            options={categoryOptions}
+            testId="select-md-category"
+          />
         </FormField>
       )}
       <div className="flex flex-wrap gap-x-5 gap-y-2">

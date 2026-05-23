@@ -65,7 +65,9 @@ export default function Tasks() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [taskNotice, setTaskNotice] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previousActiveTaskIdsRef = useRef<Set<string> | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -92,9 +94,21 @@ export default function Tasks() {
   const fetchTasks = useCallback(async () => {
     try {
       const activeRes = await apiGet<{ tasks: Task[] }>("/api/tasks/active");
-      setActiveTasks(activeRes.tasks || []);
+      const nextTasks = activeRes.tasks || [];
+      const nextIds = new Set(nextTasks.map((task) => task.id).filter((id): id is string => Boolean(id)));
+      const previousIds = previousActiveTaskIdsRef.current;
+      if (previousIds) {
+        const completedTaskIds = Array.from(previousIds).filter((taskId) => !nextIds.has(taskId));
+        if (completedTaskIds.length > 0) {
+          setTaskNotice(t("tasks.completed_notice").replace("{count}", String(completedTaskIds.length)));
+          void fetchHistory();
+          setTimeout(() => setTaskNotice(null), 3500);
+        }
+      }
+      previousActiveTaskIdsRef.current = nextIds;
+      setActiveTasks(nextTasks);
     } catch (e) { console.error("Failed to fetch tasks:", e); }
-  }, []);
+  }, [fetchHistory, t]);
 
   const fetchSites = useCallback(async () => {
     try {
@@ -135,9 +149,34 @@ export default function Tasks() {
     }
   };
 
+  const viewGlobalLogs = async () => {
+    if (isGuest) {
+      setLogModal({ taskId: "global", taskName: t("logs.title"), log: t("tasks.guest_detail_disabled") });
+      return;
+    }
+    setLogModalLoading(true);
+    setLogModal({ taskId: "global", taskName: t("logs.title"), log: "" });
+    try {
+      const res = await apiGet<{ logs?: string; error?: string }>("/api/logs/global");
+      setLogModal({ taskId: "global", taskName: t("logs.title"), log: res.logs || res.error || "(no log available)" });
+    } catch {
+      setLogModal({ taskId: "global", taskName: t("logs.title"), log: "(failed to load log)" });
+    } finally {
+      setLogModalLoading(false);
+    }
+  };
+
   const stopTask = async (taskId: string) => {
-    try { await apiPost(`/api/tasks/stop/${taskId}`); await fetchTasks(); }
-    catch (e) { console.error("Failed to stop task:", e); }
+    if (!window.confirm(t("tasks.confirm_stop"))) return;
+    try {
+      await apiPost(`/api/tasks/stop/${taskId}`);
+      setTaskNotice(t("tasks.stop_requested"));
+      await fetchTasks();
+    }
+    catch (e) {
+      console.error("Failed to stop task:", e);
+      setTaskNotice(t("tasks.stop_failed"));
+    }
   };
 
   const handleSubmitTask = async (data: Record<string, unknown>) => {
@@ -232,6 +271,13 @@ export default function Tasks() {
         <ScheduledTasksSection />
       ) : (
         <>
+      {taskNotice && (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground" data-testid="text-task-notice">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          <span className="flex-1">{taskNotice}</span>
+          <button onClick={() => setTaskNotice(null)} className="p-1 rounded hover:bg-muted"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
       {/* 1. All Tasks (task type selection grid) */}
       <div>
         <h2 className="text-lg font-semibold mb-3">{t("tasks.new_task")}</h2>
@@ -320,8 +366,12 @@ export default function Tasks() {
             {historyExpanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
           </button>
           {historyExpanded && (
-            <button onClick={fetchHistory} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              data-testid="button-refresh-history" title={t("tasks.refresh")}><RefreshCw className="w-4 h-4" /></button>
+            <div className="flex items-center gap-1">
+              <button onClick={viewGlobalLogs} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="button-global-logs" title={t("logs.title")}><FileText className="w-4 h-4" /></button>
+              <button onClick={fetchHistory} className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="button-refresh-history" title={t("tasks.refresh")}><RefreshCw className="w-4 h-4" /></button>
+            </div>
           )}
         </div>
         {historyExpanded && (

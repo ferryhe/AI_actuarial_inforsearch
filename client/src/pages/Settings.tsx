@@ -24,6 +24,7 @@ import {
   Shield,
   MessageSquare,
   Pencil,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -354,6 +355,10 @@ function AiConfigTab({ lang }: { lang: string }) {
 
   const [addingProvider, setAddingProvider] = useState(false);
   const [providerAddId, setProviderAddId] = useState("");
+  const [maintenanceBusy, setMaintenanceBusy] = useState<string | null>(null);
+  const [reencryptOpen, setReencryptOpen] = useState(false);
+  const [oldEncryptionKey, setOldEncryptionKey] = useState("");
+  const [newEncryptionKey, setNewEncryptionKey] = useState("");
 
   const [modelEdits, setModelEdits] = useState<Record<string, ModelEdit>>({});
   const [addingRouting, setAddingRouting] = useState(false);
@@ -494,6 +499,59 @@ function AiConfigTab({ lang }: { lang: string }) {
       setToast({ message: t("settings.provider_delete_error"), type: "error" });
     } finally {
       setSavingProvider(null);
+    }
+  }
+
+  async function importProviderEnv() {
+    setMaintenanceBusy("import-env");
+    try {
+      const res = await apiPost<{ imported_count?: number; skipped_count?: number }>("/api/config/provider-credentials/import-env", { overwrite: false });
+      setToast({
+        message: `${t("settings.provider_env_imported")}: ${res.imported_count || 0} / ${t("settings.skipped")}: ${res.skipped_count || 0}`,
+        type: "success",
+      });
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.provider_save_error"), type: "error" });
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  }
+
+  async function refreshModelCatalog() {
+    setMaintenanceBusy("model-catalog");
+    try {
+      const res = await apiGet<{ available: Record<string, AvailableModel[]> }>("/api/config/model-catalog?refresh=true");
+      setAvailable(res.available || {});
+      setToast({ message: t("settings.model_catalog_refreshed"), type: "success" });
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.models_save_error"), type: "error" });
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  }
+
+  async function reencryptCredentials() {
+    if (!oldEncryptionKey.trim()) return;
+    setMaintenanceBusy("reencrypt");
+    try {
+      const res = await apiPost<{ rotated_count?: number; failed_count?: number }>("/api/config/provider-credentials/re-encrypt", {
+        old_key: oldEncryptionKey.trim(),
+        new_key: newEncryptionKey.trim() || undefined,
+      });
+      setOldEncryptionKey("");
+      setNewEncryptionKey("");
+      setReencryptOpen(false);
+      setToast({
+        message: `${t("settings.credentials_reencrypted")}: ${res.rotated_count || 0} / ${t("settings.failed")}: ${res.failed_count || 0}`,
+        type: "success",
+      });
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.credentials_reencrypt_error"), type: "error" });
+    } finally {
+      setMaintenanceBusy(null);
     }
   }
 
@@ -654,17 +712,82 @@ function AiConfigTab({ lang }: { lang: string }) {
             <h3 className="text-sm font-semibold">{t("settings.model_providers")}</h3>
             <span className="text-xs text-muted-foreground">{configuredProviders.length}/{llmProviders.length} {t("settings.configured")}</span>
           </div>
-          <button
-            onClick={startAddProvider}
-            disabled={llmProviders.length === 0 || addingProvider}
-            className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
-            data-testid="button-add-provider"
-          >
-            <Plus className="w-3 h-3" />
-            {t("settings.add_key")}
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              onClick={importProviderEnv}
+              disabled={maintenanceBusy !== null}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-import-provider-env"
+            >
+              {maintenanceBusy === "import-env" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+              {t("settings.import_env")}
+            </button>
+            <button
+              onClick={refreshModelCatalog}
+              disabled={maintenanceBusy !== null}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-refresh-model-catalog"
+            >
+              {maintenanceBusy === "model-catalog" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              {t("settings.refresh_models")}
+            </button>
+            <button
+              onClick={() => setReencryptOpen((open) => !open)}
+              disabled={maintenanceBusy !== null}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-reencrypt-credentials"
+            >
+              <Shield className="w-3 h-3" />
+              {t("settings.reencrypt_credentials")}
+            </button>
+            <button
+              onClick={startAddProvider}
+              disabled={llmProviders.length === 0 || addingProvider}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              data-testid="button-add-provider"
+            >
+              <Plus className="w-3 h-3" />
+              {t("settings.add_key")}
+            </button>
+          </div>
         </div>
         <div className="divide-y divide-border">
+          {reencryptOpen && (
+            <div className="px-5 py-4 bg-muted/10" data-testid="provider-reencrypt-panel">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                <div>
+                  <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.old_encryption_key")}</label>
+                  <input
+                    type="password"
+                    value={oldEncryptionKey}
+                    onChange={(e) => setOldEncryptionKey(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    data-testid="input-old-encryption-key"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-muted-foreground mb-1 block">{t("settings.new_encryption_key")}</label>
+                  <input
+                    type="password"
+                    value={newEncryptionKey}
+                    onChange={(e) => setNewEncryptionKey(e.target.value)}
+                    placeholder={t("settings.new_encryption_key_hint")}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    data-testid="input-new-encryption-key"
+                  />
+                </div>
+                <button
+                  onClick={reencryptCredentials}
+                  disabled={!oldEncryptionKey.trim() || maintenanceBusy === "reencrypt"}
+                  className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  data-testid="button-submit-reencrypt-credentials"
+                >
+                  {maintenanceBusy === "reencrypt" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  {t("settings.reencrypt_credentials")}
+                </button>
+              </div>
+            </div>
+          )}
           {addingProvider && (() => {
             const provider = llmProviders.find((item) => item.provider_id === providerAddId);
             return (
@@ -1352,6 +1475,21 @@ function SearchCrawlerTab() {
     }
   }
 
+  async function deleteSearchCredential(engineId: string) {
+    const providerId = SEARCH_PROVIDER_MAP[engineId] || engineId;
+    if (!window.confirm(t("settings.confirm_delete_provider"))) return;
+    setSearchKeySaving(true);
+    try {
+      await apiDelete(`/api/config/provider-credentials/${providerId}?category=search`);
+      setToast({ message: t("settings.provider_deleted"), type: "success" });
+      await fetchData();
+    } catch {
+      setToast({ message: t("settings.provider_delete_error"), type: "error" });
+    } finally {
+      setSearchKeySaving(false);
+    }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   }
@@ -1392,13 +1530,25 @@ function SearchCrawlerTab() {
                   )}
                 </div>
                 {searchKeyEdit?.engine !== engine.id && (
-                  <button
-                    onClick={() => setSearchKeyEdit({ engine: engine.id, key: "" })}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
-                    data-testid={`button-edit-search-${engine.id}`}
-                  >
-                    {engine.configured ? t("settings.update_key") : t("settings.add_key")}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {searchCredentialByEngine(engine.id)?.source === "db" && (
+                      <button
+                        onClick={() => deleteSearchCredential(engine.id)}
+                        disabled={searchKeySaving}
+                        className="text-xs px-2 py-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                        data-testid={`button-delete-search-${engine.id}`}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSearchKeyEdit({ engine: engine.id, key: "" })}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
+                      data-testid={`button-edit-search-${engine.id}`}
+                    >
+                      {engine.configured ? t("settings.update_key") : t("settings.add_key")}
+                    </button>
+                  </div>
                 )}
               </div>
               {searchKeyEdit?.engine === engine.id && (
@@ -1519,7 +1669,7 @@ function CategoriesTab() {
     try {
       const res = await apiGet<CategoriesConfig>("/api/config/categories");
       setCategories(res.categories || {});
-      setAiFilterKw(res.ai_filter_keywords || []);
+      setAiFilterKw(res.ai_keywords || res.ai_filter_keywords || []);
     } catch {
     } finally {
       setLoading(false);
@@ -1560,6 +1710,7 @@ function CategoriesTab() {
       await apiPost("/api/config/categories", {
         categories,
         ai_filter_keywords: aiFilterKw,
+        ai_keywords: aiFilterKw,
       });
       setToast({ message: t("settings.categories_saved"), type: "success" });
       setDirty(false);

@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
+  MessageSquare,
   RefreshCw,
   Check,
   Clock,
@@ -29,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { ApiError, apiGet, apiPost, setStoredAuthToken } from "@/lib/api";
 import { useTaskOptions } from "@/hooks/use-task-options";
+import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface FileData {
@@ -73,6 +75,19 @@ interface ChunkSet {
   updated_at?: string;
   kb_id?: string;
   kb_name?: string;
+}
+
+interface ChunkProfile {
+  profile_id: string;
+  name: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
+}
+
+interface KnowledgeBaseOption {
+  kb_id: string;
+  name?: string;
+  file_count?: number;
 }
 
 interface CategoriesConfig {
@@ -263,8 +278,120 @@ function TaskStatusBadge({ status, t }: { status: TaskStatus; t: (k: string) => 
   );
 }
 
+function MarkdownRenderer({ content }: { content: string }) {
+  const renderInline = (text: string, keyPrefix: string): React.ReactNode[] => {
+    const nodes: React.ReactNode[] = [];
+    const pattern = /(\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/[^)\s]+)\)|`([^`]+)`)/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+      if (match[2] && match[3]) {
+        nodes.push(
+          <a key={`${keyPrefix}-link-${match.index}`} href={match[3]} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            {match[2]}
+          </a>
+        );
+      } else if (match[4]) {
+        nodes.push(<code key={`${keyPrefix}-code-${match.index}`} className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">{match[4]}</code>);
+      }
+      lastIndex = pattern.lastIndex;
+    }
+    if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+    return nodes;
+  };
+
+  const nodes: React.ReactNode[] = [];
+  const lines = content.split(/\r?\n/);
+  let paragraph: string[] = [];
+  let listItems: string[] = [];
+  let codeLines: string[] = [];
+  let inCode = false;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    const text = paragraph.join(" ");
+    nodes.push(<p key={`p-${nodes.length}`} className="leading-7">{renderInline(text, `p-${nodes.length}`)}</p>);
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    nodes.push(
+      <ul key={`ul-${nodes.length}`} className="list-disc space-y-1 pl-5">
+        {listItems.map((item, index) => <li key={index}>{renderInline(item, `li-${nodes.length}-${index}`)}</li>)}
+      </ul>
+    );
+    listItems = [];
+  };
+
+  const flushCode = () => {
+    nodes.push(
+      <pre key={`code-${nodes.length}`} className="overflow-x-auto rounded-lg border border-border bg-muted/60 p-3 text-xs leading-relaxed">
+        <code>{codeLines.join("\n")}</code>
+      </pre>
+    );
+    codeLines = [];
+  };
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      flushParagraph();
+      flushList();
+      if (inCode) {
+        flushCode();
+        inCode = false;
+      } else {
+        inCode = true;
+        codeLines = [];
+      }
+      return;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      return;
+    }
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+    const heading = /^(#{1,4})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length;
+      const className = level === 1 ? "text-lg font-semibold" : level === 2 ? "text-base font-semibold" : "text-sm font-semibold";
+      nodes.push(<div key={`h-${nodes.length}`} className={cn(className, "mt-3")}>{renderInline(heading[2], `h-${nodes.length}`)}</div>);
+      return;
+    }
+    const list = /^[-*]\s+(.+)$/.exec(trimmed);
+    if (list) {
+      flushParagraph();
+      listItems.push(list[1]);
+      return;
+    }
+    if (trimmed.startsWith(">")) {
+      flushParagraph();
+      flushList();
+      nodes.push(<blockquote key={`bq-${nodes.length}`} className="border-l-2 border-primary/40 pl-3 text-muted-foreground">{renderInline(trimmed.slice(1).trim(), `bq-${nodes.length}`)}</blockquote>);
+      return;
+    }
+    flushList();
+    paragraph.push(trimmed);
+  });
+
+  flushParagraph();
+  flushList();
+  if (inCode) flushCode();
+
+  return <div className="space-y-3 text-sm leading-relaxed">{nodes.length > 0 ? nodes : <p>{content}</p>}</div>;
+}
+
 export default function FileDetail() {
   const { t } = useTranslation();
+  const { permissions } = useAuth();
   const [, navigate] = useLocation();
   const searchString = useSearch();
   const fileUrl = new URLSearchParams(searchString).get("url") || "";
@@ -321,6 +448,12 @@ export default function FileDetail() {
 
   const [chunkSets, setChunkSets] = useState<ChunkSet[]>([]);
   const [chunkSetsLoading, setChunkSetsLoading] = useState(false);
+  const [chunkProfiles, setChunkProfiles] = useState<ChunkProfile[]>([]);
+  const [chunkProfileId, setChunkProfileId] = useState("");
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
+  const [bindToKb, setBindToKb] = useState(false);
+  const [selectedKbId, setSelectedKbId] = useState("");
+  const [bindingMode, setBindingMode] = useState("follow_latest");
 
   const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [catalogSource, setCatalogSource] = useState("markdown");
@@ -404,6 +537,20 @@ export default function FileDetail() {
     setChunkSetsLoading(true);
     refreshChunks().finally(() => setChunkSetsLoading(false));
   }, [fileUrl, refreshChunks]);
+
+  useEffect(() => {
+    Promise.all([
+      apiGet<{ profiles?: ChunkProfile[]; data?: { profiles?: ChunkProfile[] } }>("/api/chunk/profiles").catch(() => null),
+      apiGet<{ knowledge_bases?: KnowledgeBaseOption[]; data?: { knowledge_bases?: KnowledgeBaseOption[] } }>("/api/rag/knowledge-bases").catch(() => null),
+    ]).then(([profileRes, kbRes]) => {
+      const profiles = profileRes?.profiles || profileRes?.data?.profiles || [];
+      setChunkProfiles(profiles);
+      setChunkProfileId((current) => current || profiles[0]?.profile_id || "");
+      const kbs = kbRes?.knowledge_bases || kbRes?.data?.knowledge_bases || [];
+      setKnowledgeBases(kbs);
+      setSelectedKbId((current) => current || kbs[0]?.kb_id || "");
+    });
+  }, []);
 
   useEffect(() => {
     apiGet<CategoriesConfig>("/api/config/categories")
@@ -511,11 +658,19 @@ export default function FileDetail() {
     setChunkSubmitting(true);
     const body: Record<string, unknown> = {
       overwrite_same_profile: chunkOverwrite,
-      chunk_size: 800,
-      chunk_overlap: 100,
-      splitter: "semantic",
-      tokenizer: "cl100k_base",
+      binding_mode: bindingMode,
     };
+    if (chunkProfileId) {
+      body.profile_id = chunkProfileId;
+    } else {
+      body.chunk_size = 800;
+      body.chunk_overlap = 100;
+      body.splitter = "semantic";
+      body.tokenizer = "cl100k_base";
+    }
+    if (bindToKb && selectedKbId) {
+      body.kb_id = selectedKbId;
+    }
     try {
       await apiPost(`/api/files/${encodeURIComponent(file.url)}/chunk-sets/generate`, body);
       setShowChunkModal(false);
@@ -555,6 +710,23 @@ export default function FileDetail() {
     a.click();
   }
 
+  function explainCurrentFile() {
+    if (!file || !markdown?.markdown_content) return;
+    const filename = file.original_filename || file.title || "Document";
+    navigate("/chat", {
+      state: {
+        explainDocument: {
+          document_content: markdown.markdown_content,
+          file_url: file.url,
+          filename,
+          title: file.title || filename,
+          category: file.category || "",
+          keywords: file.keywords || [],
+        },
+      },
+    });
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
@@ -583,17 +755,25 @@ export default function FileDetail() {
   const catalogStatus = getCatalogStatusInfo(file, t);
   const effectiveMarkdownSource = markdown?.markdown_source || file.markdown_source || "";
   const effectiveMarkdownUpdatedAt = markdown?.markdown_updated_at || file.markdown_updated_at || "";
+  const markdownContent = markdown?.markdown_content || "";
 
   const disabledBtn = "opacity-40 pointer-events-none cursor-not-allowed";
 
-  const canEdit = !anyTaskRunning && !mdEditMode;
-  const canCatalog = !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
-  const canDownload = hasLocalFile;
+  const canDownloadFile = permissions.includes("files.download");
+  const canDeleteFile = permissions.includes("files.delete");
+  const canCatalogWrite = permissions.includes("catalog.write");
+  const canMarkdownWrite = permissions.includes("markdown.write");
+  const canRagWrite = permissions.includes("rag.write");
+
+  const canEdit = canCatalogWrite && !anyTaskRunning && !mdEditMode;
+  const canCatalog = canCatalogWrite && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
+  const canExplain = hasMarkdown && !isDeleted && !mdEditMode;
+  const canDownload = hasLocalFile && canDownloadFile;
   const canPreview = hasLocalFile;
-  const canDelete = !isDeleted && !anyTaskRunning;
-  const canModifyChunk = hasMarkdown && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
-  const canSwitchMdEdit = !editing && !anyTaskRunning;
-  const canConvert = hasLocalFile && !editing && !anyTaskRunning;
+  const canDelete = canDeleteFile && !isDeleted && !anyTaskRunning;
+  const canModifyChunk = canRagWrite && hasMarkdown && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
+  const canSwitchMdEdit = canMarkdownWrite && !editing && !anyTaskRunning;
+  const canConvert = canMarkdownWrite && hasLocalFile && !editing && !anyTaskRunning;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -643,6 +823,11 @@ export default function FileDetail() {
           className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canCatalog && disabledBtn)}
           data-testid="button-catalog">
           <Sparkles className="w-3.5 h-3.5" />{t("fv.catalog")}
+        </button>
+        <button onClick={explainCurrentFile} disabled={!canExplain}
+          className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canExplain && disabledBtn)}
+          data-testid="button-ai-explain">
+          <MessageSquare className="w-3.5 h-3.5" />{t("fv.ai_explain")}
         </button>
         <button onClick={handleDownload} disabled={!canDownload}
           className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted transition-colors", !canDownload && disabledBtn)}
@@ -853,7 +1038,7 @@ export default function FileDetail() {
             hasMarkdown ? (
               <div className={cn("prose prose-sm dark:prose-invert max-w-none overflow-y-auto transition-all", mdExpanded ? "max-h-none" : "max-h-[60vh]")}
                 data-testid="text-markdown-content">
-                <pre className="whitespace-pre-wrap text-sm font-sans">{markdown?.markdown_content}</pre>
+                <MarkdownRenderer content={markdownContent} />
               </div>
             ) : (
               <p className="text-xs text-muted-foreground italic">{t("fv.no_md")}</p>
@@ -1029,6 +1214,60 @@ export default function FileDetail() {
               <div className="px-3 py-2 rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
                 {t("fv.chunk_modal_migration_notice")}
               </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.chunk_profile")}</label>
+                <select
+                  value={chunkProfileId}
+                  onChange={(e) => setChunkProfileId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  data-testid="select-file-chunk-profile"
+                >
+                  {chunkProfiles.length === 0 ? (
+                    <option value="">{t("knowledge.no_profiles")}</option>
+                  ) : chunkProfiles.map((profile) => (
+                    <option key={profile.profile_id} value={profile.profile_id}>
+                      {profile.name} ({profile.chunk_size}/{profile.chunk_overlap})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={bindToKb} onChange={(e) => setBindToKb(e.target.checked)} className="rounded" data-testid="checkbox-file-bind-kb" />
+                {t("tasks.form.bind_to_kb")}
+              </label>
+              {bindToKb && (
+                <div className="grid grid-cols-2 gap-3" data-testid="file-kb-binding-fields">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.kb_binding")}</label>
+                    <select
+                      value={selectedKbId}
+                      onChange={(e) => setSelectedKbId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      data-testid="select-file-bind-kb"
+                    >
+                      {knowledgeBases.length === 0 ? (
+                        <option value="">{t("tasks.form.no_knowledge_bases")}</option>
+                      ) : knowledgeBases.map((kb) => (
+                        <option key={kb.kb_id} value={kb.kb_id}>
+                          {kb.name || kb.kb_id}{kb.file_count != null ? ` (${kb.file_count})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("kb.binding_mode")}</label>
+                    <select
+                      value={bindingMode}
+                      onChange={(e) => setBindingMode(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                      data-testid="select-file-binding-mode"
+                    >
+                      <option value="follow_latest">{t("kb.follow_latest")}</option>
+                      <option value="pin">{t("kb.pinned")}</option>
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={chunkOverwrite} onChange={(e) => setChunkOverwrite(e.target.checked)} className="rounded" />

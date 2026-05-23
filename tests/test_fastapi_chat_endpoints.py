@@ -10,9 +10,21 @@ import yaml
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.services.chat import _build_file_links
 from ai_actuarial.storage import Storage
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+def test_chat_file_links_use_react_routes() -> None:
+    links = _build_file_links("https://example.com/report.pdf")
+
+    assert links["source_url"] == "https://example.com/report.pdf"
+    assert links["file_detail_url"].startswith("/file-detail?url=")
+    assert "from=%2Fchat" in links["file_detail_url"]
+    assert links["file_preview_url"].startswith("/file-preview?file_url=")
+    assert "/file/" not in links["file_detail_url"]
+    assert "/file_preview" not in links["file_preview_url"]
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:

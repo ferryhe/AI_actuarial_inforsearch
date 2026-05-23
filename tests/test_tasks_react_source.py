@@ -138,3 +138,36 @@ def test_chunk_form_uses_existing_or_custom_chunk_profiles():
     assert 'testId="select-bind-kb"' in src
     assert "binding_mode: bindingMode" in src
     assert "kb_id: bindToKb ? selectedKbId : undefined" in src
+
+
+def test_task_category_scopes_use_backend_selects_not_free_text_datalists():
+    for form_name, test_id in (
+        ("CatalogForm.tsx", "select-category"),
+        ("MarkdownForm.tsx", "select-md-category"),
+        ("ChunkForm.tsx", "select-chunk-category"),
+    ):
+        src = (ROOT / "pages" / "tasks" / form_name).read_text(encoding="utf-8")
+        assert "<datalist" not in src, form_name
+        assert 'list="' not in src, form_name
+        assert f'testId="{test_id}"' in src, form_name
+        assert "categoryOptions" in src, form_name
+
+
+def test_rag_index_form_supports_explicit_file_urls():
+    src = (ROOT / "pages" / "tasks" / "RagIndexForm.tsx").read_text(encoding="utf-8")
+
+    assert "fileUrlsInput" in src
+    assert "parseFileUrls" in src
+    assert "file_urls: fileUrls.length > 0 ? fileUrls : undefined" in src
+    assert 'data-testid="input-rag-file-urls"' in src
+
+
+def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
+    src = TASKS_TSX.read_text(encoding="utf-8")
+
+    assert "previousActiveTaskIdsRef" in src
+    assert "completedTaskIds" in src
+    assert "void fetchHistory()" in src
+    assert 'window.confirm(t("tasks.confirm_stop"))' in src
+    assert 'apiGet<{ logs?: string; error?: string }>("/api/logs/global")' in src
+    assert 'data-testid="button-global-logs"' in src

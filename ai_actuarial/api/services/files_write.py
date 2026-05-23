@@ -261,6 +261,10 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
         raise FileWriteError("Invalid JSON body")
     profile_id = str(payload.get("profile_id") or "").strip()
     overwrite_same_profile = bool(payload.get("overwrite_same_profile", False))
+    kb_id = str(payload.get("kb_id") or "").strip()
+    binding_mode = str(payload.get("binding_mode") or "follow_latest").strip().lower() or "follow_latest"
+    if kb_id and binding_mode not in {"pin", "follow_latest"}:
+        raise FileWriteError("binding_mode must be one of: pin, follow_latest")
     chunk_size = parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
     chunk_overlap = parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
     if chunk_overlap >= chunk_size:
@@ -274,6 +278,30 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
 
     storage = Storage(db_path)
     try:
+        def bind_requested_kb(chunk_set_id: str) -> dict[str, Any] | None:
+            if not kb_id:
+                return None
+            try:
+                from ai_actuarial.rag.exceptions import KnowledgeBaseException
+                from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+            except ImportError as exc:  # noqa: BLE001
+                raise FileWriteError("RAG functionality not available", status_code=503) from exc
+
+            manager = KnowledgeBaseManager(storage)
+            if not manager.get_kb(kb_id):
+                raise FileWriteError(f"Knowledge base '{kb_id}' not found", status_code=404)
+            try:
+                manager.add_files_to_kb(kb_id, [file_url])
+                return storage.bind_chunk_set_to_kb(
+                    kb_id=kb_id,
+                    file_url=file_url,
+                    chunk_set_id=chunk_set_id,
+                    bound_by="file_chunk_generation",
+                    binding_mode=binding_mode,
+                )
+            except KnowledgeBaseException as exc:
+                raise FileWriteError(str(exc), status_code=404) from exc
+
         file_info = storage.get_file_by_url(file_url)
         if not file_info:
             raise FileWriteError("File not found", status_code=404)
@@ -306,7 +334,7 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
             status="ready",
         )
         if not chunk_set.get("created") and not overwrite_same_profile:
-            return {
+            response = {
                 "file_url": file_url,
                 "chunk_set_id": chunk_set["chunk_set_id"],
                 "profile": profile,
@@ -314,6 +342,10 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
                 "reused_existing": True,
                 "overwrote_existing": False,
             }
+            kb_binding = bind_requested_kb(str(chunk_set["chunk_set_id"]))
+            if kb_binding:
+                response["kb_binding"] = kb_binding
+            return response
 
         max_tokens = int(profile.get("chunk_size") or 800)
         min_tokens = max(20, min(100, max_tokens // 4))
@@ -342,7 +374,7 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
             chunk_set_id=chunk_set["chunk_set_id"],
             bound_by="chunk_generation_auto_sync",
         )
-        return {
+        response = {
             "file_url": file_url,
             "chunk_set_id": chunk_set["chunk_set_id"],
             "profile": profile,
@@ -352,6 +384,10 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
             "auto_synced_kb_bindings": sync_res.get("synced_bindings", 0),
             "auto_synced_kb_ids": sync_res.get("affected_kb_ids", []),
         }
+        kb_binding = bind_requested_kb(str(chunk_set["chunk_set_id"]))
+        if kb_binding:
+            response["kb_binding"] = kb_binding
+        return response
     except ChunkingException as exc:
         raise FileWriteError(str(exc), status_code=400) from exc
     except ValueError as exc:

@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Mapping
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from itsdangerous import URLSafeSerializer
 from ai_actuarial.api.deps import _decode_signed_session, AuthContext
@@ -157,18 +157,28 @@ def _build_file_links(raw_file_url: str, *, return_to: str = "/chat") -> dict[st
     source_url = str(raw_file_url or "").strip()
     if not source_url:
         return {"source_url": "", "file_detail_url": "", "file_preview_url": ""}
-    if source_url.startswith("/file/"):
+    if source_url.startswith("/file-detail"):
         return {"source_url": source_url, "file_detail_url": source_url, "file_preview_url": ""}
-    if source_url.startswith("/file_preview"):
+    if source_url.startswith("/file-preview"):
         return {"source_url": source_url, "file_detail_url": "", "file_preview_url": source_url}
-    if source_url.startswith("/database/"):
+    if source_url.startswith("/file/"):
+        encoded_source = source_url[len("/file/") :].split("?", 1)[0]
+        try:
+            source_url = unquote(encoded_source)
+        except Exception:
+            source_url = encoded_source
+    elif source_url.startswith("/file_preview"):
+        parsed_file_url = parse_qs(urlparse(source_url).query).get("file_url", [""])[0]
+        source_url = parsed_file_url or source_url
+    elif source_url.startswith("/database/"):
         return {"source_url": source_url, "file_detail_url": source_url, "file_preview_url": ""}
 
     encoded_source = quote(source_url, safe="")
+    encoded_return_to = quote(return_to, safe="")
     return {
         "source_url": source_url,
-        "file_detail_url": f"/file/{encoded_source}?return_to={quote(return_to, safe='')}",
-        "file_preview_url": f"/file_preview?file_url={encoded_source}",
+        "file_detail_url": f"/file-detail?url={encoded_source}&from={encoded_return_to}",
+        "file_preview_url": f"/file-preview?file_url={encoded_source}&from={encoded_return_to}",
     }
 
 
@@ -625,7 +635,7 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
                 "chunk_id": metadata.get("chunk_id") or "",
                 "similarity_score": metadata.get("similarity_score"),
                 "source_url": links["source_url"],
-                "file_url": links["file_detail_url"],
+                "file_url": links["source_url"],
                 "file_detail_url": links["file_detail_url"],
                 "file_preview_url": links["file_preview_url"],
                 "quote": content[:280].strip(),
