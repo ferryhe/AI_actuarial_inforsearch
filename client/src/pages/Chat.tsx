@@ -91,7 +91,6 @@ interface AvailableDocument {
 
 interface MarkdownResponse {
   success?: boolean;
-  data?: { markdown?: { markdown_content?: string | null } | null };
   markdown?: { markdown_content?: string | null } | null;
 }
 
@@ -472,7 +471,7 @@ export default function Chat() {
     }
 
     const res = await apiGet<MarkdownResponse>(`/api/files/${encodeURIComponent(doc.file_url)}/markdown`);
-    const markdown = res.data?.markdown || res.markdown;
+    const markdown = res.markdown;
     const content = (markdown?.markdown_content || "").trim();
     if (!content) {
       throw new Error(t("chat.document_content_unavailable"));

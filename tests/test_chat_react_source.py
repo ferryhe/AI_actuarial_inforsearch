@@ -17,6 +17,8 @@ def test_chat_document_explain_posts_markdown_document_context():
     src = CHAT_TSX.read_text(encoding="utf-8")
 
     assert "/api/files/${encodeURIComponent(doc.file_url)}/markdown" in src
+    assert "data?: { markdown?" not in src
+    assert "res.data?.markdown" not in src
     assert "sendMessage({ text: questionText, document: doc })" in src
     assert "document_content: documentContext.content" in src
     assert "document_filename: documentContext.filename" in src
