@@ -1,6 +1,6 @@
 (json_access_log) {
 	log {
-		output file /data/logs/access.log {
+		output file /data/access.log {
 			roll_size 50MiB
 			roll_keep 5
 		}
@@ -9,6 +9,7 @@
 }
 
 http://localhost:80 {
+	bind 127.0.0.1 [::1]
 	respond "ok" 200
 }
 
