@@ -20,6 +20,8 @@ services:
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:-}
       - FILE_DELETION_AUTH_TOKEN=${FILE_DELETION_AUTH_TOKEN:-}
       - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      - FASTAPI_HOST=${FASTAPI_HOST:-0.0.0.0}
+      - FASTAPI_PORT=${FASTAPI_PORT:-5000}
     volumes:
       - ai-data:/app/data
       - ./config/sites.yaml:/app/config/sites.yaml
@@ -87,6 +89,12 @@ services:
       - ai-caddy-config:/config
     environment:
       - ACME_EMAIL=${ACME_EMAIL:-}
+      - CADDY_APP_SITE_HOSTS=${CADDY_APP_SITE_HOSTS:-http://localhost:8080}
+      - CADDY_CROSS_SITE_HOST=${CADDY_CROSS_SITE_HOST:-http://localhost:8081}
+      - CADDY_CROSS_UPSTREAM=${CADDY_CROSS_UPSTREAM:-host.docker.internal:8501}
+      - "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
       interval: 30s
@@ -112,8 +120,3 @@ volumes:
 networks:
   ai-net:
     driver: bridge
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.28.0.0/16
-          gateway: 172.28.0.1

@@ -74,7 +74,11 @@ export FASTAPI_SESSION_SECRET=<strong-random-key>
 export LOGS_READ_AUTH_TOKEN=<strong-random-token>
 export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
 export TOKEN_ENCRYPTION_KEY=<fernet-key>
-export CADDY_DOMAIN=<domain>
+export FASTAPI_CORS_ORIGINS=https://<public-app-host>
+export VITE_API_BASE_URL=https://<public-app-host>/api
+export CADDY_APP_SITE_HOSTS=<public-app-host>[,www.<public-app-host>]
+export CADDY_CROSS_SITE_HOST=<optional-secondary-host>
+export CADDY_CROSS_UPSTREAM=<host-or-service>:<port>
 ```
 
 ## Update Helper
@@ -96,6 +100,10 @@ RELOAD_CADDY=true CADDY_CONTAINER=ai-caddy APP_SERVICE_NAME=api bash scripts/dep
 
 - `FASTAPI_SESSION_SECRET`: required for session login.
 - `TOKEN_ENCRYPTION_KEY`: required for decrypting database-stored provider credentials.
+- `FASTAPI_CORS_ORIGINS`: comma-separated public frontend origins allowed to call the API.
+- `VITE_API_BASE_URL`: public API URL embedded into the frontend build.
+- `CADDY_APP_SITE_HOSTS`: public hostnames Caddy should serve for the main app.
+- `CADDY_CROSS_SITE_HOST` / `CADDY_CROSS_UPSTREAM`: optional secondary host and upstream target.
 - `features.require_auth` in `config/sites.yaml`: set to `true` to require authentication.
 - `FASTAPI_ENV`: optional deployment override. If unset, FastAPI uses `config/sites.yaml -> server.fastapi_env`.
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local admin bootstrap token.
