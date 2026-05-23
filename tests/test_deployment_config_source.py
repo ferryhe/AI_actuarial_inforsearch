@@ -18,6 +18,9 @@ def test_production_compose_uses_fastapi_env_and_keeps_features_in_yaml():
     assert "VITE_API_BASE_URL=${VITE_API_BASE_URL:?VITE_API_BASE_URL is required in production}" in src
     assert "ENABLE_CSRF=${ENABLE_CSRF:-true}" in src
     assert "FASTAPI_SESSION_COOKIE_SECURE=${FASTAPI_SESSION_COOKIE_SECURE:-true}" in src
+    assert "TRUST_PROXY=${TRUST_PROXY:-false}" in src
+    assert "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src" not in src
+    assert "- CONTENT_SECURITY_POLICY" in src
     assert "CADDY_DOMAIN" not in src
 
 
@@ -54,6 +57,15 @@ def test_compose_does_not_pin_public_bridge_topology():
     assert "host.docker.internal:host-gateway" in src
     assert "CADDY_APP_SITE_HOSTS=${CADDY_APP_SITE_HOSTS:-http://localhost:8080}" in src
     assert "CADDY_CROSS_UPSTREAM=${CADDY_CROSS_UPSTREAM:-host.docker.internal:8501}" in src
+    assert "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src" not in src
+    assert "- CONTENT_SECURITY_POLICY" in src
+
+
+def test_container_entrypoint_keeps_container_bind_reachable():
+    src = (ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert 'FASTAPI_HOST:-0.0.0.0' in src
+    assert 'FASTAPI_HOST:-127.0.0.1' not in src
 
 
 def test_committed_sites_yaml_uses_safe_public_security_defaults():

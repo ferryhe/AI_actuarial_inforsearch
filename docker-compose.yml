@@ -92,7 +92,7 @@ services:
       - CADDY_APP_SITE_HOSTS=${CADDY_APP_SITE_HOSTS:-http://localhost:8080}
       - CADDY_CROSS_SITE_HOST=${CADDY_CROSS_SITE_HOST:-http://localhost:8081}
       - CADDY_CROSS_UPSTREAM=${CADDY_CROSS_UPSTREAM:-host.docker.internal:8501}
-      - "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:}"
+      - CONTENT_SECURITY_POLICY
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

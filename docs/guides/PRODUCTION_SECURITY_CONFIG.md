@@ -17,7 +17,8 @@ Set these only on the deployment server:
 - `TOKEN_ENCRYPTION_KEY`: stable Fernet key for encrypted provider credentials.
 - `ENABLE_CSRF`: keep `true` in production unless there is a documented exception.
 - `FASTAPI_SESSION_COOKIE_SECURE`: keep `true` behind HTTPS.
-- `CONTENT_SECURITY_POLICY`: override only when the frontend needs an explicit CSP change.
+- `TRUST_PROXY`: set `true` only when direct API access is restricted to trusted reverse proxy traffic.
+- `CONTENT_SECURITY_POLICY`: optional override when the frontend needs an explicit CSP change.
 
 Do not commit the server's real `.env` file.
 
@@ -28,8 +29,9 @@ Do not commit the server's real `.env` file.
 - Docker Compose uses `host.docker.internal:host-gateway` for host-side
   upstreams instead of publishing a fixed bridge subnet or gateway.
 - `config/sites.yaml` keeps safe public defaults for CSRF, CSP, and loopback
-  server binding. Production Compose can still override those values through
-  environment variables at startup.
+  server binding. Compose passes `CONTENT_SECURITY_POLICY` through from the
+  server environment; when it is unset or blank, the FastAPI app and Caddy use
+  their committed defaults instead of a second inline Compose default.
 
 ## Production startup
 
