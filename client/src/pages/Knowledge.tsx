@@ -55,6 +55,12 @@ interface ChunkProfile {
   tokenizer?: string;
 }
 
+interface CurrentEmbedding {
+  provider?: string;
+  model?: string;
+  dimension?: number;
+}
+
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
   visible: (i: number) => ({
@@ -114,16 +120,13 @@ export default function Knowledge() {
   const [deleteProfileConfirm, setDeleteProfileConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [indexingKb, setIndexingKb] = useState<string | null>(null);
-
-  const [embeddingModels, setEmbeddingModels] = useState<{provider: string; name: string; display_name: string}[]>([]);
-  const [defaultEmbedding, setDefaultEmbedding] = useState("text-embedding-3-large");
+  const [currentEmbedding, setCurrentEmbedding] = useState<CurrentEmbedding | null>(null);
 
   const [kbForm, setKbForm] = useState({
     name: "",
     kb_id: "",
     description: "",
     categories: "",
-    embedding_model: "",
     kb_mode: "manual",
     chunk_size: 800,
     chunk_overlap: 100,
@@ -142,12 +145,16 @@ export default function Knowledge() {
     Promise.all([
       apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
       apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null),
-      apiGet<Record<string, unknown>>("/api/config/ai-models").catch(() => null),
     ])
-      .then(([kbResp, profileResp, aiResp]) => {
-        const kbPayload = kbResp as { knowledge_bases?: KnowledgeBase[]; data?: { knowledge_bases?: KnowledgeBase[] } } | null;
+      .then(([kbResp, profileResp]) => {
+        const kbPayload = kbResp as {
+          knowledge_bases?: KnowledgeBase[];
+          current_embeddings?: CurrentEmbedding;
+          data?: { knowledge_bases?: KnowledgeBase[]; current_embeddings?: CurrentEmbedding };
+        } | null;
         const kbList: KnowledgeBase[] = kbPayload?.knowledge_bases || kbPayload?.data?.knowledge_bases || [];
         setKbs(kbList);
+        setCurrentEmbedding(kbPayload?.current_embeddings || kbPayload?.data?.current_embeddings || null);
 
         const profilePayload = profileResp as { profiles?: ChunkProfile[]; data?: ChunkProfile[] | { profiles?: ChunkProfile[] } } | null;
         const legacyProfiles = profilePayload?.data;
@@ -159,25 +166,6 @@ export default function Knowledge() {
               ? ((legacyProfiles as Record<string, unknown>).profiles as ChunkProfile[])
               : [];
         setProfiles(pList);
-
-        if (aiResp) {
-          const available = (aiResp as Record<string, unknown>).available as Record<string, {name: string; display_name: string; types: string[]}[]> | undefined;
-          const current = (aiResp as Record<string, unknown>).current as Record<string, {provider?: string; model?: string}> | undefined;
-          if (available) {
-            const models: {provider: string; name: string; display_name: string}[] = [];
-            for (const [provider, providerModels] of Object.entries(available)) {
-              for (const m of providerModels) {
-                if (m.types?.includes("embeddings")) {
-                  models.push({ provider, name: m.name, display_name: m.display_name });
-                }
-              }
-            }
-            setEmbeddingModels(models);
-          }
-          if (current?.embeddings?.model) {
-            setDefaultEmbedding(current.embeddings.model);
-          }
-        }
       })
       .finally(() => setLoading(false));
   }, []);
@@ -193,6 +181,11 @@ export default function Knowledge() {
       .slice(0, 60) || "kb";
   };
 
+  const currentEmbeddingLabel = [
+    currentEmbedding?.provider,
+    currentEmbedding?.model,
+  ].filter(Boolean).join(" / ") || t("knowledge.backend_embedding_unavailable");
+
   const handleCreateKB = async () => {
     if (!kbForm.name.trim()) return;
     const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
@@ -207,12 +200,11 @@ export default function Knowledge() {
         name: kbForm.name,
         description: kbForm.description,
         categories,
-        embedding_model: kbForm.embedding_model || defaultEmbedding,
         kb_mode: kbForm.kb_mode,
         chunk_size: kbForm.chunk_size,
         chunk_overlap: kbForm.chunk_overlap,
       });
-      setKbForm({ name: "", kb_id: "", description: "", categories: "", embedding_model: "", kb_mode: "manual", chunk_size: 800, chunk_overlap: 100 });
+      setKbForm({ name: "", kb_id: "", description: "", categories: "", kb_mode: "manual", chunk_size: 800, chunk_overlap: 100 });
       closeCreateKB();
       loadData();
     } catch (err) {
@@ -420,35 +412,16 @@ export default function Knowledge() {
                 <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.mode_hint")}</p>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                <p className="text-xs font-medium text-muted-foreground mb-1">
                   {t("knowledge.embedding_model")}
-                </label>
-                <select
-                  value={kbForm.embedding_model || defaultEmbedding}
-                  onChange={(e) => setKbForm({ ...kbForm, embedding_model: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  data-testid="select-kb-embedding"
+                </p>
+                <div
+                  className="rounded-lg border border-border bg-muted/40 px-3 py-2"
+                  data-testid="text-kb-backend-embedding"
                 >
-                  {embeddingModels.length > 0 ? (
-                    Object.entries(
-                      embeddingModels.reduce<Record<string, {name: string; display_name: string}[]>>((acc, m) => {
-                        (acc[m.provider] ??= []).push(m);
-                        return acc;
-                      }, {})
-                    ).map(([provider, models]) => (
-                      <optgroup key={provider} label={provider.charAt(0).toUpperCase() + provider.slice(1)}>
-                        {models.map((m) => (
-                          <option key={m.name} value={m.name}>{m.display_name}</option>
-                        ))}
-                      </optgroup>
-                    ))
-                  ) : (
-                    <>
-                      <option value="text-embedding-3-large">text-embedding-3-large</option>
-                      <option value="text-embedding-3-small">text-embedding-3-small</option>
-                    </>
-                  )}
-                </select>
+                  <p className="text-sm font-mono text-foreground truncate">{currentEmbeddingLabel}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.backend_embedding_hint")}</p>
+                </div>
               </div>
               <div className="sm:col-span-2">
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
@@ -556,7 +529,7 @@ export default function Knowledge() {
             const kbId = getKbId(kb);
             const needsReembed = kb.needs_reindex || kb.embedding_compatible === false;
             const status = kb.availability || kb.status;
-            const currentEmbeddingLabel = kb.current_embeddings?.model || defaultEmbedding;
+            const cardEmbeddingLabel = kb.current_embeddings?.model || currentEmbedding?.model || kb.embedding_model || "";
             return (
               <motion.div
                 key={kbId}
@@ -606,7 +579,7 @@ export default function Knowledge() {
                             {t("knowledge.needs_reembed")}
                           </p>
                           <p className="text-[10px] text-amber-700/80 dark:text-amber-300/80 mt-0.5 font-mono truncate">
-                            {currentEmbeddingLabel}
+                            {cardEmbeddingLabel}
                           </p>
                         </div>
                       </div>
