@@ -44,6 +44,11 @@ jobs:
           git config --global credential.helper "store --file ~/.git-credentials"
           printf 'protocol=https\nhost=gitee.com\nusername=%s\npassword=%s\n\n' "$GITEE_USER" "$GITEE_TOKEN" | git credential approve
 
+      - name: Configure Git identity
+        run: |
+          git config user.email "ferry.he@gmail.com"
+          git config user.name "jghe"
+
       - name: Sync main to Gitee
         env:
           GITEE_USER: ${{ vars.GITEE_USER }}

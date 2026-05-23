@@ -30,6 +30,8 @@ def test_gitee_sync_workflow_uses_token_auth_and_safe_push():
     assert "secrets.GITEE_TOKEN" in src
     assert "vars.GITEE_USER" in src
     assert any("git credential approve" in line for line in run_lines)
+    assert 'git config user.email "ferry.he@gmail.com"' in run_lines
+    assert 'git config user.name "jghe"' in run_lines
     assert 'git remote add gitee "https://gitee.com/${GITEE_USER}/${GITEE_REPOSITORY}.git"' in run_lines
     assert "git fetch --prune gitee" in run_lines
     assert "git push --force-with-lease gitee HEAD:main" in run_lines

@@ -9,6 +9,7 @@
 - Security follow-up: Removed the tracked 0-byte `config/storage.db` placeholder and ignored runtime database extensions to prevent accidental future commits of user/auth/provider data.
 - Security hardening follow-up: Moving public deployment topology and production-only security policy into server-local environment variables; committed defaults should not expose real domains, fixed Docker bridge gateways, disabled CSRF, or empty CSP.
 - Gitee sync: PR #112 was merged; `.github/workflows/sync-gitee.yml` now fetches Gitee and uses `--force-with-lease` for the branch mirror instead of embedding credentials in the remote URL.
+- Gitee sync follow-up: main run 26338403088 still failed in `Sync main to Gitee`; added an explicit workflow Git identity (`ferry.he@gmail.com` / `jghe`) before the Gitee sync step.
 - Review follow-up: Verified PR #107 Caddy log path/healthcheck loopback, PR #108 markdown response typing, and PR #109 page-jump integer parsing are already addressed on main.
 - Review follow-up: Addressing remaining PR #111/#113 comments by using container-safe `FASTAPI_HOST=0.0.0.0` in the Docker entrypoint, defaulting `TRUST_PROXY` to false unless explicitly enabled, removing duplicated inline CSP defaults from Compose, using PEP 440-aware version parsing for the `mistralai` guard, and clarifying CSP pass-through docs.
 - Model catalog follow-up: Updated `mistralai` pin to `1.12.4` and moved DeepSeek fallback models to current `deepseek-v4-flash` / `deepseek-v4-pro` while retaining legacy aliases for existing configs.
