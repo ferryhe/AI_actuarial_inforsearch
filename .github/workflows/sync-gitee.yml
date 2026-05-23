@@ -24,40 +24,31 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Configure Gitee SSH credentials
+      - name: Configure Gitee credentials
         env:
-          GITEE_SSH_PRIVATE_KEY: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
-          GITEE_KNOWN_HOSTS: ${{ secrets.GITEE_KNOWN_HOSTS }}
+          GITEE_USER: ${{ vars.GITEE_USER }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
-          if [ -z "$GITEE_SSH_PRIVATE_KEY" ]; then
-            echo "GITEE_SSH_PRIVATE_KEY is required." >&2
+          if [ -z "$GITEE_USER" ]; then
+            echo "Repository variable GITEE_USER is required." >&2
             exit 1
           fi
 
-          if [ -z "$GITEE_KNOWN_HOSTS" ]; then
-            echo "GITEE_KNOWN_HOSTS is required." >&2
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "Repository secret GITEE_TOKEN is required." >&2
             exit 1
           fi
 
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$GITEE_SSH_PRIVATE_KEY" > ~/.ssh/gitee_sync
-          chmod 600 ~/.ssh/gitee_sync
-          printf '%s\n' "$GITEE_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-          cat > ~/.ssh/config <<'EOF'
-          Host gitee.com
-            HostName gitee.com
-            User git
-            IdentityFile ~/.ssh/gitee_sync
-            IdentitiesOnly yes
-            StrictHostKeyChecking yes
-          EOF
+          touch ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git config --global credential.helper "store --file ~/.git-credentials"
+          printf 'protocol=https\nhost=gitee.com\nusername=%s\npassword=%s\n\n' "$GITEE_USER" "$GITEE_TOKEN" | git credential approve
 
       - name: Push main and tags to Gitee
         env:
-          GITEE_REMOTE: git@gitee.com:jghe/AI_actuarial_inforsearch.git
+          GITEE_USER: ${{ vars.GITEE_USER }}
+          GITEE_REPOSITORY: AI_actuarial_inforsearch
         run: |
-          git remote add gitee "$GITEE_REMOTE"
+          git remote add gitee "https://gitee.com/${GITEE_USER}/${GITEE_REPOSITORY}.git"
           git push gitee HEAD:main
           git push gitee --tags
