@@ -44,11 +44,11 @@ jobs:
           git config --global credential.helper "store --file ~/.git-credentials"
           printf 'protocol=https\nhost=gitee.com\nusername=%s\npassword=%s\n\n' "$GITEE_USER" "$GITEE_TOKEN" | git credential approve
 
-      - name: Push main and tags to Gitee
+      - name: Sync main to Gitee
         env:
           GITEE_USER: ${{ vars.GITEE_USER }}
           GITEE_REPOSITORY: AI_actuarial_inforsearch
         run: |
           git remote add gitee "https://gitee.com/${GITEE_USER}/${GITEE_REPOSITORY}.git"
-          git push gitee HEAD:main
-          git push gitee --tags
+          git fetch --prune gitee
+          git push --force-with-lease gitee HEAD:main

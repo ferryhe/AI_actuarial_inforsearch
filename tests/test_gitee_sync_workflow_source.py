@@ -12,11 +12,13 @@ def test_gitee_sync_workflow_uses_token_auth_and_safe_push():
     assert "vars.GITEE_USER" in src
     assert "git credential approve" in src
     assert "https://gitee.com/${GITEE_USER}/${GITEE_REPOSITORY}.git" in src
-    assert "git push gitee HEAD:main" in src
+    assert "git fetch --prune gitee" in src
+    assert "git push --force-with-lease gitee HEAD:main" in src
+    assert "git push gitee --tags" not in src
     assert "GITEE_SSH_PRIVATE_KEY" not in src
     assert "GITEE_KNOWN_HOSTS" not in src
     assert "StrictHostKeyChecking" not in src
-    assert "--force" not in src
+    assert "--force " not in src
     assert "--mirror" not in src
 
 
