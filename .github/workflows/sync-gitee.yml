@@ -1,0 +1,54 @@
+name: Sync to Gitee
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-gitee-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'ferryhe/AI_actuarial_inforsearch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure Gitee credentials
+        env:
+          GITEE_USER: ${{ vars.GITEE_USER }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -z "$GITEE_USER" ]; then
+            echo "Repository variable GITEE_USER is required." >&2
+            exit 1
+          fi
+
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "Repository secret GITEE_TOKEN is required." >&2
+            exit 1
+          fi
+
+          touch ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git config --global credential.helper "store --file ~/.git-credentials"
+          printf 'protocol=https\nhost=gitee.com\nusername=%s\npassword=%s\n\n' "$GITEE_USER" "$GITEE_TOKEN" | git credential approve
+
+      - name: Push main and tags to Gitee
+        env:
+          GITEE_USER: ${{ vars.GITEE_USER }}
+          GITEE_REPOSITORY: AI_actuarial_inforsearch
+        run: |
+          git remote add gitee "https://gitee.com/${GITEE_USER}/${GITEE_REPOSITORY}.git"
+          git push gitee HEAD:main
+          git push gitee --tags

@@ -55,6 +55,7 @@ refresh_models()
 - The catalog refresh does not write secrets or provider responses to disk; it only updates the process memory cache.
 - Runtime credential binding comes from `config/sites.yaml` plus encrypted DB credentials. Environment provider keys are supported only as temporary bootstrap/fallback values.
 - For production, prefer provider aliases such as `gpt-5.5`, `mistral-small-latest`, or `qwen3-max` only when you accept provider-side alias movement. Use dated or snapshot model ids when deterministic behavior matters.
+- DeepSeek's offline fallback list uses `deepseek-v4-flash` and `deepseek-v4-pro` first. Legacy `deepseek-chat` and `deepseek-reasoner` remain listed for existing configurations until their announced retirement date.
 
 ## References
 
@@ -71,6 +72,7 @@ refresh_models()
 - Cohere models: https://docs.cohere.com/v1/docs/models
 - SiliconFlow models: https://docs.siliconflow.cn/quickstart/models
 - ZhipuAI GLM models: https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5
+- DeepSeek models: https://api-docs.deepseek.com/api/list-models/
 - DeepSeek updates: https://api-docs.deepseek.com/updates/
 - MiniMax API models: https://platform.minimax.io/docs/api-reference/api-overview
 - OpenRouter model API: https://openrouter.ai/docs/api-reference/models/get-models

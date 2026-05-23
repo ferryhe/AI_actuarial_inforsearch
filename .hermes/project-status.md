@@ -1,13 +1,18 @@
 # Project Status
 
 - Date: 2026-05-23
-- Branch: codex/fix-knowledge-backend-embedding-config
-- Scope: Knowledge page embedding configuration controls.
-- Latest baseline: Merged origin/main after PR #109 landed.
-- Changes: Removed Knowledge page embedding model selection and stopped posting embedding_model when creating a KB. The create form now displays the backend-configured embedding provider/model from /api/rag/knowledge-bases current_embeddings as read-only context.
-- PR: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/110
-- Verification: python -m pytest tests/test_knowledge_react_source.py -q; python -m pytest tests/test_fastapi_rag_admin_endpoints.py -q; npm.cmd run build.
+- Branch: codex/security-scan-gitee-sync
+- Scope: Repository configuration exposure scan and GitHub-to-Gitee sync workflow.
+- Latest baseline: main fast-forwarded to origin/main at 93a710f before branching.
+- Security scan focus: tracked repository files for plaintext secrets, personal identifiers, runtime databases, deployment/server configuration, and CI secrets usage. Local `.env` files were not read.
+- Security scan result: No real plaintext API keys, SSH private keys, or GitHub/Gitee tokens were found in tracked runtime configuration. Tracked `.env` files are limited to `.env.example`.
+- Security follow-up: Removed the tracked 0-byte `config/storage.db` placeholder and ignored runtime database extensions to prevent accidental future commits of user/auth/provider data.
+- Security hardening follow-up: Moving public deployment topology and production-only security policy into server-local environment variables; committed defaults should not expose real domains, fixed Docker bridge gateways, disabled CSRF, or empty CSP.
+- Gitee sync: Added `.github/workflows/sync-gitee.yml` to push GitHub `main` and tags to `https://gitee.com/${GITEE_USER}/AI_actuarial_inforsearch.git` using GitHub repository variable `GITEE_USER` and repository secret `GITEE_TOKEN`.
+- Model catalog follow-up: Updated `mistralai` pin to `1.12.4` and moved DeepSeek fallback models to current `deepseek-v4-flash` / `deepseek-v4-pro` while retaining legacy aliases for existing configs.
+- CI follow-up: PR #111 `python-smoke` failed after enabling CSRF by default because the FastAPI-only auth roundtrip smoke test posted auth mutations without the frontend CSRF cookie/header flow. Updated the smoke test to seed `/api/auth/me` and send `X-CSRF-Token` on register/logout/login.
+- PR: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/111 (draft, open, mergeable clean; latest remote python-smoke passed after CSRF smoke-test fix).
+- Verification: python -m pytest tests/test_deployment_config_source.py tests/test_gitee_sync_workflow_source.py tests/test_yaml_config.py tests/test_auth_react_source.py -q; python -m pytest tests/test_dependency_versions.py tests/test_llm_models.py tests/test_ai_runtime.py -q; python -m pytest tests/test_fastapi_ops_read_endpoints.py tests/test_settings_react_source.py -q; python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py -q; python -m pytest tests/test_deployment_config_source.py tests/test_auth_react_source.py -q; python -c YAML parse for docker-compose.yml, docker-compose.override.yml, and config/sites.yaml; rg checks for removed public topology values and updated DeepSeek/Mistral pins; git diff --check.
+- Verification gap: `docker compose config` could not run locally because Docker is not installed on this Windows environment.
 - Pre-PR review gate: Blocked because `codex --help` fails with `Program 'codex.exe' failed to run: Access is denied`.
-- Merge readiness: Resolved post-PR-109 `.hermes/project-status.md` conflict by preserving this PR's current status on top of origin/main.
-- Browser smoke: http://127.0.0.1:5173/knowledge loaded with no framework overlay or console errors. Create KB panel showed the backend embedding read-only block and no embedding selector.
 - Notes: No sibling repositories were read or modified.

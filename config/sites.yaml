@@ -680,16 +680,16 @@ rag_config:
 features:
   enable_file_deletion: true
   require_auth: true
-  enable_csrf: false
+  enable_csrf: true
   enable_security_headers: true
   expose_error_details: false
   enable_global_logs_api: false
   enable_rate_limiting: true
   rate_limit_defaults: 200 per hour, 50 per minute
   rate_limit_storage_uri: memory://
-  content_security_policy: ''
+  content_security_policy: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:"
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 5000
   max_content_length: 52428800
   fastapi_env: development

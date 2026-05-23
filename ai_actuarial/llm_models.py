@@ -99,8 +99,10 @@ DEFAULT_MODELS = {
         _model("text-embedding-004", "Text Embedding 004", "embeddings"),
     ],
     "deepseek": [
-        _model("deepseek-chat", "DeepSeek Chat", "chatbot", "catalog"),
-        _model("deepseek-reasoner", "DeepSeek Reasoner", "chatbot", "catalog"),
+        _model("deepseek-v4-flash", "DeepSeek V4 Flash", "chatbot", "catalog"),
+        _model("deepseek-v4-pro", "DeepSeek V4 Pro", "chatbot", "catalog"),
+        _model("deepseek-chat", "DeepSeek Chat (Legacy)", "chatbot", "catalog"),
+        _model("deepseek-reasoner", "DeepSeek Reasoner (Legacy)", "chatbot", "catalog"),
     ],
     "zhipuai": [
         _model("glm-4.7", "GLM-4.7", "chatbot", "catalog"),

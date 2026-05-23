@@ -6,7 +6,11 @@
 #   export TOKEN_ENCRYPTION_KEY=<fernet-key>
 #   export LOGS_READ_AUTH_TOKEN=<strong-random-token>
 #   export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
-#   export CADDY_DOMAIN=aiinforsearch.com
+#   export FASTAPI_CORS_ORIGINS=https://<public-app-host>
+#   export VITE_API_BASE_URL=https://<public-app-host>/api
+#   export CADDY_APP_SITE_HOSTS=<public-app-host>[,www.<public-app-host>]
+#   export CADDY_CROSS_SITE_HOST=<optional-secondary-host>
+#   export CADDY_CROSS_UPSTREAM=<host-or-service>:<port>
 
 version: "3.9"
 
@@ -19,7 +23,11 @@ services:
       - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:?FASTAPI_SESSION_SECRET is required in production}
       - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:?LOGS_READ_AUTH_TOKEN is required}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:?CONFIG_WRITE_AUTH_TOKEN is required}
-      - FASTAPI_CORS_ORIGINS=https://${CADDY_DOMAIN:?CADDY_DOMAIN required}
+      - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:?FASTAPI_CORS_ORIGINS is required in production}
+      - ENABLE_CSRF=${ENABLE_CSRF:-true}
+      - FASTAPI_SESSION_COOKIE_SECURE=${FASTAPI_SESSION_COOKIE_SECURE:-true}
+      - TRUST_PROXY=${TRUST_PROXY:-true}
+      - "CONTENT_SECURITY_POLICY=${CONTENT_SECURITY_POLICY:-default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws: wss:}"
     volumes:
       - ai-data:/app/data:rw
       - /etc/localtime:/etc/localtime:ro
@@ -47,7 +55,7 @@ services:
     restart: on-failure
     command: sh -c "npm install -g serve && serve -s /app/dist/public -l 5173 --no-clipboard"
     environment:
-      - VITE_API_BASE_URL=https://${CADDY_DOMAIN:?CADDY_DOMAIN required}/api
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:?VITE_API_BASE_URL is required in production}
       - NODE_ENV=production
     deploy:
       resources:

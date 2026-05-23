@@ -13,6 +13,12 @@ node_modules/
 data/
 !data/.gitkeep
 
+# Runtime databases should never be committed; they can contain crawled URLs,
+# user accounts, auth tokens, and encrypted provider credentials.
+config/*.db
+*.sqlite
+*.sqlite3
+
 # Cache directory
 .cache/
 
