@@ -181,6 +181,17 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/chunk-sets/cleanup" in body["native_paths"]
 
 
+def test_fastapi_rag_admin_categories_mapping_uses_catalog_items_without_legacy_table(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    response = client.get("/api/rag/categories/mapping")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["categories"] == ["AI", "Risk"]
+    assert body["count"] == 2
+
+
 
 def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)

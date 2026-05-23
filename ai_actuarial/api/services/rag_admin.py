@@ -456,14 +456,32 @@ def get_kb_bindings(*, db_path: str, kb_id: str) -> dict[str, Any]:
 
 
 def get_categories_mapping(*, db_path: str) -> dict[str, Any]:
-    _KnowledgeBase, _manager, storage = _manager_and_storage(db_path)
+    storage = Storage(db_path)
     try:
+        table_names = {
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+            if row and row[0]
+        }
+        mapped_categories: list[str] = []
+        if "source_metadata" in table_names:
+            cursor = storage._conn.execute(
+                """
+                SELECT DISTINCT category FROM source_metadata
+                WHERE category IS NOT NULL AND category != ''
+                """
+            )
+            mapped_categories.extend(row[0] for row in cursor.fetchall() if row[0])
         cursor = storage._conn.execute(
             """
-            SELECT DISTINCT category FROM source_metadata WHERE category IS NOT NULL AND category != ''
+            SELECT DISTINCT category FROM catalog_items
+            WHERE category IS NOT NULL AND category != ''
             """
         )
-        mapped_categories = [row[0] for row in cursor.fetchall() if row[0]]
+        mapped_categories.extend(row[0] for row in cursor.fetchall() if row[0])
+        mapped_categories = sorted(set(mapped_categories))
         return {"categories": mapped_categories, "count": len(mapped_categories)}
     finally:
         storage.close()
