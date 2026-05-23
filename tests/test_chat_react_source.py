@@ -49,3 +49,12 @@ def test_chat_document_sidebar_uses_multi_category_filter_and_filename_only_rows
     assert "button-clear-doc-categories" in src
     assert "{doc.filename || doc.title}" in src
     assert "doc.keywords.slice(0, 3).join" not in src
+
+
+def test_chat_citation_links_use_react_file_routes():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+
+    assert 'import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";' in src
+    assert "normalizeFileRouteHref" in src
+    assert "buildFileDetailPath(fileUrl, \"/chat\")" in src
+    assert "buildFilePreviewPath(fileUrl, \"/chat\")" in src

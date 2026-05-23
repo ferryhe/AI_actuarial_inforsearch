@@ -198,7 +198,7 @@ function ImageViewer({ fileUrl }: { fileUrl: string }) {
   );
 }
 
-function OriginalPane({ fileInfo }: { fileInfo: FileInfo }) {
+function OriginalPane({ fileInfo, canDownload }: { fileInfo: FileInfo; canDownload: boolean }) {
   const { t } = useTranslation();
   const ct = fileInfo.content_type || "";
   const isPdf = ct.includes("pdf");
@@ -388,7 +388,7 @@ export default function FilePreview() {
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
         className="grid grid-cols-2 gap-3 h-[calc(100%-52px)]">
         <div className="rounded-xl border border-border bg-card overflow-hidden" data-testid="pane-original">
-          <OriginalPane fileInfo={data.file_info} />
+          <OriginalPane fileInfo={data.file_info} canDownload={canDownload} />
         </div>
         <div className="rounded-xl border border-border bg-card overflow-hidden" data-testid="pane-chunks">
           <ChunksPane

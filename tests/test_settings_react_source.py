@@ -39,3 +39,24 @@ def test_settings_system_flags_are_yaml_backed_controls():
     assert "toggle-system-flag-${key}" in src
     assert "input-${key.replaceAll(\"_\", \"-\")}" in src
     assert 'apiPost("/api/config/backend-settings", { features:' in src
+
+
+def test_settings_categories_preserve_ai_keywords_alias():
+    src = SETTINGS_TSX.read_text(encoding="utf-8")
+
+    assert "setAiFilterKw(res.ai_keywords || res.ai_filter_keywords || [])" in src
+    assert "ai_filter_keywords: aiFilterKw" in src
+    assert "ai_keywords: aiFilterKw" in src
+
+
+def test_settings_exposes_provider_maintenance_actions():
+    src = SETTINGS_TSX.read_text(encoding="utf-8")
+
+    assert '"/api/config/provider-credentials/import-env"' in src
+    assert '"/api/config/provider-credentials/re-encrypt"' in src
+    assert 'apiGet<{ available: Record<string, AvailableModel[]> }>("/api/config/model-catalog?refresh=true")' in src
+    assert 'apiDelete(`/api/config/provider-credentials/${providerId}?category=search`)' in src
+    assert 'data-testid="button-import-provider-env"' in src
+    assert 'data-testid="button-refresh-model-catalog"' in src
+    assert 'data-testid="button-reencrypt-credentials"' in src
+    assert 'disabled={!oldEncryptionKey.trim() || maintenanceBusy !== null}' in src

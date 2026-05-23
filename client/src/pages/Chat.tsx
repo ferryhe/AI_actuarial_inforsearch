@@ -27,6 +27,7 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { useApiQuery } from "@/hooks/use-api-query";
+import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";
 
 interface Conversation {
   id: string;
@@ -86,6 +87,7 @@ interface KnowledgeBase {
 
 interface AvailableDocument {
   file_url: string;
+  document_content?: string;
   filename: string;
   title: string;
   category: string;
@@ -139,6 +141,36 @@ function normalizeCategoryNames(items: unknown): string[] {
   return names.filter((item, index, all): item is string => Boolean(item) && all.indexOf(item) === index);
 }
 
+function extractFileUrlFromLegacyRoute(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    if (raw.startsWith("/file/")) {
+      const pathPart = raw.slice("/file/".length).split("?")[0] || "";
+      return decodeURIComponent(pathPart);
+    }
+    if (raw.startsWith("/file_preview") || raw.startsWith("/file-preview")) {
+      return new URLSearchParams(raw.split("?")[1] || "").get("file_url") || "";
+    }
+    if (raw.startsWith("/file-detail")) {
+      return new URLSearchParams(raw.split("?")[1] || "").get("url") || "";
+    }
+  } catch {
+    return "";
+  }
+  return raw;
+}
+
+function normalizeFileRouteHref(value: string | undefined, kind: "detail" | "preview", fallbackFileUrl?: string): string {
+  const raw = String(value || "").trim();
+  if (raw.startsWith("/file-detail") || raw.startsWith("/file-preview")) return raw;
+  const fileUrl = extractFileUrlFromLegacyRoute(raw) || String(fallbackFileUrl || "").trim();
+  if (!fileUrl) return "";
+  return kind === "detail"
+    ? buildFileDetailPath(fileUrl, "/chat")
+    : buildFilePreviewPath(fileUrl, "/chat");
+}
+
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-3 max-w-3xl">
@@ -163,8 +195,8 @@ function CitationCard({ citation, index }: { citation: Citation; index: number }
   const title = citation.title || citation.filename || citation.source || "Source";
   const score = citation.similarity_score || citation.score;
   const snippet = citation.content || citation.quote;
-  const detailHref = citation.file_detail_url || citation.file_url;
-  const previewHref = citation.file_preview_url;
+  const detailHref = normalizeFileRouteHref(citation.file_detail_url, "detail", citation.file_url || citation.source);
+  const previewHref = normalizeFileRouteHref(citation.file_preview_url, "preview", citation.file_url || citation.source);
 
   return (
     <div
@@ -249,8 +281,8 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
           const scoreText = Number.isFinite(score) ? score.toFixed(3) : "-";
           const filename = block.filename || "unknown";
           const kbName = block.kb_name || block.kb_id || "Unknown KB";
-          const detailHref = block.file_detail_url || block.file_url;
-          const previewHref = block.file_preview_url;
+          const detailHref = normalizeFileRouteHref(block.file_detail_url, "detail", block.file_url || block.source_url);
+          const previewHref = normalizeFileRouteHref(block.file_preview_url, "preview", block.file_url || block.source_url);
           const blockContent = block.content || block.quote || "(empty chunk)";
 
           return (
@@ -530,6 +562,15 @@ export default function Chat() {
   }
 
   async function loadDocumentMarkdown(doc: AvailableDocument): Promise<DocumentContext> {
+    const suppliedContent = (doc.document_content || "").trim();
+    if (suppliedContent) {
+      return {
+        content: suppliedContent,
+        filename: doc.filename || doc.title || "Document",
+        fileUrl: doc.file_url,
+      };
+    }
+
     if (!doc.file_url) {
       throw new Error(t("chat.document_content_unavailable"));
     }

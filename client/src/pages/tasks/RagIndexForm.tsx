@@ -19,6 +19,7 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
   const [incremental, setIncremental] = useState(true);
   const [forceReindex, setForceReindex] = useState(false);
   const [loadingKbs, setLoadingKbs] = useState(false);
+  const [fileUrlsInput, setFileUrlsInput] = useState("");
 
   useEffect(() => {
     setLoadingKbs(true);
@@ -37,12 +38,21 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
 
   const selectedKb = knowledgeBases.find((kb) => kb.kb_id === selectedKbId);
 
+  function parseFileUrls(): string[] {
+    return fileUrlsInput
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter((item, index, all) => Boolean(item) && all.indexOf(item) === index);
+  }
+
   const buildTask = (): Record<string, unknown> | null => {
     if (!selectedKbId) return null;
+    const fileUrls = parseFileUrls();
     return {
       type: "rag_indexing",
       name: selectedKb ? `RAG Indexing: ${selectedKb.name || selectedKb.kb_id}` : "RAG Indexing",
       kb_id: selectedKbId,
+      file_urls: fileUrls.length > 0 ? fileUrls : undefined,
       incremental,
       force_reindex: forceReindex,
     };
@@ -91,6 +101,16 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
           testId="checkbox-rag-force-reindex"
         />
       </div>
+      <FormField label={t("tasks.form.file_urls_optional")} hint={t("tasks.form.file_urls_hint")}>
+        <textarea
+          value={fileUrlsInput}
+          onChange={(e) => setFileUrlsInput(e.target.value)}
+          rows={4}
+          className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-border bg-background resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+          placeholder="https://example.com/report.pdf"
+          data-testid="input-rag-file-urls"
+        />
+      </FormField>
       <RunButton
         label={t("tasks.form.run")}
         submitting={submitting}

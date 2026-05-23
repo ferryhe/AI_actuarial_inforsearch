@@ -40,6 +40,10 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
   const [overwriteSameProfile, setOverwriteSameProfile] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const categoryOptions = [
+    { value: "", label: t("tasks.form.select_category") },
+    ...dynamicCategories.map((c) => ({ value: c, label: c })),
+  ];
 
   const loadStats = useCallback(async (cat?: string) => {
     setStatsLoading(true);
@@ -74,8 +78,9 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
     }
   }, [stats, startIndex]);
 
-  const handleCategoryBlur = () => {
-    if (scopeMode === "category" && category.trim()) loadStats(category.trim());
+  const changeCategory = (value: string) => {
+    setCategory(value);
+    if (value.trim()) loadStats(value.trim());
   };
 
   const usingCustomProfile = profileSelection === "__custom__";
@@ -138,13 +143,12 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
       </FormField>
       {scopeMode === "category" && (
         <FormField label={t("tasks.form.category")}>
-          <input value={category} onChange={(e) => setCategory(e.target.value)} onBlur={handleCategoryBlur} placeholder="SOA, IAA..."
-            list="chunk-categories-list"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-            data-testid="input-chunk-category" />
-          <datalist id="chunk-categories-list">
-            {dynamicCategories.map((c) => <option key={c} value={c} />)}
-          </datalist>
+          <SelectField
+            value={category}
+            onChange={changeCategory}
+            options={categoryOptions}
+            testId="select-chunk-category"
+          />
         </FormField>
       )}
       <div className="border-t border-border pt-3 mt-1">

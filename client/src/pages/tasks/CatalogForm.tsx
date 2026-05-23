@@ -21,21 +21,36 @@ export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<str
   const [outputLanguage, setOutputLanguage] = useState("auto");
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const categoryOptions = [
+    { value: "", label: t("tasks.form.select_category") },
+    ...dynamicCategories.map((c) => ({ value: c, label: c })),
+  ];
 
-  const loadStats = useCallback(async (cat?: string) => {
+  const loadStats = useCallback(async (cat?: string, source = inputSource) => {
     setStatsLoading(true);
     try {
-      const q = cat ? `?category=${encodeURIComponent(cat)}` : "";
+      const params = new URLSearchParams();
+      if (cat) params.set("category", cat);
+      if (source) params.set("input_source", source);
+      const q = params.toString() ? `?${params}` : "";
       const res = await apiGet<{ data?: Record<string, unknown> } & Record<string, unknown>>(`/api/catalog/stats${q}`);
       setStats(res.data || res);
     } catch { setStats(null); }
     finally { setStatsLoading(false); }
-  }, []);
+  }, [inputSource]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
 
-  const handleCategoryBlur = () => {
-    if (scopeMode === "category" && category.trim()) loadStats(category.trim());
+  useEffect(() => {
+    if (stats && startIndex === "1") {
+      const first = stats.first_candidate_index;
+      if (first != null) setStartIndex(String(first));
+    }
+  }, [stats, startIndex]);
+
+  const changeCategory = (value: string) => {
+    setCategory(value);
+    if (value.trim()) loadStats(value.trim());
   };
 
   const buildTask = (): Record<string, unknown> | null => {
@@ -93,20 +108,19 @@ export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<str
       </div>
       {scopeMode === "category" && (
         <FormField label={t("tasks.form.category")}>
-          <input value={category} onChange={(e) => setCategory(e.target.value)} onBlur={handleCategoryBlur} placeholder="SOA, IAA..."
-            list="catalog-categories-list"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-            data-testid="input-category" />
-          <datalist id="catalog-categories-list">
-            {dynamicCategories.map((c) => <option key={c} value={c} />)}
-          </datalist>
+          <SelectField
+            value={category}
+            onChange={changeCategory}
+            options={categoryOptions}
+            testId="select-category"
+          />
         </FormField>
       )}
       <FormField label={t("tasks.form.start_index")} hint={t("tasks.form.start_index_hint")}>
         <InputField value={startIndex} onChange={setStartIndex} placeholder="1" type="number" testId="input-start-index" />
       </FormField>
       <FormField label={t("tasks.form.input_source")}>
-        <SelectField value={inputSource} onChange={setInputSource} testId="select-input-source"
+        <SelectField value={inputSource} onChange={(value) => { setInputSource(value); loadStats(scopeMode === "category" ? category : undefined, value); }} testId="select-input-source"
           options={[{ value: "markdown", label: "Markdown" }, { value: "source", label: "Source" }]} />
       </FormField>
       {catalogProviders.length > 0 && (

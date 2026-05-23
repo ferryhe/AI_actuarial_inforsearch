@@ -323,6 +323,7 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
                 "Pricing": ["pricing", "reserve"],
             },
             "ai_filter_keywords": ["artificial intelligence", "large language model"],
+            "ai_keywords": ["artificial intelligence", "large language model"],
         },
         headers=headers,
     )
@@ -331,11 +332,12 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
     assert categories_body["success"] is True
     assert categories_body["categories"]["AI Governance"] == ["governance", "policy"]
     assert categories_body["ai_filter_keywords"] == ["artificial intelligence", "large language model"]
-    assert categories_body["ai_keywords"] == []
+    assert categories_body["ai_keywords"] == ["artificial intelligence", "large language model"]
 
     written_categories = yaml.safe_load(categories_path.read_text(encoding="utf-8")) or {}
     assert written_categories["categories"]["Pricing"] == ["pricing", "reserve"]
     assert written_categories["ai_filter_keywords"] == ["artificial intelligence", "large language model"]
+    assert written_categories["ai_keywords"] == ["artificial intelligence", "large language model"]
 
     ai_models_response = client.post(
         "/api/config/ai-models",
