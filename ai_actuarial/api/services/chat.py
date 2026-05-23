@@ -127,6 +127,28 @@ def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _query_values(query: Mapping[str, Any], key: str) -> list[str]:
+    getlist = getattr(query, "getlist", None)
+    if callable(getlist):
+        raw_values = getlist(key)
+    else:
+        value = query.get(key)
+        if isinstance(value, (list, tuple)):
+            raw_values = list(value)
+        elif value is None:
+            raw_values = []
+        else:
+            raw_values = [value]
+
+    values: list[str] = []
+    for raw_value in raw_values:
+        for part in str(raw_value or "").split(","):
+            normalized = part.strip()
+            if normalized and normalized not in values:
+                values.append(normalized)
+    return values
+
+
 def _current_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -456,7 +478,8 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
 
 
 def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
-    category = _normalize_text(query.get("category"))
+    categories = _query_values(query, "category")
+    categories.extend(category for category in _query_values(query, "categories") if category not in categories)
     keywords_raw = _normalize_text(query.get("keywords"))
     keywords = [item.strip() for item in keywords_raw.split(",") if item.strip()]
 
@@ -468,12 +491,17 @@ def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[
             "c.markdown_content != ''",
         ]
         params: list[Any] = []
-        if category:
-            if category == "__uncategorized__":
-                where_parts.append("(c.category IS NULL OR c.category = '')")
-            else:
-                where_parts.append("c.category LIKE ?")
-                params.append(f"%{category}%")
+        if categories:
+            category_clauses = []
+            for category in categories:
+                if category == "__uncategorized__":
+                    category_clauses.append("(c.category IS NULL OR TRIM(c.category) = '')")
+                else:
+                    category_clauses.append(
+                        "(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)"
+                    )
+                    params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
+            where_parts.append(f"({' OR '.join(category_clauses)})")
         if keywords:
             keyword_clauses = []
             for keyword in keywords:

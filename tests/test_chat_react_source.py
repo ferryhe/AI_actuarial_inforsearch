@@ -36,3 +36,16 @@ def test_chat_accepts_database_explain_document_route_state():
     assert "const doc = routeState?.explainDocument" in src
     assert "void askAboutDocument(doc)" in src
     assert "navigate(location, { replace: true, state: null })" in src
+
+
+def test_chat_document_sidebar_uses_multi_category_filter_and_filename_only_rows():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+
+    assert "selectedDocCategories" in src
+    assert "params.append(\"category\", category)" in src
+    assert "data-testid=\"doc-category-filter\"" in src
+    assert "data-testid=\"input-doc-category\"" not in src
+    assert "button-toggle-doc-category" in src
+    assert "button-clear-doc-categories" in src
+    assert "{doc.filename || doc.title}" in src
+    assert "doc.keywords.slice(0, 3).join" not in src

@@ -223,6 +223,11 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
     assert len(docs) == 1
     assert docs[0]["file_url"] == seed["alpha_url"]
 
+    multi_category = client.get("/api/chat/available-documents?category=AI&category=Risk")
+    assert multi_category.status_code == 200, multi_category.text
+    multi_docs = multi_category.json()["data"]["documents"]
+    assert {doc["file_url"] for doc in multi_docs} == {seed["alpha_url"], seed["beta_url"]}
+
     deleted = client.delete(f"/api/chat/conversations/{conversation_id}")
     assert deleted.status_code == 200, deleted.text
 
