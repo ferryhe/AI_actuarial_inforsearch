@@ -36,12 +36,12 @@ class TestCatalogRuntime(unittest.TestCase):
                 provider="deepseek",
                 model="deepseek-chat",
                 api_key="runtime-key",
-                base_url="https://api.deepseek.com/v1",
+                base_url="https://api.deepseek.com",
             )
 
         mock_openai.OpenAI.assert_called_once_with(
             api_key="runtime-key",
-            base_url="https://api.deepseek.com/v1",
+            base_url="https://api.deepseek.com",
         )
         self.assertEqual(result.model, "deepseek-chat")
         self.assertEqual(result.summary, "Summary")
@@ -64,7 +64,7 @@ class TestCatalogRuntime(unittest.TestCase):
             provider="deepseek",
             model="deepseek-chat",
             api_key="runtime-key",
-            base_url="https://api.deepseek.com/v1",
+            base_url="https://api.deepseek.com",
             raw_config={"timeout_seconds": 12},
         )
 
@@ -78,7 +78,7 @@ class TestCatalogRuntime(unittest.TestCase):
                 provider="deepseek",
                 model="deepseek-chat",
                 api_key="runtime-key",
-                base_url="https://api.deepseek.com/v1",
+                base_url="https://api.deepseek.com",
             )
 
         _, kwargs = mock_client.chat.completions.create.call_args

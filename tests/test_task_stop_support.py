@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionResult
@@ -1347,3 +1349,197 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
     assert kwargs["payload"]["name"] == "Task Profile"
     assert kwargs["payload"]["chunk_size"] == 120
     assert kwargs["payload"]["chunk_overlap"] == 20
+
+
+def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selected_profile(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-chunk-profile.db"
+    download_dir = tmp_path / "files"
+    file_url = "https://example.com/profile-source.pdf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-profile-chunk",
+            title="Profile Source",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="profile-source.pdf",
+            local_path=str(tmp_path / "profile-source.pdf"),
+            bytes=12,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(file_url, "# Profile Markdown", "manual")
+        selected_profile = storage.create_chunk_profile(
+            name="Selected Profile",
+            chunk_size=300,
+            chunk_overlap=40,
+        )
+        other_profile = storage.create_chunk_profile(
+            name="Other Profile",
+            chunk_size=500,
+            chunk_overlap=80,
+        )
+        storage.get_or_create_file_chunk_set(
+            file_url=file_url,
+            profile_id=other_profile["profile_id"],
+            markdown_hash="other-profile-hash",
+            status="ready",
+        )
+    finally:
+        storage.close()
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime.generate_file_chunk_sets",
+        return_value={"chunk_set_id": "cs-selected", "chunk_count": 4, "reused_existing": False},
+    ) as mock_generate:
+        result = runtime._run_collection(
+            "task-chunk-profile",
+            "chunk_generation",
+            {
+                "profile_id": selected_profile["profile_id"],
+                "scan_count": "10",
+                "overwrite_same_profile": False,
+            },
+        )
+
+    assert result.success is True
+    assert result.items_found == 1
+    mock_generate.assert_called_once()
+    assert mock_generate.call_args.kwargs["payload"]["profile_id"] == selected_profile["profile_id"]
+
+
+def test_native_task_runtime_chunk_generation_resolves_custom_profile_before_filtering(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-chunk-custom-profile.db"
+    download_dir = tmp_path / "files"
+    file_url = "https://example.com/custom-profile-source.pdf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-custom-profile-chunk",
+            title="Custom Profile Source",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="custom-profile-source.pdf",
+            local_path=str(tmp_path / "custom-profile-source.pdf"),
+            bytes=12,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(file_url, "# Custom Profile Markdown", "manual")
+        other_profile = storage.create_chunk_profile(
+            name="Existing Other Profile",
+            chunk_size=400,
+            chunk_overlap=50,
+        )
+        storage.get_or_create_file_chunk_set(
+            file_url=file_url,
+            profile_id=other_profile["profile_id"],
+            markdown_hash="other-profile-hash",
+            status="ready",
+        )
+    finally:
+        storage.close()
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime.generate_file_chunk_sets",
+        return_value={"chunk_set_id": "cs-custom", "chunk_count": 5, "reused_existing": False},
+    ) as mock_generate:
+        result = runtime._run_collection(
+            "task-chunk-custom-profile",
+            "chunk_generation",
+            {
+                "profile_name": "New Custom Profile",
+                "chunk_size": "700",
+                "chunk_overlap": "80",
+                "scan_count": "10",
+                "overwrite_same_profile": False,
+            },
+        )
+
+    assert result.success is True
+    assert result.items_found == 1
+    mock_generate.assert_called_once()
+    payload = mock_generate.call_args.kwargs["payload"]
+    assert payload["profile_id"]
+    assert payload["name"] == "New Custom Profile"
+
+
+def test_native_task_runtime_chunk_generation_rejects_invalid_binding_mode(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-chunk-binding-mode.db"
+    download_dir = tmp_path / "files"
+    file_url = "https://example.com/binding-mode-source.pdf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-binding-mode-chunk",
+            title="Binding Mode Source",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="binding-mode-source.pdf",
+            local_path=str(tmp_path / "binding-mode-source.pdf"),
+            bytes=12,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(file_url, "# Binding Mode Markdown", "manual")
+    finally:
+        storage.close()
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with pytest.raises(RuntimeError, match="binding_mode must be one of"):
+        runtime._run_collection(
+            "task-chunk-binding-mode",
+            "chunk_generation",
+            {
+                "file_urls": [file_url],
+                "kb_id": "kb-binding-mode",
+                "binding_mode": "invalid",
+            },
+        )

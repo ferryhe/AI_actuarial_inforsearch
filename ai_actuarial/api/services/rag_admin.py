@@ -6,7 +6,10 @@ from typing import Any, Mapping
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.config import settings
 from ai_actuarial.shared_runtime import parse_int_clamped
-from ai_actuarial.storage import Storage
+from ai_actuarial.storage import Storage, _split_visible_categories
+
+
+MAX_CATEGORY_STATS_CATEGORIES = 100
 
 
 class RagAdminError(Exception):
@@ -48,6 +51,153 @@ def _list(value: Any, field: str) -> list[str]:
 
 
 
+def _visible_category_list(raw_categories: list[Any]) -> list[str]:
+    categories: set[str] = set()
+    for raw_category in raw_categories:
+        for category in _split_visible_categories(_norm(raw_category)):
+            categories.add(category)
+    return sorted(categories, key=lambda item: item.lower())
+
+
+
+def _category_filter(categories: list[str]) -> tuple[str, list[Any]]:
+    conditions: list[str] = []
+    params: list[Any] = []
+    for category in categories:
+        conditions.append("(ci.category = ? OR ci.category LIKE ? OR ci.category LIKE ? OR ci.category LIKE ?)")
+        params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
+    return " OR ".join(conditions), params
+
+
+
+def _latest_ready_chunk_set(storage: Storage, *, file_url: str, profile_id: str) -> dict[str, Any] | None:
+    row = storage._conn.execute(
+        """
+        SELECT s.chunk_set_id, s.file_url, s.profile_id, p.name, s.chunk_count, s.updated_at
+        FROM file_chunk_sets s
+        JOIN chunk_profiles p ON p.profile_id = s.profile_id
+        WHERE s.file_url = ?
+          AND s.profile_id = ?
+          AND s.status = 'ready'
+          AND COALESCE(s.chunk_count, 0) > 0
+        ORDER BY s.updated_at DESC, s.created_at DESC
+        LIMIT 1
+        """,
+        (file_url, profile_id),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "chunk_set_id": row[0],
+        "file_url": row[1],
+        "profile_id": row[2],
+        "profile_name": row[3] or "",
+        "chunk_count": row[4] or 0,
+        "updated_at": row[5],
+    }
+
+
+
+def _unique_existing_chunk_file_urls(storage: Storage, *, file_urls: list[str], profile_id: str) -> list[str]:
+    out: list[str] = []
+    for file_url in file_urls:
+        if file_url in out:
+            continue
+        if _latest_ready_chunk_set(storage, file_url=file_url, profile_id=profile_id):
+            out.append(file_url)
+    return out
+
+
+
+def _category_file_urls_with_existing_chunks(storage: Storage, *, categories: list[str], profile_id: str) -> list[str]:
+    where_sql, params = _category_filter(categories)
+    if not where_sql:
+        return []
+    rows = storage._conn.execute(
+        f"""
+        SELECT DISTINCT ci.file_url
+        FROM catalog_items ci
+        JOIN file_chunk_sets s ON s.file_url = ci.file_url
+        WHERE ({where_sql})
+          AND ci.status = 'ok'
+          AND ci.markdown_content IS NOT NULL
+          AND ci.markdown_content != ''
+          AND s.profile_id = ?
+          AND s.status = 'ready'
+          AND COALESCE(s.chunk_count, 0) > 0
+        """,
+        params + [profile_id],
+    ).fetchall()
+    return [row[0] for row in rows if row and row[0]]
+
+
+
+def _bind_existing_chunk_sets(
+    storage: Storage,
+    *,
+    kb_id: str,
+    file_urls: list[str],
+    profile_id: str,
+    requested_count: int,
+    bound_by: str = "kb_create",
+) -> dict[str, Any]:
+    bound = 0
+    skipped_without_chunks: list[str] = []
+    bindings: list[dict[str, Any]] = []
+    for file_url in file_urls:
+        chunk_set = _latest_ready_chunk_set(storage, file_url=file_url, profile_id=profile_id)
+        if not chunk_set:
+            skipped_without_chunks.append(file_url)
+            continue
+        binding = storage.bind_chunk_set_to_kb(
+            kb_id=kb_id,
+            file_url=file_url,
+            chunk_set_id=chunk_set["chunk_set_id"],
+            bound_by=bound_by,
+            binding_mode="follow_latest",
+        )
+        bound += 1
+        bindings.append(binding)
+    return {
+        "profile_id": profile_id,
+        "requested": requested_count,
+        "bound": bound,
+        "skipped_without_chunks": max(0, requested_count - bound),
+        "skipped_file_urls": skipped_without_chunks,
+        "bindings": bindings,
+    }
+
+
+
+def _add_and_bind_existing_profile_chunks(
+    manager: Any,
+    storage: Storage,
+    *,
+    kb_id: str,
+    file_urls: list[str],
+    profile_id: str,
+    bound_by: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    bindable_file_urls = _unique_existing_chunk_file_urls(
+        storage,
+        file_urls=file_urls,
+        profile_id=profile_id,
+    )
+    add_result: dict[str, Any] = {"added_count": 0, "skipped_count": 0, "total_files": 0}
+    if bindable_file_urls:
+        add_result = manager.add_files_to_kb(kb_id, bindable_file_urls)
+    binding_result = _bind_existing_chunk_sets(
+        storage,
+        kb_id=kb_id,
+        file_urls=file_urls,
+        profile_id=profile_id,
+        requested_count=len(file_urls),
+        bound_by=bound_by,
+    )
+    return add_result, binding_result
+
+
+
 def _kb_id(value: Any) -> str:
     kb_id = _norm(value)
     if not kb_id:
@@ -64,6 +214,7 @@ def _serialize_kb(kb: Any) -> dict[str, Any]:
         "name": kb.name,
         "description": kb.description,
         "kb_mode": kb.kb_mode,
+        "chunk_profile_id": getattr(kb, "chunk_profile_id", "") or "",
         "embedding_provider": getattr(kb, "embedding_provider", "openai"),
         "embedding_model": kb.embedding_model,
         "embedding_dimension": getattr(kb, "embedding_dimension", None),
@@ -75,6 +226,37 @@ def _serialize_kb(kb: Any) -> dict[str, Any]:
         "created_at": kb.created_at,
         "updated_at": kb.updated_at,
     }
+
+
+
+def _decorate_kb_chunk_profile(storage: Storage, payload: dict[str, Any]) -> dict[str, Any]:
+    profile_id = _norm(payload.get("chunk_profile_id"))
+    if not profile_id:
+        bindings = storage.list_kb_chunk_bindings(_norm(payload.get("kb_id")))
+        profile_ids = {
+            _norm(binding.get("profile_id"))
+            for binding in bindings
+            if _norm(binding.get("profile_id"))
+        }
+        if len(profile_ids) == 1:
+            profile_id = next(iter(profile_ids))
+            payload["chunk_profile_id"] = profile_id
+    if profile_id:
+        profile = storage.get_chunk_profile(profile_id)
+        if profile:
+            payload["chunk_profile_name"] = profile.get("name") or profile_id
+            payload["chunk_profile"] = {
+                "profile_id": profile.get("profile_id") or profile_id,
+                "name": profile.get("name") or profile_id,
+                "chunk_size": profile.get("chunk_size"),
+                "chunk_overlap": profile.get("chunk_overlap"),
+                "splitter": profile.get("splitter"),
+                "tokenizer": profile.get("tokenizer"),
+                "version": profile.get("version"),
+            }
+    if "chunk_profile_name" not in payload:
+        payload["chunk_profile_name"] = ""
+    return payload
 
 
 
@@ -288,13 +470,117 @@ def get_kb_bindings(*, db_path: str, kb_id: str) -> dict[str, Any]:
 def get_categories_mapping(*, db_path: str) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
+        table_names = {
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+            if row and row[0]
+        }
+        raw_categories: list[Any] = []
+        if "source_metadata" in table_names:
+            cursor = storage._conn.execute(
+                """
+                SELECT DISTINCT category FROM source_metadata
+                WHERE category IS NOT NULL AND category != ''
+                """
+            )
+            raw_categories.extend(row[0] for row in cursor.fetchall() if row[0])
         cursor = storage._conn.execute(
             """
-            SELECT DISTINCT category FROM source_metadata WHERE category IS NOT NULL AND category != ''
+            SELECT DISTINCT category FROM catalog_items
+            WHERE category IS NOT NULL AND category != ''
             """
         )
-        mapped_categories = [row[0] for row in cursor.fetchall() if row[0]]
+        raw_categories.extend(row[0] for row in cursor.fetchall() if row[0])
+        mapped_categories = _visible_category_list(raw_categories)
         return {"categories": mapped_categories, "count": len(mapped_categories)}
+    finally:
+        storage.close()
+
+
+def get_category_stats(*, db_path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise RagAdminError("Invalid JSON body")
+    categories = _list(payload.get("categories"), "categories")
+    if len(categories) > MAX_CATEGORY_STATS_CATEGORIES:
+        raise RagAdminError(f"categories can include at most {MAX_CATEGORY_STATS_CATEGORIES} items")
+    profile_id = _norm(payload.get("profile_id") or payload.get("chunk_profile_id"))
+    kb_id = _norm(payload.get("kb_id"))
+
+    _KnowledgeBase, _manager, storage = _manager_and_storage(db_path)
+    try:
+        if profile_id and not storage.get_chunk_profile(profile_id):
+            raise RagAdminError("chunk profile not found", status_code=404)
+        if kb_id:
+            row = storage._conn.execute("SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", (kb_id,)).fetchone()
+            if not row:
+                raise RagAdminError(f"Knowledge base '{kb_id}' not found", status_code=404)
+
+        rows: list[dict[str, Any]] = []
+        totals = {
+            "total_files": 0,
+            "markdown_files": 0,
+            "ready_chunk_files": 0,
+            "in_kb_files": 0,
+        }
+        chunk_profile_clause = "AND s.profile_id = ?" if profile_id else ""
+        for category in categories:
+            where_sql, params = _category_filter([category])
+            if not where_sql:
+                continue
+            sql_params: list[Any] = []
+            if profile_id:
+                sql_params.append(profile_id)
+            sql_params.append(kb_id)
+            sql_params.append(kb_id)
+            sql_params.extend(params)
+            row = storage._conn.execute(
+                f"""
+                SELECT
+                    COUNT(DISTINCT ci.file_url) AS total_files,
+                    COUNT(DISTINCT CASE
+                        WHEN ci.markdown_content IS NOT NULL AND ci.markdown_content != '' THEN ci.file_url
+                    END) AS markdown_files,
+                    COUNT(DISTINCT CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM file_chunk_sets s
+                            WHERE s.file_url = ci.file_url
+                              {chunk_profile_clause}
+                              AND s.status = 'ready'
+                              AND COALESCE(s.chunk_count, 0) > 0
+                        ) THEN ci.file_url
+                    END) AS ready_chunk_files,
+                    COUNT(DISTINCT CASE
+                        WHEN ? != '' AND EXISTS (
+                            SELECT 1
+                            FROM rag_kb_files kf
+                            WHERE kf.kb_id = ? AND kf.file_url = ci.file_url
+                        ) THEN ci.file_url
+                    END) AS in_kb_files
+                FROM catalog_items ci
+                WHERE ({where_sql})
+                  AND ci.status = 'ok'
+                """,
+                sql_params,
+            ).fetchone()
+            item = {
+                "name": category,
+                "total_files": int((row[0] if row else 0) or 0),
+                "markdown_files": int((row[1] if row else 0) or 0),
+                "ready_chunk_files": int((row[2] if row else 0) or 0),
+                "in_kb_files": int((row[3] if row else 0) or 0),
+            }
+            for key in totals:
+                totals[key] += int(item[key])
+            rows.append(item)
+        return {
+            "categories": rows,
+            "totals": totals,
+            "profile_id": profile_id or None,
+            "kb_id": kb_id or None,
+        }
     finally:
         storage.close()
 
@@ -306,7 +592,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
         search = _norm(query.get("search")).lower()
         cursor = storage._conn.execute(
             """
-            SELECT kb_id, name, description, kb_mode, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
+            SELECT kb_id, name, description, kb_mode, chunk_profile_id, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
@@ -318,11 +604,12 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
             kb = KnowledgeBase(
                 kb_id=row[0], name=row[1], description=row[2],
                 kb_mode=row[3] or "category",
-                embedding_provider=row[4] or "openai",
-                embedding_model=row[5], embedding_dimension=row[6],
-                chunk_size=row[7], chunk_overlap=row[8],
-                index_type=row[9], created_at=row[10], updated_at=row[11],
-                file_count=row[12], chunk_count=row[13],
+                chunk_profile_id=row[4] or "",
+                embedding_provider=row[5] or "openai",
+                embedding_model=row[6], embedding_dimension=row[7],
+                chunk_size=row[8], chunk_overlap=row[9],
+                index_type=row[10], created_at=row[11], updated_at=row[12],
+                file_count=row[13], chunk_count=row[14],
             )
             if kb_mode and kb.kb_mode != kb_mode:
                 continue
@@ -335,7 +622,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
             kbs.append(
                 _build_kb_embedding_status(
                     storage=storage,
-                    kb_payload=_serialize_kb(kb),
+                    kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
                     current_embeddings=current_embeddings,
                 )
             )
@@ -356,8 +643,6 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
     kb_mode = _norm(payload.get("kb_mode") or "manual").lower()
     if kb_mode not in {"manual", "category"}:
         raise RagAdminError("kb_mode must be 'category' or 'manual'")
-    chunk_size = parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
-    chunk_overlap = parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
     categories = _list(payload.get("categories"), "categories")
     file_urls = _list(payload.get("file_urls"), "file_urls")
     if kb_mode == "category" and not categories:
@@ -367,22 +652,73 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
     try:
         if manager.get_kb(kb_id):
             raise RagAdminError(f"Knowledge base '{kb_id}' already exists", status_code=409)
+        chunk_profile_id = _norm(payload.get("chunk_profile_id") or payload.get("profile_id"))
+        chunk_profile: dict[str, Any] | None = None
+        if chunk_profile_id:
+            chunk_profile = storage.get_chunk_profile(chunk_profile_id)
+            if not chunk_profile:
+                raise RagAdminError("chunk profile not found", status_code=404)
+            chunk_size = int(chunk_profile.get("chunk_size") or manager.config.max_chunk_tokens)
+            chunk_overlap = int(chunk_profile.get("chunk_overlap") or 0)
+        else:
+            chunk_size = parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
+            chunk_overlap = parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
         runtime_embedding = manager.get_current_embedding_metadata()
         manager.create_kb(
             kb_id=kb_id,
             name=name,
             description=_norm(payload.get("description")),
             kb_mode=kb_mode,
+            chunk_profile_id=chunk_profile_id,
             embedding_model=runtime_embedding["model"],
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
+        chunk_binding_result: dict[str, Any] | None = None
         if kb_mode == "category":
-            manager.link_kb_to_categories(kb_id, categories)
+            if chunk_profile_id:
+                manager.link_kb_to_categories(kb_id, categories, auto_sync=False)
+                category_file_urls = _category_file_urls_with_existing_chunks(
+                    storage,
+                    categories=categories,
+                    profile_id=chunk_profile_id,
+                )
+                if category_file_urls:
+                    manager.add_files_to_kb(kb_id, category_file_urls)
+                chunk_binding_result = _bind_existing_chunk_sets(
+                    storage,
+                    kb_id=kb_id,
+                    file_urls=category_file_urls,
+                    profile_id=chunk_profile_id,
+                    requested_count=len(category_file_urls),
+                )
+            else:
+                manager.link_kb_to_categories(kb_id, categories)
         elif file_urls:
-            manager.add_files_to_kb(kb_id, file_urls)
+            if chunk_profile_id:
+                bindable_file_urls = _unique_existing_chunk_file_urls(
+                    storage,
+                    file_urls=file_urls,
+                    profile_id=chunk_profile_id,
+                )
+                if bindable_file_urls:
+                    manager.add_files_to_kb(kb_id, bindable_file_urls)
+                chunk_binding_result = _bind_existing_chunk_sets(
+                    storage,
+                    kb_id=kb_id,
+                    file_urls=file_urls,
+                    profile_id=chunk_profile_id,
+                    requested_count=len(file_urls),
+                )
+            else:
+                manager.add_files_to_kb(kb_id, file_urls)
         kb = manager.get_kb(kb_id)
-        return {"knowledge_base": _serialize_kb(kb)}
+        response: dict[str, Any] = {"knowledge_base": _decorate_kb_chunk_profile(storage, _serialize_kb(kb))}
+        if chunk_profile:
+            response["chunk_profile"] = chunk_profile
+        if chunk_binding_result is not None:
+            response["chunk_bindings"] = chunk_binding_result
+        return response
     finally:
         storage.close()
 
@@ -395,7 +731,7 @@ def get_knowledge_base(*, db_path: str, kb_id: str) -> dict[str, Any]:
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        payload = _build_kb_embedding_status(storage=storage, kb_payload=_serialize_kb(kb))
+        payload = _build_kb_embedding_status(storage=storage, kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)))
         payload["stats"] = manager.get_kb_stats(kid)
         payload["categories"] = manager.get_kb_categories(kid)
         return {"knowledge_base": payload}
@@ -541,8 +877,28 @@ def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any
 
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
-        if not manager.get_kb(kid):
+        kb = manager.get_kb(kid)
+        if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        chunk_profile_id = _norm(payload.get("chunk_profile_id") or payload.get("profile_id") or getattr(kb, "chunk_profile_id", ""))
+        if chunk_profile_id:
+            if not storage.get_chunk_profile(chunk_profile_id):
+                raise RagAdminError("chunk profile not found", status_code=404)
+            result, binding_result = _add_and_bind_existing_profile_chunks(
+                manager,
+                storage,
+                kb_id=kid,
+                file_urls=file_urls,
+                profile_id=chunk_profile_id,
+                bound_by="kb_add_files",
+            )
+            return {
+                "kb_id": kid,
+                "added_count": int(result.get("added_count") or 0),
+                "skipped_count": int(result.get("skipped_count") or 0) + int(binding_result.get("skipped_without_chunks") or 0),
+                "total_files": int(result.get("total_files") or manager.get_kb_stats(kid).get("total_files") or 0),
+                "chunk_bindings": binding_result,
+            }
         result = manager.add_files_to_kb(kid, file_urls)
         return {
             "kb_id": kid,
@@ -594,6 +950,7 @@ def get_unmapped_categories(*, db_path: str) -> dict[str, Any]:
 def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
     q = _norm(query.get("query")).lower()
     category = _norm(query.get("category"))
+    profile_id = _norm(query.get("profile_id") or query.get("chunk_profile_id"))
     kb_id_raw = _norm(query.get("kb_id"))
     kb_id = _kb_id(kb_id_raw) if kb_id_raw else ""
     limit = parse_int_clamped(query.get("limit") or 100, default=100, min_value=1, max_value=500)
@@ -601,7 +958,49 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
 
     storage = Storage(db_path)
     try:
+        if profile_id and not storage.get_chunk_profile(profile_id):
+            raise RagAdminError("chunk profile not found", status_code=404)
         conn = storage._conn
+        chunk_join_sql = ""
+        chunk_join_params: list[Any] = []
+        chunk_columns = """
+            NULL AS chunk_set_id,
+            NULL AS chunk_profile_id,
+            NULL AS chunk_profile_name,
+            NULL AS chunk_count
+        """
+        if profile_id:
+            chunk_join_sql = """
+            JOIN (
+                SELECT chunk_set_id, file_url, profile_id, profile_name, chunk_count
+                FROM (
+                    SELECT
+                        s.chunk_set_id,
+                        s.file_url,
+                        s.profile_id,
+                        p.name AS profile_name,
+                        s.chunk_count,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.file_url, s.profile_id
+                            ORDER BY s.updated_at DESC, s.created_at DESC, s.chunk_set_id DESC
+                        ) AS rn
+                    FROM file_chunk_sets s
+                    JOIN chunk_profiles p ON p.profile_id = s.profile_id
+                    WHERE s.profile_id = ?
+                      AND s.status = 'ready'
+                      AND COALESCE(s.chunk_count, 0) > 0
+                )
+                WHERE rn = 1
+            ) latest_chunk ON latest_chunk.file_url = f.url
+            """
+            chunk_join_params.append(profile_id)
+            chunk_columns = """
+                latest_chunk.chunk_set_id,
+                latest_chunk.profile_id AS chunk_profile_id,
+                latest_chunk.profile_name AS chunk_profile_name,
+                latest_chunk.chunk_count
+            """
+
         where_parts = [
             "f.deleted_at IS NULL",
             "c.markdown_content IS NOT NULL",
@@ -625,24 +1024,41 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
 
         total = int(
             conn.execute(
-                f"SELECT COUNT(*) FROM files f JOIN catalog_items c ON c.file_url = f.url WHERE {where_sql}",
-                params,
+                f"""
+                SELECT COUNT(*)
+                FROM files f
+                JOIN catalog_items c ON c.file_url = f.url
+                {chunk_join_sql}
+                WHERE {where_sql}
+                """,
+                chunk_join_params + params,
             ).fetchone()[0]
             or 0
         )
         rows = conn.execute(
             f"""
-            SELECT f.url, f.title, f.original_filename, f.source_site, f.bytes, f.last_seen, c.category, c.markdown_updated_at
+            SELECT
+                f.url,
+                f.title,
+                f.original_filename,
+                f.source_site,
+                f.bytes,
+                f.last_seen,
+                c.category,
+                c.markdown_updated_at,
+                {chunk_columns}
             FROM files f
             JOIN catalog_items c ON c.file_url = f.url
+            {chunk_join_sql}
             WHERE {where_sql}
             ORDER BY f.last_seen DESC, f.id DESC
             LIMIT ? OFFSET ?
             """,
-            params + [limit, offset],
+            chunk_join_params + params + [limit, offset],
         ).fetchall()
-        files = [
-            {
+        files = []
+        for row in rows:
+            item = {
                 "url": row[0],
                 "title": row[1] or "",
                 "original_filename": row[2] or "",
@@ -652,8 +1068,16 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
                 "category": row[6] or "",
                 "markdown_updated_at": row[7],
             }
-            for row in rows
-        ]
+            if row[8]:
+                item.update(
+                    {
+                        "chunk_set_id": row[8],
+                        "chunk_profile_id": row[9],
+                        "chunk_profile_name": row[10] or "",
+                        "chunk_count": row[11] or 0,
+                    }
+                )
+            files.append(item)
         return {"files": files, "total": total, "limit": limit, "offset": offset, "kb_id": kb_id or None}
     finally:
         storage.close()
@@ -686,17 +1110,39 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
         raise RagAdminError("action must be one of: add, remove, replace")
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
-        if not manager.get_kb(kid):
+        kb = manager.get_kb(kid)
+        if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         before_n = int(manager.get_kb_stats(kid).get("total_files", 0))
         manager._ensure_category_mapping_table()
         conn = storage._conn
         timestamp = _KnowledgeBase._get_timestamp()
+        chunk_profile_id = _norm(payload.get("chunk_profile_id") or payload.get("profile_id") or getattr(kb, "chunk_profile_id", ""))
 
         if action == "add":
-            manager.link_kb_to_categories(kid, categories)
+            manager.link_kb_to_categories(kid, categories, auto_sync=not bool(chunk_profile_id))
+            binding_result = None
+            if chunk_profile_id:
+                if not storage.get_chunk_profile(chunk_profile_id):
+                    raise RagAdminError("chunk profile not found", status_code=404)
+                category_file_urls = _category_file_urls_with_existing_chunks(
+                    storage,
+                    categories=categories,
+                    profile_id=chunk_profile_id,
+                )
+                _add_result, binding_result = _add_and_bind_existing_profile_chunks(
+                    manager,
+                    storage,
+                    kb_id=kid,
+                    file_urls=category_file_urls,
+                    profile_id=chunk_profile_id,
+                    bound_by="kb_category_add",
+                )
             after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
-            return {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n)}
+            response = {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n)}
+            if binding_result is not None:
+                response["chunk_bindings"] = binding_result
+            return response
 
         if action == "remove":
             placeholders = ",".join(["?" for _ in categories])
@@ -713,9 +1159,29 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
 
         conn.execute("DELETE FROM rag_kb_category_mappings WHERE kb_id = ?", (kid,))
         conn.commit()
-        manager.link_kb_to_categories(kid, categories)
+        manager.link_kb_to_categories(kid, categories, auto_sync=not bool(chunk_profile_id))
+        binding_result = None
+        if chunk_profile_id:
+            if not storage.get_chunk_profile(chunk_profile_id):
+                raise RagAdminError("chunk profile not found", status_code=404)
+            category_file_urls = _category_file_urls_with_existing_chunks(
+                storage,
+                categories=categories,
+                profile_id=chunk_profile_id,
+            )
+            _add_result, binding_result = _add_and_bind_existing_profile_chunks(
+                manager,
+                storage,
+                kb_id=kid,
+                file_urls=category_file_urls,
+                profile_id=chunk_profile_id,
+                bound_by="kb_category_replace",
+            )
         after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
-        return {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n), "categories": manager.get_kb_categories(kid)}
+        response = {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n), "categories": manager.get_kb_categories(kid)}
+        if binding_result is not None:
+            response["chunk_bindings"] = binding_result
+        return response
     finally:
         storage.close()
 
@@ -780,6 +1246,12 @@ def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], header
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        unique_file_urls = []
+        for file_url, _chunk_set_id, _binding_mode in parsed:
+            if file_url not in unique_file_urls:
+                unique_file_urls.append(file_url)
+        if unique_file_urls:
+            manager.add_files_to_kb(kid, unique_file_urls)
         created_n = 0
         out: list[dict[str, Any]] = []
         for file_url, chunk_set_id, binding_mode in parsed:

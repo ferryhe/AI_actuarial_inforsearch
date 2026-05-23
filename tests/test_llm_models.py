@@ -16,6 +16,7 @@ from ai_actuarial.llm_models import (
     refresh_models,
     initialize_models,
     DEFAULT_MODELS,
+    OPENAI_COMPATIBLE_DISCOVERY,
     _build_models_from_ids,
 )
 
@@ -440,7 +441,7 @@ class TestGenericOpenAICompatibleFetching:
                 "deepseek",
                 api_key_env="DEEPSEEK_API_KEY",
                 base_url_env="DEEPSEEK_BASE_URL",
-                default_base_url="https://api.deepseek.com/v1",
+                default_base_url="https://api.deepseek.com",
                 api_key_required=True,
                 provider_credentials={
                     "deepseek": {
@@ -546,6 +547,9 @@ class TestDefaultModels:
         assert deepseek_names[:2] == ["deepseek-v4-flash", "deepseek-v4-pro"]
         assert "deepseek-chat" in deepseek_names
         assert "deepseek-reasoner" in deepseek_names
+
+    def test_deepseek_discovery_uses_official_openai_compatible_base_url(self):
+        assert OPENAI_COMPATIBLE_DISCOVERY["deepseek"][2] == "https://api.deepseek.com"
 
     def test_build_models_from_ids_falls_back_for_unknown_modalities(self):
         models = _build_models_from_ids("openai", {"omni-moderation-latest"}, DEFAULT_MODELS["openai"])

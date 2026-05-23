@@ -96,7 +96,7 @@ KNOWN_LLM_PROVIDERS = {
     },
     "deepseek": {
         "display_name": "DeepSeek",
-        "default_base_url": "https://api.deepseek.com/v1",
+        "default_base_url": "https://api.deepseek.com",
         "api_key_hint": "sk-...",
     },
     "zhipuai": {

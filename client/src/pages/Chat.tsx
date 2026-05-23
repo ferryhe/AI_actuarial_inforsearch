@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useLocation } from "wouter";
+import { useHistoryState } from "wouter/use-browser-location";
 import {
   Send,
   Plus,
@@ -18,6 +20,7 @@ import {
   ExternalLink,
   Sparkles,
   AlertTriangle,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -89,6 +92,11 @@ interface AvailableDocument {
   keywords: string[];
 }
 
+interface CategoryOption {
+  name: string;
+  count?: number | null;
+}
+
 interface MarkdownResponse {
   success?: boolean;
   markdown?: { markdown_content?: string | null } | null;
@@ -105,8 +113,31 @@ interface SendMessageOptions {
   document?: AvailableDocument;
 }
 
+interface ChatRouteState {
+  explainDocument?: AvailableDocument;
+}
+
 const MODES = ["expert", "summary", "tutorial", "comparison"] as const;
 type ChatMode = (typeof MODES)[number];
+
+function splitCategoryNames(value: string): string[] {
+  return value
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeCategoryNames(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  const names = items.flatMap((item) => {
+    if (typeof item === "string") return splitCategoryNames(item);
+    if (item && typeof item === "object" && "name" in item) {
+      return splitCategoryNames(String((item as CategoryOption).name || ""));
+    }
+    return [];
+  });
+  return names.filter((item, index, all): item is string => Boolean(item) && all.indexOf(item) === index);
+}
 
 function TypingIndicator() {
   return (
@@ -316,6 +347,8 @@ type SidebarTab = "conversations" | "documents";
 
 export default function Chat() {
   const { t } = useTranslation();
+  const [location, navigate] = useLocation();
+  const routeState = useHistoryState<ChatRouteState | null>();
   const { user, isLoggedIn } = useAuth();
   const isGuest = !isLoggedIn || user?.role === "guest";
   const GUEST_CHAT_QUOTA = 5;
@@ -335,11 +368,13 @@ export default function Chat() {
   const [documents, setDocuments] = useState<AvailableDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [docSearch, setDocSearch] = useState("");
-  const [docCategory, setDocCategory] = useState("");
+  const [selectedDocCategories, setSelectedDocCategories] = useState<string[]>([]);
+  const [docCategoryOptions, setDocCategoryOptions] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const routeExplainKeyRef = useRef<string | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -383,17 +418,32 @@ export default function Chat() {
   }
 
 
-  async function loadDocuments() {
+  async function loadDocumentCategories() {
+    try {
+      const res = await apiGet<{ categories?: Array<string | CategoryOption> }>("/api/categories?mode=used");
+      setDocCategoryOptions(normalizeCategoryNames(res.categories).sort((a, b) => a.localeCompare(b)));
+    } catch {}
+  }
+
+  async function loadDocuments(filters?: { categories?: string[]; search?: string }) {
     setLoadingDocs(true);
     try {
       let url = "/api/chat/available-documents";
       const params = new URLSearchParams();
-      if (docCategory) params.set("category", docCategory);
-      if (docSearch) params.set("keywords", docSearch);
+      const categories = filters?.categories ?? selectedDocCategories;
+      const search = filters?.search ?? docSearch;
+      categories.forEach((category) => params.append("category", category));
+      if (search) params.set("keywords", search);
       if (params.toString()) url += `?${params}`;
 
       const res = await apiGet<{ success?: boolean; data?: { documents?: AvailableDocument[] }; documents?: AvailableDocument[] }>(url);
-      setDocuments(res.data?.documents || res.documents || []);
+      const nextDocuments = res.data?.documents || res.documents || [];
+      setDocuments(nextDocuments);
+      setDocCategoryOptions((prev) => (
+        prev.length > 0
+          ? prev
+          : normalizeCategoryNames(nextDocuments.map((doc) => doc.category)).sort((a, b) => a.localeCompare(b))
+      ));
     } catch {
       setDocuments([]);
     } finally {
@@ -403,12 +453,26 @@ export default function Chat() {
 
   useEffect(() => {
     if (sidebarTab === "documents") {
+      loadDocumentCategories();
       loadDocuments();
     }
   }, [sidebarTab]);
 
   function searchDocuments() {
     loadDocuments();
+  }
+
+  function toggleDocCategory(category: string) {
+    const next = selectedDocCategories.includes(category)
+      ? selectedDocCategories.filter((item) => item !== category)
+      : [...selectedDocCategories, category];
+    setSelectedDocCategories(next);
+    void loadDocuments({ categories: next });
+  }
+
+  function clearDocCategories() {
+    setSelectedDocCategories([]);
+    void loadDocuments({ categories: [] });
   }
 
   async function loadConversation(id: string) {
@@ -460,7 +524,7 @@ export default function Chat() {
   }
 
   async function askAboutDocument(doc: AvailableDocument) {
-    const questionText = `${t("chat.explain_document")}: "${doc.title || doc.filename}"`;
+    const questionText = `${t("chat.explain_document")}: "${doc.filename || doc.title}"`;
     setSidebarTab("conversations");
     await sendMessage({ text: questionText, document: doc });
   }
@@ -483,6 +547,18 @@ export default function Chat() {
       fileUrl: doc.file_url,
     };
   }
+
+  useEffect(() => {
+    const doc = routeState?.explainDocument;
+    if (!doc?.file_url) return;
+
+    const explainKey = `${doc.file_url}\n${doc.filename || ""}\n${doc.title || ""}`;
+    if (routeExplainKeyRef.current === explainKey) return;
+    routeExplainKeyRef.current = explainKey;
+
+    void askAboutDocument(doc);
+    navigate(location, { replace: true, state: null });
+  }, [location, navigate, routeState]);
 
   async function sendMessage(options?: SendMessageOptions) {
     const text = (options?.text ?? input).trim();
@@ -724,14 +800,53 @@ export default function Chat() {
                       <Search className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  <input
-                    type="text"
-                    value={docCategory}
-                    onChange={(e) => setDocCategory(e.target.value)}
-                    placeholder={t("chat.filter_category")}
-                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                    data-testid="input-doc-category"
-                  />
+                  <div className="space-y-1.5" data-testid="doc-category-filter">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-muted-foreground">{t("knowledge.categories")}</span>
+                      {selectedDocCategories.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={clearDocCategories}
+                          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                          data-testid="button-clear-doc-categories"
+                        >
+                          <X className="w-3 h-3" />
+                          {t("db.clear_filters")}
+                        </button>
+                      )}
+                    </div>
+                    {docCategoryOptions.length === 0 ? (
+                      <p className="text-xs text-muted-foreground/70 px-1 py-1">{t("knowledge.no_categories_available")}</p>
+                    ) : (
+                      <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                        {docCategoryOptions.map((category) => {
+                          const selected = selectedDocCategories.includes(category);
+                          return (
+                            <button
+                              key={category}
+                              type="button"
+                              onClick={() => toggleDocCategory(category)}
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors",
+                                selected
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                              )}
+                              data-testid={`button-toggle-doc-category-${category}`}
+                            >
+                              {selected && <Check className="h-3 w-3" />}
+                              <span className="max-w-[9rem] truncate">{category}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {selectedDocCategories.length > 0 && (
+                      <p className="text-[11px] text-muted-foreground px-1">
+                        {selectedDocCategories.length} {t("db.selected_count")}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
                   {loadingDocs ? (
@@ -759,20 +874,8 @@ export default function Chat() {
                           <FileText className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground group-hover:text-primary transition-colors" strokeWidth={1.5} />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                              {doc.title || doc.filename}
+                              {doc.filename || doc.title}
                             </p>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              {doc.category && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                                  {doc.category}
-                                </span>
-                              )}
-                              {doc.keywords && doc.keywords.length > 0 && (
-                                <span className="text-[10px] text-muted-foreground truncate">
-                                  {doc.keywords.slice(0, 3).join(", ")}
-                                </span>
-                              )}
-                            </div>
                           </div>
                           <Sparkles className="w-3.5 h-3.5 shrink-0 mt-1 text-muted-foreground/30 group-hover:text-primary transition-colors" />
                         </div>

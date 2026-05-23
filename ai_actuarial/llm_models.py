@@ -205,7 +205,7 @@ DEFAULT_MODELS = {
 
 OPENAI_COMPATIBLE_DISCOVERY = {
     "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1", True),
-    "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1", True),
+    "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "https://api.deepseek.com", True),
     "zhipuai": ("ZHIPUAI_API_KEY", "ZHIPUAI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4", True),
     "moonshot": ("MOONSHOT_API_KEY", "MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1", True),
     "kimi": ("KIMI_API_KEY", "KIMI_BASE_URL", "https://api.moonshot.cn/v1", True),

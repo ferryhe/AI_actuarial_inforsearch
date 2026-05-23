@@ -32,6 +32,8 @@ interface KBMeta {
   name: string;
   description?: string;
   kb_mode?: string;
+  chunk_profile_id?: string;
+  chunk_profile_name?: string;
   embedding_provider?: string;
   embedding_model?: string;
   embedding_dimension?: number;
@@ -89,9 +91,14 @@ interface UnmappedCategory {
 
 interface SelectableFile {
   file_url: string;
+  url?: string;
   title?: string;
   category?: string;
   source_site?: string;
+  chunk_set_id?: string;
+  chunk_count?: number;
+  chunk_profile_id?: string;
+  chunk_profile_name?: string;
 }
 
 function StatusDot({ status }: { status?: string }) {
@@ -112,6 +119,7 @@ export default function KBDetail() {
   const kbId = params?.kbId ? decodeURIComponent(params.kbId) : "";
 
   const [meta, setMeta] = useState<KBMeta | null>(null);
+  const canBindFiles = Boolean(meta?.chunk_profile_id);
   const [stats, setStats] = useState<KBStats | null>(null);
   const [files, setFiles] = useState<KBFile[]>([]);
   const [categories, setCategories] = useState<KBCategory[]>([]);
@@ -282,6 +290,7 @@ export default function KBDetail() {
       if (query) params.set("query", query);
       params.set("kb_id", kbId);
       params.set("limit", "50");
+      if (meta && meta.chunk_profile_id) params.set("profile_id", meta.chunk_profile_id);
       const url = `/api/rag/files/selectable?${params.toString()}`;
       const res = await apiGet<{ files?: Array<SelectableFile & { url?: string }> }>(url);
       setBindableFiles(
@@ -290,6 +299,10 @@ export default function KBDetail() {
           title: file.title,
           category: file.category,
           source_site: file.source_site,
+          chunk_set_id: file.chunk_set_id,
+          chunk_count: file.chunk_count,
+          chunk_profile_id: file.chunk_profile_id,
+          chunk_profile_name: file.chunk_profile_name,
         })).filter((file) => file.file_url)
       );
     } catch {
@@ -300,6 +313,7 @@ export default function KBDetail() {
   };
 
   const handleOpenBindDialog = () => {
+    if (!canBindFiles) return;
     setShowBindDialog(true);
     setBindSearch("");
     setSelectedBindFiles([]);
@@ -316,8 +330,16 @@ export default function KBDetail() {
     if (selectedBindFiles.length === 0) return;
     setBindSubmitting(true);
     try {
-      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`, {
-        file_urls: selectedBindFiles,
+      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/bindings`, {
+        bindings: selectedBindFiles.map((fileUrl) => {
+          const file = bindableFiles.find((item) => item.file_url === fileUrl);
+          if (!file?.chunk_set_id) return null;
+          return {
+            file_url: file.file_url,
+            chunk_set_id: file.chunk_set_id,
+            binding_mode: "follow_latest",
+          };
+        }).filter(Boolean),
       });
       setShowBindDialog(false);
       setSelectedBindFiles([]);
@@ -744,7 +766,9 @@ export default function KBDetail() {
             />
             <button
               onClick={handleOpenBindDialog}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              disabled={!canBindFiles}
+              title={!canBindFiles ? t("knowledge.select_chunk_profile_first") : undefined}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               data-testid="button-bind-files"
             >
               <LinkIcon className="w-3.5 h-3.5" />
@@ -907,6 +931,8 @@ export default function KBDetail() {
                             </span>
                           )}
                           {file.source_site && <span>{file.source_site}</span>}
+                          {file.chunk_profile_name && <span className="font-mono">{file.chunk_profile_name}</span>}
+                          {file.chunk_count != null && <span>{file.chunk_count} chunks</span>}
                         </div>
                       </div>
                       {selected && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}

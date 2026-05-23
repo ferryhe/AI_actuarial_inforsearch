@@ -15,6 +15,7 @@ from ..services.rag_admin import (
     delete_chunk_profile,
     delete_knowledge_base,
     get_categories_mapping,
+    get_category_stats,
     get_kb_bindings,
     get_knowledge_base,
     get_knowledge_base_categories,
@@ -239,6 +240,18 @@ def api_categories_mapping(
 ):
     try:
         return get_categories_mapping(db_path=_db_path(request))
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
+@router.post("/rag/categories/stats")
+def api_category_stats(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return get_category_stats(db_path=_db_path(request), payload=payload)
     except RagAdminError as exc:
         return _error_response(exc)
 

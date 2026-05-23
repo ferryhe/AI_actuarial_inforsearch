@@ -17,6 +17,7 @@ import {
   FolderOpen,
   Sparkles,
   RefreshCw,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -60,6 +61,34 @@ interface CurrentEmbedding {
   model?: string;
   dimension?: number;
 }
+
+interface SelectableFile {
+  url: string;
+  title?: string;
+  original_filename?: string;
+  source_site?: string;
+  category?: string;
+  markdown_updated_at?: string;
+  chunk_set_id?: string;
+  chunk_profile_id?: string;
+  chunk_profile_name?: string;
+  chunk_count?: number;
+}
+
+interface CategoryOption {
+  name: string;
+  count?: number | null;
+}
+
+const emptyKbForm = {
+  name: "",
+  kb_id: "",
+  description: "",
+  categories: [] as string[],
+  file_urls: [] as string[],
+  kb_mode: "manual",
+  chunk_profile_id: "",
+};
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -107,6 +136,19 @@ function ModeBadge({ mode }: { mode?: string }) {
   );
 }
 
+function normalizeCategoryNames(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      if (typeof item === "string") return item.trim();
+      if (item && typeof item === "object" && "name" in item) {
+        return String((item as CategoryOption).name || "").trim();
+      }
+      return "";
+    })
+    .filter((item, index, all): item is string => Boolean(item) && all.indexOf(item) === index);
+}
+
 export default function Knowledge() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
@@ -121,16 +163,14 @@ export default function Knowledge() {
   const [deleting, setDeleting] = useState(false);
   const [indexingKb, setIndexingKb] = useState<string | null>(null);
   const [currentEmbedding, setCurrentEmbedding] = useState<CurrentEmbedding | null>(null);
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const [selectableFiles, setSelectableFiles] = useState<SelectableFile[]>([]);
+  const [fileSearch, setFileSearch] = useState("");
+  const [selectableFilesLoading, setSelectableFilesLoading] = useState(false);
+  const [categoryStats, setCategoryStats] = useState<Record<string, number> | null>(null);
+  const [categoryStatsLoading, setCategoryStatsLoading] = useState(false);
 
-  const [kbForm, setKbForm] = useState({
-    name: "",
-    kb_id: "",
-    description: "",
-    categories: "",
-    kb_mode: "manual",
-    chunk_size: 800,
-    chunk_overlap: 100,
-  });
+  const [kbForm, setKbForm] = useState(emptyKbForm);
 
   const [profileForm, setProfileForm] = useState({
     name: "",
@@ -145,8 +185,10 @@ export default function Knowledge() {
     Promise.all([
       apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
       apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null),
+      apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null),
+      apiGet<Record<string, unknown>>("/api/categories?mode=used").catch(() => null),
     ])
-      .then(([kbResp, profileResp]) => {
+      .then(([kbResp, profileResp, ragCategoriesResp, usedCategoriesResp]) => {
         const kbPayload = kbResp as {
           knowledge_bases?: KnowledgeBase[];
           current_embeddings?: CurrentEmbedding;
@@ -166,13 +208,64 @@ export default function Knowledge() {
               ? ((legacyProfiles as Record<string, unknown>).profiles as ChunkProfile[])
               : [];
         setProfiles(pList);
+
+        const ragCategories = normalizeCategoryNames((ragCategoriesResp as { categories?: unknown[] } | null)?.categories);
+        const usedCategories = normalizeCategoryNames((usedCategoriesResp as { categories?: unknown[] } | null)?.categories);
+        setCategoryOptions(Array.from(new Set([...ragCategories, ...usedCategories])).sort((a, b) => a.localeCompare(b)));
       })
       .finally(() => setLoading(false));
   }, []);
 
+  const loadSelectableFiles = useCallback((query = "") => {
+    if (!kbForm.chunk_profile_id) {
+      setSelectableFiles([]);
+      setSelectableFilesLoading(false);
+      return;
+    }
+    setSelectableFilesLoading(true);
+    const params = new URLSearchParams({ limit: "50" });
+    params.set("profile_id", kbForm.chunk_profile_id);
+    const normalizedQuery = query.trim();
+    if (normalizedQuery) params.set("query", normalizedQuery);
+    apiGet<{ files?: SelectableFile[]; data?: { files?: SelectableFile[] } }>(`/api/rag/files/selectable?${params.toString()}`)
+      .then((res) => setSelectableFiles(res.files || res.data?.files || []))
+      .catch(() => setSelectableFiles([]))
+      .finally(() => setSelectableFilesLoading(false));
+  }, [kbForm.chunk_profile_id]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!showCreateKB || kbForm.chunk_profile_id) return;
+    const defaultProfileId = profiles.find((profile) => profile.profile_id)?.profile_id || "";
+    if (defaultProfileId) {
+      setKbForm((current) => current.chunk_profile_id ? current : { ...current, chunk_profile_id: defaultProfileId });
+    }
+  }, [kbForm.chunk_profile_id, profiles, showCreateKB]);
+
+  useEffect(() => {
+    if (!showCreateKB || kbForm.kb_mode !== "manual") return;
+    const timer = window.setTimeout(() => loadSelectableFiles(fileSearch), 250);
+    return () => window.clearTimeout(timer);
+  }, [fileSearch, kbForm.chunk_profile_id, kbForm.kb_mode, loadSelectableFiles, showCreateKB]);
+
+  useEffect(() => {
+    if (!showCreateKB || kbForm.kb_mode !== "category" || kbForm.categories.length === 0 || !kbForm.chunk_profile_id) {
+      setCategoryStats(null);
+      setCategoryStatsLoading(false);
+      return;
+    }
+    setCategoryStatsLoading(true);
+    apiPost<{ totals?: Record<string, number> }>("/api/rag/categories/stats", {
+      categories: kbForm.categories,
+      profile_id: kbForm.chunk_profile_id,
+    })
+      .then((res) => setCategoryStats(res.totals || null))
+      .catch(() => setCategoryStats(null))
+      .finally(() => setCategoryStatsLoading(false));
+  }, [kbForm.categories, kbForm.chunk_profile_id, kbForm.kb_mode, showCreateKB]);
 
   const generateKbId = (name: string) => {
     return name.trim().toLowerCase()
@@ -181,30 +274,31 @@ export default function Knowledge() {
       .slice(0, 60) || "kb";
   };
 
-  const currentEmbeddingLabel = [
-    currentEmbedding?.provider,
-    currentEmbedding?.model,
-  ].filter(Boolean).join(" / ") || t("knowledge.backend_embedding_unavailable");
-
-  const handleCreateKB = async () => {
+  const handleCreateKB = async (createAndIndex = false) => {
     if (!kbForm.name.trim()) return;
+    if (!kbForm.chunk_profile_id) return;
+    if (kbForm.kb_mode === "category" && kbForm.categories.length === 0) return;
+    if (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0) return;
     const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
     setCreating(true);
     try {
-      const categories = kbForm.categories
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
       await apiPost("/api/rag/knowledge-bases", {
         kb_id: finalKbId,
         name: kbForm.name,
         description: kbForm.description,
-        categories,
+        categories: kbForm.categories,
+        file_urls: kbForm.kb_mode === "manual" ? kbForm.file_urls : [],
         kb_mode: kbForm.kb_mode,
-        chunk_size: kbForm.chunk_size,
-        chunk_overlap: kbForm.chunk_overlap,
+        chunk_profile_id: kbForm.chunk_profile_id,
       });
-      setKbForm({ name: "", kb_id: "", description: "", categories: "", kb_mode: "manual", chunk_size: 800, chunk_overlap: 100 });
+      if (createAndIndex) {
+        await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(finalKbId)}/index`, {
+          incremental: true,
+        });
+      }
+      const defaultProfileId = profiles.find((profile) => profile.profile_id)?.profile_id || "";
+      setKbForm({ ...emptyKbForm, chunk_profile_id: defaultProfileId });
+      setFileSearch("");
       closeCreateKB();
       loadData();
     } catch (err) {
@@ -239,6 +333,24 @@ export default function Knowledge() {
     } finally {
       setIndexingKb(null);
     }
+  };
+
+  const toggleKbCategory = (category: string) => {
+    setKbForm((current) => ({
+      ...current,
+      categories: current.categories.includes(category)
+        ? current.categories.filter((item) => item !== category)
+        : [...current.categories, category],
+    }));
+  };
+
+  const toggleKbFile = (fileUrl: string) => {
+    setKbForm((current) => ({
+      ...current,
+      file_urls: current.file_urls.includes(fileUrl)
+        ? current.file_urls.filter((item) => item !== fileUrl)
+        : [...current.file_urls, fileUrl],
+    }));
   };
 
   const handleCreateProfile = async () => {
@@ -294,6 +406,13 @@ export default function Knowledge() {
   const closeCreateProfile = () => {
     setShowCreateProfile(false);
   };
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("open") === "create") {
+      setShowCreateProfile(false);
+      setShowCreateKB(true);
+    }
+  }, []);
 
   const handleCleanup = async () => {
     setCleanupRunning(true);
@@ -412,16 +531,30 @@ export default function Knowledge() {
                 <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.mode_hint")}</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">
-                  {t("knowledge.embedding_model")}
-                </p>
-                <div
-                  className="rounded-lg border border-border bg-muted/40 px-3 py-2"
-                  data-testid="text-kb-backend-embedding"
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  {t("knowledge.chunk_profile")} <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={kbForm.chunk_profile_id}
+                  onChange={(e) => {
+                    setKbForm({ ...kbForm, chunk_profile_id: e.target.value, file_urls: [] });
+                    setSelectableFiles([]);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  data-testid="select-kb-chunk-profile"
+                  disabled={profiles.length === 0}
                 >
-                  <p className="text-sm font-mono text-foreground truncate">{currentEmbeddingLabel}</p>
-                  <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.backend_embedding_hint")}</p>
-                </div>
+                  {profiles.length === 0 ? (
+                    <option value="">{t("knowledge.no_profiles")}</option>
+                  ) : (
+                    profiles.map((profile) => (
+                      <option key={profile.profile_id || profile.name} value={profile.profile_id || ""}>
+                        {profile.name} ({profile.chunk_size}/{profile.chunk_overlap})
+                      </option>
+                    ))
+                  )}
+                </select>
+                <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.chunk_profile_hint")}</p>
               </div>
               <div className="sm:col-span-2">
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
@@ -437,48 +570,124 @@ export default function Knowledge() {
                 />
                 <p className="text-[11px] text-muted-foreground/70 mt-1">{t("knowledge.desc_guidance")}</p>
               </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  {t("knowledge.chunk_size")}
-                </label>
-                <input
-                  type="number"
-                  value={kbForm.chunk_size}
-                  onChange={(e) => setKbForm({ ...kbForm, chunk_size: parseInt(e.target.value) || 800 })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  min={64}
-                  max={8192}
-                  data-testid="input-kb-chunk-size"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  {t("knowledge.overlap")}
-                </label>
-                <input
-                  type="number"
-                  value={kbForm.chunk_overlap}
-                  onChange={(e) => setKbForm({ ...kbForm, chunk_overlap: parseInt(e.target.value) || 100 })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  min={0}
-                  max={2048}
-                  data-testid="input-kb-chunk-overlap"
-                />
-              </div>
-              <div className={cn("sm:col-span-2", kbForm.kb_mode === "category" && "ring-2 ring-amber-500/30 rounded-lg p-3 -m-1")}>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  {t("knowledge.categories")}
-                  {kbForm.kb_mode === "category" && <span className="text-amber-600 ml-1">({t("knowledge.required")})</span>}
-                </label>
-                <input
-                  type="text"
-                  value={kbForm.categories}
-                  onChange={(e) => setKbForm({ ...kbForm, categories: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  placeholder={t("knowledge.categories_placeholder")}
-                  data-testid="input-kb-categories"
-                />
-              </div>
+              {kbForm.kb_mode === "category" && (
+                <div className="sm:col-span-2 rounded-lg border border-border bg-muted/20 p-3" data-testid="kb-category-picker">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      {t("knowledge.categories")} <span className="text-amber-600">({t("knowledge.required")})</span>
+                    </label>
+                    <span className="text-[11px] text-muted-foreground">
+                      {kbForm.categories.length} {t("db.selected_count")}
+                    </span>
+                  </div>
+                  {(categoryStatsLoading || categoryStats) && (
+                    <div className="mb-3 rounded-lg border border-border bg-background px-3 py-2 text-[11px] text-muted-foreground" data-testid="kb-category-stats">
+                      {categoryStatsLoading ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          {t("tasks.form.loading_stats")}
+                        </span>
+                      ) : categoryStats ? (
+                        <span>
+                          {t("knowledge.category_stats")}:
+                          {" "}{categoryStats.total_files || 0} {t("kb.stat_files")},
+                          {" "}{categoryStats.markdown_files || 0} Markdown,
+                          {" "}{categoryStats.ready_chunk_files || 0} {t("knowledge.chunks")}
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
+                  {categoryOptions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-2">{t("knowledge.no_categories_available")}</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {categoryOptions.map((category) => {
+                        const selected = kbForm.categories.includes(category);
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            onClick={() => toggleKbCategory(category)}
+                            className={cn(
+                              "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                              selected
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
+                            )}
+                            data-testid={`button-toggle-kb-category-${category}`}
+                          >
+                            {category}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+              {kbForm.kb_mode === "manual" && (
+                <div className="sm:col-span-2 rounded-lg border border-border bg-muted/20 p-3" data-testid="kb-document-picker">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
+                    <label className="text-xs font-medium text-muted-foreground">{t("knowledge.select_documents")}</label>
+                    <span className="text-[11px] text-muted-foreground">
+                      {kbForm.file_urls.length} {t("db.selected_count")}
+                    </span>
+                  </div>
+                  <div className="relative mb-3">
+                    <input
+                      type="text"
+                      value={fileSearch}
+                      onChange={(e) => setFileSearch(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      placeholder={t("knowledge.document_search_placeholder")}
+                      data-testid="input-kb-document-search"
+                    />
+                    {selectableFilesLoading && (
+                      <Loader2 className="absolute right-3 top-2.5 h-4 w-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                  {!kbForm.chunk_profile_id ? (
+                    <p className="text-xs text-muted-foreground py-2">{t("knowledge.select_chunk_profile_first")}</p>
+                  ) : selectableFiles.length === 0 && !selectableFilesLoading ? (
+                    <p className="text-xs text-muted-foreground py-2">{t("knowledge.no_selectable_chunk_files")}</p>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto rounded-lg border border-border bg-background divide-y divide-border">
+                      {selectableFiles.map((file) => {
+                        const selected = kbForm.file_urls.includes(file.url);
+                        const title = file.title || file.original_filename || file.url;
+                        return (
+                          <button
+                            key={file.url}
+                            type="button"
+                            onClick={() => toggleKbFile(file.url)}
+                            className={cn(
+                              "flex w-full items-start gap-3 px-3 py-2 text-left transition-colors",
+                              selected ? "bg-primary/10" : "hover:bg-muted/70"
+                            )}
+                            data-testid={`button-toggle-kb-file-${file.url}`}
+                          >
+                            <span
+                              className={cn(
+                                "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                                selected ? "border-primary bg-primary text-primary-foreground" : "border-border"
+                              )}
+                            >
+                              {selected ? <Check className="h-3 w-3" /> : null}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-foreground">{title}</span>
+                              <span className="mt-0.5 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                {file.category && <span>{file.category}</span>}
+                                {file.source_site && <span>{file.source_site}</span>}
+                                {typeof file.chunk_count === "number" && <span>{file.chunk_count} {t("knowledge.chunks")}</span>}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex justify-end mt-4 gap-2">
               <button
@@ -490,13 +699,34 @@ export default function Knowledge() {
                 {t("common.cancel")}
               </button>
               <button
-                onClick={handleCreateKB}
-                disabled={creating || !kbForm.name.trim()}
+                onClick={() => handleCreateKB(false)}
+                disabled={
+                  creating
+                  || !kbForm.name.trim()
+                  || !kbForm.chunk_profile_id
+                  || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
+                  || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
+                }
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                 data-testid="button-submit-kb"
               >
                 {creating && <Loader2 className="w-4 h-4 animate-spin" />}
                 {t("knowledge.create")}
+              </button>
+              <button
+                onClick={() => handleCreateKB(true)}
+                disabled={
+                  creating
+                  || !kbForm.name.trim()
+                  || !kbForm.chunk_profile_id
+                  || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
+                  || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
+                }
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
+                data-testid="button-submit-kb-index"
+              >
+                {creating && <Loader2 className="w-4 h-4 animate-spin" />}
+                {t("knowledge.create_and_index")}
               </button>
             </div>
           </motion.div>
