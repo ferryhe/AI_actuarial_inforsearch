@@ -14,6 +14,7 @@ from cryptography.fernet import Fernet
 from ai_actuarial.ai_runtime import (
     get_ai_function_section,
     get_search_runtime_credentials,
+    get_provider_default_base_url,
     list_provider_credentials,
     resolve_search_engine_credentials,
     resolve_provider_credentials,
@@ -57,6 +58,9 @@ class TestAiRuntime(unittest.TestCase):
 
         self.assertEqual(section["provider"], "deepseek")
         self.assertEqual(section["model"], "deepseek-chat")
+
+    def test_deepseek_default_base_url_matches_official_openai_compatible_endpoint(self):
+        self.assertEqual(get_provider_default_base_url("deepseek"), "https://api.deepseek.com")
 
     def test_resolve_ai_function_runtime_prefers_db_credentials(self):
         """DB provider credentials should override env fallback for runtime use."""

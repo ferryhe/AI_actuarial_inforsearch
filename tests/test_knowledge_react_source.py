@@ -26,5 +26,6 @@ def test_knowledge_create_uses_backend_embedding_configuration_only():
     assert "embeddingModels" not in src
     assert "embedding_model: kbForm" not in src
     assert 'data-testid="select-kb-embedding"' not in src
-    assert 'data-testid="text-kb-backend-embedding"' in src
+    assert 'data-testid="text-kb-backend-embedding"' not in src
+    assert "currentEmbeddingLabel" not in src
     assert "current_embeddings" in src

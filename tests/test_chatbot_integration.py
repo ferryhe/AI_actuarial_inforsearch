@@ -385,7 +385,7 @@ class TestChatbotIntegration(unittest.TestCase):
             llm_provider="deepseek",
             model="deepseek-chat",
             api_key="deepseek-key",
-            base_url="https://api.deepseek.com/v1",
+            base_url="https://api.deepseek.com",
             max_tokens=222,
             _apply_env_defaults=False,
         )
@@ -405,7 +405,7 @@ class TestChatbotIntegration(unittest.TestCase):
             llm_provider="deepseek",
             model="deepseek-chat",
             api_key="deepseek-key",
-            base_url="https://api.deepseek.com/v1",
+            base_url="https://api.deepseek.com",
             _apply_env_defaults=False,
         )
 
@@ -413,7 +413,7 @@ class TestChatbotIntegration(unittest.TestCase):
 
         mock_openai_class.assert_called_once_with(
             api_key="deepseek-key",
-            base_url="https://api.deepseek.com/v1",
+            base_url="https://api.deepseek.com",
             timeout=60.0,
         )
     

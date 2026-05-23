@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useLocation } from "wouter";
+import { useHistoryState } from "wouter/use-browser-location";
 import {
   Send,
   Plus,
@@ -103,6 +105,10 @@ interface DocumentContext {
 interface SendMessageOptions {
   text?: string;
   document?: AvailableDocument;
+}
+
+interface ChatRouteState {
+  explainDocument?: AvailableDocument;
 }
 
 const MODES = ["expert", "summary", "tutorial", "comparison"] as const;
@@ -316,6 +322,8 @@ type SidebarTab = "conversations" | "documents";
 
 export default function Chat() {
   const { t } = useTranslation();
+  const [location, navigate] = useLocation();
+  const routeState = useHistoryState<ChatRouteState | null>();
   const { user, isLoggedIn } = useAuth();
   const isGuest = !isLoggedIn || user?.role === "guest";
   const GUEST_CHAT_QUOTA = 5;
@@ -340,6 +348,7 @@ export default function Chat() {
   const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const routeExplainKeyRef = useRef<string | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -483,6 +492,18 @@ export default function Chat() {
       fileUrl: doc.file_url,
     };
   }
+
+  useEffect(() => {
+    const doc = routeState?.explainDocument;
+    if (!doc?.file_url) return;
+
+    const explainKey = `${doc.file_url}\n${doc.filename || ""}\n${doc.title || ""}`;
+    if (routeExplainKeyRef.current === explainKey) return;
+    routeExplainKeyRef.current = explainKey;
+
+    void askAboutDocument(doc);
+    navigate(location, { replace: true, state: null });
+  }, [location, navigate, routeState]);
 
   async function sendMessage(options?: SendMessageOptions) {
     const text = (options?.text ?? input).trim();

@@ -15,6 +15,7 @@ import {
   Trash2,
   Download,
   Eye,
+  Sparkles,
   Square,
   CheckSquare,
   FileSpreadsheet,
@@ -39,6 +40,16 @@ interface FileItem {
   markdown_source: string | null;
   bytes: number | null;
   deleted_at: string | null;
+}
+
+interface ExplainDocumentState {
+  explainDocument: {
+    file_url: string;
+    filename: string;
+    title: string;
+    category: string;
+    keywords: string[];
+  };
 }
 
 interface FilesResponse {
@@ -537,6 +548,22 @@ export default function DatabasePage() {
     navigate(buildFilePreviewPath(file.url, locationKey));
   }
 
+  function explainFile(file: FileItem) {
+    const filename = file.original_filename || file.title || "Document";
+    databaseScrollCache.set(locationKey, window.scrollY);
+    navigate<ExplainDocumentState>("/chat", {
+      state: {
+        explainDocument: {
+          file_url: file.url,
+          filename,
+          title: file.title || filename,
+          category: file.category || "",
+          keywords: [],
+        },
+      },
+    });
+  }
+
   function toggleSelected(url: string) {
     setSelectedUrls((current) => (current.includes(url) ? current.filter((item) => item !== url) : [...current, url]));
   }
@@ -803,7 +830,7 @@ export default function DatabasePage() {
         </motion.div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="hidden lg:grid grid-cols-[36px_1fr_110px_120px_50px_70px_90px_140px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          <div className="hidden lg:grid grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
             <button
               type="button"
               onClick={toggleSelectAllVisible}
@@ -842,7 +869,7 @@ export default function DatabasePage() {
                 initial="hidden"
                 animate="visible"
                 className={cn(
-                  "grid lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_140px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
+                  "grid lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
                   isDeleted && "opacity-50"
                 )}
                 onClick={() => navigateToFile(file)}
@@ -922,6 +949,20 @@ export default function DatabasePage() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (!hasMd || isDeleted) return;
+                      explainFile(file);
+                    }}
+                    disabled={!hasMd || isDeleted}
+                    className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                    data-testid={`button-ai-explain-${i}`}
+                    title={hasMd ? t("db.explain_with_ai") : t("db.explain_unavailable")}
+                  >
+                    <Sparkles className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       navigateToPreview(file);
                     }}
                     className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -965,6 +1006,20 @@ export default function DatabasePage() {
                   <span className="text-xs text-muted-foreground">{formatSize(file.bytes)}</span>
                 </div>
                 <div className="flex items-center gap-2 sm:hidden mt-2 pl-6">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!hasMd || isDeleted) return;
+                      explainFile(file);
+                    }}
+                    disabled={!hasMd || isDeleted}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                    data-testid={`button-ai-explain-mobile-${i}`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {t("db.explain_with_ai")}
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => {

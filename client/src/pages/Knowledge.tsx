@@ -181,11 +181,6 @@ export default function Knowledge() {
       .slice(0, 60) || "kb";
   };
 
-  const currentEmbeddingLabel = [
-    currentEmbedding?.provider,
-    currentEmbedding?.model,
-  ].filter(Boolean).join(" / ") || t("knowledge.backend_embedding_unavailable");
-
   const handleCreateKB = async () => {
     if (!kbForm.name.trim()) return;
     const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
@@ -410,18 +405,6 @@ export default function Knowledge() {
                   <option value="category">{t("knowledge.mode_category")}</option>
                 </select>
                 <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.mode_hint")}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">
-                  {t("knowledge.embedding_model")}
-                </p>
-                <div
-                  className="rounded-lg border border-border bg-muted/40 px-3 py-2"
-                  data-testid="text-kb-backend-embedding"
-                >
-                  <p className="text-sm font-mono text-foreground truncate">{currentEmbeddingLabel}</p>
-                  <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.backend_embedding_hint")}</p>
-                </div>
               </div>
               <div className="sm:col-span-2">
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">

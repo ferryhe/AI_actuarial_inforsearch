@@ -24,3 +24,15 @@ def test_chat_document_explain_posts_markdown_document_context():
     assert "document_filename: documentContext.filename" in src
     assert "document_file_url: documentContext.fileUrl" in src
     assert "setInput(questionText)" not in src
+
+
+def test_chat_accepts_database_explain_document_route_state():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+
+    assert 'import { useLocation } from "wouter";' in src
+    assert 'import { useHistoryState } from "wouter/use-browser-location";' in src
+    assert "interface ChatRouteState" in src
+    assert "const routeState = useHistoryState<ChatRouteState | null>()" in src
+    assert "const doc = routeState?.explainDocument" in src
+    assert "void askAboutDocument(doc)" in src
+    assert "navigate(location, { replace: true, state: null })" in src

@@ -1,21 +1,13 @@
 # Project Status
 
 - Date: 2026-05-23
-- Branch: codex/address-missed-review-comments
-- Scope: Follow-up for missed Copilot review comments on merged PRs #107-#113.
-- Latest baseline: origin/main at a2a1e3e after PR #112 was merged into main.
-- Security scan focus: tracked repository files for plaintext secrets, personal identifiers, runtime databases, deployment/server configuration, and CI secrets usage. Local `.env` files were not read.
-- Security scan result: No real plaintext API keys, SSH private keys, or GitHub/Gitee tokens were found in tracked runtime configuration. Tracked `.env` files are limited to `.env.example`.
-- Security follow-up: Removed the tracked 0-byte `config/storage.db` placeholder and ignored runtime database extensions to prevent accidental future commits of user/auth/provider data.
-- Security hardening follow-up: Moving public deployment topology and production-only security policy into server-local environment variables; committed defaults should not expose real domains, fixed Docker bridge gateways, disabled CSRF, or empty CSP.
-- Gitee sync: PR #112 was merged; `.github/workflows/sync-gitee.yml` now fetches Gitee and uses `--force-with-lease` for the branch mirror instead of embedding credentials in the remote URL.
-- Gitee sync follow-up: main run 26338403088 still failed in `Sync main to Gitee`; added an explicit workflow Git identity (`ferry.he@gmail.com` / `jghe`) before the Gitee sync step.
-- Review follow-up: Verified PR #107 Caddy log path/healthcheck loopback, PR #108 markdown response typing, and PR #109 page-jump integer parsing are already addressed on main.
-- Review follow-up: Addressing remaining PR #111/#113 comments by using container-safe `FASTAPI_HOST=0.0.0.0` in the Docker entrypoint, defaulting `TRUST_PROXY` to false unless explicitly enabled, removing duplicated inline CSP defaults from Compose, using PEP 440-aware version parsing for the `mistralai` guard, and clarifying CSP pass-through docs.
-- Model catalog follow-up: Updated `mistralai` pin to `1.12.4` and moved DeepSeek fallback models to current `deepseek-v4-flash` / `deepseek-v4-pro` while retaining legacy aliases for existing configs.
-- CI follow-up: PR #111 `python-smoke` failed after enabling CSRF by default because the FastAPI-only auth roundtrip smoke test posted auth mutations without the frontend CSRF cookie/header flow. Updated the smoke test to seed `/api/auth/me` and send `X-CSRF-Token` on register/logout/login.
-- PR: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/113
-- Verification: python -m pytest tests/test_deployment_config_source.py tests/test_dependency_versions.py tests/test_gitee_sync_workflow_source.py -q; python -c YAML parse for docker-compose.yml, docker-compose.override.yml, config/sites.yaml, and .github/workflows/sync-gitee.yml; rg checks for conflict markers and removed unsafe/obsolete patterns; git diff --check.
-- Verification gap: `docker compose config` could not run locally because Docker is not installed on this Windows environment; raw GitHub Actions logs could not be retrieved because local `gh` auth token is invalid.
-- Pre-PR review gate: Blocked because `codex --help` fails with `Program 'codex.exe' failed to run: Access is denied`.
+- Branch: codex/fix-knowledge-deepseek-database-explain
+- Scope: Knowledge KB creation embedding UI removal, DeepSeek official model endpoint defaults, and Database-to-Chat AI document explanation restoration.
+- Latest baseline: origin/main at d05198e729456c7830830e7dc0babdf834ba0a0e after PR #113 merge and successful Gitee sync follow-up.
+- Knowledge page: The create-KB panel no longer renders an embedding selector or read-only embedding field; embedding remains backend-defined and surfaced only through existing KB metadata/status.
+- DeepSeek config: Verified official DeepSeek docs list OpenAI-compatible `base_url` as `https://api.deepseek.com` and current model IDs as `deepseek-v4-flash` and `deepseek-v4-pro`; updated runtime/discovery defaults from `/v1` to the official root endpoint while keeping legacy aliases.
+- Chat document explanation: Chat already posts `document_content`, `document_filename`, and `document_file_url` when given a document; Database now restores an AI explain action for markdown-backed files and routes the selected file to Chat, where Chat fetches markdown and submits the document context directly.
+- Verification: `python -m pytest tests/test_knowledge_react_source.py tests/test_database_react_source.py tests/test_chat_react_source.py tests/test_llm_models.py tests/test_ai_runtime.py tests/test_chatbot_core.py tests/test_catalog_runtime.py -q` passed; `python -m pytest tests/test_chat_react_source.py tests/test_database_react_source.py tests/test_knowledge_react_source.py tests/test_llm_models.py tests/test_ai_runtime.py -q` passed; `npm.cmd run build` passed with the existing large-chunk warning; local Vite HTTP smoke returned 200 for `/database` and `/knowledge`; `git diff --check` passed.
+- Verification notes: Initial `npm run build` was blocked by local PowerShell script execution policy for `npm.ps1`; reran successfully with `npm.cmd run build`. Playwright/browser automation was unavailable because `playwright` is not installed in local `node_modules`, so the UI smoke used Vite HTTP route checks.
+- Pre-PR review gate: Blocked; `codex --help` failed normally and with escalated sandbox permissions with `Program 'codex.exe' failed to run: Access is denied`.
 - Notes: No sibling repositories were read or modified.
