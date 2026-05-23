@@ -182,7 +182,16 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
 
 
 def test_fastapi_rag_admin_categories_mapping_uses_catalog_items_without_legacy_table(tmp_path: Path, monkeypatch) -> None:
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET category = ? WHERE file_url = ?",
+            ("AI; Risk", seed["alpha_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
 
     response = client.get("/api/rag/categories/mapping")
 
@@ -531,6 +540,13 @@ def test_fastapi_rag_admin_category_stats_and_kb_profile_metadata(tmp_path: Path
     by_name = {item["name"]: item for item in body["categories"]}
     assert by_name["AI"]["ready_chunk_files"] == 1
     assert by_name["Risk"]["ready_chunk_files"] == 0
+
+    too_many = client.post(
+        "/api/rag/categories/stats",
+        json={"categories": [f"Category {idx}" for idx in range(101)], "profile_id": profile_id},
+    )
+    assert too_many.status_code == 400, too_many.text
+    assert "at most 100" in too_many.json()["error"]
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",

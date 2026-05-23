@@ -6,7 +6,10 @@ from typing import Any, Mapping
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.config import settings
 from ai_actuarial.shared_runtime import parse_int_clamped
-from ai_actuarial.storage import Storage
+from ai_actuarial.storage import Storage, _split_visible_categories
+
+
+MAX_CATEGORY_STATS_CATEGORIES = 100
 
 
 class RagAdminError(Exception):
@@ -45,6 +48,15 @@ def _list(value: Any, field: str) -> list[str]:
         if normalized and normalized not in out:
             out.append(normalized)
     return out
+
+
+
+def _visible_category_list(raw_categories: list[Any]) -> list[str]:
+    categories: set[str] = set()
+    for raw_category in raw_categories:
+        for category in _split_visible_categories(_norm(raw_category)):
+            categories.add(category)
+    return sorted(categories, key=lambda item: item.lower())
 
 
 
@@ -465,7 +477,7 @@ def get_categories_mapping(*, db_path: str) -> dict[str, Any]:
             ).fetchall()
             if row and row[0]
         }
-        mapped_categories: list[str] = []
+        raw_categories: list[Any] = []
         if "source_metadata" in table_names:
             cursor = storage._conn.execute(
                 """
@@ -473,15 +485,15 @@ def get_categories_mapping(*, db_path: str) -> dict[str, Any]:
                 WHERE category IS NOT NULL AND category != ''
                 """
             )
-            mapped_categories.extend(row[0] for row in cursor.fetchall() if row[0])
+            raw_categories.extend(row[0] for row in cursor.fetchall() if row[0])
         cursor = storage._conn.execute(
             """
             SELECT DISTINCT category FROM catalog_items
             WHERE category IS NOT NULL AND category != ''
             """
         )
-        mapped_categories.extend(row[0] for row in cursor.fetchall() if row[0])
-        mapped_categories = sorted(set(mapped_categories))
+        raw_categories.extend(row[0] for row in cursor.fetchall() if row[0])
+        mapped_categories = _visible_category_list(raw_categories)
         return {"categories": mapped_categories, "count": len(mapped_categories)}
     finally:
         storage.close()
@@ -491,6 +503,8 @@ def get_category_stats(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     categories = _list(payload.get("categories"), "categories")
+    if len(categories) > MAX_CATEGORY_STATS_CATEGORIES:
+        raise RagAdminError(f"categories can include at most {MAX_CATEGORY_STATS_CATEGORIES} items")
     profile_id = _norm(payload.get("profile_id") or payload.get("chunk_profile_id"))
     kb_id = _norm(payload.get("kb_id"))
 
@@ -947,6 +961,46 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
         if profile_id and not storage.get_chunk_profile(profile_id):
             raise RagAdminError("chunk profile not found", status_code=404)
         conn = storage._conn
+        chunk_join_sql = ""
+        chunk_join_params: list[Any] = []
+        chunk_columns = """
+            NULL AS chunk_set_id,
+            NULL AS chunk_profile_id,
+            NULL AS chunk_profile_name,
+            NULL AS chunk_count
+        """
+        if profile_id:
+            chunk_join_sql = """
+            JOIN (
+                SELECT chunk_set_id, file_url, profile_id, profile_name, chunk_count
+                FROM (
+                    SELECT
+                        s.chunk_set_id,
+                        s.file_url,
+                        s.profile_id,
+                        p.name AS profile_name,
+                        s.chunk_count,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.file_url, s.profile_id
+                            ORDER BY s.updated_at DESC, s.created_at DESC, s.chunk_set_id DESC
+                        ) AS rn
+                    FROM file_chunk_sets s
+                    JOIN chunk_profiles p ON p.profile_id = s.profile_id
+                    WHERE s.profile_id = ?
+                      AND s.status = 'ready'
+                      AND COALESCE(s.chunk_count, 0) > 0
+                )
+                WHERE rn = 1
+            ) latest_chunk ON latest_chunk.file_url = f.url
+            """
+            chunk_join_params.append(profile_id)
+            chunk_columns = """
+                latest_chunk.chunk_set_id,
+                latest_chunk.profile_id AS chunk_profile_id,
+                latest_chunk.profile_name AS chunk_profile_name,
+                latest_chunk.chunk_count
+            """
+
         where_parts = [
             "f.deleted_at IS NULL",
             "c.markdown_content IS NOT NULL",
@@ -960,20 +1014,6 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
         if category:
             where_parts.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
             params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
-        if profile_id:
-            where_parts.append(
-                """
-                EXISTS (
-                    SELECT 1
-                    FROM file_chunk_sets s
-                    WHERE s.file_url = f.url
-                      AND s.profile_id = ?
-                      AND s.status = 'ready'
-                      AND COALESCE(s.chunk_count, 0) > 0
-                )
-                """
-            )
-            params.append(profile_id)
         if kb_id:
             row = conn.execute("SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ?", [kb_id]).fetchone()
             if not row:
@@ -984,25 +1024,40 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
 
         total = int(
             conn.execute(
-                f"SELECT COUNT(*) FROM files f JOIN catalog_items c ON c.file_url = f.url WHERE {where_sql}",
-                params,
+                f"""
+                SELECT COUNT(*)
+                FROM files f
+                JOIN catalog_items c ON c.file_url = f.url
+                {chunk_join_sql}
+                WHERE {where_sql}
+                """,
+                chunk_join_params + params,
             ).fetchone()[0]
             or 0
         )
         rows = conn.execute(
             f"""
-            SELECT f.url, f.title, f.original_filename, f.source_site, f.bytes, f.last_seen, c.category, c.markdown_updated_at
+            SELECT
+                f.url,
+                f.title,
+                f.original_filename,
+                f.source_site,
+                f.bytes,
+                f.last_seen,
+                c.category,
+                c.markdown_updated_at,
+                {chunk_columns}
             FROM files f
             JOIN catalog_items c ON c.file_url = f.url
+            {chunk_join_sql}
             WHERE {where_sql}
             ORDER BY f.last_seen DESC, f.id DESC
             LIMIT ? OFFSET ?
             """,
-            params + [limit, offset],
+            chunk_join_params + params + [limit, offset],
         ).fetchall()
         files = []
         for row in rows:
-            chunk_set = _latest_ready_chunk_set(storage, file_url=row[0], profile_id=profile_id) if profile_id else None
             item = {
                 "url": row[0],
                 "title": row[1] or "",
@@ -1013,13 +1068,13 @@ def list_selectable_files(*, db_path: str, query: Mapping[str, Any]) -> dict[str
                 "category": row[6] or "",
                 "markdown_updated_at": row[7],
             }
-            if chunk_set:
+            if row[8]:
                 item.update(
                     {
-                        "chunk_set_id": chunk_set["chunk_set_id"],
-                        "chunk_profile_id": chunk_set["profile_id"],
-                        "chunk_profile_name": chunk_set["profile_name"],
-                        "chunk_count": chunk_set["chunk_count"],
+                        "chunk_set_id": row[8],
+                        "chunk_profile_id": row[9],
+                        "chunk_profile_name": row[10] or "",
+                        "chunk_count": row[11] or 0,
                     }
                 )
             files.append(item)
