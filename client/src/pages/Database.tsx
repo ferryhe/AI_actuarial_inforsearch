@@ -333,6 +333,7 @@ export default function DatabasePage() {
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null);
+  const [pageJumpInput, setPageJumpInput] = useState("1");
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 300);
@@ -491,6 +492,26 @@ export default function DatabasePage() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+
+  useEffect(() => {
+    setPageJumpInput(String(currentPage));
+  }, [currentPage]);
+
+  function handlePageJump() {
+    const normalizedPage = pageJumpInput.trim();
+    if (!/^\d+$/.test(normalizedPage)) {
+      setPageJumpInput(String(currentPage));
+      return;
+    }
+    const parsedPage = Number(normalizedPage);
+    if (!Number.isSafeInteger(parsedPage)) {
+      setPageJumpInput(String(currentPage));
+      return;
+    }
+    const targetPage = Math.min(totalPages, Math.max(1, parsedPage));
+    setPageJumpInput(String(targetPage));
+    setOffset((targetPage - 1) * PAGE_SIZE);
+  }
 
   function handleSort(field: SortField) {
     if (orderBy === field) {
@@ -976,7 +997,7 @@ export default function DatabasePage() {
       )}
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-2">
+        <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
           <button
             onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
             disabled={offset === 0}
@@ -990,6 +1011,32 @@ export default function DatabasePage() {
           <span className="text-sm text-muted-foreground" data-testid="text-page-info">
             {t("db.page")} {currentPage} / {totalPages}
           </span>
+
+          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <label htmlFor="database-page-jump" className="whitespace-nowrap">
+              {t("db.go_to_page")}
+            </label>
+            <input
+              id="database-page-jump"
+              type="number"
+              min={1}
+              max={totalPages}
+              inputMode="numeric"
+              value={pageJumpInput}
+              onChange={(e) => setPageJumpInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handlePageJump()}
+              className="h-9 w-20 rounded-lg border border-border bg-background px-2 text-center text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              data-testid="input-page-jump"
+            />
+            <button
+              type="button"
+              onClick={handlePageJump}
+              className="h-9 rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+              data-testid="button-page-jump"
+            >
+              {t("db.jump")}
+            </button>
+          </div>
 
           <button
             onClick={() => setOffset(offset + PAGE_SIZE)}
