@@ -3,6 +3,7 @@
 - Date: 2026-05-23
 - Branch: codex/react-fastapi-parity-closure
 - Latest baseline: `origin/main` at `bd411cd4bfa4b5acd027135baaba28bb86ccd1c0`; PR #114 was verified merged at `2026-05-23T21:00:55Z`.
+- PR: #115 `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/115`, opened from `codex/react-fastapi-parity-closure` to `main` at head `d00db0c8d5b5ae138a81a68029be5b2279e78671`.
 - Scope: Follow-up parity closure for Settings, Tasks, task forms, FileDetail/FilePreview, Chat citation routing, and direct document explanation contracts. Sibling repositories were not read or modified.
 - Planning: Added `docs/superpowers/plans/2026-05-23-react-fastapi-parity-closure.md` summarizing the prior review/GAP items and execution plan.
 - Settings: Category save now preserves both `ai_filter_keywords` and `ai_keywords`, preventing the backend from clearing the legacy AI keyword alias. AI settings now expose provider env import, model catalog refresh, and credential re-encryption actions. Search settings can remove DB-backed search credentials.
@@ -23,3 +24,4 @@
 - Browser smoke note: Browser runtime setup succeeded initially, but navigation later failed with `No active Codex browser pane available`; HTTP route smoke was used instead. The temporary Vite dev server on port 5177 was stopped after testing.
 - Remaining decisions: Old Flask `/collection/url` and `/collection/file` deep links were not restored because current FastAPI navigation uses React database/file routes. Chunk `version`/`chunk_model` remains a retire-or-restore decision; current UI favors existing chunk profiles.
 - Pre-PR review gate: Blocked and rechecked after final changes. `codex --help` failed both normally and with escalated sandbox permissions with `Program 'codex.exe' failed to run: Access is denied`.
+- Post-PR follow-up: Initial PR #115 check shows mergeable=true, no commit statuses returned yet, no PR comments yet, and Copilot reviewer requested. A 15-minute heartbeat (`check-pr-115-parity-closure`) was created for CI/comment follow-up.
