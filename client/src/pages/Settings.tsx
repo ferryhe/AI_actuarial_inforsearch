@@ -778,7 +778,7 @@ function AiConfigTab({ lang }: { lang: string }) {
                 </div>
                 <button
                   onClick={reencryptCredentials}
-                  disabled={!oldEncryptionKey.trim() || maintenanceBusy === "reencrypt"}
+                  disabled={!oldEncryptionKey.trim() || maintenanceBusy !== null}
                   className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                   data-testid="button-submit-reencrypt-credentials"
                 >

@@ -59,3 +59,4 @@ def test_settings_exposes_provider_maintenance_actions():
     assert 'data-testid="button-import-provider-env"' in src
     assert 'data-testid="button-refresh-model-catalog"' in src
     assert 'data-testid="button-reencrypt-credentials"' in src
+    assert 'disabled={!oldEncryptionKey.trim() || maintenanceBusy !== null}' in src

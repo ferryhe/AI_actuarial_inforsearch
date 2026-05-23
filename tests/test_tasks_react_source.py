@@ -170,4 +170,7 @@ def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
     assert "void fetchHistory()" in src
     assert 'window.confirm(t("tasks.confirm_stop"))' in src
     assert 'apiGet<{ logs?: string; error?: string }>("/api/logs/global")' in src
+    assert "const refreshLogModal = () =>" in src
+    assert 'logModal.taskId === "global"' in src
+    assert "void viewGlobalLogs()" in src
     assert 'data-testid="button-global-logs"' in src

@@ -166,6 +166,15 @@ export default function Tasks() {
     }
   };
 
+  const refreshLogModal = () => {
+    if (!logModal) return;
+    if (logModal.taskId === "global") {
+      void viewGlobalLogs();
+      return;
+    }
+    void viewTaskLog(logModal.taskId, logModal.taskName, logModal.task);
+  };
+
   const stopTask = async (taskId: string) => {
     if (!window.confirm(t("tasks.confirm_stop"))) return;
     try {
@@ -502,7 +511,7 @@ export default function Tasks() {
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("tasks.log_app_log") || "Application Log"}</h4>
                     <button
-                      onClick={() => viewTaskLog(logModal.taskId, logModal.taskName, logModal.task)}
+                      onClick={refreshLogModal}
                       className="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-muted transition-colors text-muted-foreground"
                     >
                       {t("common.refresh") || "Refresh"}
