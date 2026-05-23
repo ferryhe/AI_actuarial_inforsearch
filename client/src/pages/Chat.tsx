@@ -89,6 +89,23 @@ interface AvailableDocument {
   keywords: string[];
 }
 
+interface MarkdownResponse {
+  success?: boolean;
+  data?: { markdown?: { markdown_content?: string | null } | null };
+  markdown?: { markdown_content?: string | null } | null;
+}
+
+interface DocumentContext {
+  content: string;
+  filename: string;
+  fileUrl: string;
+}
+
+interface SendMessageOptions {
+  text?: string;
+  document?: AvailableDocument;
+}
+
 const MODES = ["expert", "summary", "tutorial", "comparison"] as const;
 type ChatMode = (typeof MODES)[number];
 
@@ -445,13 +462,31 @@ export default function Chat() {
 
   async function askAboutDocument(doc: AvailableDocument) {
     const questionText = `${t("chat.explain_document")}: "${doc.title || doc.filename}"`;
-    setInput(questionText);
     setSidebarTab("conversations");
-    inputRef.current?.focus();
+    await sendMessage({ text: questionText, document: doc });
   }
 
-  async function sendMessage() {
-    const text = input.trim();
+  async function loadDocumentMarkdown(doc: AvailableDocument): Promise<DocumentContext> {
+    if (!doc.file_url) {
+      throw new Error(t("chat.document_content_unavailable"));
+    }
+
+    const res = await apiGet<MarkdownResponse>(`/api/files/${encodeURIComponent(doc.file_url)}/markdown`);
+    const markdown = res.data?.markdown || res.markdown;
+    const content = (markdown?.markdown_content || "").trim();
+    if (!content) {
+      throw new Error(t("chat.document_content_unavailable"));
+    }
+
+    return {
+      content,
+      filename: doc.filename || doc.title || "Document",
+      fileUrl: doc.file_url,
+    };
+  }
+
+  async function sendMessage(options?: SendMessageOptions) {
+    const text = (options?.text ?? input).trim();
     if (!text || sending) return;
 
     // Check guest quota
@@ -472,12 +507,15 @@ export default function Chat() {
     setErrorMsg(null);
     const userMsg: Message = { role: "user", content: text };
     setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    if (inputRef.current) {
+    if (!options?.text) {
+      setInput("");
+    }
+    if (!options?.text && inputRef.current) {
       inputRef.current.style.height = "auto";
     }
 
     try {
+      const documentContext = options?.document ? await loadDocumentMarkdown(options.document) : null;
       const res = await apiPost<{
         success?: boolean;
         data?: {
@@ -493,6 +531,13 @@ export default function Chat() {
         message: text,
         kb_ids: selectedKbs.length > 0 ? selectedKbs : undefined,
         mode,
+        ...(documentContext
+          ? {
+              document_content: documentContext.content,
+              document_filename: documentContext.filename,
+              document_file_url: documentContext.fileUrl,
+            }
+          : {}),
       });
 
       const responseText =
@@ -980,7 +1025,7 @@ export default function Chat() {
             <button
               type="button"
               aria-label="Send message"
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={!input.trim() || sending}
               className={cn(
                 "p-2.5 rounded-xl transition-colors shrink-0",
