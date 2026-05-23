@@ -940,17 +940,6 @@ class NativeTaskRuntime:
         db_path: str,
         data: dict[str, Any],
     ) -> CollectionResult:
-        file_urls = self._chunk_candidate_file_urls(storage, data)
-        if not file_urls:
-            return CollectionResult(
-                success=True,
-                items_found=0,
-                items_downloaded=0,
-                items_skipped=0,
-                errors=[],
-                metadata={"source_type": "chunk_generation"},
-            )
-
         chunk_size = self._positive_int(data.get("chunk_size"), 800)
         chunk_overlap = self._positive_int(data.get("chunk_overlap"), 100, min_value=0)
         if chunk_overlap >= chunk_size:
@@ -966,8 +955,38 @@ class NativeTaskRuntime:
             "version": str(data.get("version") or "v1").strip(),
             "overwrite_same_profile": bool(data.get("overwrite_same_profile", False)),
         }
+        if not payload["profile_id"] and not payload["overwrite_same_profile"]:
+            try:
+                profile = storage.create_chunk_profile(
+                    name=payload["name"],
+                    chunk_size=payload["chunk_size"],
+                    chunk_overlap=payload["chunk_overlap"],
+                    splitter=payload["splitter"],
+                    tokenizer=payload["tokenizer"],
+                    version=payload["version"],
+                    metadata={},
+                    upsert=True,
+                )
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+            payload["profile_id"] = str(profile.get("profile_id") or "")
+
+        candidate_data = {**data, "profile_id": payload["profile_id"]}
+        file_urls = self._chunk_candidate_file_urls(storage, candidate_data)
+        if not file_urls:
+            return CollectionResult(
+                success=True,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=[],
+                metadata={"source_type": "chunk_generation"},
+            )
+
         kb_id = str(data.get("kb_id") or "").strip()
         binding_mode = str(data.get("binding_mode") or "follow_latest").strip().lower() or "follow_latest"
+        if kb_id and binding_mode not in {"pin", "follow_latest"}:
+            raise RuntimeError("binding_mode must be one of: pin, follow_latest")
         kb_manager = None
         if kb_id:
             kb_manager = KnowledgeBaseManager(storage)

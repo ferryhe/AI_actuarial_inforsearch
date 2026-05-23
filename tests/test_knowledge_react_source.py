@@ -70,3 +70,6 @@ def test_kb_detail_bind_dialog_uses_kb_chunk_profile_and_chunk_bindings():
     assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/bindings`" in src
     assert "bindings: selectedBindFiles.map" in src
     assert "chunk_set_id: file.chunk_set_id" in src
+    assert "canBindFiles" in src
+    assert "disabled={!canBindFiles}" in src
+    assert "if (!canBindFiles) return;" in src

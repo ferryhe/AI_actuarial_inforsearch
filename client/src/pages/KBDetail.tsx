@@ -119,6 +119,7 @@ export default function KBDetail() {
   const kbId = params?.kbId ? decodeURIComponent(params.kbId) : "";
 
   const [meta, setMeta] = useState<KBMeta | null>(null);
+  const canBindFiles = Boolean(meta?.chunk_profile_id);
   const [stats, setStats] = useState<KBStats | null>(null);
   const [files, setFiles] = useState<KBFile[]>([]);
   const [categories, setCategories] = useState<KBCategory[]>([]);
@@ -312,6 +313,7 @@ export default function KBDetail() {
   };
 
   const handleOpenBindDialog = () => {
+    if (!canBindFiles) return;
     setShowBindDialog(true);
     setBindSearch("");
     setSelectedBindFiles([]);
@@ -764,7 +766,9 @@ export default function KBDetail() {
             />
             <button
               onClick={handleOpenBindDialog}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              disabled={!canBindFiles}
+              title={!canBindFiles ? t("knowledge.select_chunk_profile_first") : undefined}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               data-testid="button-bind-files"
             >
               <LinkIcon className="w-3.5 h-3.5" />

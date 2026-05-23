@@ -551,7 +551,7 @@ export default function DatabasePage() {
   function explainFile(file: FileItem) {
     const filename = file.original_filename || file.title || "Document";
     databaseScrollCache.set(locationKey, window.scrollY);
-    navigate<ExplainDocumentState>("/chat", {
+    navigate("/chat", {
       state: {
         explainDocument: {
           file_url: file.url,

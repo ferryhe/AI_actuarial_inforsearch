@@ -22,7 +22,8 @@ def test_database_file_rows_offer_ai_explain_via_chat_route_state():
     src = DATABASE_TSX.read_text(encoding="utf-8")
 
     assert "function explainFile(file: FileItem)" in src
-    assert 'navigate<ExplainDocumentState>("/chat"' in src
+    assert 'navigate("/chat"' in src
+    assert 'navigate<ExplainDocumentState>("/chat"' not in src
     assert "explainDocument: {" in src
     assert "file_url: file.url" in src
     assert "filename," in src
