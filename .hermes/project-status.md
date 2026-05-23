@@ -1,14 +1,13 @@
 # Project Status
 
 - Date: 2026-05-23
-- Branch: codex/add-page-jump-pagination
-- Scope: Database page pagination controls.
-- Latest baseline: Merged origin/main after PR #108 landed.
-- Changes: Added a direct page-number jump input and jump button to the Database page footer pagination, including Enter-key submit and clamping to the available page range.
-- Review follow-up: Validated the entire page-jump input as integer digits before clamping so partial numeric values such as `2.9` or `1e2` do not navigate unexpectedly.
-- Verification: python -m pytest tests/test_database_react_source.py -q; npm.cmd run build.
-- Latest follow-up verification: python -m pytest tests/test_database_react_source.py -q; npm.cmd run build; git diff --check.
-- Merge readiness: Resolved post-PR-108 `.hermes/project-status.md` conflict by preserving this PR's current status on top of origin/main.
-- Browser smoke: http://127.0.0.1:5173/database loaded with no framework overlay or console errors. The local data set/API state had zero files, so the totalPages > 1 pagination controls did not render for an end-to-end interaction.
-- Pre-PR review: codex --help failed with WindowsApps Access denied, even with escalated permissions.
+- Branch: codex/fix-knowledge-backend-embedding-config
+- Scope: Knowledge page embedding configuration controls.
+- Latest baseline: Merged origin/main after PR #109 landed.
+- Changes: Removed Knowledge page embedding model selection and stopped posting embedding_model when creating a KB. The create form now displays the backend-configured embedding provider/model from /api/rag/knowledge-bases current_embeddings as read-only context.
+- PR: https://github.com/ferryhe/AI_actuarial_inforsearch/pull/110
+- Verification: python -m pytest tests/test_knowledge_react_source.py -q; python -m pytest tests/test_fastapi_rag_admin_endpoints.py -q; npm.cmd run build.
+- Pre-PR review gate: Blocked because `codex --help` fails with `Program 'codex.exe' failed to run: Access is denied`.
+- Merge readiness: Resolved post-PR-109 `.hermes/project-status.md` conflict by preserving this PR's current status on top of origin/main.
+- Browser smoke: http://127.0.0.1:5173/knowledge loaded with no framework overlay or console errors. Create KB panel showed the backend embedding read-only block and no embedding selector.
 - Notes: No sibling repositories were read or modified.
