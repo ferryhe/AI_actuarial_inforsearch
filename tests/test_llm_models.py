@@ -426,7 +426,7 @@ class TestGenericOpenAICompatibleFetching:
     def test_fetch_openai_compatible_models_uses_db_credentials_without_env(self):
         cache = ModelCache()
         mock_model = Mock()
-        mock_model.id = "deepseek-chat"
+        mock_model.id = "deepseek-v4-flash"
         mock_response = Mock()
         mock_response.data = [mock_model]
         mock_client = Mock()
@@ -453,7 +453,7 @@ class TestGenericOpenAICompatibleFetching:
         kwargs = mock_openai.OpenAI.call_args.kwargs
         assert kwargs["api_key"] == "db-deepseek-key"
         assert str(kwargs["base_url"]) == "https://db.deepseek.example/v1"
-        assert any(m["name"] == "deepseek-chat" for m in models)
+        assert any(m["name"] == "deepseek-v4-flash" for m in models)
 
 
 class TestGlobalAPI:
@@ -539,6 +539,13 @@ class TestDefaultModels:
 
         assert {"opendataloader", "markitdown", "docling"}.issubset(local_ocr_names)
         assert "mathpix" in mathpix_ocr_names
+
+    def test_deepseek_defaults_prefer_current_v4_models_and_keep_legacy_aliases(self):
+        deepseek_names = [model["name"] for model in DEFAULT_MODELS["deepseek"]]
+
+        assert deepseek_names[:2] == ["deepseek-v4-flash", "deepseek-v4-pro"]
+        assert "deepseek-chat" in deepseek_names
+        assert "deepseek-reasoner" in deepseek_names
 
     def test_build_models_from_ids_falls_back_for_unknown_modalities(self):
         models = _build_models_from_ids("openai", {"omni-moderation-latest"}, DEFAULT_MODELS["openai"])
