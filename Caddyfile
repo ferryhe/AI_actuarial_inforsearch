@@ -1,13 +1,14 @@
 www.aiinforsearch.com, aiinforsearch.com {
     handle /api/* {
-        reverse_proxy ai-api:5000
+        reverse_proxy api:5000
     }
 
     handle {
-        reverse_proxy ai-frontend:5173
+        reverse_proxy frontend:5173
     }
 }
 
 cross.aiactuary.cn {
+    # C-Ross runs on the host and binds to the ai-net bridge gateway.
     reverse_proxy 172.28.0.1:8501
 }
