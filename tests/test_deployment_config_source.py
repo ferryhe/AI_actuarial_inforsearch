@@ -20,3 +20,11 @@ def test_env_example_documents_comma_separated_cors_origins():
 
     assert "FASTAPI_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173" in src
     assert 'FASTAPI_CORS_ORIGINS=["' not in src
+
+
+def test_caddy_fail2ban_access_log_and_healthcheck_are_deployable():
+    src = (ROOT / "Caddyfile").read_text(encoding="utf-8")
+
+    assert "output file /data/access.log" in src
+    assert "/data/logs/access.log" not in src
+    assert "http://localhost:80 {\n\tbind 127.0.0.1 [::1]\n\trespond \"ok\" 200\n}" in src

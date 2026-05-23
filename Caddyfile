@@ -1,4 +1,21 @@
+(json_access_log) {
+	log {
+		output file /data/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+	}
+}
+
+http://localhost:80 {
+	bind 127.0.0.1 [::1]
+	respond "ok" 200
+}
+
 www.aiinforsearch.com, aiinforsearch.com {
+	import json_access_log
+
 	handle /api/* {
 		reverse_proxy api:5000
 	}
@@ -9,6 +26,8 @@ www.aiinforsearch.com, aiinforsearch.com {
 }
 
 cross.aiactuary.cn {
+	import json_access_log
+
 	# C-Ross runs on the host and binds to the ai-net bridge gateway.
 	reverse_proxy 172.28.0.1:8501
 }
