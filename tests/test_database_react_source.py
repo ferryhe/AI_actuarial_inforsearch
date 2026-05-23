@@ -9,6 +9,9 @@ def test_database_pagination_supports_direct_page_jump():
 
     assert "pageJumpInput" in src
     assert "handlePageJump" in src
+    assert "Number.parseInt(pageJumpInput" not in src
+    assert "/^\\d+$/.test(normalizedPage)" in src
+    assert "Number.isSafeInteger(parsedPage)" in src
     assert "setOffset((targetPage - 1) * PAGE_SIZE)" in src
     assert 'data-testid="input-page-jump"' in src
     assert 'data-testid="button-page-jump"' in src

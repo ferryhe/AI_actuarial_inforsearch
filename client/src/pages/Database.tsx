@@ -498,8 +498,13 @@ export default function DatabasePage() {
   }, [currentPage]);
 
   function handlePageJump() {
-    const parsedPage = Number.parseInt(pageJumpInput, 10);
-    if (!Number.isFinite(parsedPage)) {
+    const normalizedPage = pageJumpInput.trim();
+    if (!/^\d+$/.test(normalizedPage)) {
+      setPageJumpInput(String(currentPage));
+      return;
+    }
+    const parsedPage = Number(normalizedPage);
+    if (!Number.isSafeInteger(parsedPage)) {
       setPageJumpInput(String(currentPage));
       return;
     }
