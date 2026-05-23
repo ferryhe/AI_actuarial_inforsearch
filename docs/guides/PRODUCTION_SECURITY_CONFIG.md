@@ -29,9 +29,9 @@ Do not commit the server's real `.env` file.
 - Docker Compose uses `host.docker.internal:host-gateway` for host-side
   upstreams instead of publishing a fixed bridge subnet or gateway.
 - `config/sites.yaml` keeps safe public defaults for CSRF, CSP, and loopback
-  server binding. Production Compose passes `CONTENT_SECURITY_POLICY` only when
-  the server environment sets it, so the committed Compose files do not carry a
-  second inline CSP default.
+  server binding. Compose passes `CONTENT_SECURITY_POLICY` through from the
+  server environment; when it is unset or blank, the FastAPI app and Caddy use
+  their committed defaults instead of a second inline Compose default.
 
 ## Production startup
 

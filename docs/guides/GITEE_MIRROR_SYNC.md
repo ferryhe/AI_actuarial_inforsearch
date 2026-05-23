@@ -16,6 +16,6 @@ Do not store these values in the repository.
 1. Create or choose a Gitee token for `jghe` with repository write access.
 2. Add that token as the GitHub repository secret `GITEE_TOKEN`.
 3. Add `jghe` as the GitHub repository variable `GITEE_USER`.
-4. Make sure the Gitee repository exists and its `main` branch history is aligned with GitHub `main`; the workflow uses a normal push and intentionally does not force-push.
+4. Make sure the Gitee repository exists. If its `main` branch was initialized separately, the workflow will fetch it first and then update `main` with `--force-with-lease` so the mirror can converge without exposing the token in the remote URL.
 
 The workflow runs after every push to GitHub `main` and can also be run manually with `workflow_dispatch`.
