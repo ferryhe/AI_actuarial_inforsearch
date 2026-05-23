@@ -1347,3 +1347,76 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
     assert kwargs["payload"]["name"] == "Task Profile"
     assert kwargs["payload"]["chunk_size"] == 120
     assert kwargs["payload"]["chunk_overlap"] == 20
+
+
+def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selected_profile(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-chunk-profile.db"
+    download_dir = tmp_path / "files"
+    file_url = "https://example.com/profile-source.pdf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-profile-chunk",
+            title="Profile Source",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="profile-source.pdf",
+            local_path=str(tmp_path / "profile-source.pdf"),
+            bytes=12,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(file_url, "# Profile Markdown", "manual")
+        selected_profile = storage.create_chunk_profile(
+            name="Selected Profile",
+            chunk_size=300,
+            chunk_overlap=40,
+        )
+        other_profile = storage.create_chunk_profile(
+            name="Other Profile",
+            chunk_size=500,
+            chunk_overlap=80,
+        )
+        storage.get_or_create_file_chunk_set(
+            file_url=file_url,
+            profile_id=other_profile["profile_id"],
+            markdown_hash="other-profile-hash",
+            status="ready",
+        )
+    finally:
+        storage.close()
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime.generate_file_chunk_sets",
+        return_value={"chunk_set_id": "cs-selected", "chunk_count": 4, "reused_existing": False},
+    ) as mock_generate:
+        result = runtime._run_collection(
+            "task-chunk-profile",
+            "chunk_generation",
+            {
+                "profile_id": selected_profile["profile_id"],
+                "scan_count": "10",
+                "overwrite_same_profile": False,
+            },
+        )
+
+    assert result.success is True
+    assert result.items_found == 1
+    mock_generate.assert_called_once()
+    assert mock_generate.call_args.kwargs["payload"]["profile_id"] == selected_profile["profile_id"]

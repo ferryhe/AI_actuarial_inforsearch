@@ -649,9 +649,6 @@ export default function DatabasePage() {
             <FileSpreadsheet className="w-3.5 h-3.5" />
             {t("db.export_csv")}
           </button>
-          <span className="shrink-0 rounded-full border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-medium text-primary">
-            {t("db.fastapi_file_actions")}
-          </span>
         </div>
       </motion.div>
 

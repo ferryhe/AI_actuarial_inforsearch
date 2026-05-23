@@ -6,6 +6,19 @@ import { apiGet } from "@/lib/api";
 import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
+interface ChunkProfile {
+  profile_id: string;
+  name: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
+}
+
+interface KnowledgeBaseOption {
+  kb_id: string;
+  name?: string;
+  file_count?: number;
+}
+
 export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
   const { categories: dynamicCategories } = useTaskOptions();
@@ -18,6 +31,12 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
   const [splitter, setSplitter] = useState("semantic");
   const [tokenizer, setTokenizer] = useState("cl100k_base");
   const [profileName, setProfileName] = useState("");
+  const [profiles, setProfiles] = useState<ChunkProfile[]>([]);
+  const [profileSelection, setProfileSelection] = useState("__custom__");
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
+  const [bindToKb, setBindToKb] = useState(false);
+  const [selectedKbId, setSelectedKbId] = useState("");
+  const [bindingMode, setBindingMode] = useState("follow_latest");
   const [overwriteSameProfile, setOverwriteSameProfile] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -35,6 +54,20 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
   useEffect(() => { loadStats(); }, [loadStats]);
 
   useEffect(() => {
+    Promise.all([
+      apiGet<{ profiles?: ChunkProfile[]; data?: { profiles?: ChunkProfile[] } }>("/api/chunk/profiles").catch(() => null),
+      apiGet<{ knowledge_bases?: KnowledgeBaseOption[]; data?: { knowledge_bases?: KnowledgeBaseOption[] } }>("/api/rag/knowledge-bases").catch(() => null),
+    ]).then(([profileRes, kbRes]) => {
+      const nextProfiles = profileRes?.profiles || profileRes?.data?.profiles || [];
+      setProfiles(nextProfiles);
+      setProfileSelection((current) => current !== "__custom__" ? current : (nextProfiles[0]?.profile_id || "__custom__"));
+      const nextKbs = kbRes?.knowledge_bases || kbRes?.data?.knowledge_bases || [];
+      setKnowledgeBases(nextKbs);
+      setSelectedKbId((current) => current || nextKbs[0]?.kb_id || "");
+    });
+  }, []);
+
+  useEffect(() => {
     if (stats && !startIndex) {
       const first = stats.first_without_chunks_index;
       if (first != null) setStartIndex(String(first));
@@ -45,23 +78,39 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
     if (scopeMode === "category" && category.trim()) loadStats(category.trim());
   };
 
+  const usingCustomProfile = profileSelection === "__custom__";
+
   const buildTask = (): Record<string, unknown> | null => {
     if (scopeMode === "category" && !category.trim()) return null;
-    return {
+    if (bindToKb && !selectedKbId) return null;
+    if (!usingCustomProfile && !profileSelection) return null;
+    const task: Record<string, unknown> = {
       type: "chunk_generation",
       name: "Chunk Generation",
       scope_mode: scopeMode,
       category: scopeMode === "category" ? category : undefined,
       scan_count: parseInt(scanCount) || 50,
       scan_start_index: startIndex ? parseInt(startIndex) : undefined,
-      chunk_size: parseInt(chunkSize) || 800,
-      chunk_overlap: parseInt(chunkOverlap) || 100,
-      splitter,
-      tokenizer,
-      profile_name: profileName || undefined,
+      kb_id: bindToKb ? selectedKbId : undefined,
+      binding_mode: bindingMode,
       overwrite_same_profile: overwriteSameProfile,
     };
+    if (usingCustomProfile) {
+      task.chunk_size = parseInt(chunkSize) || 800;
+      task.chunk_overlap = parseInt(chunkOverlap) || 100;
+      task.splitter = splitter;
+      task.tokenizer = tokenizer;
+      task.profile_name = profileName || undefined;
+    } else {
+      task.profile_id = profileSelection;
+    }
+    return task;
   };
+
+  const formDisabled = submitting
+    || (scopeMode === "category" && !category.trim())
+    || (!usingCustomProfile && !profileSelection)
+    || (bindToKb && !selectedKbId);
 
   return (
     <div className="space-y-4">
@@ -99,42 +148,87 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
         </FormField>
       )}
       <div className="border-t border-border pt-3 mt-1">
-        <p className="text-xs font-medium text-muted-foreground mb-3">{t("tasks.form.chunk_params")}</p>
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label={t("tasks.form.chunk_size")} hint="64 – 8192">
-            <InputField value={chunkSize} onChange={setChunkSize} placeholder="800" type="number" testId="input-chunk-size" />
-          </FormField>
-          <FormField label={t("tasks.form.chunk_overlap")} hint="0 – 2048">
-            <InputField value={chunkOverlap} onChange={setChunkOverlap} placeholder="100" type="number" testId="input-chunk-overlap" />
-          </FormField>
-        </div>
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          <FormField label={t("tasks.form.splitter")}>
-            <SelectField value={splitter} onChange={setSplitter} testId="select-splitter"
-              options={[{ value: "semantic", label: "Semantic" }, { value: "recursive", label: "Recursive" }]} />
-          </FormField>
-          <FormField label={t("tasks.form.tokenizer")}>
-            <SelectField value={tokenizer} onChange={setTokenizer} testId="select-tokenizer"
-              options={[{ value: "cl100k_base", label: "cl100k_base" }, { value: "p50k_base", label: "p50k_base" }, { value: "o200k_base", label: "o200k_base" }]} />
-          </FormField>
-        </div>
-        <div className="mt-3">
-          <FormField label={t("tasks.form.chunk_profile")} hint={t("tasks.form.profile_hint")}>
-            <InputField value={profileName} onChange={setProfileName} placeholder="task-profile" testId="input-chunk-profile" />
-          </FormField>
-        </div>
+        <p className="text-xs font-medium text-muted-foreground mb-3">{t("tasks.form.chunk_profile")}</p>
+        <FormField label={t("tasks.form.chunk_profile")} hint={t("tasks.form.profile_hint")}>
+          <SelectField
+            value={profileSelection}
+            onChange={setProfileSelection}
+            testId="select-chunk-profile"
+            options={[
+              ...profiles.map((profile) => ({
+                value: profile.profile_id,
+                label: `${profile.name} (${profile.chunk_size}/${profile.chunk_overlap})`,
+              })),
+              { value: "__custom__", label: t("tasks.form.custom_chunk_profile") },
+            ]}
+          />
+        </FormField>
+        {usingCustomProfile && (
+          <div className="mt-3 space-y-3" data-testid="custom-chunk-profile-fields">
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={t("tasks.form.chunk_size")} hint="64 - 8192">
+                <InputField value={chunkSize} onChange={setChunkSize} placeholder="800" type="number" testId="input-chunk-size" />
+              </FormField>
+              <FormField label={t("tasks.form.chunk_overlap")} hint="0 - 2048">
+                <InputField value={chunkOverlap} onChange={setChunkOverlap} placeholder="100" type="number" testId="input-chunk-overlap" />
+              </FormField>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={t("tasks.form.splitter")}>
+                <SelectField value={splitter} onChange={setSplitter} testId="select-splitter"
+                  options={[{ value: "semantic", label: "Semantic" }, { value: "recursive", label: "Recursive" }]} />
+              </FormField>
+              <FormField label={t("tasks.form.tokenizer")}>
+                <SelectField value={tokenizer} onChange={setTokenizer} testId="select-tokenizer"
+                  options={[{ value: "cl100k_base", label: "cl100k_base" }, { value: "p50k_base", label: "p50k_base" }, { value: "o200k_base", label: "o200k_base" }]} />
+              </FormField>
+            </div>
+            <FormField label={t("tasks.form.new_chunk_profile_name")} hint={t("tasks.form.profile_hint")}>
+              <InputField value={profileName} onChange={setProfileName} placeholder="task-profile" testId="input-chunk-profile" />
+            </FormField>
+          </div>
+        )}
       </div>
-      <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        {t("tasks.form.chunk_kb_binding_notice")}
+      <div className="border-t border-border pt-3 mt-1 space-y-3">
+        <CheckboxField checked={bindToKb} onChange={setBindToKb}
+          label={t("tasks.form.bind_to_kb")} testId="checkbox-bind-to-kb" />
+        {bindToKb && (
+          <div className="grid grid-cols-2 gap-3" data-testid="chunk-kb-binding-fields">
+            <FormField label={t("tasks.form.kb_binding")}>
+              <SelectField
+                value={selectedKbId}
+                onChange={setSelectedKbId}
+                testId="select-bind-kb"
+                options={knowledgeBases.length === 0
+                  ? [{ value: "", label: t("tasks.form.no_knowledge_bases") }]
+                  : knowledgeBases.map((kb) => ({
+                    value: kb.kb_id,
+                    label: `${kb.name || kb.kb_id}${kb.file_count != null ? ` (${kb.file_count})` : ""}`,
+                  }))}
+              />
+            </FormField>
+            <FormField label={t("kb.binding_mode")}>
+              <SelectField
+                value={bindingMode}
+                onChange={setBindingMode}
+                testId="select-binding-mode"
+                options={[
+                  { value: "follow_latest", label: t("kb.follow_latest") },
+                  { value: "pin", label: t("kb.pinned") },
+                ]}
+              />
+            </FormField>
+          </div>
+        )}
       </div>
       <CheckboxField checked={overwriteSameProfile} onChange={setOverwriteSameProfile}
         label={t("tasks.form.overwrite_same_profile")} testId="checkbox-overwrite-profile" />
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
+      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={formDisabled}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);
         }} />
-      <ScheduleFromTaskButton buildTask={buildTask} disabled={scopeMode === "category" && !category.trim()} />
+      <ScheduleFromTaskButton buildTask={buildTask} disabled={formDisabled} />
     </div>
   );
 }

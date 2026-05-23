@@ -72,6 +72,7 @@ def test_each_task_form_exposes_add_to_schedule_control():
         "CatalogForm.tsx",
         "MarkdownForm.tsx",
         "ChunkForm.tsx",
+        "RagIndexForm.tsx",
     ]
 
     for form_name in form_names:
@@ -98,3 +99,42 @@ def test_task_options_uses_native_ai_config_response_contracts():
     assert "prov.filter(providerUsable).map(providerName)" in src
     assert "selectedEngineAvailable" in web_search_src
     assert "disabled={submitting || !query.trim() || !selectedEngineAvailable}" in web_search_src
+
+
+def test_tasks_page_restores_rag_indexing_task_form():
+    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
+    rag_src = (ROOT / "pages" / "tasks" / "RagIndexForm.tsx").read_text(encoding="utf-8")
+
+    assert 'type: "rag_index"' in tasks_src
+    assert 'apiType: "rag_indexing"' in tasks_src
+    assert "<RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />" in tasks_src
+    assert '"/api/rag/knowledge-bases"' in rag_src
+    assert 'type: "rag_indexing"' in rag_src
+    assert "kb_id: selectedKbId" in rag_src
+    assert "force_reindex: forceReindex" in rag_src
+    assert "ScheduleFromTaskButton" in rag_src
+
+
+def test_tasks_page_orders_markdown_before_catalog_and_links_create_kb():
+    src = TASKS_TSX.read_text(encoding="utf-8")
+
+    markdown_pos = src.index('type: "markdown"')
+    catalog_pos = src.index('type: "catalog"')
+    assert markdown_pos < catalog_pos
+    assert 'type: "create_kb"' in src
+    assert 'route: "/knowledge?open=create"' in src
+    assert "navigate(route)" in src
+
+
+def test_chunk_form_uses_existing_or_custom_chunk_profiles():
+    src = (ROOT / "pages" / "tasks" / "ChunkForm.tsx").read_text(encoding="utf-8")
+
+    assert '"/api/chunk/profiles"' in src
+    assert 'testId="select-chunk-profile"' in src
+    assert 'value: "__custom__"' in src
+    assert "task.profile_id = profileSelection" in src
+    assert 'profileSelection === "__custom__"' in src
+    assert 'testId="input-chunk-profile"' in src
+    assert 'testId="select-bind-kb"' in src
+    assert "binding_mode: bindingMode" in src
+    assert "kb_id: bindToKb ? selectedKbId : undefined" in src

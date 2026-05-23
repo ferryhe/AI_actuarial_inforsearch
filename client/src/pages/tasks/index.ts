@@ -13,4 +13,5 @@ export { WebSearchForm } from "./WebSearchForm";
 export { CatalogForm } from "./CatalogForm";
 export { MarkdownForm } from "./MarkdownForm";
 export { ChunkForm } from "./ChunkForm";
+export { RagIndexForm } from "./RagIndexForm";
 export * from "./Tasks.types";

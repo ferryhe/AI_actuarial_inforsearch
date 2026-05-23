@@ -131,6 +131,33 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
 
 
 
+def _seed_ready_chunk_set(db_path: Path, file_url: str, profile_id: str, *, text: str = "Chunk") -> dict[str, object]:
+    storage = Storage(str(db_path))
+    try:
+        chunk_set = storage.get_or_create_file_chunk_set(
+            file_url=file_url,
+            profile_id=profile_id,
+            markdown_hash=f"{file_url}:{profile_id}",
+            status="ready",
+        )
+        storage.replace_global_chunks(
+            chunk_set_id=chunk_set["chunk_set_id"],
+            chunks=[
+                {
+                    "chunk_index": 0,
+                    "content": text,
+                    "token_count": 2,
+                    "section_hierarchy": "Root",
+                }
+            ],
+            overwrite=True,
+        )
+        return chunk_set
+    finally:
+        storage.close()
+
+
+
 def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
@@ -146,6 +173,7 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/rag/knowledge-bases/{kb_id}/files/{file_url:path}" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/categories" in body["native_paths"]
     assert "/api/rag/categories/unmapped" in body["native_paths"]
+    assert "/api/rag/categories/stats" in body["native_paths"]
     assert "/api/rag/files/selectable" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files/pending" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/bindings" in body["native_paths"]
@@ -382,3 +410,181 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
     assert index.status_code == 202, index.text
     assert index.json()["kb_id"] == "kb-zero-overlap"
     assert str(index.json()["job_id"]).startswith("task_")
+
+
+def test_fastapi_rag_admin_create_kb_uses_existing_chunk_profile_bindings(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_profile = client.post(
+        "/api/chunk/profiles",
+        json={
+            "name": "kb-create-profile",
+            "chunk_size": 300,
+            "chunk_overlap": 50,
+            "splitter": "semantic",
+            "tokenizer": "cl100k_base",
+        },
+    )
+    assert create_profile.status_code == 201, create_profile.text
+    profile_id = create_profile.json()["profile"]["profile_id"]
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        chunk_set = storage.get_or_create_file_chunk_set(
+            file_url=alpha_url,
+            profile_id=profile_id,
+            markdown_hash="alpha-markdown-hash",
+            status="ready",
+        )
+        storage.replace_global_chunks(
+            chunk_set_id=chunk_set["chunk_set_id"],
+            chunks=[
+                {
+                    "chunk_index": 0,
+                    "content": "Alpha chunk",
+                    "token_count": 2,
+                    "section_hierarchy": "Alpha",
+                }
+            ],
+            overwrite=True,
+        )
+    finally:
+        storage.close()
+
+    selectable = client.get("/api/rag/files/selectable", params={"profile_id": profile_id})
+    assert selectable.status_code == 200, selectable.text
+    selectable_files = selectable.json()["files"]
+    assert [item["url"] for item in selectable_files] == [alpha_url]
+    assert selectable_files[0]["chunk_set_id"] == chunk_set["chunk_set_id"]
+    assert selectable_files[0]["chunk_profile_id"] == profile_id
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-existing-chunks",
+            "name": "Existing Chunks KB",
+            "kb_mode": "manual",
+            "chunk_profile_id": profile_id,
+            "file_urls": [alpha_url, beta_url],
+            "chunk_size": 9999,
+            "chunk_overlap": 888,
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    body = create_kb.json()
+    assert body["knowledge_base"]["chunk_size"] == 300
+    assert body["knowledge_base"]["chunk_overlap"] == 50
+    assert body["chunk_bindings"]["bound"] == 1
+    assert body["chunk_bindings"]["skipped_without_chunks"] == 1
+
+    files = client.get("/api/rag/knowledge-bases/kb-existing-chunks/files")
+    assert files.status_code == 200, files.text
+    assert [item["file_url"] for item in files.json()["files"]] == [alpha_url]
+
+    bindings = client.get("/api/rag/knowledge-bases/kb-existing-chunks/bindings")
+    assert bindings.status_code == 200, bindings.text
+    binding = bindings.json()["bindings"][0]
+    assert binding["file_url"] == alpha_url
+    assert binding["chunk_set_id"] == chunk_set["chunk_set_id"]
+    assert binding["binding_mode"] == "follow_latest"
+
+
+def test_fastapi_rag_admin_category_stats_and_kb_profile_metadata(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = seed["alpha_url"]
+
+    create_profile = client.post(
+        "/api/chunk/profiles",
+        json={
+            "name": "stats-profile",
+            "chunk_size": 256,
+            "chunk_overlap": 32,
+        },
+    )
+    assert create_profile.status_code == 201, create_profile.text
+    profile_id = create_profile.json()["profile"]["profile_id"]
+    _seed_ready_chunk_set(db_path, alpha_url, profile_id, text="Alpha ready chunk")
+
+    stats = client.post(
+        "/api/rag/categories/stats",
+        json={"categories": ["AI", "Risk"], "profile_id": profile_id},
+    )
+    assert stats.status_code == 200, stats.text
+    body = stats.json()
+    assert body["totals"]["total_files"] == 2
+    assert body["totals"]["markdown_files"] == 2
+    assert body["totals"]["ready_chunk_files"] == 1
+    by_name = {item["name"]: item for item in body["categories"]}
+    assert by_name["AI"]["ready_chunk_files"] == 1
+    assert by_name["Risk"]["ready_chunk_files"] == 0
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-profile-metadata",
+            "name": "Profile Metadata KB",
+            "kb_mode": "manual",
+            "chunk_profile_id": profile_id,
+            "file_urls": [alpha_url],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    created = create_kb.json()["knowledge_base"]
+    assert created["chunk_profile_id"] == profile_id
+    assert created["chunk_profile_name"] == "stats-profile"
+
+    detail = client.get("/api/rag/knowledge-bases/kb-profile-metadata")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["knowledge_base"]["chunk_profile_id"] == profile_id
+    assert detail.json()["knowledge_base"]["chunk_profile_name"] == "stats-profile"
+
+    listed = client.get("/api/rag/knowledge-bases")
+    assert listed.status_code == 200, listed.text
+    listed_kb = next(item for item in listed.json()["knowledge_bases"] if item["kb_id"] == "kb-profile-metadata")
+    assert listed_kb["chunk_profile_id"] == profile_id
+    assert listed_kb["chunk_profile_name"] == "stats-profile"
+
+
+def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = seed["alpha_url"]
+
+    create_profile = client.post("/api/chunk/profiles", json={"name": "bind-profile", "chunk_size": 256, "chunk_overlap": 32})
+    assert create_profile.status_code == 201, create_profile.text
+    profile_id = create_profile.json()["profile"]["profile_id"]
+    chunk_set = _seed_ready_chunk_set(db_path, alpha_url, profile_id, text="Bindable alpha chunk")
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-direct-bind",
+            "name": "Direct Bind KB",
+            "kb_mode": "manual",
+            "chunk_profile_id": profile_id,
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    bind = client.post(
+        "/api/rag/knowledge-bases/kb-direct-bind/bindings",
+        json={
+            "bindings": [
+                {
+                    "file_url": alpha_url,
+                    "chunk_set_id": chunk_set["chunk_set_id"],
+                    "binding_mode": "follow_latest",
+                }
+            ]
+        },
+    )
+    assert bind.status_code == 200, bind.text
+    assert bind.json()["created"] == 1
+
+    files = client.get("/api/rag/knowledge-bases/kb-direct-bind/files")
+    assert files.status_code == 200, files.text
+    assert [item["file_url"] for item in files.json()["files"]] == [alpha_url]
+    assert files.json()["files"][0]["chunk_set_id"] == chunk_set["chunk_set_id"]

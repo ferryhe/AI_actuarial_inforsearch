@@ -31,3 +31,9 @@ def test_database_file_rows_offer_ai_explain_via_chat_route_state():
     assert 'data-testid={`button-ai-explain-${i}`}' in src
     assert 'data-testid={`button-ai-explain-mobile-${i}`}' in src
     assert "disabled={!hasMd || isDeleted}" in src
+
+
+def test_database_header_does_not_render_fastapi_native_badge():
+    src = DATABASE_TSX.read_text(encoding="utf-8")
+
+    assert "db.fastapi_file_actions" not in src

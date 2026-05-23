@@ -966,11 +966,19 @@ class NativeTaskRuntime:
             "version": str(data.get("version") or "v1").strip(),
             "overwrite_same_profile": bool(data.get("overwrite_same_profile", False)),
         }
+        kb_id = str(data.get("kb_id") or "").strip()
+        binding_mode = str(data.get("binding_mode") or "follow_latest").strip().lower() or "follow_latest"
+        kb_manager = None
+        if kb_id:
+            kb_manager = KnowledgeBaseManager(storage)
+            if not kb_manager.get_kb(kb_id):
+                raise RuntimeError(f"Knowledge base '{kb_id}' not found")
 
         progress = self._progress_callback(task_id)
         errors: list[str] = []
         generated = 0
         skipped = 0
+        bound_to_kb = 0
         total_chunks = 0
         total = len(file_urls)
         progress(0, total, "Starting chunk generation")
@@ -984,6 +992,16 @@ class NativeTaskRuntime:
                     skipped += 1
                 else:
                     generated += 1
+                if kb_manager is not None and result.get("chunk_set_id"):
+                    kb_manager.add_files_to_kb(kb_id, [file_url])
+                    storage.bind_chunk_set_to_kb(
+                        kb_id=kb_id,
+                        file_url=file_url,
+                        chunk_set_id=str(result["chunk_set_id"]),
+                        bound_by="chunk_generation",
+                        binding_mode=binding_mode,
+                    )
+                    bound_to_kb += 1
                 total_chunks += int(result.get("chunk_count") or 0)
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{file_url}: {exc}")
@@ -1001,6 +1019,8 @@ class NativeTaskRuntime:
                 "chunk_size": chunk_size,
                 "chunk_overlap": chunk_overlap,
                 "total_chunks": total_chunks,
+                "kb_id": kb_id or None,
+                "bound_to_kb": bound_to_kb,
             },
         )
 
@@ -1149,7 +1169,12 @@ class NativeTaskRuntime:
             AND c.markdown_content != ''
         """ + category_sql
         if not bool(data.get("overwrite_same_profile", False)):
-            where += " AND NOT EXISTS (SELECT 1 FROM file_chunk_sets s WHERE s.file_url = f.url)"
+            profile_id = str(data.get("profile_id") or "").strip()
+            if profile_id:
+                where += " AND NOT EXISTS (SELECT 1 FROM file_chunk_sets s WHERE s.file_url = f.url AND s.profile_id = ?)"
+                params.append(profile_id)
+            else:
+                where += " AND NOT EXISTS (SELECT 1 FROM file_chunk_sets s WHERE s.file_url = f.url)"
         limit = self._positive_int(data.get("scan_count"), 50)
         offset = max(0, self._positive_int(data.get("scan_start_index"), 1) - 1)
         rows = storage._conn.execute(

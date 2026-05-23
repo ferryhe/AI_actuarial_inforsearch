@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, Square, Clock, CheckCircle2, XCircle, Loader2, RefreshCw,
@@ -21,6 +22,7 @@ import { WebSearchForm } from "./tasks/WebSearchForm";
 import { CatalogForm } from "./tasks/CatalogForm";
 import { MarkdownForm } from "./tasks/MarkdownForm";
 import { ChunkForm } from "./tasks/ChunkForm";
+import { RagIndexForm } from "./tasks/RagIndexForm";
 import { FilterBar } from "./tasks/FilterBar";
 import { TaskCard, statusBadge, formatDate } from "./tasks/TaskCard";
 import { TaskTable } from "./tasks/TaskTable";
@@ -34,9 +36,11 @@ const taskTypes = [
   { type: "adhoc_url", apiType: "url", icon: Link2, color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   { type: "file_import", apiType: "file", icon: FileUp, color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
   { type: "web_search", apiType: "search", icon: Search, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-  { type: "catalog", apiType: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   { type: "markdown", apiType: "markdown_conversion", icon: FileText, color: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
+  { type: "catalog", apiType: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   { type: "chunk", apiType: "chunk_generation", icon: Layers, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+  { type: "create_kb", apiType: "create_kb", route: "/knowledge?open=create", icon: FolderOpen, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
+  { type: "rag_index", apiType: "rag_indexing", icon: Zap, color: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
 ];
 
 const fadeUp = {
@@ -50,6 +54,7 @@ const fadeUp = {
 
 export default function Tasks() {
   const { t } = useTranslation();
+  const [, navigate] = useLocation();
   const { user, isLoggedIn } = useAuth();
   const isGuest = !isLoggedIn || user?.role === "guest";
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
@@ -182,6 +187,7 @@ export default function Tasks() {
       case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "rag_index": return <RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />;
       default: return null;
     }
   }
@@ -260,9 +266,17 @@ export default function Tasks() {
           ) : (
             <motion.div key="grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="grid grid-cols-3 sm:grid-cols-5 gap-3">
-              {taskTypes.map(({ type, icon: Icon, color }, i) => (
+              {taskTypes.map(({ type, icon: Icon, color, route }, i) => (
                 <motion.button key={type} custom={i} variants={fadeUp} initial="hidden" animate="visible"
-                  onClick={() => { setActiveForm(type); setSubmitError(null); setSubmitSuccess(null); }}
+                  onClick={() => {
+                    if (route) {
+                      navigate(route);
+                      return;
+                    }
+                    setActiveForm(type);
+                    setSubmitError(null);
+                    setSubmitSuccess(null);
+                  }}
                   className="flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:shadow-md transition-all duration-300"
                   data-testid={`button-start-${type}`}>
                   <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", color)}>

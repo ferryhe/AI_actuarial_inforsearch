@@ -582,6 +582,9 @@ class Storage:
         if "embedding_dimension" not in existing:
             self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_dimension INTEGER")
             changed = True
+        if "chunk_profile_id" not in existing:
+            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN chunk_profile_id TEXT")
+            changed = True
         rows = self._conn.execute(
             """
             SELECT kb_id, embedding_provider, embedding_model, embedding_dimension
