@@ -20,9 +20,9 @@ def test_chat_document_explain_posts_markdown_document_context():
     assert "data?: { markdown?" not in src
     assert "res.data?.markdown" not in src
     assert "sendMessage({ text: questionText, document: doc })" in src
-    assert "document_content: documentContext.content" in src
-    assert "document_filename: documentContext.filename" in src
-    assert "document_file_url: documentContext.fileUrl" in src
+    assert "document_content: documentContexts[0].content" in src
+    assert "document_filename: documentContexts[0].filename" in src
+    assert "document_file_url: documentContexts[0].fileUrl" in src
     assert "setInput(questionText)" not in src
 
 
@@ -49,6 +49,20 @@ def test_chat_document_sidebar_uses_multi_category_filter_and_filename_only_rows
     assert "button-clear-doc-categories" in src
     assert "{doc.filename || doc.title}" in src
     assert "doc.keywords.slice(0, 3).join" not in src
+
+
+def test_chat_document_sidebar_supports_multi_document_comparison():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+
+    assert "selectedCompareDocs" in src
+    assert "toggleCompareDocument" in src
+    assert "compareSelectedDocuments" in src
+    assert "document_sources: documentContexts.map" in src
+    assert "setMode(\"comparison\")" in src
+    assert "chat.compare_documents" in src
+    assert "chat.compare_selected_count" in src
+    assert 'data-testid="button-compare-selected-documents"' in src
+    assert 'data-testid={`button-toggle-compare-document-${i}`}' in src
 
 
 def test_chat_citation_links_use_react_file_routes():
