@@ -449,7 +449,7 @@ def api_tasks_stop(
 def api_collections_run(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+    auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
     """
     Trigger an immediate on-demand collection (crawl + ingestion) for one
@@ -478,7 +478,7 @@ def api_collections_run(
         403: If the caller lacks the ``tasks.run`` permission.
     """
     try:
-        return start_collection(payload, bridge=_bridge(request))
+        return start_collection(payload, bridge=_bridge(request), auth_token=auth.token)
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 

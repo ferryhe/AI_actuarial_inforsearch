@@ -1,24 +1,18 @@
 # Project Status
 
 - Date: 2026-05-24
-- Branch: `fix/rbac-chat-i18n`
-- Latest baseline: latest `origin/main` when the branch was created.
-- Scope: Tighten RBAC for anonymous/registered/operator/admin users and fix chat/login/register i18n gaps. Sibling repositories were not read or modified.
-- Backend RBAC: Guest/anonymous permissions are limited to public database/file/markdown reads plus chat view/query; anonymous stats, tasks, and conversation listing were removed. Registered users keep read-only access; operators can run/stop/schedule tasks but do not get `config.write`, token management, or user management; admins retain full configuration/user/token access.
-- Backend compatibility: legacy auth group names are normalized (`anonymous`→`guest`, `reader`→`registered`, `operator_ai`→`operator`) before deriving permissions.
-- Frontend RBAC: route guards and task UI now use explicit permission checks. Guest users do not see task controls; signed-in readers get read-only task/history access; operators get run/stop/schedule actions; settings/users remain admin-only.
-- Chat i18n: retrieved citation actions now use `chat.file_detail` and `chat.preview` instead of hardcoded Chinese labels.
-- Auth i18n: `/login` and `/register` now use i18n keys for headings, labels, buttons, errors, token controls, and helper text; both pages include a language toggle and a `Back to home`/`返回主页` link.
-- Review decision: local Codex review flagged operator loss of `config.write` on KB mutation endpoints. This was not applied because the current user requirement says only admins can change settings and operators should execute tasks/task settings, not important configuration.
-- Verification passed: `python -m pytest tests/test_auth_react_source.py tests/test_chat_react_source.py tests/unit/test_permissions.py -q` (28 passed, 3 warnings).
-- Verification passed: `python -m pytest tests/unit/test_permissions.py tests/test_auth_react_source.py tests/test_chat_react_source.py tests/test_fastapi_auth_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_fastapi_rag_admin_endpoints.py tests/test_fastapi_file_preview.py tests/test_fastapi_chat_endpoints.py tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_read_endpoints.py -q` (100 passed, 3 warnings).
-- Verification passed: `npm run build` (passed with the existing Vite large-chunk warning).
+- Branch: `feat/browser-file-import-batches`
+- Latest baseline: latest `origin/main` when this branch was created.
+- Scope: PR1 security hardening for browser-selected local file import batches. Sibling repositories were not read or modified.
+- Backend: Added `/api/files/import-batches` multipart upload endpoint gated by `tasks.run`; uploaded files are staged under an import-batch root with per-file/total limits, path traversal checks, owner checks, duplicate relative-path checks, and an allowlist covering supported import extensions including EPUB.
+- Backend: Immediate file collections now require `upload_batch_id`; `directory_path` is rejected and removed from task payloads so the server no longer imports arbitrary server filesystem paths from user input.
+- Backend: Runtime file collection consumes staged batch file paths and applies the selected extension filter during collection. Browser-selected original relative paths and filenames are preserved for staged files.
+- Backend: Scheduled `file` tasks are rejected server-side because browser upload batches are one-shot immediate imports and cannot be safely replayed by the scheduler.
+- Frontend: File import UI now uses browser file/folder pickers plus `FormData`, removes the server-side `FolderBrowser`, filters selected files by the chosen extensions before upload, and disables scheduling for file imports.
+- Frontend i18n: Added Chinese/English strings for browser-based file upload labels, hints, errors, and uploading state.
+- Local browser smoke passed on Vite/FastAPI: `/tasks` as operator, opened File Import, uploaded a PDF plus TXT sidecar batch through `/api/files/import-batches`, launched `/api/collections/run` with `upload_batch_id`, and confirmed task completion with no browser console errors.
+- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_ops_write_endpoints.py tests/test_fastapi_ops_read_endpoints.py tests/test_tasks_react_source.py -q` (39 passed, 3 warnings).
+- Verification passed: `npm run build` (passed with existing Vite large-chunk warning).
 - Verification passed: `git diff --check` (passed).
-- Browser smoke passed on local Vite/FastAPI: `/login` Chinese view shows `返回主页`, `登录`, `邮箱`, `密码`, `注册`; token tab shows Chinese token labels and controls; `/register` Chinese view shows `返回主页`, `创建账号`, `显示名称`, `邮箱`, `密码`, `确认密码`, `创建账号`; English register view still renders correctly.
-- PR #117 follow-up: pulled latest `fix/rbac-chat-i18n`; inspected CI and Copilot review comments. Copilot reported 3 inline comments; all were confirmed valid/in-scope and addressed. CI `python-smoke` failed because task history now requires `tasks.view`; the smoke fixture now bootstraps and uses an admin token for that protected endpoint.
-- PR #117 follow-up verification passed: `FASTAPI_SESSION_SECRET=ci-fastapi-session-secret TOKEN_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= python -m pytest tests/test_fastapi_entrypoint.py tests/unit/test_permissions.py tests/test_auth_react_source.py -q` (28 passed, 3 warnings).
-- PR #117 follow-up verification passed: `FASTAPI_SESSION_SECRET=ci-fastapi-session-secret TOKEN_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py -q` (13 passed, 3 warnings).
-- PR #117 follow-up verification passed: `npm run build` (passed with the existing Vite large-chunk warning).
-- PR #117 follow-up verification passed: `git diff --check` (passed).
-- PR #117 local Codex review gate: first run timed out after invoking a focused pytest without CI env; rerun in read-only/diff-only mode completed with `No findings`.
-- Known out-of-scope full-suite failures from earlier investigation: `test_fastapi_entrypoint.py` CSRF secret setup when local env lacks `FASTAPI_SESSION_SECRET`, `test_code_review_fixes.py`/`test_fastapi_react_cleanup.py` path assumptions, and `test_safe_pickle.py` pickle safety assertions.
+- Local Codex review gate: first run found valid issues around scheduled file tasks and upload allowlist; fixes were applied. Final `codex -c 'model="gpt-5.5"' review --uncommitted` completed with `No discrete, actionable correctness issues`.
+- Next step: commit, push, create PR1, then check CI and remote comments before moving to PR2 SSRF protection.

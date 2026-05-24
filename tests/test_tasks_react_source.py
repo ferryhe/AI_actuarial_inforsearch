@@ -81,6 +81,25 @@ def test_each_task_form_exposes_add_to_schedule_control():
         assert "buildTask" in src or "buildCollectionTask" in src, form_name
 
 
+def test_file_import_form_uses_browser_upload_batches_not_server_folder_browser():
+    src = (ROOT / "pages" / "tasks" / "FileImportForm.tsx").read_text(encoding="utf-8")
+    api_src = (ROOT / "lib" / "api.ts").read_text(encoding="utf-8")
+    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
+
+    assert '"/api/files/import-batches"' in src
+    assert "apiPostForm" in src
+    assert 'data-testid="input-local-files"' in src
+    assert 'data-testid="input-local-directory"' in src
+    assert "upload_batch_id" in src
+    assert "directory_path" not in src
+    assert "FolderBrowser" not in src
+    assert "FolderBrowser" not in tasks_src
+    assert "body instanceof FormData" in api_src
+    assert "fileMatchesExtensions" in src
+    assert "selectedExtensions" in src
+    assert "appendFiles(formData" in src
+
+
 def test_recommended_markdown_conversion_tools_are_in_frontend_defaults():
     src = (ROOT / "hooks" / "use-task-options.ts").read_text(encoding="utf-8")
     settings_src = (ROOT / "pages" / "Settings.tsx").read_text(encoding="utf-8")

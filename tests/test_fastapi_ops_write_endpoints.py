@@ -11,6 +11,7 @@ from cryptography.fernet import Fernet
 
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.storage import Storage
+from ai_actuarial.task_runtime import NativeTaskRuntime
 from tests.test_fastapi_ops_read_endpoints import (
     _build_test_client,
     _make_session_cookie,
@@ -387,6 +388,20 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
         assert invalid_response.status_code == 400, invalid_response.text
         assert "Invalid schedule interval" in invalid_response.text
 
+    file_schedule_response = client.post(
+        "/api/scheduled-tasks/add",
+        json={
+            "name": "Legacy File Schedule",
+            "type": "file",
+            "interval": "daily",
+            "enabled": True,
+            "params": {"directory_path": "/tmp"},
+        },
+        headers=headers,
+    )
+    assert file_schedule_response.status_code == 400, file_schedule_response.text
+    assert "Invalid task type: file" in file_schedule_response.text
+
     add_response = client.post(
         "/api/scheduled-tasks/add",
         json={
@@ -469,7 +484,7 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
 
 
 
-def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, monkeypatch) -> None:
+def test_upload_batch_then_run_file_collection_uses_batch_not_server_path(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
@@ -491,21 +506,38 @@ def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, mo
     assert stop_response.status_code == 200, stop_response.text
     assert active_tasks["task-live"]["stop_requested"] is True
 
-    invalid_response = client.post("/api/collections/run", json={"type": "file", "directory_path": "/does/not/exist"}, headers=headers)
-    assert invalid_response.status_code == 400
-    assert invalid_response.json()["error"] == "Invalid directory path"
+    server_path_response = client.post("/api/collections/run", json={"type": "file", "directory_path": "/does/not/exist"}, headers=headers)
+    assert server_path_response.status_code == 400
+    assert server_path_response.json()["error"] == "File imports must use an upload batch"
 
-    real_dir = tmp_path / "import-me"
-    real_dir.mkdir(parents=True, exist_ok=True)
-    (real_dir / "bulletin.pdf").write_text("fake pdf", encoding="utf-8")
+    upload_response = client.post(
+        "/api/files/import-batches",
+        data={"relative_paths": ["reports/bulletin.pdf", "reports/notes.txt", "books/manual.epub"]},
+        files=[
+            ("files", ("bulletin.pdf", b"fake pdf", "application/pdf")),
+            ("files", ("notes.txt", b"side note", "text/plain")),
+            ("files", ("manual.epub", b"fake epub", "application/epub+zip")),
+        ],
+        headers=headers,
+    )
+    assert upload_response.status_code == 201, upload_response.text
+    upload_body = upload_response.json()
+    assert upload_body["success"] is True
+    assert upload_body["file_count"] == 3
+    assert upload_body["total_bytes"] == len(b"fake pdf") + len(b"side note") + len(b"fake epub")
+    assert [item["relative_path"] for item in upload_body["files"]] == ["reports/bulletin.pdf", "reports/notes.txt", "books/manual.epub"]
+    staged_paths = [Path(item["stored_path"]) for item in upload_body["files"]]
+    assert [str(path.relative_to(path.parents[2] / "files")) for path in staged_paths] == ["reports/bulletin.pdf", "reports/notes.txt", "books/manual.epub"]
+    batch_id = upload_body["upload_batch_id"]
+    runtime_paths = NativeTaskRuntime()._collect_file_paths({"upload_batch_id": batch_id, "extensions": ["pdf"]})
+    assert [Path(path).name for path in runtime_paths] == ["bulletin.pdf"]
+
     run_response = client.post(
         "/api/collections/run",
         json={
             "type": "file",
             "name": "Import PDFs",
-            "directory_path": str(real_dir),
-            "extensions": ["pdf"],
-            "recursive": True,
+            "upload_batch_id": batch_id,
         },
         headers=headers,
     )
@@ -514,7 +546,39 @@ def test_run_collection_and_stop_use_fastapi_native_endpoints(tmp_path: Path, mo
     assert run_body["success"] is True
     assert run_body["job_id"] == "task-fastapi-bridge"
     assert recorder.started[-1][0] == "file"
-    assert recorder.started[-1][1]["directory_path"] == str(real_dir)
+    assert recorder.started[-1][1]["upload_batch_id"] == batch_id
+    assert "directory_path" not in recorder.started[-1][1]
+
+
+def test_import_batch_rejects_readers_and_path_traversal(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+
+    reader_response = client.post(
+        "/api/files/import-batches",
+        data={"relative_paths": ["bulletin.pdf"]},
+        files={"files": ("bulletin.pdf", b"fake pdf", "application/pdf")},
+        headers={"Authorization": f"Bearer {seed['reader_token']}"},
+    )
+    assert reader_response.status_code == 403
+
+    traversal_response = client.post(
+        "/api/files/import-batches",
+        data={"relative_paths": ["../escape.pdf"]},
+        files={"files": ("escape.pdf", b"fake pdf", "application/pdf")},
+        headers={"X-Auth-Token": seed["operator_token"]},
+    )
+    assert traversal_response.status_code == 400
+    assert traversal_response.json()["error"] == "Invalid relative path"
+
+    unsupported_response = client.post(
+        "/api/files/import-batches",
+        data={"relative_paths": ["malware.exe"]},
+        files={"files": ("malware.exe", b"fake exe", "application/octet-stream")},
+        headers={"X-Auth-Token": seed["operator_token"]},
+    )
+    assert unsupported_response.status_code == 400
+    assert unsupported_response.json()["error"] == "Unsupported file type"
 
 
 
@@ -527,18 +591,21 @@ def test_schedule_reinit_and_file_collection_work_with_native_bridge(tmp_path: P
     assert reinit_response.status_code == 200, reinit_response.text
     assert reinit_response.json()["job_count"] >= 1
 
-    real_dir = tmp_path / "native-import"
-    real_dir.mkdir(parents=True, exist_ok=True)
-    (real_dir / "native.pdf").write_text("fake pdf", encoding="utf-8")
+    upload_response = client.post(
+        "/api/files/import-batches",
+        data={"relative_paths": ["native.pdf"]},
+        files={"files": ("native.pdf", b"fake pdf", "application/pdf")},
+        headers=headers,
+    )
+    assert upload_response.status_code == 201, upload_response.text
 
     run_response = client.post(
         "/api/collections/run",
         json={
             "type": "file",
             "name": "Native Import",
-            "directory_path": str(real_dir),
+            "upload_batch_id": upload_response.json()["upload_batch_id"],
             "extensions": ["pdf"],
-            "recursive": True,
         },
         headers=headers,
     )

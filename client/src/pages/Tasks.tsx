@@ -17,7 +17,6 @@ import { ScheduledTasksSection } from "./tasks/ScheduledTasksSection";
 import { WebCrawlForm } from "./tasks/WebCrawlForm";
 import { AdhocUrlForm } from "./tasks/AdhocUrlForm";
 import { FileImportForm } from "./tasks/FileImportForm";
-import { FolderBrowser } from "./tasks/FolderBrowser";
 import { WebSearchForm } from "./tasks/WebSearchForm";
 import { CatalogForm } from "./tasks/CatalogForm";
 import { MarkdownForm } from "./tasks/MarkdownForm";

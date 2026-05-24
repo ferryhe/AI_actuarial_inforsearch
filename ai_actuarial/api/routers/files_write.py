@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from ai_actuarial.config import settings
 from ..deps import AuthContext, require_permissions
+from ..services.import_batches import ImportBatchError, create_import_batch
 from ..services.files_write import (
     FileWriteError,
     delete_file_record,
@@ -66,6 +67,20 @@ def _require_config_write_token(request: Request) -> JSONResponse | None:
     if not provided_token or provided_token != expected_token:
         return JSONResponse(status_code=403, content={"error": "Forbidden"})
     return None
+
+
+@router.post("/files/import-batches")
+async def api_files_import_batches(
+    files: list[UploadFile],
+    request: Request,
+    relative_paths: list[str] = Form(default=[]),
+    auth: AuthContext = Depends(require_permissions("tasks.run")),
+):
+    try:
+        result = await create_import_batch(files=files, relative_paths=relative_paths, auth_token=auth.token)
+        return JSONResponse(status_code=201, content=result)
+    except ImportBatchError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
 @router.post("/files/update")
