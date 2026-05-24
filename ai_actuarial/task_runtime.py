@@ -663,8 +663,12 @@ class NativeTaskRuntime:
             raise RuntimeError(f"Knowledge base '{kb_id}' not found")
 
         category_sync: dict[str, Any] | None = None
-        if getattr(kb, "kb_mode", "") == "category":
+        all_sync: dict[str, Any] | None = None
+        kb_mode = getattr(kb, "kb_mode", "")
+        if kb_mode == "category":
             category_sync = manager.sync_category_files(kb_id)
+        elif kb_mode == "all":
+            all_sync = manager.sync_all_files(kb_id, profile_id=getattr(kb, "chunk_profile_id", ""))
 
         force_reindex = bool(data.get("force_reindex", False) or data.get("reindex_all", False))
         incremental = bool(data.get("incremental", True))
@@ -735,6 +739,7 @@ class NativeTaskRuntime:
                 "error_files": int(stats.get("error_files") or 0),
                 "stopped": stopped,
                 "category_sync": category_sync,
+                "all_sync": all_sync,
             },
         )
 

@@ -221,6 +221,29 @@ def _sync_category_kb_files(
     return sync_result, binding_result
 
 
+def _sync_all_kb_files(
+    manager: Any,
+    storage: Storage,
+    *,
+    kb_id: str,
+    profile_id: str,
+    bound_by: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    sync_result = manager.sync_all_files(kb_id, profile_id=profile_id)
+    binding_result = None
+    synced_file_urls = list(sync_result.get("file_urls") or [])
+    if profile_id and synced_file_urls:
+        binding_result = _bind_existing_chunk_sets(
+            storage,
+            kb_id=kb_id,
+            file_urls=synced_file_urls,
+            profile_id=profile_id,
+            requested_count=len(synced_file_urls),
+            bound_by=bound_by,
+        )
+    return sync_result, binding_result
+
+
 
 def _kb_id(value: Any) -> str:
     kb_id = _norm(value)
@@ -665,8 +688,8 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
     if not name:
         raise RagAdminError("name is required")
     kb_mode = _norm(payload.get("kb_mode") or "manual").lower()
-    if kb_mode not in {"manual", "category"}:
-        raise RagAdminError("kb_mode must be 'category' or 'manual'")
+    if kb_mode not in {"manual", "category", "all"}:
+        raise RagAdminError("kb_mode must be one of: 'all', 'category', or 'manual'")
     categories = _list(payload.get("categories"), "categories")
     file_urls = _list(payload.get("file_urls"), "file_urls")
     if kb_mode == "category" and not categories:
@@ -700,6 +723,7 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
         )
         chunk_binding_result: dict[str, Any] | None = None
         category_sync_result: dict[str, Any] | None = None
+        all_sync_result: dict[str, Any] | None = None
         if kb_mode == "category":
             if chunk_profile_id:
                 manager.link_kb_to_categories(kb_id, categories, auto_sync=False)
@@ -713,6 +737,14 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
                 )
             else:
                 manager.link_kb_to_categories(kb_id, categories)
+        elif kb_mode == "all":
+            all_sync_result, chunk_binding_result = _sync_all_kb_files(
+                manager,
+                storage,
+                kb_id=kb_id,
+                profile_id=chunk_profile_id,
+                bound_by="kb_create_all_sync",
+            )
         elif file_urls:
             if chunk_profile_id:
                 bindable_file_urls = _unique_existing_chunk_file_urls(
@@ -737,6 +769,8 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
             response["chunk_profile"] = chunk_profile
         if category_sync_result is not None:
             response["category_sync"] = category_sync_result
+        if all_sync_result is not None:
+            response["all_sync"] = all_sync_result
         if chunk_binding_result is not None:
             response["chunk_bindings"] = chunk_binding_result
         return response
@@ -1314,8 +1348,10 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         category_sync_result = None
+        all_sync_result = None
         chunk_binding_result = None
-        if getattr(kb, "kb_mode", "") == "category":
+        kb_mode = getattr(kb, "kb_mode", "")
+        if kb_mode == "category":
             categories = manager.get_kb_categories(kid)
             profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
             if categories:
@@ -1327,6 +1363,15 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
                     profile_id=profile_id,
                     bound_by="kb_index_category_sync",
                 )
+        elif kb_mode == "all":
+            profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
+            all_sync_result, chunk_binding_result = _sync_all_kb_files(
+                manager,
+                storage,
+                kb_id=kid,
+                profile_id=profile_id,
+                bound_by="kb_index_all_sync",
+            )
         user_requested = bool(requested)
         files_to_index = requested
         if not files_to_index:
@@ -1379,16 +1424,21 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
             extra_fields={"kb_id": kid, "kb_name": kb.name, "rag_file_count": len(files_to_index)},
         )
 
-        return {
+        response = {
             "job_id": task_id,
             "kb_id": kid,
             "file_count": len(files_to_index),
             "skipped_no_markdown": skipped_no_markdown,
             "force_reindex": force_reindex,
             "incremental": incremental,
-            "category_sync": category_sync_result,
-            "chunk_bindings": chunk_binding_result,
-        }, 202
+        }
+        if category_sync_result is not None:
+            response["category_sync"] = category_sync_result
+        if all_sync_result is not None:
+            response["all_sync"] = all_sync_result
+        if chunk_binding_result is not None:
+            response["chunk_bindings"] = chunk_binding_result
+        return response, 202
     finally:
         storage.close()
 

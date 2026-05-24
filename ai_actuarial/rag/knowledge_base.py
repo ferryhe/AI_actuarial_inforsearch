@@ -980,6 +980,60 @@ class KnowledgeBaseManager:
 
     def _sync_category_files(self, kb_id: str, categories: List[str]):
         self.sync_category_files(kb_id, categories)
+
+    def sync_all_files(self, kb_id: str, profile_id: str = "") -> Dict[str, Any]:
+        """Add all eligible markdown files to a KB, optionally constrained to a ready chunk profile."""
+        profile_id = str(profile_id or "").strip()
+        profile_filter = ""
+        params: list[Any] = []
+        if profile_id:
+            profile_filter = """
+                AND EXISTS (
+                    SELECT 1
+                    FROM file_chunk_sets s
+                    WHERE s.file_url = f.url
+                      AND s.profile_id = ?
+                      AND s.status = 'ready'
+                      AND COALESCE(s.chunk_count, 0) > 0
+                )
+            """
+            params.append(profile_id)
+
+        cursor = self.storage._conn.execute(
+            f"""
+            SELECT DISTINCT f.url
+            FROM files f
+            JOIN catalog_items c ON c.file_url = f.url
+            WHERE f.deleted_at IS NULL
+              AND c.status = 'ok'
+              AND c.markdown_content IS NOT NULL
+              AND c.markdown_content != ''
+              {profile_filter}
+            ORDER BY f.last_seen DESC, f.id DESC
+            """,
+            params,
+        )
+        file_urls = [row[0] for row in cursor.fetchall()]
+        before_urls = {
+            str(row.get("file_url") or "").strip()
+            for row in self.get_kb_files(kb_id)
+            if str(row.get("file_url") or "").strip()
+        }
+        added_file_urls = [file_url for file_url in file_urls if file_url not in before_urls]
+
+        add_result = {"added_count": 0, "skipped_count": 0, "total_files": len(before_urls)}
+        if file_urls:
+            add_result = self.add_files_to_kb(kb_id, file_urls)
+
+        return {
+            "kb_id": kb_id,
+            "profile_id": profile_id,
+            "file_urls": file_urls,
+            "added_file_urls": added_file_urls,
+            "added_count": int(add_result.get("added_count") or 0),
+            "skipped_count": int(add_result.get("skipped_count") or 0),
+            "total_files": int(add_result.get("total_files") or 0),
+        }
     
     def get_kb_categories(self, kb_id: str) -> List[str]:
         """

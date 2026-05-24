@@ -121,12 +121,15 @@ function StatusBadge({ status }: { status?: string }) {
 function ModeBadge({ mode }: { mode?: string }) {
   if (!mode) return null;
   const isCategory = mode === "category";
+  const isAll = mode === "all";
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full",
         isCategory
           ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+          : isAll
+            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
           : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
       )}
     >
@@ -225,7 +228,7 @@ export default function Knowledge() {
       return;
     }
     setSelectableFilesLoading(true);
-    const params = new URLSearchParams({ limit: "50" });
+    const params = new URLSearchParams({ limit: "500" });
     params.set("profile_id", kbForm.chunk_profile_id);
     const normalizedQuery = query.trim();
     if (normalizedQuery) params.set("query", normalizedQuery);
@@ -286,7 +289,10 @@ export default function Knowledge() {
     setKbActionError(null);
     setKbActionNotice(null);
     try {
-      await apiPost("/api/rag/knowledge-bases", {
+      const createResponse = await apiPost<{
+        category_sync?: { added_count?: number };
+        all_sync?: { added_count?: number };
+      }>("/api/rag/knowledge-bases", {
         kb_id: finalKbId,
         name: kbForm.name,
         description: kbForm.description,
@@ -295,16 +301,37 @@ export default function Knowledge() {
         kb_mode: kbForm.kb_mode,
         chunk_profile_id: kbForm.chunk_profile_id,
       });
+      let indexFailed = false;
+      let indexErrorDetail = "";
       if (createAndIndex) {
-        await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(finalKbId)}/index`, {
-          incremental: true,
-        });
+        try {
+          await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(finalKbId)}/index`, {
+            incremental: true,
+          });
+        } catch (indexErr) {
+          console.error("Failed to start KB index task:", indexErr);
+          indexFailed = true;
+          indexErrorDetail = indexErr instanceof ApiError
+            ? indexErr.detail || indexErr.message
+            : indexErr instanceof Error
+              ? indexErr.message
+              : "";
+        }
       }
       const defaultProfileId = profiles.find((profile) => profile.profile_id)?.profile_id || "";
       setKbForm({ ...emptyKbForm, chunk_profile_id: defaultProfileId });
       setFileSearch("");
       closeCreateKB();
-      setKbActionNotice(createAndIndex ? t("knowledge.create_index_started") : t("knowledge.create_success"));
+      const syncedCount = createResponse.category_sync?.added_count ?? createResponse.all_sync?.added_count ?? 0;
+      const createNotice = createAndIndex && !indexFailed ? t("knowledge.create_index_started") : t("knowledge.create_success");
+      setKbActionNotice(
+        syncedCount > 0
+          ? `${createNotice} ${t("knowledge.synced_files_notice").replace("{count}", String(syncedCount))}`
+          : createNotice
+      );
+      if (indexFailed) {
+        setKbActionError(`${t("knowledge.create_index_partial_error")}${indexErrorDetail ? `: ${indexErrorDetail}` : ""}`);
+      }
       loadData();
     } catch (err) {
       console.error("Failed to create KB:", err);
@@ -363,6 +390,20 @@ export default function Knowledge() {
         ? current.file_urls.filter((item) => item !== fileUrl)
         : [...current.file_urls, fileUrl],
     }));
+  };
+
+  const handleSelectAllKbFiles = () => {
+    const loadedFileUrls = selectableFiles.map((file) => file.url).filter(Boolean);
+    if (loadedFileUrls.length === 0) return;
+    setKbForm((current) => {
+      const allLoadedSelected = selectableFiles.every((file) => kbForm.file_urls.includes(file.url));
+      return {
+        ...current,
+        file_urls: allLoadedSelected
+          ? current.file_urls.filter((fileUrl) => !loadedFileUrls.includes(fileUrl))
+          : Array.from(new Set([...current.file_urls, ...loadedFileUrls])),
+      };
+    });
   };
 
   const handleCreateProfile = async () => {
@@ -549,12 +590,13 @@ export default function Knowledge() {
                 </label>
                 <select
                   value={kbForm.kb_mode}
-                  onChange={(e) => setKbForm({ ...kbForm, kb_mode: e.target.value })}
+                  onChange={(e) => setKbForm({ ...kbForm, kb_mode: e.target.value, categories: [], file_urls: [] })}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="select-kb-mode"
                 >
                   <option value="manual">{t("knowledge.mode_manual")}</option>
                   <option value="category">{t("knowledge.mode_category")}</option>
+                  <option value="all">{t("knowledge.mode_all")}</option>
                 </select>
                 <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.mode_hint")}</p>
               </div>
@@ -656,9 +698,22 @@ export default function Knowledge() {
                 <div className="sm:col-span-2 rounded-lg border border-border bg-muted/20 p-3" data-testid="kb-document-picker">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
                     <label className="text-xs font-medium text-muted-foreground">{t("knowledge.select_documents")}</label>
-                    <span className="text-[11px] text-muted-foreground">
-                      {kbForm.file_urls.length} {t("db.selected_count")}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectAllKbFiles}
+                        disabled={selectableFiles.length === 0}
+                        className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+                        data-testid="button-select-all-kb-files"
+                      >
+                        {selectableFiles.length > 0 && selectableFiles.every((file) => kbForm.file_urls.includes(file.url))
+                          ? t("knowledge.clear_loaded")
+                          : t("knowledge.select_all")}
+                      </button>
+                      <span className="text-[11px] text-muted-foreground">
+                        {kbForm.file_urls.length} {t("db.selected_count")}
+                      </span>
+                    </div>
                   </div>
                   <div className="relative mb-3">
                     <input
@@ -714,6 +769,19 @@ export default function Knowledge() {
                       })}
                     </div>
                   )}
+                </div>
+              )}
+              {kbForm.kb_mode === "all" && (
+                <div className="sm:col-span-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3" data-testid="kb-all-mode-summary">
+                  <div className="flex items-start gap-2 text-sm text-emerald-800 dark:text-emerald-200">
+                    <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-medium">{t("knowledge.mode_all_title")}</p>
+                      <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-200/80">
+                        {t("knowledge.mode_all_hint")}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

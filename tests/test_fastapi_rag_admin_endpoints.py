@@ -430,6 +430,9 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
     assert index.status_code == 202, index.text
     assert index.json()["kb_id"] == "kb-zero-overlap"
     assert str(index.json()["job_id"]).startswith("task_")
+    assert "category_sync" not in index.json()
+    assert "all_sync" not in index.json()
+    assert "chunk_bindings" not in index.json()
 
 
 def test_fastapi_rag_admin_create_kb_uses_existing_chunk_profile_bindings(tmp_path: Path, monkeypatch) -> None:
@@ -638,6 +641,45 @@ def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_increm
     files_after = client.get("/api/rag/knowledge-bases/kb-category-sync/files")
     assert files_after.status_code == 200, files_after.text
     assert sorted(item["file_url"] for item in files_after.json()["files"]) == sorted([alpha_url, beta_url])
+
+
+def test_fastapi_rag_admin_all_mode_adds_all_ready_profile_files(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_profile = client.post(
+        "/api/chunk/profiles",
+        json={
+            "name": "all-mode-profile",
+            "chunk_size": 256,
+            "chunk_overlap": 32,
+        },
+    )
+    assert create_profile.status_code == 201, create_profile.text
+    profile_id = create_profile.json()["profile"]["profile_id"]
+    _seed_ready_chunk_set(db_path, alpha_url, profile_id, text="Alpha all chunk")
+    _seed_ready_chunk_set(db_path, beta_url, profile_id, text="Beta all chunk")
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-all-mode",
+            "name": "All Mode KB",
+            "kb_mode": "all",
+            "chunk_profile_id": profile_id,
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    body = create_kb.json()
+    assert body["all_sync"]["added_count"] == 2
+    assert sorted(body["all_sync"]["file_urls"]) == sorted([alpha_url, beta_url])
+    assert body["chunk_bindings"]["bound"] == 2
+
+    files = client.get("/api/rag/knowledge-bases/kb-all-mode/files")
+    assert files.status_code == 200, files.text
+    assert sorted(item["file_url"] for item in files.json()["files"]) == sorted([alpha_url, beta_url])
 
 
 def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path, monkeypatch) -> None:
