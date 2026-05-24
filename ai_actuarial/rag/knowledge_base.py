@@ -24,6 +24,7 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import KnowledgeBaseException
 from ai_actuarial.rag.semantic_chunking import SemanticChunker
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
+from ai_actuarial.rag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -638,7 +639,15 @@ class KnowledgeBaseManager:
                 DELETE FROM rag_kb_files 
                 WHERE kb_id = ? AND file_url = ?
             """, (kb_id, file_url))
-            removed_count += cursor.rowcount
+            if cursor.rowcount > 0:
+                removed_count += cursor.rowcount
+                conn.execute(
+                    "DELETE FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
+                    (kb_id, file_url),
+                )
+
+        if removed_count > 0:
+            self._soft_delete_file_vectors(kb, file_urls)
         
         # Update file count
         timestamp = KnowledgeBase._get_timestamp()
@@ -647,14 +656,55 @@ class KnowledgeBaseManager:
             SET file_count = (
                 SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
             ),
-            updated_at = ?,
-            index_dirty_at = CASE WHEN ? > 0 THEN ? ELSE index_dirty_at END
+            chunk_count = (
+                SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ?
+            ),
+            updated_at = ?
             WHERE kb_id = ?
-        """, (kb_id, timestamp, removed_count, timestamp, kb_id))
+        """, (kb_id, kb_id, timestamp, kb_id))
         
         conn.commit()
         
         return removed_count
+
+    def _soft_delete_file_vectors(self, kb: KnowledgeBase, file_urls: List[str]) -> Dict[str, Any]:
+        """Mark vectors for removed files as deleted without rebuilding the index."""
+        index_path = Path(self.config.data_dir) / kb.kb_id / "index.faiss"
+        if not index_path.exists():
+            return {"removed_vectors": 0, "index_path": str(index_path), "skipped": "missing_index"}
+
+        dimension = kb.embedding_dimension or infer_embedding_dimension(kb.embedding_model)
+        if dimension in (None, ""):
+            return {"removed_vectors": 0, "index_path": str(index_path), "skipped": "unknown_dimension"}
+
+        try:
+            vector_store = VectorStore(
+                dimension=int(dimension),
+                config=self.config,
+                index_path=str(index_path),
+            )
+            indices: list[int] = []
+            for file_url in file_urls:
+                indices.extend(
+                    vector_store.find_indices_by_metadata(
+                        kb_id=kb.kb_id,
+                        file_url=file_url,
+                    )
+                )
+            removed_vectors = vector_store.remove_vectors(indices)
+            if removed_vectors:
+                vector_store.save_index()
+            return {
+                "removed_vectors": removed_vectors,
+                "index_path": str(index_path),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to soft-delete vectors for KB '%s': %s", kb.kb_id, exc)
+            return {
+                "removed_vectors": 0,
+                "index_path": str(index_path),
+                "error": str(exc),
+            }
     
     def get_kb_files(self, kb_id: str) -> List[Dict[str, Any]]:
         """Get all files in a knowledge base."""

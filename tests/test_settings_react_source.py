@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 SETTINGS_TSX = ROOT / "pages" / "Settings.tsx"
+I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 
 def test_settings_model_routing_surfaces_backend_error_detail():
@@ -21,6 +22,18 @@ def test_settings_model_routing_does_not_round_trip_failed_credentials():
     assert "credential.decrypt_ok === false" in src
     assert "routing[functionName]?.credential_error ? \"\"" in src
     assert "credentialUsable(credential)" in src
+
+
+def test_settings_model_routing_keeps_embeddings_editable_with_rebuild_warning():
+    src = SETTINGS_TSX.read_text(encoding="utf-8")
+    i18n = I18N_TS.read_text(encoding="utf-8")
+
+    assert '{ key: "embeddings", label: t("settings.routing_embeddings"), capability: "embeddings" }' in src
+    assert 'data-testid={`button-edit-model-${card.key}`}' in src
+    assert 'data-testid={`select-model-${card.key}`}' in src
+    assert 'response.rebuild_required' in src
+    assert 'data-testid="routing-warning-reindex"' in src
+    assert '"settings.routing_saved_reindex_required": "AI routing saved; embeddings changed. Rebuild affected KB indexes before using them in Chat."' in i18n
 
 
 def test_settings_system_flags_are_yaml_backed_controls():

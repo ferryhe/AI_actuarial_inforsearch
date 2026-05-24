@@ -4,14 +4,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.crawler import Crawler, SiteConfig
+from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.rag.semantic_chunking import Chunk
+from ai_actuarial.rag.vector_store import VectorStore
 from ai_actuarial.storage import Storage
 
 
@@ -355,6 +359,131 @@ def test_indexing_pipeline_force_reindex_removes_chunks_for_deleted_files(tmp_pa
             ).fetchall()
         ]
         assert old_url not in remaining_urls
+    finally:
+        storage.close()
+
+
+def test_vector_store_soft_delete_ignores_invalid_indices_and_filters_search(tmp_path) -> None:
+    index_path = tmp_path / "index.faiss"
+    store = VectorStore(dimension=2, index_path=str(index_path))
+    store.add_vectors(
+        np.array([[1.0, 0.0], [0.0, 1.0], [0.8, 0.2]], dtype="float32"),
+        [
+            {"id": "active-a", "file_url": "a"},
+            {"id": "deleted-b", "file_url": "b"},
+            {"id": "active-c", "file_url": "c"},
+        ],
+    )
+
+    removed = store.remove_vectors([-1, 1, 99, 1])
+
+    assert removed == 1
+    assert store.metadata[-1].get("_deleted") is not True
+    results = store.search(np.array([0.0, 1.0], dtype="float32"), k=2)
+    result_ids = [result["metadata"]["id"] for result in results]
+    assert "deleted-b" not in result_ids
+    assert len(result_ids) == 2
+
+
+def test_indexing_pipeline_update_soft_deletes_old_file_vectors_before_append(tmp_path) -> None:
+    kb_id = "kb-update-soft-delete"
+    file_url = "https://example.com/update.pdf"
+    storage = Storage(str(tmp_path / "update-soft-delete.db"))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-update",
+            title="Update",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="update.pdf",
+            local_path=str(tmp_path / "update.pdf"),
+            bytes=1024,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(file_url, "# Updated\n\nNew content", "manual")
+        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager.create_kb(kb_id, "Update Soft Delete KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [file_url])
+        manager.chunker = SimpleNamespace(
+            chunk_document=lambda _content, metadata: [
+                Chunk(
+                    content="New chunk",
+                    chunk_index=0,
+                    token_count=2,
+                    section_hierarchy="Updated",
+                    metadata=metadata,
+                )
+            ]
+        )
+        manager.embedding_generator = SimpleNamespace(
+            provider="openai",
+            get_embedding_dimension=lambda: 3,
+            generate_embeddings=lambda texts: [[0.0, 1.0, 0.0] for _text in texts],
+        )
+
+        class FakeVectorStore:
+            def __init__(self) -> None:
+                self.metadata = [
+                    {"kb_id": kb_id, "file_url": file_url, "content": "Old chunk"},
+                    {"kb_id": kb_id, "file_url": "https://example.com/other.pdf", "content": "Other chunk"},
+                ]
+
+            def add_vectors(self, _vectors, metadata):
+                self.metadata.extend(metadata)
+
+        vector_store = FakeVectorStore()
+        pipeline = IndexingPipeline(manager)
+
+        result = pipeline._index_single_file(kb_id, file_url, vector_store)  # noqa: SLF001
+
+        assert result == {"success": True, "chunk_count": 1}
+        assert vector_store.metadata[0].get("_deleted") is True
+        assert vector_store.metadata[1].get("_deleted") is not True
+        assert vector_store.metadata[2]["file_url"] == file_url
+        assert vector_store.metadata[2].get("_deleted") is not True
+    finally:
+        storage.close()
+
+
+def test_remove_files_from_kb_soft_deletes_file_vectors(tmp_path) -> None:
+    kb_id = "kb-remove-soft-delete"
+    removed_url = "https://example.com/remove-me.pdf"
+    kept_url = "https://example.com/keep-me.pdf"
+    storage = Storage(str(tmp_path / "remove-soft-delete.db"))
+    try:
+        for file_url, title in [(removed_url, "Remove"), (kept_url, "Keep")]:
+            storage.insert_file(
+                url=file_url,
+                sha256=f"sha-{title}",
+                title=title,
+                source_site="example.com",
+                source_page_url="https://example.com",
+                original_filename=f"{title.lower()}.pdf",
+                local_path=str(tmp_path / f"{title.lower()}.pdf"),
+                bytes=1024,
+                content_type="application/pdf",
+            )
+        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager.create_kb(kb_id, "Remove Soft Delete KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [removed_url, kept_url])
+        index_path = tmp_path / "rag-data" / kb_id / "index.faiss"
+        vector_store = VectorStore(dimension=3, index_path=str(index_path))
+        vector_store.add_vectors(
+            np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype="float32"),
+            [
+                {"kb_id": kb_id, "file_url": removed_url, "content": "Remove"},
+                {"kb_id": kb_id, "file_url": kept_url, "content": "Keep"},
+            ],
+        )
+        vector_store.save_index()
+
+        removed = manager.remove_files_from_kb(kb_id, [removed_url])
+
+        assert removed == 1
+        reloaded = VectorStore(dimension=3, index_path=str(index_path))
+        assert reloaded.metadata[0].get("_deleted") is True
+        assert reloaded.metadata[1].get("_deleted") is not True
     finally:
         storage.close()
 

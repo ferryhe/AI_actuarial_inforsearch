@@ -312,7 +312,7 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
     assert not any(item["file_url"] == alpha_url for item in files_after_remove.json()["files"])
 
 
-def test_fastapi_rag_admin_kb_add_and_delete_mark_index_dirty(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     alpha_url = seed["alpha_url"]
     beta_url = seed["beta_url"]
@@ -411,14 +411,66 @@ def test_fastapi_rag_admin_kb_add_and_delete_mark_index_dirty(tmp_path: Path, mo
 
     after_delete = client.get("/api/rag/knowledge-bases/kb-index-dirty")
     assert after_delete.status_code == 200, after_delete.text
-    assert after_delete.json()["knowledge_base"]["needs_reindex"] is True
+    assert after_delete.json()["knowledge_base"]["needs_reindex"] is False
 
-    rebuild = client.post(
-        "/api/rag/knowledge-bases/kb-index-dirty/index",
-        json={"force_reindex": True},
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        stale_chunks = storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
+            ("kb-index-dirty", alpha_url),
+        ).fetchone()[0]
+    finally:
+        storage.close()
+    assert stale_chunks == 0
+
+
+def test_fastapi_rag_admin_rejects_incremental_index_after_embedding_change(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-embedding-change",
+            "name": "Embedding Change KB",
+            "kb_mode": "manual",
+            "file_urls": [alpha_url],
+        },
     )
-    assert rebuild.status_code == 202, rebuild.text
-    assert rebuild.json()["file_count"] == 1
+    assert create_kb.status_code == 201, create_kb.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        old_built_at = "2026-05-24T02:00:00+00:00"
+        storage._conn.execute(
+            "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
+            (old_built_at, 1, "kb-embedding-change", alpha_url),
+        )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_count = ?, updated_at = ? WHERE kb_id = ?",
+            (1, old_built_at, "kb-embedding-change"),
+        )
+        storage._conn.commit()
+        storage.create_kb_index_version(
+            kb_id="kb-embedding-change",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-small",
+            embedding_dimension=1536,
+            index_type="Flat",
+            chunk_count=1,
+            status="ready",
+            built_at=old_built_at,
+        )
+    finally:
+        storage.close()
+
+    incremental = client.post(
+        "/api/rag/knowledge-bases/kb-embedding-change/index",
+        json={"incremental": True},
+    )
+
+    assert incremental.status_code == 409, incremental.text
+    assert "full re-embed" in incremental.text.lower()
 
 
 def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) -> None:

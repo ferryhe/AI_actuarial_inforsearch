@@ -82,6 +82,9 @@ class IndexingPipeline:
         kb = self.kb_manager.get_kb(kb_id)
         if not kb:
             raise RAGException(f"Knowledge base '{kb_id}' not found")
+        current_embedding = self.kb_manager.get_current_embedding_metadata()
+        if not force_reindex:
+            self._ensure_incremental_embedding_compatible(kb_id, kb, current_embedding)
         self.kb_manager.sync_kb_embedding_metadata(kb_id)
         kb = self.kb_manager.get_kb(kb_id)
         if not kb:
@@ -228,6 +231,37 @@ class IndexingPipeline:
             (kb_id,),
         )
         conn.commit()
+
+    def _ensure_incremental_embedding_compatible(
+        self,
+        kb_id: str,
+        kb: KnowledgeBase,
+        current_embedding: Dict[str, Any],
+    ) -> None:
+        composition = {}
+        if hasattr(self.storage, "get_kb_composition_status"):
+            composition = self.storage.get_kb_composition_status(kb_id) or {}
+        if not composition.get("has_index"):
+            return
+
+        latest_index = composition.get("latest_index") if isinstance(composition, dict) else None
+        latest_index = latest_index if isinstance(latest_index, dict) else {}
+        index_provider = latest_index.get("embedding_provider") or kb.embedding_provider
+        index_model = latest_index.get("embedding_model") or kb.embedding_model
+        index_dimension = latest_index.get("embedding_dimension") or kb.embedding_dimension
+
+        current_provider = str(current_embedding.get("provider") or "").strip().lower()
+        current_model = str(current_embedding.get("model") or "").strip()
+        current_dimension = current_embedding.get("dimension")
+        compatible = (
+            str(index_provider or "").strip().lower() == current_provider
+            and str(index_model or "").strip() == current_model
+            and str(index_dimension or "") == str(current_dimension or "")
+        )
+        if not compatible:
+            raise RAGException(
+                "Embedding configuration changed; full re-embed is required before incremental indexing"
+            )
     
     def _needs_indexing(self, kb_id: str, file_url: str) -> bool:
         """Check if file needs indexing."""
@@ -331,14 +365,37 @@ class IndexingPipeline:
                 }
                 chunk_metadata.append(chunk_meta)
             
+            previous_indices = self._find_file_vector_indices(vector_store, kb_id, file_url)
+            previous_deleted_states = {
+                idx: bool(vector_store.metadata[idx].get('_deleted', False))
+                for idx in previous_indices
+                if 0 <= idx < len(vector_store.metadata)
+            }
+            appended_start = len(vector_store.metadata)
+
             # Add to vector store (INCREMENTAL OPERATION)
             vector_store.add_vectors(vectors, chunk_metadata)
+
+            # Updates are delete + insert: new vectors are appended, then old
+            # active vectors for this file are soft-deleted from metadata.
+            if previous_indices:
+                self._soft_delete_vector_indices(vector_store, previous_indices)
             
             # Store chunks in database for tracking
-            self._store_chunks(kb_id, file_url, chunks, embeddings)
-            
-            # Update file indexing status
-            self._update_file_index_status(kb_id, file_url, len(chunks))
+            try:
+                self._store_chunks(kb_id, file_url, chunks, embeddings)
+                self._update_file_index_status(kb_id, file_url, len(chunks))
+            except Exception:
+                for idx in range(appended_start, len(vector_store.metadata)):
+                    vector_store.metadata[idx]['_deleted'] = True
+                for idx, was_deleted in previous_deleted_states.items():
+                    if not (0 <= idx < len(vector_store.metadata)):
+                        continue
+                    if was_deleted:
+                        vector_store.metadata[idx]['_deleted'] = True
+                    else:
+                        vector_store.metadata[idx].pop('_deleted', None)
+                raise
             
             return {
                 'success': True,
@@ -352,6 +409,32 @@ class IndexingPipeline:
                 'error': str(e),
                 'chunk_count': 0
             }
+
+    def _find_file_vector_indices(self, vector_store: VectorStore, kb_id: str, file_url: str) -> List[int]:
+        if hasattr(vector_store, "find_indices_by_metadata"):
+            return vector_store.find_indices_by_metadata(kb_id=kb_id, file_url=file_url)
+        metadata = getattr(vector_store, "metadata", [])
+        return [
+            idx
+            for idx, item in enumerate(metadata)
+            if item.get("kb_id") == kb_id
+            and item.get("file_url") == file_url
+            and not item.get("_deleted", False)
+        ]
+
+    def _soft_delete_vector_indices(self, vector_store: VectorStore, indices: List[int]) -> int:
+        if hasattr(vector_store, "remove_vectors"):
+            return vector_store.remove_vectors(indices)
+        removed = 0
+        metadata = getattr(vector_store, "metadata", [])
+        for idx in sorted(set(indices)):
+            if not (0 <= idx < len(metadata)):
+                continue
+            if metadata[idx].get("_deleted", False):
+                continue
+            metadata[idx]["_deleted"] = True
+            removed += 1
+        return removed
     
     def _get_file_info(self, file_url: str) -> Dict[str, Any]:
         """Get file metadata from storage."""

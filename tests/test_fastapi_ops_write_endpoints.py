@@ -669,6 +669,75 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
     assert not any(row["provider_id"] == "mistral" and row["instance_id"] == "backup" and row["source"] == "db" for row in remaining)
 
 
+def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["operator_token"]}
+    alpha_url = "https://alpha.example/doc-a.pdf"
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={"kb_id": "kb-embedding-route-change", "name": "Embedding Route Change", "kb_mode": "manual"},
+        headers=headers,
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    add_file = client.post(
+        "/api/rag/knowledge-bases/kb-embedding-route-change/files",
+        json={"file_urls": [alpha_url]},
+        headers=headers,
+    )
+    assert add_file.status_code == 200, add_file.text
+
+    built_at = "2026-05-01T00:00:00+00:00"
+    storage = Storage(str(app.state.db_path))
+    try:
+        storage.create_kb_index_version(
+            kb_id="kb-embedding-route-change",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dimension=3072,
+            index_type="Flat",
+            status="ready",
+            chunk_count=1,
+            built_at=built_at,
+        )
+        storage._conn.execute(
+            "UPDATE rag_kb_files SET indexed_at = ? WHERE kb_id = ? AND file_url = ?",
+            (built_at, "kb-embedding-route-change", alpha_url),
+        )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_count = 1, index_dirty_at = NULL WHERE kb_id = ?",
+            ("kb-embedding-route-change",),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"},
+            ]
+        },
+        headers=headers,
+    )
+    assert routing_update.status_code == 200, routing_update.text
+    routing_body = routing_update.json()
+    assert routing_body["rebuild_required"] is True
+    assert routing_body["affected_kb_count"] == 1
+    assert routing_body["affected_kb_ids"] == ["kb-embedding-route-change"]
+
+    chat_kbs = client.get("/api/chat/knowledge-bases", headers=headers)
+    assert chat_kbs.status_code == 200, chat_kbs.text
+    kb = next(item for item in chat_kbs.json()["data"]["knowledge_bases"] if item["kb_id"] == "kb-embedding-route-change")
+    assert kb["embedding_compatible"] is False
+    assert kb["needs_reindex"] is True
+    assert kb["availability"] == "needs_reindex"
+    assert kb["usable"] is False
+
+
 def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)

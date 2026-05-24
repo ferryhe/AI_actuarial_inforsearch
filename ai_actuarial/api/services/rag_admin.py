@@ -1372,6 +1372,16 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
                 profile_id=profile_id,
                 bound_by="kb_index_all_sync",
             )
+        if not force_reindex:
+            embedding_status = _build_kb_embedding_status(
+                storage=storage,
+                kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
+            )
+            if embedding_status.get("index_status") and not embedding_status.get("embedding_compatible"):
+                raise RagAdminError(
+                    "Embedding configuration changed; full re-embed is required before incremental indexing",
+                    status_code=409,
+                )
         user_requested = bool(requested)
         files_to_index = requested
         if not files_to_index:

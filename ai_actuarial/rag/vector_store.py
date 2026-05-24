@@ -237,8 +237,16 @@ class VectorStore:
             # Reshape for FAISS
             query_vector = query_vector.reshape(1, -1).astype('float32')
             
-            # Search
-            distances, indices = self.index.search(query_vector, k)
+            total_vectors = int(getattr(self.index, 'ntotal', 0) or 0)
+            if total_vectors <= 0:
+                return []
+
+            deleted_count = sum(1 for meta in self.metadata if meta.get('_deleted', False))
+            search_k = min(total_vectors, max(k, k + deleted_count))
+
+            # Search. Over-fetch when soft-deleted vectors exist so active
+            # neighbors just below deleted hits can still be returned.
+            distances, indices = self.index.search(query_vector, search_k)
             
             # Convert distances to similarity scores (L2 distance to cosine-like score)
             # Lower distance = higher similarity
@@ -249,23 +257,29 @@ class VectorStore:
             # Build results
             results = []
             for pos, (idx, score) in enumerate(zip(indices[0], similarities[0])):
-                if idx < len(self.metadata):  # Valid index
-                    # Apply threshold if specified
-                    if similarity_threshold is None or score >= similarity_threshold:
-                        result = {
-                            'metadata': self.metadata[idx],
-                            'score': float(score),
-                            'distance': float(distances[0][pos]),
-                            'index': int(idx)
-                        }
-                        results.append(result)
+                if len(results) >= k:
+                    break
+                if not (0 <= idx < len(self.metadata)):
+                    continue
+                metadata = self.metadata[idx]
+                if metadata.get('_deleted', False):
+                    continue
+                # Apply threshold if specified
+                if similarity_threshold is None or score >= similarity_threshold:
+                    result = {
+                        'metadata': metadata,
+                        'score': float(score),
+                        'distance': float(distances[0][pos]),
+                        'index': int(idx)
+                    }
+                    results.append(result)
             
             return results
             
         except Exception as e:
             raise VectorStoreException(f"Search failed: {e}")
     
-    def remove_vectors(self, indices: List[int]) -> None:
+    def remove_vectors(self, indices: List[int]) -> int:
         """
         Remove vectors from index.
         
@@ -275,10 +289,30 @@ class VectorStore:
         Args:
             indices: List of vector indices to remove
         """
-        # Mark metadata as deleted
-        for idx in indices:
-            if idx < len(self.metadata):
-                self.metadata[idx]['_deleted'] = True
+        removed = 0
+        for idx in sorted(set(indices)):
+            if not (0 <= idx < len(self.metadata)):
+                continue
+            if self.metadata[idx].get('_deleted', False):
+                continue
+            self.metadata[idx]['_deleted'] = True
+            removed += 1
+        return removed
+
+    def find_indices_by_metadata(
+        self,
+        *,
+        include_deleted: bool = False,
+        **criteria: Any,
+    ) -> List[int]:
+        """Return vector metadata indices matching all criteria."""
+        matches: List[int] = []
+        for idx, metadata in enumerate(self.metadata):
+            if not include_deleted and metadata.get('_deleted', False):
+                continue
+            if all(metadata.get(key) == value for key, value in criteria.items()):
+                matches.append(idx)
+        return matches
     
     def rebuild_without_deleted(self) -> None:
         """
