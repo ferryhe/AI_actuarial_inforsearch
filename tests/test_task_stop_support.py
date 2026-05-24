@@ -4,13 +4,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.crawler import Crawler, SiteConfig
+from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.indexing import IndexingPipeline
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.rag.semantic_chunking import Chunk
+from ai_actuarial.rag.vector_store import VectorStore
 from ai_actuarial.storage import Storage
 
 
@@ -295,6 +300,288 @@ def test_indexing_pipeline_records_current_embedding_index_version(tmp_path) -> 
         status="ready",
         artifact_path=str(tmp_path / kb_id / "index.faiss"),
     )
+
+
+def test_indexing_pipeline_force_reindex_removes_chunks_for_deleted_files(tmp_path) -> None:
+    kb_id = "kb-clean-removed"
+    old_url = "https://example.com/removed.pdf"
+    current_url = "https://example.com/current.pdf"
+    storage = Storage(str(tmp_path / "clean-removed.db"))
+    try:
+        for file_url, title in [(old_url, "Removed"), (current_url, "Current")]:
+            storage.insert_file(
+                url=file_url,
+                sha256=f"sha-{title}",
+                title=title,
+                source_site="example.com",
+                source_page_url="https://example.com",
+                original_filename=f"{title.lower()}.pdf",
+                local_path=str(tmp_path / f"{title.lower()}.pdf"),
+                bytes=1024,
+                content_type="application/pdf",
+            )
+        manager = KnowledgeBaseManager(storage)
+        manager.create_kb(kb_id, "Clean Removed KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [current_url])
+        storage._conn.execute(
+            """
+            INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"{kb_id}:removed:0", kb_id, old_url, 0, "Removed stale chunk", 3, "Removed", "hash-removed", "2026-05-24T02:00:00+00:00"),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"{kb_id}:current:0", kb_id, current_url, 0, "Current stale chunk", 3, "Current", "hash-current", "2026-05-24T02:00:00+00:00"),
+        )
+        storage._conn.commit()
+
+        manager.embedding_generator = MagicMock()
+        manager.embedding_generator.get_embedding_dimension.return_value = 3
+        with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
+            IndexingPipeline,
+            "_index_single_file",
+            return_value={"success": True, "chunk_count": 1},
+        ):
+            pipeline = IndexingPipeline(manager)
+            stats = pipeline.index_files(kb_id=kb_id, file_urls=[current_url], force_reindex=True)
+
+        assert stats["indexed_files"] == 1
+        mock_vector_store.return_value.save_index.assert_called_once()
+        remaining_urls = [
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT DISTINCT file_url FROM rag_chunks WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchall()
+        ]
+        assert old_url not in remaining_urls
+    finally:
+        storage.close()
+
+
+def test_vector_store_soft_delete_ignores_invalid_indices_and_filters_search(tmp_path) -> None:
+    index_path = tmp_path / "index.faiss"
+    store = VectorStore(dimension=2, index_path=str(index_path))
+    store.add_vectors(
+        np.array([[1.0, 0.0], [0.0, 1.0], [0.8, 0.2]], dtype="float32"),
+        [
+            {"id": "active-a", "file_url": "a"},
+            {"id": "deleted-b", "file_url": "b"},
+            {"id": "active-c", "file_url": "c"},
+        ],
+    )
+
+    removed = store.remove_vectors([-1, 1, 99, 1])
+
+    assert removed == 1
+    assert store.metadata[-1].get("_deleted") is not True
+    results = store.search(np.array([0.0, 1.0], dtype="float32"), k=2)
+    result_ids = [result["metadata"]["id"] for result in results]
+    assert "deleted-b" not in result_ids
+    assert len(result_ids) == 2
+
+
+def test_vector_store_search_caps_soft_deleted_overfetch(tmp_path) -> None:
+    store = VectorStore(dimension=2, index_path=str(tmp_path / "bounded-search.faiss"))
+    store.metadata = [
+        {"id": f"deleted-near-{idx}", "_deleted": True}
+        for idx in range(5)
+    ] + [
+        {"id": f"active-{idx}"}
+        for idx in range(5, 20)
+    ] + [
+        {"id": f"deleted-far-{idx}", "_deleted": True}
+        for idx in range(20, 200)
+    ]
+
+    class FakeIndex:
+        ntotal = 200
+
+        def __init__(self) -> None:
+            self.requested_k = 0
+
+        def search(self, _query_vector, k):
+            self.requested_k = k
+            distances = np.linspace(0.0, 1.0, k, dtype="float32").reshape(1, -1)
+            indices = np.arange(k, dtype="int64").reshape(1, -1)
+            return distances, indices
+
+    fake_index = FakeIndex()
+    store.index = fake_index
+
+    results = store.search(np.array([1.0, 0.0], dtype="float32"), k=3)
+
+    assert fake_index.requested_k <= 35
+    assert [result["metadata"]["id"] for result in results] == ["active-5", "active-6", "active-7"]
+
+
+def test_indexing_pipeline_update_soft_deletes_old_file_vectors_before_append(tmp_path) -> None:
+    kb_id = "kb-update-soft-delete"
+    file_url = "https://example.com/update.pdf"
+    storage = Storage(str(tmp_path / "update-soft-delete.db"))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-update",
+            title="Update",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="update.pdf",
+            local_path=str(tmp_path / "update.pdf"),
+            bytes=1024,
+            content_type="application/pdf",
+        )
+        storage.update_file_markdown(file_url, "# Updated\n\nNew content", "manual")
+        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager.create_kb(kb_id, "Update Soft Delete KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [file_url])
+        manager.chunker = SimpleNamespace(
+            chunk_document=lambda _content, metadata: [
+                Chunk(
+                    content="New chunk",
+                    chunk_index=0,
+                    token_count=2,
+                    section_hierarchy="Updated",
+                    metadata=metadata,
+                )
+            ]
+        )
+        manager.embedding_generator = SimpleNamespace(
+            provider="openai",
+            get_embedding_dimension=lambda: 3,
+            generate_embeddings=lambda texts: [[0.0, 1.0, 0.0] for _text in texts],
+        )
+
+        class FakeVectorStore:
+            def __init__(self) -> None:
+                self.metadata = [
+                    {"kb_id": kb_id, "file_url": file_url, "content": "Old chunk"},
+                    {"kb_id": kb_id, "file_url": "https://example.com/other.pdf", "content": "Other chunk"},
+                ]
+
+            def add_vectors(self, _vectors, metadata):
+                self.metadata.extend(metadata)
+
+        vector_store = FakeVectorStore()
+        pipeline = IndexingPipeline(manager)
+
+        result = pipeline._index_single_file(kb_id, file_url, vector_store)  # noqa: SLF001
+
+        assert result == {"success": True, "chunk_count": 1}
+        assert vector_store.metadata[0].get("_deleted") is True
+        assert vector_store.metadata[1].get("_deleted") is not True
+        assert vector_store.metadata[2]["file_url"] == file_url
+        assert vector_store.metadata[2].get("_deleted") is not True
+    finally:
+        storage.close()
+
+
+def test_indexing_pipeline_force_reindex_rebuilds_full_kb_when_subset_requested(tmp_path) -> None:
+    kb_id = "kb-force-reindex-full"
+    first_url = "https://example.com/first.pdf"
+    second_url = "https://example.com/second.pdf"
+    storage = Storage(str(tmp_path / "force-reindex-full.db"))
+    try:
+        for file_url, title in [(first_url, "First"), (second_url, "Second")]:
+            storage.insert_file(
+                url=file_url,
+                sha256=f"sha-{title}",
+                title=title,
+                source_site="example.com",
+                source_page_url="https://example.com",
+                original_filename=f"{title.lower()}.pdf",
+                local_path=str(tmp_path / f"{title.lower()}.pdf"),
+                bytes=1024,
+                content_type="application/pdf",
+            )
+            storage.update_file_markdown(file_url, f"# {title}\n\n{title} content", "manual")
+
+        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager.create_kb(kb_id, "Force Reindex Full KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [first_url, second_url])
+        manager.chunker = SimpleNamespace(
+            chunk_document=lambda content, metadata: [
+                Chunk(
+                    content=content,
+                    chunk_index=0,
+                    token_count=2,
+                    section_hierarchy=metadata["title"],
+                    metadata=metadata,
+                )
+            ]
+        )
+        manager.embedding_generator = SimpleNamespace(
+            provider="openai",
+            get_embedding_dimension=lambda: 3,
+            generate_embeddings=lambda texts: [[1.0, 0.0, 0.0] for _text in texts],
+        )
+
+        pipeline = IndexingPipeline(manager)
+
+        stats = pipeline.index_files(kb_id=kb_id, file_urls=[first_url], force_reindex=True)
+
+        assert stats["total_files"] == 2
+        assert stats["indexed_files"] == 2
+        chunk_rows = storage._conn.execute(
+            "SELECT file_url FROM rag_chunks WHERE kb_id = ? ORDER BY file_url",
+            (kb_id,),
+        ).fetchall()
+        assert [row[0] for row in chunk_rows] == [first_url, second_url]
+        file_rows = storage._conn.execute(
+            "SELECT file_url, indexed_at, chunk_count FROM rag_kb_files WHERE kb_id = ? ORDER BY file_url",
+            (kb_id,),
+        ).fetchall()
+        assert [row[0] for row in file_rows] == [first_url, second_url]
+        assert all(row[1] for row in file_rows)
+        assert [row[2] for row in file_rows] == [1, 1]
+    finally:
+        storage.close()
+
+
+def test_remove_files_from_kb_soft_deletes_file_vectors(tmp_path) -> None:
+    kb_id = "kb-remove-soft-delete"
+    removed_url = "https://example.com/remove-me.pdf"
+    kept_url = "https://example.com/keep-me.pdf"
+    storage = Storage(str(tmp_path / "remove-soft-delete.db"))
+    try:
+        for file_url, title in [(removed_url, "Remove"), (kept_url, "Keep")]:
+            storage.insert_file(
+                url=file_url,
+                sha256=f"sha-{title}",
+                title=title,
+                source_site="example.com",
+                source_page_url="https://example.com",
+                original_filename=f"{title.lower()}.pdf",
+                local_path=str(tmp_path / f"{title.lower()}.pdf"),
+                bytes=1024,
+                content_type="application/pdf",
+            )
+        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager.create_kb(kb_id, "Remove Soft Delete KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [removed_url, kept_url])
+        index_path = tmp_path / "rag-data" / kb_id / "index.faiss"
+        vector_store = VectorStore(dimension=3, index_path=str(index_path))
+        vector_store.add_vectors(
+            np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype="float32"),
+            [
+                {"kb_id": kb_id, "file_url": removed_url, "content": "Remove"},
+                {"kb_id": kb_id, "file_url": kept_url, "content": "Keep"},
+            ],
+        )
+        vector_store.save_index()
+
+        removed = manager.remove_files_from_kb(kb_id, [removed_url])
+
+        assert removed == 1
+        reloaded = VectorStore(dimension=3, index_path=str(index_path))
+        assert reloaded.metadata[0].get("_deleted") is True
+        assert reloaded.metadata[1].get("_deleted") is not True
+    finally:
+        storage.close()
 
 
 def test_indexing_pipeline_keeps_index_when_version_recording_fails(tmp_path) -> None:

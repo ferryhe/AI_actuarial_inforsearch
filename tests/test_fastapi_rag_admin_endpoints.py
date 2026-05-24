@@ -312,6 +312,166 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
     assert not any(item["file_url"] == alpha_url for item in files_after_remove.json()["files"])
 
 
+def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-index-dirty",
+            "name": "Index Dirty KB",
+            "kb_mode": "manual",
+            "file_urls": [alpha_url],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        indexed_at = "2026-05-24T02:00:00+00:00"
+        storage._conn.execute(
+            "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
+            (indexed_at, 1, "kb-index-dirty", alpha_url),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("kb-index-dirty:alpha:0", "kb-index-dirty", alpha_url, 0, "Alpha indexed chunk", 3, "Alpha", "hash-alpha", indexed_at),
+        )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_count = ?, updated_at = ? WHERE kb_id = ?",
+            (1, indexed_at, "kb-index-dirty"),
+        )
+        storage._conn.commit()
+        storage.create_kb_index_version(
+            kb_id="kb-index-dirty",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dimension=3072,
+            index_type="Flat",
+            chunk_count=1,
+            status="ready",
+            built_at=indexed_at,
+        )
+        storage._conn.execute("UPDATE rag_knowledge_bases SET index_dirty_at = NULL WHERE kb_id = ?", ("kb-index-dirty",))
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    initial_detail = client.get("/api/rag/knowledge-bases/kb-index-dirty")
+    assert initial_detail.status_code == 200, initial_detail.text
+    assert initial_detail.json()["knowledge_base"]["needs_reindex"] is False
+
+    add_beta = client.post(
+        "/api/rag/knowledge-bases/kb-index-dirty/files",
+        json={"file_urls": [beta_url]},
+    )
+    assert add_beta.status_code == 200, add_beta.text
+
+    after_add = client.get("/api/rag/knowledge-bases/kb-index-dirty")
+    assert after_add.status_code == 200, after_add.text
+    assert after_add.json()["knowledge_base"]["needs_reindex"] is True
+
+    incremental = client.post(
+        "/api/rag/knowledge-bases/kb-index-dirty/index",
+        json={"incremental": True},
+    )
+    assert incremental.status_code == 202, incremental.text
+    assert incremental.json()["file_count"] == 1
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        beta_indexed_at = "2026-05-24T02:10:00+00:00"
+        storage._conn.execute(
+            "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
+            (beta_indexed_at, 1, "kb-index-dirty", beta_url),
+        )
+        storage._conn.commit()
+        storage.create_kb_index_version(
+            kb_id="kb-index-dirty",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dimension=3072,
+            index_type="Flat",
+            chunk_count=2,
+            status="ready",
+            built_at=beta_indexed_at,
+        )
+        storage._conn.execute("UPDATE rag_knowledge_bases SET index_dirty_at = NULL WHERE kb_id = ?", ("kb-index-dirty",))
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    remove_alpha = client.delete(f"/api/rag/knowledge-bases/kb-index-dirty/files/{alpha_url}")
+    assert remove_alpha.status_code == 200, remove_alpha.text
+
+    after_delete = client.get("/api/rag/knowledge-bases/kb-index-dirty")
+    assert after_delete.status_code == 200, after_delete.text
+    assert after_delete.json()["knowledge_base"]["needs_reindex"] is False
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        stale_chunks = storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
+            ("kb-index-dirty", alpha_url),
+        ).fetchone()[0]
+    finally:
+        storage.close()
+    assert stale_chunks == 0
+
+
+def test_fastapi_rag_admin_rejects_incremental_index_after_embedding_change(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-embedding-change",
+            "name": "Embedding Change KB",
+            "kb_mode": "manual",
+            "file_urls": [alpha_url],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        old_built_at = "2026-05-24T02:00:00+00:00"
+        storage._conn.execute(
+            "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
+            (old_built_at, 1, "kb-embedding-change", alpha_url),
+        )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_count = ?, updated_at = ? WHERE kb_id = ?",
+            (1, old_built_at, "kb-embedding-change"),
+        )
+        storage._conn.commit()
+        storage.create_kb_index_version(
+            kb_id="kb-embedding-change",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-small",
+            embedding_dimension=1536,
+            index_type="Flat",
+            chunk_count=1,
+            status="ready",
+            built_at=old_built_at,
+        )
+    finally:
+        storage.close()
+
+    incremental = client.post(
+        "/api/rag/knowledge-bases/kb-embedding-change/index",
+        json={"incremental": True},
+    )
+
+    assert incremental.status_code == 409, incremental.text
+    assert "full re-embed" in incremental.text.lower()
+
 
 def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
@@ -430,6 +590,9 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
     assert index.status_code == 202, index.text
     assert index.json()["kb_id"] == "kb-zero-overlap"
     assert str(index.json()["job_id"]).startswith("task_")
+    assert "category_sync" not in index.json()
+    assert "all_sync" not in index.json()
+    assert "chunk_bindings" not in index.json()
 
 
 def test_fastapi_rag_admin_create_kb_uses_existing_chunk_profile_bindings(tmp_path: Path, monkeypatch) -> None:
@@ -573,6 +736,110 @@ def test_fastapi_rag_admin_category_stats_and_kb_profile_metadata(tmp_path: Path
     listed_kb = next(item for item in listed.json()["knowledge_bases"] if item["kb_id"] == "kb-profile-metadata")
     assert listed_kb["chunk_profile_id"] == profile_id
     assert listed_kb["chunk_profile_name"] == "stats-profile"
+
+
+def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_incremental_index(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_profile = client.post(
+        "/api/chunk/profiles",
+        json={
+            "name": "category-sync-profile",
+            "chunk_size": 256,
+            "chunk_overlap": 32,
+        },
+    )
+    assert create_profile.status_code == 201, create_profile.text
+    profile_id = create_profile.json()["profile"]["profile_id"]
+    _seed_ready_chunk_set(db_path, alpha_url, profile_id, text="Initial alpha chunk")
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-category-sync",
+            "name": "Category Sync KB",
+            "kb_mode": "category",
+            "chunk_profile_id": profile_id,
+            "categories": ["AI"],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    files_before = client.get("/api/rag/knowledge-bases/kb-category-sync/files")
+    assert files_before.status_code == 200, files_before.text
+    assert [item["file_url"] for item in files_before.json()["files"]] == [alpha_url]
+
+    beta_sha = hashlib.sha256((PDF_BYTES + b"\n% beta")).hexdigest()
+    storage = Storage(str(db_path))
+    try:
+        storage.upsert_catalog_item(
+            item={
+                "url": beta_url,
+                "sha256": beta_sha,
+                "keywords": ["ai"],
+                "summary": "Beta moved into AI",
+                "category": "AI",
+            },
+            pipeline_version="v2",
+            status="ok",
+        )
+        _seed_ready_chunk_set(db_path, beta_url, profile_id, text="New beta AI chunk")
+    finally:
+        storage.close()
+
+    index = client.post(
+        "/api/rag/knowledge-bases/kb-category-sync/index",
+        json={"incremental": True},
+    )
+    assert index.status_code == 202, index.text
+    assert index.json()["file_count"] == 2
+    assert sorted(index.json()["category_sync"]["added_file_urls"]) == [beta_url]
+    assert index.json()["chunk_bindings"]["bound"] == 2
+
+    files_after = client.get("/api/rag/knowledge-bases/kb-category-sync/files")
+    assert files_after.status_code == 200, files_after.text
+    assert sorted(item["file_url"] for item in files_after.json()["files"]) == sorted([alpha_url, beta_url])
+
+
+def test_fastapi_rag_admin_all_mode_adds_all_ready_profile_files(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_profile = client.post(
+        "/api/chunk/profiles",
+        json={
+            "name": "all-mode-profile",
+            "chunk_size": 256,
+            "chunk_overlap": 32,
+        },
+    )
+    assert create_profile.status_code == 201, create_profile.text
+    profile_id = create_profile.json()["profile"]["profile_id"]
+    _seed_ready_chunk_set(db_path, alpha_url, profile_id, text="Alpha all chunk")
+    _seed_ready_chunk_set(db_path, beta_url, profile_id, text="Beta all chunk")
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-all-mode",
+            "name": "All Mode KB",
+            "kb_mode": "all",
+            "chunk_profile_id": profile_id,
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    body = create_kb.json()
+    assert body["all_sync"]["added_count"] == 2
+    assert sorted(body["all_sync"]["file_urls"]) == sorted([alpha_url, beta_url])
+    assert body["chunk_bindings"]["bound"] == 2
+
+    files = client.get("/api/rag/knowledge-bases/kb-all-mode/files")
+    assert files.status_code == 200, files.text
+    assert sorted(item["file_url"] for item in files.json()["files"]) == sorted([alpha_url, beta_url])
 
 
 def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path, monkeypatch) -> None:

@@ -1,7 +1,8 @@
 """
 Unit tests for permission system in shared_auth.py
 """
-import pytest
+from types import SimpleNamespace
+
 from ai_actuarial.shared_auth import (
     GUEST_PERMISSIONS,
     REGISTERED_PERMISSIONS,
@@ -137,3 +138,24 @@ class TestPermissionsForGroup:
         """Group names should be case-insensitive."""
         assert permissions_for_group("Guest") == GUEST_PERMISSIONS
         assert permissions_for_group("ADMIN") == ADMIN_PERMISSIONS
+
+
+def test_public_permission_fast_path_skips_auth_lookup_for_anonymous_request(monkeypatch):
+    import ai_actuarial.api.deps as deps
+
+    class FailingStorage:
+        def __init__(self, _db_path):
+            raise AssertionError("anonymous public request should not open auth storage")
+
+    monkeypatch.setattr(deps, "Storage", FailingStorage)
+    request = SimpleNamespace(
+        headers={},
+        cookies={},
+        app=SimpleNamespace(state=SimpleNamespace(require_auth=True, db_path="unused")),
+        state=SimpleNamespace(),
+    )
+
+    auth = deps.require_permissions("chat.query")(request)
+
+    assert auth.token is None
+    assert auth.permissions == frozenset()

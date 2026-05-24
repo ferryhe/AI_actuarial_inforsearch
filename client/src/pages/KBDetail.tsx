@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
 
 interface KBMeta {
   kb_id: string;
@@ -127,6 +127,8 @@ export default function KBDetail() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [indexing, setIndexing] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
@@ -245,16 +247,26 @@ export default function KBDetail() {
 
   const handleAddCategory = async (cat: string) => {
     if (!cat.trim()) return;
+    setActionNotice(null);
+    setActionError(null);
     try {
-      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/categories`, {
+      const res = await apiPost<{ category_sync?: { added_count?: number } }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/categories`, {
         categories: [cat.trim()],
         action: "add",
       });
+      const addedCount = res.category_sync?.added_count ?? 0;
+      setActionNotice(
+        addedCount > 0
+          ? t("kb.category_sync_notice").replace("{count}", String(addedCount))
+          : t("kb.category_added_notice")
+      );
       setNewCategory("");
       setShowAddCategory(false);
-      await loadCategories();
+      await Promise.all([loadMeta(), loadStats(), loadFiles(), loadCategories()]);
     } catch (err) {
       console.error("Failed to add category:", err);
+      const detail = formatApiErrorDetail(err);
+      setActionError(detail || t("kb.category_add_error"));
     }
   };
 
@@ -272,12 +284,25 @@ export default function KBDetail() {
 
   const handleBuildIndex = async (force: boolean) => {
     setIndexing(true);
+    setActionNotice(null);
+    setActionError(null);
     try {
       const endpoint = `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`;
-      await apiPost(endpoint, force ? { force_reindex: true } : { incremental: true });
+      const res = await apiPost<{
+        category_sync?: { added_count?: number };
+        all_sync?: { added_count?: number };
+      }>(endpoint, force ? { force_reindex: true } : { incremental: true });
+      const addedCount = res.category_sync?.added_count ?? res.all_sync?.added_count ?? 0;
+      setActionNotice(
+        addedCount > 0
+          ? t("kb.index_sync_notice").replace("{count}", String(addedCount))
+          : t("kb.index_started_notice")
+      );
       await Promise.all([loadMeta(), loadStats(), loadFiles()]);
     } catch (err) {
       console.error("Failed to build index:", err);
+      const detail = formatApiErrorDetail(err);
+      setActionError(detail || t("kb.index_error"));
     } finally {
       setIndexing(false);
     }
@@ -289,7 +314,7 @@ export default function KBDetail() {
       const params = new URLSearchParams();
       if (query) params.set("query", query);
       params.set("kb_id", kbId);
-      params.set("limit", "50");
+      params.set("limit", "500");
       if (meta && meta.chunk_profile_id) params.set("profile_id", meta.chunk_profile_id);
       const url = `/api/rag/files/selectable?${params.toString()}`;
       const res = await apiGet<{ files?: Array<SelectableFile & { url?: string }> }>(url);
@@ -317,6 +342,8 @@ export default function KBDetail() {
     setShowBindDialog(true);
     setBindSearch("");
     setSelectedBindFiles([]);
+    setActionNotice(null);
+    setActionError(null);
     handleSearchBindable();
   };
 
@@ -326,26 +353,50 @@ export default function KBDetail() {
     );
   };
 
+  const handleSelectAllBindFiles = () => {
+    const visibleFileUrls = bindableFiles.map((file) => file.file_url).filter(Boolean);
+    if (visibleFileUrls.length === 0) return;
+    setSelectedBindFiles((prev) => {
+      const allVisibleSelected = bindableFiles.every((file) => prev.includes(file.file_url));
+      return allVisibleSelected
+        ? prev.filter((fileUrl) => !visibleFileUrls.includes(fileUrl))
+        : Array.from(new Set([...prev, ...visibleFileUrls]));
+    });
+  };
+
   const handleSubmitBindings = async () => {
     if (selectedBindFiles.length === 0) return;
     setBindSubmitting(true);
+    setActionNotice(null);
+    setActionError(null);
     try {
-      await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/bindings`, {
-        bindings: selectedBindFiles.map((fileUrl) => {
-          const file = bindableFiles.find((item) => item.file_url === fileUrl);
-          if (!file?.chunk_set_id) return null;
-          return {
-            file_url: file.file_url,
-            chunk_set_id: file.chunk_set_id,
-            binding_mode: "follow_latest",
-          };
-        }).filter(Boolean),
-      });
+      if (meta?.kb_mode === "manual") {
+        await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`, {
+          file_urls: selectedBindFiles,
+          chunk_profile_id: meta.chunk_profile_id,
+        });
+        setActionNotice(t("kb.files_added_notice").replace("{count}", String(selectedBindFiles.length)));
+      } else {
+        await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/bindings`, {
+          bindings: selectedBindFiles.map((fileUrl) => {
+            const file = bindableFiles.find((item) => item.file_url === fileUrl);
+            if (!file?.chunk_set_id) return null;
+            return {
+              file_url: file.file_url,
+              chunk_set_id: file.chunk_set_id,
+              binding_mode: "follow_latest",
+            };
+          }).filter(Boolean),
+        });
+        setActionNotice(t("kb.files_bound_notice").replace("{count}", String(selectedBindFiles.length)));
+      }
       setShowBindDialog(false);
       setSelectedBindFiles([]);
       await Promise.all([loadFiles(), loadStats()]);
     } catch (err) {
       console.error("Failed to add files to KB:", err);
+      const detail = formatApiErrorDetail(err);
+      setActionError(detail || t("kb.add_files_error"));
     } finally {
       setBindSubmitting(false);
     }
@@ -404,6 +455,8 @@ export default function KBDetail() {
 
   const pendingCount = stats?.pending_count ?? stats?.pending_files ?? 0;
   const needsEmbeddingRebuild = meta.needs_reindex || meta.embedding_compatible === false;
+  const isManualMode = meta.kb_mode === "manual";
+  const isCategoryMode = meta.kb_mode === "category";
   const currentEmbeddingLabel = [
     meta.current_embeddings?.provider,
     meta.current_embeddings?.model,
@@ -496,6 +549,19 @@ export default function KBDetail() {
         </div>
       </motion.div>
 
+      {actionError && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" data-testid="alert-kb-detail-action-error">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
+      {actionNotice && (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300" data-testid="alert-kb-detail-action-notice">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>{actionNotice}</span>
+        </div>
+      )}
+
       {needsEmbeddingRebuild && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -527,6 +593,39 @@ export default function KBDetail() {
             >
               <RefreshCw className={cn("w-4 h-4", indexing && "animate-spin")} />
               {t("kb.reembed_current")}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {isCategoryMode && pendingCount > 0 && !needsEmbeddingRebuild && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.14, duration: 0.35 }}
+          className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
+          data-testid="banner-category-index-required"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  {t("kb.category_index_required_title")}
+                </p>
+                <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mt-1">
+                  {t("kb.category_index_required_desc").replace("{count}", String(pendingCount))}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => handleBuildIndex(false)}
+              disabled={indexing}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 disabled:opacity-50 transition-colors"
+              data-testid="button-category-index-now"
+            >
+              <Zap className={cn("w-4 h-4", indexing && "animate-pulse")} />
+              {t("kb.index_now")}
             </button>
           </div>
         </motion.div>
@@ -660,7 +759,7 @@ export default function KBDetail() {
         </motion.div>
       )}
 
-      {(meta.kb_mode === "category" || categories.length > 0) && (
+      {(isCategoryMode || categories.length > 0) && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -772,7 +871,7 @@ export default function KBDetail() {
               data-testid="button-bind-files"
             >
               <LinkIcon className="w-3.5 h-3.5" />
-              {t("kb.bind_file")}
+              {isManualMode ? t("kb.add_files") : t("kb.bind_file")}
             </button>
           </div>
         </div>
@@ -853,7 +952,7 @@ export default function KBDetail() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div className="flex items-center gap-2">
                 <LinkIcon className="w-5 h-5 text-primary" />
-                <h3 className="text-base font-semibold">{t("kb.bind_file_title")}</h3>
+                <h3 className="text-base font-semibold">{isManualMode ? t("kb.add_files_title") : t("kb.bind_file_title")}</h3>
               </div>
               <button
                 onClick={() => setShowBindDialog(false)}
@@ -887,6 +986,22 @@ export default function KBDetail() {
                 >
                   {bindLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
                 </button>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleSelectAllBindFiles}
+                  disabled={bindableFiles.length === 0}
+                  className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+                  data-testid="button-select-all-bind-files"
+                >
+                  {bindableFiles.length > 0 && bindableFiles.every((file) => selectedBindFiles.includes(file.file_url))
+                    ? t("knowledge.clear_loaded")
+                    : t("knowledge.select_all")}
+                </button>
+                <span className="text-[11px] text-muted-foreground">
+                  {selectedBindFiles.length} {t("db.selected_count")}
+                </span>
               </div>
             </div>
 
@@ -963,7 +1078,7 @@ export default function KBDetail() {
                   data-testid="button-submit-bind"
                 >
                   {bindSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
-                  {t("kb.bind_submit")}
+                  {isManualMode ? t("kb.add_files_submit") : t("kb.bind_submit")}
                 </button>
               </div>
             </div>

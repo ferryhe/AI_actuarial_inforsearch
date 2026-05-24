@@ -113,6 +113,8 @@ interface DocumentContext {
 interface SendMessageOptions {
   text?: string;
   document?: AvailableDocument;
+  documents?: AvailableDocument[];
+  modeOverride?: ChatMode;
 }
 
 interface ChatRouteState {
@@ -402,6 +404,7 @@ export default function Chat() {
   const [docSearch, setDocSearch] = useState("");
   const [selectedDocCategories, setSelectedDocCategories] = useState<string[]>([]);
   const [docCategoryOptions, setDocCategoryOptions] = useState<string[]>([]);
+  const [selectedCompareDocs, setSelectedCompareDocs] = useState<AvailableDocument[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [quotaWarning, setQuotaWarning] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -561,6 +564,32 @@ export default function Chat() {
     await sendMessage({ text: questionText, document: doc });
   }
 
+  function toggleCompareDocument(doc: AvailableDocument) {
+    setSelectedCompareDocs((current) => {
+      const fileUrl = doc.file_url;
+      if (current.some((item) => item.file_url === fileUrl)) {
+        return current.filter((item) => item.file_url !== fileUrl);
+      }
+      return [...current, doc];
+    });
+  }
+
+  async function compareSelectedDocuments() {
+    if (selectedCompareDocs.length < 2) {
+      setErrorMsg(t("chat.compare_requires_two"));
+      return;
+    }
+    const filenames = selectedCompareDocs
+      .map((doc) => doc.filename || doc.title)
+      .filter(Boolean)
+      .join(", ");
+    const questionText = t("chat.compare_documents_prompt").replace("{filenames}", filenames);
+    setMode("comparison");
+    setSidebarTab("conversations");
+    await sendMessage({ text: questionText, documents: selectedCompareDocs, modeOverride: "comparison" });
+    setSelectedCompareDocs([]);
+  }
+
   async function loadDocumentMarkdown(doc: AvailableDocument): Promise<DocumentContext> {
     const suppliedContent = (doc.document_content || "").trim();
     if (suppliedContent) {
@@ -631,7 +660,15 @@ export default function Chat() {
     }
 
     try {
-      const documentContext = options?.document ? await loadDocumentMarkdown(options.document) : null;
+      const documentInputs = options?.documents?.length
+        ? options.documents
+        : options?.document
+          ? [options.document]
+          : [];
+      const documentContexts = documentInputs.length > 0
+        ? await Promise.all(documentInputs.map((doc) => loadDocumentMarkdown(doc)))
+        : [];
+      const activeMode = options?.modeOverride || mode;
       const res = await apiPost<{
         success?: boolean;
         data?: {
@@ -646,12 +683,21 @@ export default function Chat() {
         conversation_id: activeConvId,
         message: text,
         kb_ids: selectedKbs.length > 0 ? selectedKbs : undefined,
-        mode,
-        ...(documentContext
+        mode: activeMode,
+        ...(documentContexts.length > 0
           ? {
-              document_content: documentContext.content,
-              document_filename: documentContext.filename,
-              document_file_url: documentContext.fileUrl,
+              document_content: documentContexts[0].content,
+              document_filename: documentContexts[0].filename,
+              document_file_url: documentContexts[0].fileUrl,
+              ...(documentContexts.length > 1
+                ? {
+                    document_sources: documentContexts.map((documentContext) => ({
+                      content: documentContext.content,
+                      filename: documentContext.filename,
+                      file_url: documentContext.fileUrl,
+                    })),
+                  }
+                : {}),
             }
           : {}),
       });
@@ -905,22 +951,89 @@ export default function Chat() {
                       <div className="text-[10px] text-muted-foreground px-2 py-1">
                         {documents.length} {t("chat.documents_available")}
                       </div>
-                      {documents.map((doc, i) => (
+                      {selectedCompareDocs.length > 0 && (
                         <div
-                          key={doc.file_url || i}
-                          className="group flex items-start gap-2 px-3 py-2.5 rounded-lg hover:bg-muted cursor-pointer transition-colors"
-                          onClick={() => askAboutDocument(doc)}
-                          data-testid={`document-${i}`}
+                          className="mx-1 mb-2 rounded-lg border border-border bg-muted/40 p-2"
+                          data-testid="compare-documents-bar"
                         >
-                          <FileText className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground group-hover:text-primary transition-colors" strokeWidth={1.5} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                              {doc.filename || doc.title}
-                            </p>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] text-muted-foreground">
+                              {t("chat.compare_selected_count").replace("{count}", String(selectedCompareDocs.length))}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedCompareDocs([])}
+                              className="p-1 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                              aria-label={t("chat.clear_compare_selection")}
+                              title={t("chat.clear_compare_selection")}
+                              data-testid="button-clear-compare-documents"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                          <Sparkles className="w-3.5 h-3.5 shrink-0 mt-1 text-muted-foreground/30 group-hover:text-primary transition-colors" />
+                          <button
+                            type="button"
+                            onClick={compareSelectedDocuments}
+                            disabled={selectedCompareDocs.length < 2 || sending}
+                            className={cn(
+                              "mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                              selectedCompareDocs.length >= 2 && !sending
+                                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                                : "bg-muted text-muted-foreground cursor-not-allowed"
+                            )}
+                            data-testid="button-compare-selected-documents"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            {t("chat.compare_documents")}
+                          </button>
                         </div>
-                      ))}
+                      )}
+                      {documents.map((doc, i) => {
+                        const selectedForCompare = selectedCompareDocs.some((item) => item.file_url === doc.file_url);
+                        return (
+                          <div
+                            key={doc.file_url || i}
+                            className="group flex items-start gap-2 px-3 py-2.5 rounded-lg hover:bg-muted cursor-pointer transition-colors"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`${t("chat.explain_document")}: ${doc.filename || doc.title}`}
+                            onClick={() => askAboutDocument(doc)}
+                            onKeyDown={(event) => {
+                              if (event.target !== event.currentTarget) return;
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                askAboutDocument(doc);
+                              }
+                            }}
+                            data-testid={`document-${i}`}
+                          >
+                            <FileText className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground group-hover:text-primary transition-colors" strokeWidth={1.5} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
+                                {doc.filename || doc.title}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleCompareDocument(doc);
+                              }}
+                              className={cn(
+                                "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
+                                selectedForCompare
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary"
+                              )}
+                              aria-label={t("chat.toggle_compare_document")}
+                              title={t("chat.toggle_compare_document")}
+                              data-testid={`button-toggle-compare-document-${i}`}
+                            >
+                              {selectedForCompare ? <Check className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        );
+                      })}
                     </>
                   )}
                 </div>

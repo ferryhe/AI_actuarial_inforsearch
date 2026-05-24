@@ -49,6 +49,31 @@ def test_knowledge_create_supports_document_and_category_multiselects():
     assert "`/api/rag/knowledge-bases/${encodeURIComponent(finalKbId)}/index`" in src
 
 
+def test_knowledge_create_supports_select_all_and_all_mode():
+    src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+
+    assert '<option value="all">{t("knowledge.mode_all")}</option>' in src
+    assert "kbForm.kb_mode === \"all\"" in src
+    assert "handleSelectAllKbFiles" in src
+    assert 'data-testid="button-select-all-kb-files"' in src
+    assert "selectableFiles.every((file) => current.file_urls.includes(file.url))" in src
+
+
+def test_knowledge_create_surfaces_create_and_index_errors():
+    src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+
+    assert "formatApiErrorDetail" in src
+    assert "function formatActionErrorDetail(err: unknown): string" not in src
+    assert "kbActionError" in src
+    assert "setKbActionError" in src
+    assert "kbActionNotice" in src
+    assert 'data-testid="alert-kb-action-error"' in src
+    assert 'data-testid="alert-kb-action-notice"' in src
+    assert 'type="button"' in src
+    assert "indexFailed" in src
+    assert "knowledge.create_index_partial_error" in src
+
+
 def test_knowledge_create_uses_existing_chunk_profile_not_inline_chunk_settings():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
 
@@ -73,3 +98,17 @@ def test_kb_detail_bind_dialog_uses_kb_chunk_profile_and_chunk_bindings():
     assert "canBindFiles" in src
     assert "disabled={!canBindFiles}" in src
     assert "if (!canBindFiles) return;" in src
+
+
+def test_kb_detail_manual_mode_can_add_files_with_select_all_and_category_index_prompt():
+    src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+
+    assert "formatApiErrorDetail" in src
+    assert "function formatActionErrorDetail(err: unknown): string" not in src
+    assert "isManualMode" in src
+    assert "handleSelectAllBindFiles" in src
+    assert 'data-testid="button-select-all-bind-files"' in src
+    assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`" in src
+    assert "file_urls: selectedBindFiles" in src
+    assert "meta.kb_mode === \"manual\"" in src
+    assert 'data-testid="banner-category-index-required"' in src

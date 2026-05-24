@@ -24,6 +24,7 @@ from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import KnowledgeBaseException
 from ai_actuarial.rag.semantic_chunking import SemanticChunker
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
+from ai_actuarial.rag.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,7 @@ class KnowledgeBaseManager:
                 updated_at TEXT NOT NULL,
                 file_count INTEGER DEFAULT 0,
                 chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT,
                 index_path TEXT,
                 metadata_path TEXT
             )
@@ -206,6 +208,7 @@ class KnowledgeBaseManager:
                 "updated_at": "TEXT",
                 "file_count": "INTEGER DEFAULT 0",
                 "chunk_count": "INTEGER DEFAULT 0",
+                "index_dirty_at": "TEXT",
                 "index_path": "TEXT",
                 "metadata_path": "TEXT",
             },
@@ -387,14 +390,14 @@ class KnowledgeBaseManager:
         conn.execute("""
             INSERT INTO rag_knowledge_bases 
             (kb_id, name, description, kb_mode, chunk_profile_id, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
-             index_type, created_at, updated_at, file_count, chunk_count,
+             index_type, created_at, updated_at, file_count, chunk_count, index_dirty_at,
              index_path, metadata_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             kb.kb_id, kb.name, kb.description, kb.kb_mode, kb.chunk_profile_id,
             kb.embedding_provider, kb.embedding_model, kb.embedding_dimension,
             kb.chunk_size, kb.chunk_overlap, kb.index_type,
-            kb.created_at, kb.updated_at, kb.file_count, kb.chunk_count,
+            kb.created_at, kb.updated_at, kb.file_count, kb.chunk_count, None,
             str(kb_dir / "index.faiss"),
             str(kb_dir / "index.meta.pkl")
         ))
@@ -605,9 +608,10 @@ class KnowledgeBaseManager:
             SET file_count = (
                 SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
             ),
-            updated_at = ?
+            updated_at = ?,
+            index_dirty_at = CASE WHEN ? > 0 THEN ? ELSE index_dirty_at END
             WHERE kb_id = ?
-        """, (kb_id, timestamp, kb_id))
+        """, (kb_id, timestamp, added_count, timestamp, kb_id))
         
         conn.commit()
         
@@ -635,7 +639,15 @@ class KnowledgeBaseManager:
                 DELETE FROM rag_kb_files 
                 WHERE kb_id = ? AND file_url = ?
             """, (kb_id, file_url))
-            removed_count += cursor.rowcount
+            if cursor.rowcount > 0:
+                removed_count += cursor.rowcount
+                conn.execute(
+                    "DELETE FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
+                    (kb_id, file_url),
+                )
+
+        if removed_count > 0:
+            self._soft_delete_file_vectors(kb, file_urls)
         
         # Update file count
         timestamp = KnowledgeBase._get_timestamp()
@@ -644,13 +656,55 @@ class KnowledgeBaseManager:
             SET file_count = (
                 SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
             ),
+            chunk_count = (
+                SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ?
+            ),
             updated_at = ?
             WHERE kb_id = ?
-        """, (kb_id, timestamp, kb_id))
+        """, (kb_id, kb_id, timestamp, kb_id))
         
         conn.commit()
         
         return removed_count
+
+    def _soft_delete_file_vectors(self, kb: KnowledgeBase, file_urls: List[str]) -> Dict[str, Any]:
+        """Mark vectors for removed files as deleted without rebuilding the index."""
+        index_path = Path(self.config.data_dir) / kb.kb_id / "index.faiss"
+        if not index_path.exists():
+            return {"removed_vectors": 0, "index_path": str(index_path), "skipped": "missing_index"}
+
+        dimension = kb.embedding_dimension or infer_embedding_dimension(kb.embedding_model)
+        if dimension in (None, ""):
+            return {"removed_vectors": 0, "index_path": str(index_path), "skipped": "unknown_dimension"}
+
+        try:
+            vector_store = VectorStore(
+                dimension=int(dimension),
+                config=self.config,
+                index_path=str(index_path),
+            )
+            indices: list[int] = []
+            for file_url in file_urls:
+                indices.extend(
+                    vector_store.find_indices_by_metadata(
+                        kb_id=kb.kb_id,
+                        file_url=file_url,
+                    )
+                )
+            removed_vectors = vector_store.remove_vectors(indices)
+            if removed_vectors:
+                vector_store.save_index()
+            return {
+                "removed_vectors": removed_vectors,
+                "index_path": str(index_path),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to soft-delete vectors for KB '%s': %s", kb.kb_id, exc)
+            return {
+                "removed_vectors": 0,
+                "index_path": str(index_path),
+                "error": str(exc),
+            }
     
     def get_kb_files(self, kb_id: str) -> List[Dict[str, Any]]:
         """Get all files in a knowledge base."""
@@ -912,14 +966,28 @@ class KnowledgeBaseManager:
         if auto_sync:
             self._sync_category_files(kb_id, categories)
     
-    def _sync_category_files(self, kb_id: str, categories: List[str]):
+    def sync_category_files(self, kb_id: str, categories: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Automatically add all files from specified categories to KB.
         
         Args:
             kb_id: Knowledge base ID
-            categories: List of category names
+            categories: List of category names. Uses the KB's mapped categories when omitted.
         """
+        if categories is None:
+            categories = self.get_kb_categories(kb_id)
+        categories = [str(category or "").strip() for category in categories if str(category or "").strip()]
+        if not categories:
+            return {
+                "kb_id": kb_id,
+                "categories": [],
+                "file_urls": [],
+                "added_file_urls": [],
+                "added_count": 0,
+                "skipped_count": 0,
+                "total_files": self.get_kb_stats(kb_id).get("total_files", 0),
+            }
+
         # Build query to find all files matching categories
         category_conditions = []
         params = []
@@ -941,10 +1009,85 @@ class KnowledgeBaseManager:
         """, params)
         
         file_urls = [row[0] for row in cursor.fetchall()]
-        
+
+        before_urls = {
+            str(row.get("file_url") or "").strip()
+            for row in self.get_kb_files(kb_id)
+            if str(row.get("file_url") or "").strip()
+        }
+        added_file_urls = [file_url for file_url in file_urls if file_url not in before_urls]
+
         # Add to KB (silently skip if already added)
+        add_result = {"added_count": 0, "skipped_count": 0, "total_files": len(before_urls)}
         if file_urls:
-            self.add_files_to_kb(kb_id, file_urls)
+            add_result = self.add_files_to_kb(kb_id, file_urls)
+
+        return {
+            "kb_id": kb_id,
+            "categories": categories,
+            "file_urls": file_urls,
+            "added_file_urls": added_file_urls,
+            "added_count": int(add_result.get("added_count") or 0),
+            "skipped_count": int(add_result.get("skipped_count") or 0),
+            "total_files": int(add_result.get("total_files") or 0),
+        }
+
+    def _sync_category_files(self, kb_id: str, categories: List[str]):
+        self.sync_category_files(kb_id, categories)
+
+    def sync_all_files(self, kb_id: str, profile_id: str = "") -> Dict[str, Any]:
+        """Add all eligible markdown files to a KB, optionally constrained to a ready chunk profile."""
+        profile_id = str(profile_id or "").strip()
+        profile_filter = ""
+        params: list[Any] = []
+        if profile_id:
+            profile_filter = """
+                AND EXISTS (
+                    SELECT 1
+                    FROM file_chunk_sets s
+                    WHERE s.file_url = f.url
+                      AND s.profile_id = ?
+                      AND s.status = 'ready'
+                      AND COALESCE(s.chunk_count, 0) > 0
+                )
+            """
+            params.append(profile_id)
+
+        cursor = self.storage._conn.execute(
+            f"""
+            SELECT DISTINCT f.url
+            FROM files f
+            JOIN catalog_items c ON c.file_url = f.url
+            WHERE f.deleted_at IS NULL
+              AND c.status = 'ok'
+              AND c.markdown_content IS NOT NULL
+              AND c.markdown_content != ''
+              {profile_filter}
+            ORDER BY f.last_seen DESC, f.id DESC
+            """,
+            params,
+        )
+        file_urls = [row[0] for row in cursor.fetchall()]
+        before_urls = {
+            str(row.get("file_url") or "").strip()
+            for row in self.get_kb_files(kb_id)
+            if str(row.get("file_url") or "").strip()
+        }
+        added_file_urls = [file_url for file_url in file_urls if file_url not in before_urls]
+
+        add_result = {"added_count": 0, "skipped_count": 0, "total_files": len(before_urls)}
+        if file_urls:
+            add_result = self.add_files_to_kb(kb_id, file_urls)
+
+        return {
+            "kb_id": kb_id,
+            "profile_id": profile_id,
+            "file_urls": file_urls,
+            "added_file_urls": added_file_urls,
+            "added_count": int(add_result.get("added_count") or 0),
+            "skipped_count": int(add_result.get("skipped_count") or 0),
+            "total_files": int(add_result.get("total_files") or 0),
+        }
     
     def get_kb_categories(self, kb_id: str) -> List[str]:
         """

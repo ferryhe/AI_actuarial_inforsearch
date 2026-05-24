@@ -662,6 +662,14 @@ class NativeTaskRuntime:
         if not kb:
             raise RuntimeError(f"Knowledge base '{kb_id}' not found")
 
+        category_sync: dict[str, Any] | None = None
+        all_sync: dict[str, Any] | None = None
+        kb_mode = getattr(kb, "kb_mode", "")
+        if kb_mode == "category":
+            category_sync = manager.sync_category_files(kb_id)
+        elif kb_mode == "all":
+            all_sync = manager.sync_all_files(kb_id, profile_id=getattr(kb, "chunk_profile_id", ""))
+
         force_reindex = bool(data.get("force_reindex", False) or data.get("reindex_all", False))
         incremental = bool(data.get("incremental", True))
         file_urls = [
@@ -679,7 +687,7 @@ class NativeTaskRuntime:
             else:
                 file_urls = manager.get_files_needing_index(kb_id)
 
-        if not file_urls:
+        if not file_urls and not force_reindex:
             return CollectionResult(
                 success=True,
                 items_found=0,
@@ -730,6 +738,8 @@ class NativeTaskRuntime:
                 "total_chunks": int(stats.get("total_chunks") or 0),
                 "error_files": int(stats.get("error_files") or 0),
                 "stopped": stopped,
+                "category_sync": category_sync,
+                "all_sync": all_sync,
             },
         )
 

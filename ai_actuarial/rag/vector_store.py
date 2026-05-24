@@ -117,6 +117,8 @@ class VectorStore:
     
     Critical feature: Supports adding new vectors without full rebuild.
     """
+
+    MAX_DELETED_OVERFETCH = 256
     
     def __init__(
         self,
@@ -143,6 +145,8 @@ class VectorStore:
         else:
             self.index = self._create_index()
             self.metadata = []
+        self._deleted_count = self._count_deleted_metadata()
+        self._deleted_count_metadata_len = len(self.metadata)
     
     def _create_index(self) -> faiss.Index:
         """
@@ -207,6 +211,8 @@ class VectorStore:
             
             # Store metadata
             self.metadata.extend(metadata)
+            self._deleted_count += sum(1 for item in metadata if item.get('_deleted', False))
+            self._deleted_count_metadata_len = len(self.metadata)
             
         except Exception as e:
             raise VectorStoreException(f"Failed to add vectors: {e}")
@@ -232,13 +238,28 @@ class VectorStore:
             raise VectorStoreException(
                 f"Query vector dimension mismatch: {query_vector.shape[0]} != {self.dimension}"
             )
+        if k <= 0:
+            return []
         
         try:
             # Reshape for FAISS
             query_vector = query_vector.reshape(1, -1).astype('float32')
             
-            # Search
-            distances, indices = self.index.search(query_vector, k)
+            total_vectors = int(getattr(self.index, 'ntotal', 0) or 0)
+            if total_vectors <= 0:
+                return []
+
+            deleted_count = self._get_deleted_count()
+            overfetch = min(
+                deleted_count,
+                max(k * 4, 32),
+                self.MAX_DELETED_OVERFETCH,
+            )
+            search_k = min(total_vectors, max(k, k + overfetch))
+
+            # Search. Over-fetch when soft-deleted vectors exist so active
+            # neighbors just below deleted hits can still be returned.
+            distances, indices = self.index.search(query_vector, search_k)
             
             # Convert distances to similarity scores (L2 distance to cosine-like score)
             # Lower distance = higher similarity
@@ -249,23 +270,29 @@ class VectorStore:
             # Build results
             results = []
             for pos, (idx, score) in enumerate(zip(indices[0], similarities[0])):
-                if idx < len(self.metadata):  # Valid index
-                    # Apply threshold if specified
-                    if similarity_threshold is None or score >= similarity_threshold:
-                        result = {
-                            'metadata': self.metadata[idx],
-                            'score': float(score),
-                            'distance': float(distances[0][pos]),
-                            'index': int(idx)
-                        }
-                        results.append(result)
+                if len(results) >= k:
+                    break
+                if not (0 <= idx < len(self.metadata)):
+                    continue
+                metadata = self.metadata[idx]
+                if metadata.get('_deleted', False):
+                    continue
+                # Apply threshold if specified
+                if similarity_threshold is None or score >= similarity_threshold:
+                    result = {
+                        'metadata': metadata,
+                        'score': float(score),
+                        'distance': float(distances[0][pos]),
+                        'index': int(idx)
+                    }
+                    results.append(result)
             
             return results
             
         except Exception as e:
             raise VectorStoreException(f"Search failed: {e}")
     
-    def remove_vectors(self, indices: List[int]) -> None:
+    def remove_vectors(self, indices: List[int]) -> int:
         """
         Remove vectors from index.
         
@@ -275,10 +302,47 @@ class VectorStore:
         Args:
             indices: List of vector indices to remove
         """
-        # Mark metadata as deleted
-        for idx in indices:
-            if idx < len(self.metadata):
-                self.metadata[idx]['_deleted'] = True
+        removed = 0
+        for idx in sorted(set(indices)):
+            if not (0 <= idx < len(self.metadata)):
+                continue
+            if self.metadata[idx].get('_deleted', False):
+                continue
+            self.metadata[idx]['_deleted'] = True
+            removed += 1
+        if removed:
+            self._deleted_count += removed
+            self._deleted_count_metadata_len = len(self.metadata)
+        return removed
+
+    def _count_deleted_metadata(self) -> int:
+        return sum(1 for meta in self.metadata if meta.get('_deleted', False))
+
+    def _get_deleted_count(self) -> int:
+        """Return cached soft-delete count, refreshing if metadata length changed."""
+        if (
+            not hasattr(self, "_deleted_count")
+            or not hasattr(self, "_deleted_count_metadata_len")
+            or self._deleted_count_metadata_len != len(self.metadata)
+        ):
+            self._deleted_count = self._count_deleted_metadata()
+            self._deleted_count_metadata_len = len(self.metadata)
+        return self._deleted_count
+
+    def find_indices_by_metadata(
+        self,
+        *,
+        include_deleted: bool = False,
+        **criteria: Any,
+    ) -> List[int]:
+        """Return vector metadata indices matching all criteria."""
+        matches: List[int] = []
+        for idx, metadata in enumerate(self.metadata):
+            if not include_deleted and metadata.get('_deleted', False):
+                continue
+            if all(metadata.get(key) == value for key, value in criteria.items()):
+                matches.append(idx)
+        return matches
     
     def rebuild_without_deleted(self) -> None:
         """
@@ -296,6 +360,8 @@ class VectorStore:
             # All deleted, create fresh index
             self.index = self._create_index()
             self.metadata = []
+            self._deleted_count = 0
+            self._deleted_count_metadata_len = 0
             return
         
         # Extract vectors (reconstruct from index if possible)
@@ -312,6 +378,8 @@ class VectorStore:
             
             # Add valid vectors
             self.add_vectors(vectors, new_metadata)
+            self._deleted_count = 0
+            self._deleted_count_metadata_len = len(self.metadata)
         else:
             raise VectorStoreException(
                 "Index type doesn't support reconstruction. "

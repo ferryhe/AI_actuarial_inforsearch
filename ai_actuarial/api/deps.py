@@ -44,6 +44,13 @@ def _extract_presented_token(request: Request) -> str | None:
     return token.strip() if token else None
 
 
+def _has_presented_auth_material(request: Request) -> bool:
+    if _extract_presented_token(request):
+        return True
+    cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
+    return bool(request.cookies.get(cookie_name))
+
+
 def _decode_signed_session(request: Request) -> dict[str, Any]:
     cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
     cookie_value = request.cookies.get(cookie_name)
@@ -152,6 +159,10 @@ def require_permissions(*required: str):
     def dependency(request: Request) -> AuthContext:
         public_permissions = public_permissions_for_request(request)
         if all(permission in public_permissions for permission in required):
+            if _has_presented_auth_material(request):
+                context = _load_auth_context(request)
+                if context.token:
+                    return context
             return AuthContext(token=None, permissions=frozenset())
 
         context = _load_auth_context(request)
