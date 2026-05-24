@@ -15,4 +15,5 @@
 - Verification passed: `npm.cmd run build -- --outDir C:/tmp/ai-actuarial-category-kb-build-final` after rerunning with escalated filesystem permission for `C:/tmp`; the first sandboxed build failed with `EPERM` on output directory creation. The usual large chunk warning remains.
 - Browser smoke note: Browser runtime could start the temporary Vite server and detect HTTP readiness, but the in-app browser automation failed with `No active Codex browser pane available`; HTTP smoke was used as the environment-safe fallback.
 - Pre-PR review gate: Blocked. `codex --help` failed both normally and with escalated sandbox permissions with `Program 'codex.exe' failed to run: Access is denied`.
-- PR: pending creation after commit and push from this branch.
+- PR: #116 `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/116`, opened from `codex/category-kb-index-actions` to `main` at head `7756c1b`.
+- Initial PR state: no comments or inline review threads yet. `gh pr checks 116 --repo ferryhe/AI_actuarial_inforsearch` shows `python-smoke` pending. A 15-minute heartbeat (`check-pr-116-category-kb-index-actions`) was created for CI/comment follow-up.
