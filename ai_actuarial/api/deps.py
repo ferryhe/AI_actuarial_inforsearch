@@ -16,17 +16,6 @@ from ai_actuarial.shared_auth import (
 from ai_actuarial.storage import Storage
 
 
-_ANONYMOUS_PERMISSIONS: frozenset[str] = frozenset(
-    {
-        "files.read",
-        "catalog.read",
-        "markdown.read",
-        "chat.view",
-        "chat.query",
-    }
-)
-
-
 @dataclass(slots=True)
 class AuthContext:
     token: dict[str, Any] | None
@@ -145,8 +134,7 @@ def get_auth_context(request: Request) -> AuthContext:
 
 
 def public_permissions_for_request(request: Request) -> frozenset[str]:
-    require_auth = bool(getattr(request.app.state, "require_auth", False))
-    return _ANONYMOUS_PERMISSIONS if require_auth else PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
+    return PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
 
 
 def require_permissions(*required: str):

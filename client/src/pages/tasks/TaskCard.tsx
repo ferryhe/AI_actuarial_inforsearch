@@ -93,7 +93,7 @@ export function TaskCard({ task, index, onStop }: TaskCardProps) {
           )}
         </div>
         {onStop && (
-          <button onClick={() => onStop?.(task.id)}
+          <button onClick={() => onStop(task.id)}
             className="shrink-0 p-2 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500/20 transition-colors"
             data-testid={`button-stop-task-${task.id}`} title={t("tasks.stop")}><Square className="w-4 h-4" /></button>
         )}

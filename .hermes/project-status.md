@@ -15,4 +15,10 @@
 - Verification passed: `npm run build` (passed with the existing Vite large-chunk warning).
 - Verification passed: `git diff --check` (passed).
 - Browser smoke passed on local Vite/FastAPI: `/login` Chinese view shows `返回主页`, `登录`, `邮箱`, `密码`, `注册`; token tab shows Chinese token labels and controls; `/register` Chinese view shows `返回主页`, `创建账号`, `显示名称`, `邮箱`, `密码`, `确认密码`, `创建账号`; English register view still renders correctly.
-- Known out-of-scope full-suite failures from earlier investigation: `test_fastapi_entrypoint.py` CSRF secret setup, `test_code_review_fixes.py`/`test_fastapi_react_cleanup.py` path assumptions, and `test_safe_pickle.py` pickle safety assertions.
+- PR #117 follow-up: pulled latest `fix/rbac-chat-i18n`; inspected CI and Copilot review comments. Copilot reported 3 inline comments; all were confirmed valid/in-scope and addressed. CI `python-smoke` failed because task history now requires `tasks.view`; the smoke fixture now bootstraps and uses an admin token for that protected endpoint.
+- PR #117 follow-up verification passed: `FASTAPI_SESSION_SECRET=ci-fastapi-session-secret TOKEN_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= python -m pytest tests/test_fastapi_entrypoint.py tests/unit/test_permissions.py tests/test_auth_react_source.py -q` (28 passed, 3 warnings).
+- PR #117 follow-up verification passed: `FASTAPI_SESSION_SECRET=ci-fastapi-session-secret TOKEN_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py -q` (13 passed, 3 warnings).
+- PR #117 follow-up verification passed: `npm run build` (passed with the existing Vite large-chunk warning).
+- PR #117 follow-up verification passed: `git diff --check` (passed).
+- PR #117 local Codex review gate: first run timed out after invoking a focused pytest without CI env; rerun in read-only/diff-only mode completed with `No findings`.
+- Known out-of-scope full-suite failures from earlier investigation: `test_fastapi_entrypoint.py` CSRF secret setup when local env lacks `FASTAPI_SESSION_SECRET`, `test_code_review_fixes.py`/`test_fastapi_react_cleanup.py` path assumptions, and `test_safe_pickle.py` pickle safety assertions.

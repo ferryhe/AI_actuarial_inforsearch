@@ -38,16 +38,17 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RequirePermission({ permission, children }: { permission: string; children: React.ReactNode }) {
   const { isLoading, permissions, requireAuth, isLoggedIn } = useAuth();
   const [, navigate] = useLocation();
+  const hasPermission = permissions.includes(permission);
 
   useEffect(() => {
-    if (!isLoading && requireAuth && !isLoggedIn) {
+    if (!isLoading && requireAuth && !isLoggedIn && !hasPermission) {
       navigate("/login");
     }
-  }, [isLoading, requireAuth, isLoggedIn, navigate]);
+  }, [isLoading, requireAuth, isLoggedIn, hasPermission, navigate]);
 
   if (isLoading) return null;
-  if (requireAuth && !isLoggedIn) return null;
-  if (!permissions.includes(permission)) {
+  if (requireAuth && !isLoggedIn && !hasPermission) return null;
+  if (!hasPermission) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted-foreground" data-testid="text-forbidden">
         403 — insufficient permissions
