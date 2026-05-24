@@ -526,8 +526,7 @@ def test_upload_batch_then_run_file_collection_uses_batch_not_server_path(tmp_pa
     assert upload_body["file_count"] == 3
     assert upload_body["total_bytes"] == len(b"fake pdf") + len(b"side note") + len(b"fake epub")
     assert [item["relative_path"] for item in upload_body["files"]] == ["reports/bulletin.pdf", "reports/notes.txt", "books/manual.epub"]
-    staged_paths = [Path(item["stored_path"]) for item in upload_body["files"]]
-    assert [str(path.relative_to(path.parents[2] / "files")) for path in staged_paths] == ["reports/bulletin.pdf", "reports/notes.txt", "books/manual.epub"]
+    assert all("stored_path" not in item for item in upload_body["files"])
     batch_id = upload_body["upload_batch_id"]
     runtime_paths = NativeTaskRuntime()._collect_file_paths({"upload_batch_id": batch_id, "extensions": ["pdf"]})
     assert [Path(path).name for path in runtime_paths] == ["bulletin.pdf"]

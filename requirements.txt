@@ -6,6 +6,7 @@ python-pptx>=1.0.2
 keybert>=0.9.0
 sentence-transformers>=5.0.0
 fastapi>=0.115.0
+python-multipart>=0.0.20
 uvicorn>=0.30.0
 itsdangerous>=2.2.0
 sqlalchemy>=2.0.0

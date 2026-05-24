@@ -11,7 +11,6 @@ type ImportBatchResponse = {
   upload_batch_id: string;
   file_count?: number;
   total_bytes?: number;
-  error?: string;
 };
 
 type FileInputWithDirectory = HTMLInputElement & { webkitdirectory?: boolean };
@@ -66,10 +65,6 @@ export function FileImportForm({ onSubmit, submitting }: { onSubmit: (d: Record<
     setUploadError(null);
     try {
       const batch = await apiPostForm<ImportBatchResponse>("/api/files/import-batches", formData);
-      if (batch.error) {
-        setUploadError(batch.error);
-        return;
-      }
       onSubmit({
         type: "file",
         name: `File Import: ${batch.file_count || count} files`,

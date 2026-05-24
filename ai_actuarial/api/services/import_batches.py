@@ -105,6 +105,29 @@ def _write_manifest(batch_dir: Path, manifest: dict[str, Any]) -> None:
     (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _response_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    public_files = []
+    for item in manifest.get("files") or []:
+        public_files.append(
+            {
+                "original_name": item.get("original_name"),
+                "relative_path": item.get("relative_path"),
+                "size": item.get("size"),
+                "content_type": item.get("content_type"),
+                "sha256": item.get("sha256"),
+            }
+        )
+    return {
+        "success": True,
+        "upload_batch_id": manifest.get("upload_batch_id"),
+        "status": manifest.get("status"),
+        "created_at": manifest.get("created_at"),
+        "file_count": manifest.get("file_count"),
+        "total_bytes": manifest.get("total_bytes"),
+        "files": public_files,
+    }
+
+
 async def create_import_batch(*, files: list[UploadFile], relative_paths: list[str], auth_token: dict[str, Any] | None) -> dict[str, Any]:
     if not files:
         raise ImportBatchError("No files uploaded")
@@ -174,7 +197,7 @@ async def create_import_batch(*, files: list[UploadFile], relative_paths: list[s
             "files": manifest_files,
         }
         _write_manifest(batch_dir, manifest)
-        return {"success": True, **manifest}
+        return _response_manifest(manifest)
     except Exception:
         shutil.rmtree(batch_dir, ignore_errors=True)
         raise

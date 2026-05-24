@@ -14,5 +14,8 @@
 - Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_ops_write_endpoints.py tests/test_fastapi_ops_read_endpoints.py tests/test_tasks_react_source.py -q` (39 passed, 3 warnings).
 - Verification passed: `npm run build` (passed with existing Vite large-chunk warning).
 - Verification passed: `git diff --check` (passed).
-- Local Codex review gate: first run found valid issues around scheduled file tasks and upload allowlist; fixes were applied. Final `codex -c 'model="gpt-5.5"' review --uncommitted` completed with `No discrete, actionable correctness issues`.
-- Next step: commit, push, create PR1, then check CI and remote comments before moving to PR2 SSRF protection.
+- PR follow-up: Copilot comments were reviewed against the current diff. Confirmed and fixed: upload-batch API response no longer returns absolute `stored_path` values; frontend import response type no longer models unreachable `{error}` success bodies and relies on HTTP error handling.
+- CI follow-up: `python-smoke` had failed because CI lacked `python-multipart`; added it to `requirements.txt`. Also updated the no-Flask runtime smoke to use upload batches instead of legacy `directory_path`.
+- CI smoke reproduced locally with CI-equivalent required env present: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py -q` (13 passed, 3 warnings).
+- Local Codex review gate: first run found valid issues around scheduled file tasks and upload allowlist; fixes were applied. Latest `codex -c 'model="gpt-5.5"' review --uncommitted` completed with no discrete correctness issues.
+- Next step: commit/push PR1 follow-up and wait for refreshed GitHub CI/review state before moving to PR2 SSRF protection.
