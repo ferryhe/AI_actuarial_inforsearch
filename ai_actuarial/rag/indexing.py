@@ -90,6 +90,9 @@ class IndexingPipeline:
         if not kb:
             raise RAGException(f"Knowledge base '{kb_id}' not found")
 
+        if force_reindex:
+            file_urls = self._force_reindex_file_urls(kb_id, file_urls)
+
         stats = {
             'total_files': len(file_urls),
             'indexed_files': 0,
@@ -209,6 +212,25 @@ class IndexingPipeline:
             )
         
         return stats
+
+    def _force_reindex_file_urls(self, kb_id: str, requested_file_urls: List[str]) -> List[str]:
+        """Force reindex always rebuilds the complete current KB file set."""
+        get_kb_files = getattr(self.kb_manager, "get_kb_files", None)
+        if not callable(get_kb_files):
+            return requested_file_urls
+
+        kb_files = get_kb_files(kb_id) or []
+        full_file_urls: List[str] = []
+        seen: set[str] = set()
+        for item in kb_files:
+            if not isinstance(item, dict):
+                continue
+            file_url = str(item.get("file_url") or item.get("url") or "").strip()
+            if not file_url or file_url in seen:
+                continue
+            full_file_urls.append(file_url)
+            seen.add(file_url)
+        return full_file_urls
 
     def _reset_kb_index_contents(self, kb_id: str, index_path: Path) -> None:
         """Clear persisted vectors/chunks before a full KB rebuild."""

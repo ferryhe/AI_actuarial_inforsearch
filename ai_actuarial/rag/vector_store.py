@@ -117,6 +117,8 @@ class VectorStore:
     
     Critical feature: Supports adding new vectors without full rebuild.
     """
+
+    MAX_DELETED_OVERFETCH = 256
     
     def __init__(
         self,
@@ -143,6 +145,8 @@ class VectorStore:
         else:
             self.index = self._create_index()
             self.metadata = []
+        self._deleted_count = self._count_deleted_metadata()
+        self._deleted_count_metadata_len = len(self.metadata)
     
     def _create_index(self) -> faiss.Index:
         """
@@ -207,6 +211,8 @@ class VectorStore:
             
             # Store metadata
             self.metadata.extend(metadata)
+            self._deleted_count += sum(1 for item in metadata if item.get('_deleted', False))
+            self._deleted_count_metadata_len = len(self.metadata)
             
         except Exception as e:
             raise VectorStoreException(f"Failed to add vectors: {e}")
@@ -232,6 +238,8 @@ class VectorStore:
             raise VectorStoreException(
                 f"Query vector dimension mismatch: {query_vector.shape[0]} != {self.dimension}"
             )
+        if k <= 0:
+            return []
         
         try:
             # Reshape for FAISS
@@ -241,8 +249,13 @@ class VectorStore:
             if total_vectors <= 0:
                 return []
 
-            deleted_count = sum(1 for meta in self.metadata if meta.get('_deleted', False))
-            search_k = min(total_vectors, max(k, k + deleted_count))
+            deleted_count = self._get_deleted_count()
+            overfetch = min(
+                deleted_count,
+                max(k * 4, 32),
+                self.MAX_DELETED_OVERFETCH,
+            )
+            search_k = min(total_vectors, max(k, k + overfetch))
 
             # Search. Over-fetch when soft-deleted vectors exist so active
             # neighbors just below deleted hits can still be returned.
@@ -297,7 +310,24 @@ class VectorStore:
                 continue
             self.metadata[idx]['_deleted'] = True
             removed += 1
+        if removed:
+            self._deleted_count += removed
+            self._deleted_count_metadata_len = len(self.metadata)
         return removed
+
+    def _count_deleted_metadata(self) -> int:
+        return sum(1 for meta in self.metadata if meta.get('_deleted', False))
+
+    def _get_deleted_count(self) -> int:
+        """Return cached soft-delete count, refreshing if metadata length changed."""
+        if (
+            not hasattr(self, "_deleted_count")
+            or not hasattr(self, "_deleted_count_metadata_len")
+            or self._deleted_count_metadata_len != len(self.metadata)
+        ):
+            self._deleted_count = self._count_deleted_metadata()
+            self._deleted_count_metadata_len = len(self.metadata)
+        return self._deleted_count
 
     def find_indices_by_metadata(
         self,
@@ -330,6 +360,8 @@ class VectorStore:
             # All deleted, create fresh index
             self.index = self._create_index()
             self.metadata = []
+            self._deleted_count = 0
+            self._deleted_count_metadata_len = 0
             return
         
         # Extract vectors (reconstruct from index if possible)
@@ -346,6 +378,8 @@ class VectorStore:
             
             # Add valid vectors
             self.add_vectors(vectors, new_metadata)
+            self._deleted_count = 0
+            self._deleted_count_metadata_len = len(self.metadata)
         else:
             raise VectorStoreException(
                 "Index type doesn't support reconstruction. "

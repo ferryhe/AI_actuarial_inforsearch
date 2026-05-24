@@ -385,6 +385,40 @@ def test_vector_store_soft_delete_ignores_invalid_indices_and_filters_search(tmp
     assert len(result_ids) == 2
 
 
+def test_vector_store_search_caps_soft_deleted_overfetch(tmp_path) -> None:
+    store = VectorStore(dimension=2, index_path=str(tmp_path / "bounded-search.faiss"))
+    store.metadata = [
+        {"id": f"deleted-near-{idx}", "_deleted": True}
+        for idx in range(5)
+    ] + [
+        {"id": f"active-{idx}"}
+        for idx in range(5, 20)
+    ] + [
+        {"id": f"deleted-far-{idx}", "_deleted": True}
+        for idx in range(20, 200)
+    ]
+
+    class FakeIndex:
+        ntotal = 200
+
+        def __init__(self) -> None:
+            self.requested_k = 0
+
+        def search(self, _query_vector, k):
+            self.requested_k = k
+            distances = np.linspace(0.0, 1.0, k, dtype="float32").reshape(1, -1)
+            indices = np.arange(k, dtype="int64").reshape(1, -1)
+            return distances, indices
+
+    fake_index = FakeIndex()
+    store.index = fake_index
+
+    results = store.search(np.array([1.0, 0.0], dtype="float32"), k=3)
+
+    assert fake_index.requested_k <= 35
+    assert [result["metadata"]["id"] for result in results] == ["active-5", "active-6", "active-7"]
+
+
 def test_indexing_pipeline_update_soft_deletes_old_file_vectors_before_append(tmp_path) -> None:
     kb_id = "kb-update-soft-delete"
     file_url = "https://example.com/update.pdf"
@@ -442,6 +476,68 @@ def test_indexing_pipeline_update_soft_deletes_old_file_vectors_before_append(tm
         assert vector_store.metadata[1].get("_deleted") is not True
         assert vector_store.metadata[2]["file_url"] == file_url
         assert vector_store.metadata[2].get("_deleted") is not True
+    finally:
+        storage.close()
+
+
+def test_indexing_pipeline_force_reindex_rebuilds_full_kb_when_subset_requested(tmp_path) -> None:
+    kb_id = "kb-force-reindex-full"
+    first_url = "https://example.com/first.pdf"
+    second_url = "https://example.com/second.pdf"
+    storage = Storage(str(tmp_path / "force-reindex-full.db"))
+    try:
+        for file_url, title in [(first_url, "First"), (second_url, "Second")]:
+            storage.insert_file(
+                url=file_url,
+                sha256=f"sha-{title}",
+                title=title,
+                source_site="example.com",
+                source_page_url="https://example.com",
+                original_filename=f"{title.lower()}.pdf",
+                local_path=str(tmp_path / f"{title.lower()}.pdf"),
+                bytes=1024,
+                content_type="application/pdf",
+            )
+            storage.update_file_markdown(file_url, f"# {title}\n\n{title} content", "manual")
+
+        manager = KnowledgeBaseManager(storage, config=RAGConfig(data_dir=str(tmp_path / "rag-data")))
+        manager.create_kb(kb_id, "Force Reindex Full KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [first_url, second_url])
+        manager.chunker = SimpleNamespace(
+            chunk_document=lambda content, metadata: [
+                Chunk(
+                    content=content,
+                    chunk_index=0,
+                    token_count=2,
+                    section_hierarchy=metadata["title"],
+                    metadata=metadata,
+                )
+            ]
+        )
+        manager.embedding_generator = SimpleNamespace(
+            provider="openai",
+            get_embedding_dimension=lambda: 3,
+            generate_embeddings=lambda texts: [[1.0, 0.0, 0.0] for _text in texts],
+        )
+
+        pipeline = IndexingPipeline(manager)
+
+        stats = pipeline.index_files(kb_id=kb_id, file_urls=[first_url], force_reindex=True)
+
+        assert stats["total_files"] == 2
+        assert stats["indexed_files"] == 2
+        chunk_rows = storage._conn.execute(
+            "SELECT file_url FROM rag_chunks WHERE kb_id = ? ORDER BY file_url",
+            (kb_id,),
+        ).fetchall()
+        assert [row[0] for row in chunk_rows] == [first_url, second_url]
+        file_rows = storage._conn.execute(
+            "SELECT file_url, indexed_at, chunk_count FROM rag_kb_files WHERE kb_id = ? ORDER BY file_url",
+            (kb_id,),
+        ).fetchall()
+        assert [row[0] for row in file_rows] == [first_url, second_url]
+        assert all(row[1] for row in file_rows)
+        assert [row[2] for row in file_rows] == [1, 1]
     finally:
         storage.close()
 
