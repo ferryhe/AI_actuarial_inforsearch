@@ -101,6 +101,20 @@ interface SelectableFile {
   chunk_profile_name?: string;
 }
 
+function formatActionErrorDetail(err: unknown): string {
+  if (err instanceof ApiError) {
+    const detail = err.detail as unknown;
+    if (typeof detail === "string") return detail || err.message;
+    if (detail === null || detail === undefined) return err.message;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+  return err instanceof Error ? err.message : "";
+}
+
 function StatusDot({ status }: { status?: string }) {
   const s = (status || "").toLowerCase();
   const color =
@@ -265,7 +279,7 @@ export default function KBDetail() {
       await Promise.all([loadMeta(), loadStats(), loadFiles(), loadCategories()]);
     } catch (err) {
       console.error("Failed to add category:", err);
-      const detail = err instanceof ApiError ? err.detail || err.message : err instanceof Error ? err.message : "";
+      const detail = formatActionErrorDetail(err);
       setActionError(detail || t("kb.category_add_error"));
     }
   };
@@ -301,7 +315,7 @@ export default function KBDetail() {
       await Promise.all([loadMeta(), loadStats(), loadFiles()]);
     } catch (err) {
       console.error("Failed to build index:", err);
-      const detail = err instanceof ApiError ? err.detail || err.message : err instanceof Error ? err.message : "";
+      const detail = formatActionErrorDetail(err);
       setActionError(detail || t("kb.index_error"));
     } finally {
       setIndexing(false);
@@ -395,7 +409,7 @@ export default function KBDetail() {
       await Promise.all([loadFiles(), loadStats()]);
     } catch (err) {
       console.error("Failed to add files to KB:", err);
-      const detail = err instanceof ApiError ? err.detail || err.message : err instanceof Error ? err.message : "";
+      const detail = formatActionErrorDetail(err);
       setActionError(detail || t("kb.add_files_error"));
     } finally {
       setBindSubmitting(false);

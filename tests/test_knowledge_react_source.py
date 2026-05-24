@@ -56,13 +56,15 @@ def test_knowledge_create_supports_select_all_and_all_mode():
     assert "kbForm.kb_mode === \"all\"" in src
     assert "handleSelectAllKbFiles" in src
     assert 'data-testid="button-select-all-kb-files"' in src
-    assert "selectableFiles.every((file) => kbForm.file_urls.includes(file.url))" in src
+    assert "selectableFiles.every((file) => current.file_urls.includes(file.url))" in src
 
 
 def test_knowledge_create_surfaces_create_and_index_errors():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
 
     assert "ApiError" in src
+    assert "function formatActionErrorDetail(err: unknown): string" in src
+    assert "JSON.stringify(detail)" in src
     assert "kbActionError" in src
     assert "setKbActionError" in src
     assert "kbActionNotice" in src
@@ -103,6 +105,8 @@ def test_kb_detail_bind_dialog_uses_kb_chunk_profile_and_chunk_bindings():
 def test_kb_detail_manual_mode_can_add_files_with_select_all_and_category_index_prompt():
     src = KB_DETAIL_TSX.read_text(encoding="utf-8")
 
+    assert "function formatActionErrorDetail(err: unknown): string" in src
+    assert "JSON.stringify(detail)" in src
     assert "isManualMode" in src
     assert "handleSelectAllBindFiles" in src
     assert 'data-testid="button-select-all-bind-files"' in src

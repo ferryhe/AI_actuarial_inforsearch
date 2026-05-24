@@ -80,6 +80,20 @@ interface CategoryOption {
   count?: number | null;
 }
 
+function formatActionErrorDetail(err: unknown): string {
+  if (err instanceof ApiError) {
+    const detail = err.detail as unknown;
+    if (typeof detail === "string") return detail || err.message;
+    if (detail === null || detail === undefined) return err.message;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+  return err instanceof Error ? err.message : "";
+}
+
 const emptyKbForm = {
   name: "",
   kb_id: "",
@@ -311,11 +325,7 @@ export default function Knowledge() {
         } catch (indexErr) {
           console.error("Failed to start KB index task:", indexErr);
           indexFailed = true;
-          indexErrorDetail = indexErr instanceof ApiError
-            ? indexErr.detail || indexErr.message
-            : indexErr instanceof Error
-              ? indexErr.message
-              : "";
+          indexErrorDetail = formatActionErrorDetail(indexErr);
         }
       }
       const defaultProfileId = profiles.find((profile) => profile.profile_id)?.profile_id || "";
@@ -335,7 +345,7 @@ export default function Knowledge() {
       loadData();
     } catch (err) {
       console.error("Failed to create KB:", err);
-      const detail = err instanceof ApiError ? err.detail || err.message : err instanceof Error ? err.message : "";
+      const detail = formatActionErrorDetail(err);
       setKbActionError(detail || (createAndIndex ? t("knowledge.create_index_error") : t("knowledge.create_error")));
     } finally {
       setCreating(false);
@@ -367,7 +377,7 @@ export default function Knowledge() {
       loadData();
     } catch (err) {
       console.error("Failed to re-embed KB:", err);
-      const detail = err instanceof ApiError ? err.detail || err.message : err instanceof Error ? err.message : "";
+      const detail = formatActionErrorDetail(err);
       setKbActionError(detail || t("knowledge.index_error"));
     } finally {
       setIndexingKb(null);
@@ -396,7 +406,7 @@ export default function Knowledge() {
     const loadedFileUrls = selectableFiles.map((file) => file.url).filter(Boolean);
     if (loadedFileUrls.length === 0) return;
     setKbForm((current) => {
-      const allLoadedSelected = selectableFiles.every((file) => kbForm.file_urls.includes(file.url));
+      const allLoadedSelected = selectableFiles.every((file) => current.file_urls.includes(file.url));
       return {
         ...current,
         file_urls: allLoadedSelected
