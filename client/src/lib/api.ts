@@ -2,7 +2,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public detail?: string
+    public detail?: unknown
   ) {
     super(message);
     this.name = "ApiError";
@@ -64,12 +64,13 @@ async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promis
   });
 
   if (!res.ok) {
-    let detail: string | undefined;
+    let detail: unknown;
     try {
       const body = await res.json();
       detail = body.error || body.message || body.detail;
     } catch {}
-    throw new ApiError(detail || `Request failed (${res.status})`, res.status, detail);
+    const message = typeof detail === "string" && detail ? detail : `Request failed (${res.status})`;
+    throw new ApiError(message, res.status, detail);
   }
 
   if (res.status === 204) return null as T;
@@ -107,4 +108,18 @@ export function apiPatch<T = unknown>(url: string, body?: unknown): Promise<T> {
 
 export function apiDelete<T = unknown>(url: string): Promise<T> {
   return apiFetch<T>(url, { method: "DELETE" });
+}
+
+export function formatApiErrorDetail(err: unknown): string {
+  if (err instanceof ApiError) {
+    const detail = err.detail;
+    if (typeof detail === "string") return detail || err.message;
+    if (detail === null || detail === undefined) return err.message;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+  return err instanceof Error ? err.message : "";
 }

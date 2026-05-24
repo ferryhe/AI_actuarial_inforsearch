@@ -994,7 +994,17 @@ export default function Chat() {
                           <div
                             key={doc.file_url || i}
                             className="group flex items-start gap-2 px-3 py-2.5 rounded-lg hover:bg-muted cursor-pointer transition-colors"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`${t("chat.explain_document")}: ${doc.filename || doc.title}`}
                             onClick={() => askAboutDocument(doc)}
+                            onKeyDown={(event) => {
+                              if (event.target !== event.currentTarget) return;
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                askAboutDocument(doc);
+                              }
+                            }}
                             data-testid={`document-${i}`}
                           >
                             <FileText className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground group-hover:text-primary transition-colors" strokeWidth={1.5} />

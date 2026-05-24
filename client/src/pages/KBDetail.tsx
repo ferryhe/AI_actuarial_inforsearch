@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { ApiError, apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
 
 interface KBMeta {
   kb_id: string;
@@ -99,20 +99,6 @@ interface SelectableFile {
   chunk_count?: number;
   chunk_profile_id?: string;
   chunk_profile_name?: string;
-}
-
-function formatActionErrorDetail(err: unknown): string {
-  if (err instanceof ApiError) {
-    const detail = err.detail as unknown;
-    if (typeof detail === "string") return detail || err.message;
-    if (detail === null || detail === undefined) return err.message;
-    try {
-      return JSON.stringify(detail);
-    } catch {
-      return String(detail);
-    }
-  }
-  return err instanceof Error ? err.message : "";
 }
 
 function StatusDot({ status }: { status?: string }) {
@@ -279,7 +265,7 @@ export default function KBDetail() {
       await Promise.all([loadMeta(), loadStats(), loadFiles(), loadCategories()]);
     } catch (err) {
       console.error("Failed to add category:", err);
-      const detail = formatActionErrorDetail(err);
+      const detail = formatApiErrorDetail(err);
       setActionError(detail || t("kb.category_add_error"));
     }
   };
@@ -315,7 +301,7 @@ export default function KBDetail() {
       await Promise.all([loadMeta(), loadStats(), loadFiles()]);
     } catch (err) {
       console.error("Failed to build index:", err);
-      const detail = formatActionErrorDetail(err);
+      const detail = formatApiErrorDetail(err);
       setActionError(detail || t("kb.index_error"));
     } finally {
       setIndexing(false);
@@ -409,7 +395,7 @@ export default function KBDetail() {
       await Promise.all([loadFiles(), loadStats()]);
     } catch (err) {
       console.error("Failed to add files to KB:", err);
-      const detail = formatActionErrorDetail(err);
+      const detail = formatApiErrorDetail(err);
       setActionError(detail || t("kb.add_files_error"));
     } finally {
       setBindSubmitting(false);

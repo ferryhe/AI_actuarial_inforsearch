@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { ApiError, apiGet, apiPost, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface KnowledgeBase {
@@ -78,20 +78,6 @@ interface SelectableFile {
 interface CategoryOption {
   name: string;
   count?: number | null;
-}
-
-function formatActionErrorDetail(err: unknown): string {
-  if (err instanceof ApiError) {
-    const detail = err.detail as unknown;
-    if (typeof detail === "string") return detail || err.message;
-    if (detail === null || detail === undefined) return err.message;
-    try {
-      return JSON.stringify(detail);
-    } catch {
-      return String(detail);
-    }
-  }
-  return err instanceof Error ? err.message : "";
 }
 
 const emptyKbForm = {
@@ -325,7 +311,7 @@ export default function Knowledge() {
         } catch (indexErr) {
           console.error("Failed to start KB index task:", indexErr);
           indexFailed = true;
-          indexErrorDetail = formatActionErrorDetail(indexErr);
+          indexErrorDetail = formatApiErrorDetail(indexErr);
         }
       }
       const defaultProfileId = profiles.find((profile) => profile.profile_id)?.profile_id || "";
@@ -345,7 +331,7 @@ export default function Knowledge() {
       loadData();
     } catch (err) {
       console.error("Failed to create KB:", err);
-      const detail = formatActionErrorDetail(err);
+      const detail = formatApiErrorDetail(err);
       setKbActionError(detail || (createAndIndex ? t("knowledge.create_index_error") : t("knowledge.create_error")));
     } finally {
       setCreating(false);
@@ -377,7 +363,7 @@ export default function Knowledge() {
       loadData();
     } catch (err) {
       console.error("Failed to re-embed KB:", err);
-      const detail = formatActionErrorDetail(err);
+      const detail = formatApiErrorDetail(err);
       setKbActionError(detail || t("knowledge.index_error"));
     } finally {
       setIndexingKb(null);

@@ -63,6 +63,9 @@ def test_chat_document_sidebar_supports_multi_document_comparison():
     assert "chat.compare_selected_count" in src
     assert 'data-testid="button-compare-selected-documents"' in src
     assert 'data-testid={`button-toggle-compare-document-${i}`}' in src
+    assert 'role="button"' in src
+    assert "tabIndex={0}" in src
+    assert 'event.key === "Enter" || event.key === " "' in src
 
 
 def test_chat_citation_links_use_react_file_routes():
