@@ -1,15 +1,16 @@
 # Project Status
 
-- Date: 2026-05-23
+- Date: 2026-05-24
 - Branch: `codex/category-kb-index-actions`
 - Latest baseline: `origin/main` at `2b747a4` after PR #115 was merged.
-- Scope: Extend PR #116 to close the remaining Knowledge Base creation/management gaps, address remote review comments, and restore Chat document comparison UX. Sibling repositories were not read or modified.
+- Scope: Extend PR #116 to close the remaining Knowledge Base creation/management gaps, address remote review comments, restore Chat document comparison UX, and fix logged-in chat quota detection. Sibling repositories were not read or modified.
 - Frontend: Knowledge creation now supports `manual`, `category`, and `all` modes. Manual create and KB detail add-file flows include select-all/clear-loaded controls. Category-backed KB detail pages show an incremental-index prompt when synced or updated category files need embedding before chat can use them.
 - Frontend: Manual KB detail management can add new files through the existing RAG file endpoint. Category and all-mode index actions surface sync counts in user-visible notices.
 - Frontend review fix: `Create & Index` now treats KB creation and index-task startup as separate steps. If creation succeeds but indexing fails, the create modal closes, the KB remains created, and the user sees a partial-success error instead of retrying into a 409 conflict.
 - Frontend: Chat document sidebar now supports selecting multiple markdown documents for comparison. The compare action switches to `comparison` mode and POSTs the selected markdown files through the backend's existing `document_sources` contract.
 - Backend: Added all-mode KB syncing that includes every eligible markdown file with ready chunks for the selected chunk profile. Create-index requests and direct RAG indexing tasks now resync category/all-mode membership before choosing incremental files to embed.
 - Backend review fix: Index-task responses now include `category_sync`, `all_sync`, and `chunk_bindings` only when those actions actually happened, preserving the manual-mode API shape.
+- Backend: Public chat routes now still load an authenticated session/API token when one is present, so registered users use the configured registered quota instead of anonymous quota. Admin chat requests now bypass daily chat quota accounting.
 - Tests added/updated: React source tests cover all mode, select-all controls, manual add-file UI, category index prompt, and create/index partial failure handling. FastAPI tests cover all-mode ready-profile file syncing and optional response metadata omission for manual index tasks.
 - Verification passed: `python -m pytest tests/test_knowledge_react_source.py::test_knowledge_create_surfaces_create_and_index_errors tests/test_fastapi_rag_admin_endpoints.py::test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge -q` (2 passed).
 - Verification passed: `python -m pytest tests/test_knowledge_react_source.py tests/test_fastapi_rag_admin_endpoints.py -q` (19 passed, 3 warnings).
@@ -17,6 +18,9 @@
 - Verification passed: `python -m pytest tests/test_chat_react_source.py::test_chat_document_sidebar_supports_multi_document_comparison -q` (1 passed after first confirming the new test failed on the missing UI).
 - Verification passed: `python -m pytest tests/test_chat_react_source.py tests/test_fastapi_chat_endpoints.py -q` (17 passed, 3 warnings).
 - Verification passed: `python -m pytest tests/test_chat_react_source.py tests/test_knowledge_react_source.py tests/test_fastapi_rag_admin_endpoints.py tests/test_tasks_react_source.py tests/test_fastapi_file_preview.py tests/test_fastapi_chat_endpoints.py tests/test_settings_react_source.py -q` (60 passed, 3 warnings).
+- Verification passed: `python -m pytest tests/test_fastapi_chat_endpoints.py::test_fastapi_chat_query_uses_registered_session_quota_for_public_chat_route tests/test_fastapi_chat_endpoints.py::test_fastapi_chat_admin_quota_is_unlimited -q` (2 passed, 3 warnings after first confirming both tests failed on the old quota behavior).
+- Verification passed: `python -m pytest tests/test_fastapi_chat_endpoints.py tests/unit/test_permissions.py -q` (32 passed, 3 warnings).
+- Verification passed: `python -m pytest tests/test_chat_react_source.py tests/test_knowledge_react_source.py tests/test_fastapi_rag_admin_endpoints.py tests/test_tasks_react_source.py tests/test_fastapi_file_preview.py tests/test_fastapi_chat_endpoints.py tests/test_settings_react_source.py tests/unit/test_permissions.py -q` (81 passed, 3 warnings).
 - Verification passed: `npm.cmd run build -- --outDir C:/tmp/ai-actuarial-chat-compare-build` (passed with the existing Vite large chunk warning).
 - Verification passed: Temporary Vite HTTP smoke for `http://127.0.0.1:5185/chat` returned 200; the temporary server was stopped afterward.
 - Verification passed: `npm.cmd run build -- --outDir C:/tmp/ai-actuarial-kb-manual-all-build` (passed with the existing Vite large chunk warning).
@@ -24,4 +28,4 @@
 - Browser smoke blocker: The user opened the in-app browser, but Browser automation could not attach because `C:/Users/ferry/.codex/plugins/cache/openai-bundled/browser/26.519.41501/scripts/browser-client.mjs` is missing from the Browser plugin package. The skill forbids substituting the Chrome plugin's copy, so rendered browser clicks were not completed in this environment.
 - Browser smoke note: The in-app browser automation environment previously reported `No active Codex browser pane available`; HTTP smoke was used as the environment-safe fallback.
 - Pre-PR review gate: Blocked. `codex --help` failed both normally and with escalated sandbox permissions with `Program 'codex.exe' failed to run: Access is denied`.
-- PR: #116 `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/116`, opened from `codex/category-kb-index-actions` to `main`. Current follow-up addresses the two latest remote review comments without resolving or replying to GitHub threads.
+- PR: #116 `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/116`, opened from `codex/category-kb-index-actions` to `main`. Current follow-up addresses the logged-in chat quota bug without resolving or replying to GitHub threads.

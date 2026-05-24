@@ -3,14 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.deps import AuthContext
 from ai_actuarial.api.services.chat import _build_file_links
+from ai_actuarial.shared_auth import hash_password
 from ai_actuarial.storage import Storage
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
@@ -178,6 +182,11 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     client.headers.update({"X-Auth-Token": seed["operator_token"]})
     _seed_knowledge_bases(client)
     return client, app, seed
+
+
+def _make_session_cookie(app, payload: dict[str, object]) -> str:
+    serializer = URLSafeSerializer(app.state.fastapi_session_secret, salt="fastapi-session")
+    return serializer.dumps(payload)
 
 
 
@@ -728,6 +737,136 @@ def test_apply_session_update_uses_fastapi_cookie_serializer() -> None:
     chat_service.apply_session_update(response, request, chat_service.SessionUpdate({"guest_chat_user_id": "guest:test"}))
     assert len(response.cookies) == 1
     assert response.cookies[0]["key"] == "session"
+
+
+def test_fastapi_chat_query_uses_registered_session_quota_for_public_chat_route(tmp_path: Path, monkeypatch) -> None:
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch)
+    app.state.require_auth = True
+    client = TestClient(app)
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        user_id = storage.create_user(
+            "registered-quota@example.com",
+            hash_password("password123"),
+            role="registered",
+            display_name="Registered Quota",
+        )
+    finally:
+        storage.close()
+
+    import ai_actuarial.api.services.chat as chat_service
+    monkeypatch.setattr(
+        chat_service,
+        "AI_CHAT_QUOTA",
+        {**chat_service.AI_CHAT_QUOTA, "anonymous": 2, "guest": 2, "registered": 4},
+    )
+
+    class FakeConversationManager:
+        def __init__(self, storage, config):
+            self.storage = storage
+            chat_service._ensure_conversation_schema(storage)
+
+        def create_conversation(self, user_id: str, kb_id: str | None = None, mode: str = "expert", metadata=None):
+            conversation_id = f"conv_registered_quota_{uuid.uuid4().hex[:8]}"
+            now = "2026-04-16T00:00:00+00:00"
+            self.storage._conn.execute(
+                "INSERT INTO conversations (conversation_id, user_id, title, kb_id, mode, created_at, updated_at, message_count, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, user_id, "Registered Quota", kb_id, mode, now, now, 0, json.dumps(metadata) if metadata else None),
+            )
+            self.storage._conn.commit()
+            return conversation_id
+
+        def get_conversation(self, conversation_id: str):
+            return None
+
+        def add_message(self, conversation_id: str, role: str, content: str, citations=None, metadata=None):
+            return f"msg_{role}_{uuid.uuid4().hex[:8]}"
+
+        def get_context(self, conversation_id: str):
+            return []
+
+    class FakeRetriever:
+        def __init__(self, storage, config):
+            pass
+
+        def retrieve(self, query, kb_ids):
+            return []
+
+    class FakeLLMClient:
+        def __init__(self, config, storage=None):
+            pass
+
+        def generate_response(self, query, chunks, mode, conversation_history):
+            return "registered quota ok"
+
+    class FakeConfigModule:
+        class ChatbotConfig:
+            @staticmethod
+            def from_config(storage=None, default_mode="expert"):
+                return SimpleNamespace(available_modes=["expert", "summary", "tutorial", "comparison"], similarity_threshold=0.35, model="fake-chat-model", default_mode=default_mode)
+
+    class FakeConversationModule:
+        ConversationManager = FakeConversationManager
+
+    class FakeRetrievalModule:
+        RAGRetriever = FakeRetriever
+
+    class FakeLLMModule:
+        LLMClient = FakeLLMClient
+
+    class FakeRouterModule:
+        QueryRouter = lambda *args, **kwargs: None
+
+    class FakeExceptionsModule:
+        class NoResultsException(Exception):
+            pass
+
+        class EmbeddingConfigurationMismatchException(Exception):
+            pass
+
+        LLMException = RuntimeError
+        ConversationException = RuntimeError
+        RetrievalException = RuntimeError
+
+    monkeypatch.setattr(
+        chat_service,
+        "_full_chat_modules",
+        lambda: {
+            "config": FakeConfigModule,
+            "conversation": FakeConversationModule,
+            "exceptions": FakeExceptionsModule,
+            "retrieval": FakeRetrievalModule,
+            "llm": FakeLLMModule,
+            "router": FakeRouterModule,
+        },
+    )
+
+    client.cookies.set(app.state.fastapi_session_cookie_name, _make_session_cookie(app, {"email_user_id": user_id}))
+    payload = {"message": "hello", "kb_ids": ["chat-kb-a"], "mode": "expert"}
+    responses = [client.post("/api/chat/query", json=payload) for _ in range(3)]
+
+    assert all(response.status_code == 200 for response in responses), [response.text for response in responses]
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        assert storage.get_ai_chat_quota_used(chat_service._today_utc(), user_id=user_id) == 3
+    finally:
+        storage.close()
+
+
+def test_fastapi_chat_admin_quota_is_unlimited(monkeypatch) -> None:
+    import ai_actuarial.api.services.chat as chat_service
+
+    class FailingQuotaStorage:
+        def check_and_increment_ai_chat_quota(self, *args, **kwargs):
+            raise AssertionError("admin chat should not increment daily quota")
+
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+    auth = AuthContext(token={"group_name": "admin"}, permissions=frozenset())
+
+    monkeypatch.setattr(chat_service, "AI_CHAT_QUOTA", {**chat_service.AI_CHAT_QUOTA, "admin": 2})
+    chat_service._enforce_chat_quota(storage=FailingQuotaStorage(), request=request, auth=auth)
 
 
 

@@ -152,6 +152,9 @@ def require_permissions(*required: str):
     def dependency(request: Request) -> AuthContext:
         public_permissions = public_permissions_for_request(request)
         if all(permission in public_permissions for permission in required):
+            context = _load_auth_context(request)
+            if context.token:
+                return context
             return AuthContext(token=None, permissions=frozenset())
 
         context = _load_auth_context(request)

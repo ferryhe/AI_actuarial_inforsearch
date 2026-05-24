@@ -578,10 +578,22 @@ def _client_ip(request) -> str:
     return getattr(client, "host", None) or "unknown"
 
 
+def _chat_quota_role(token: dict[str, Any]) -> str:
+    role = _normalize_text(token.get("group_name")).lower()
+    email_user = token.get("_email_user")
+    if not role and isinstance(email_user, dict):
+        role = _normalize_text(email_user.get("role")).lower()
+    if not role and token.get("_email_user_id") is not None:
+        role = "registered"
+    return role or "anonymous"
+
+
 def _enforce_chat_quota(*, storage: Storage, request, auth: AuthContext) -> None:
     token = auth.token or {}
     email_user = token.get("_email_user") if isinstance(token, dict) else None
-    role = str((token.get("group_name") if isinstance(token, dict) else None) or "anonymous").lower()
+    role = _chat_quota_role(token) if isinstance(token, dict) else "anonymous"
+    if role == "admin":
+        return
     limit = AI_CHAT_QUOTA.get(role, AI_CHAT_QUOTA.get("anonymous", 2))
     today = _today_utc()
 
