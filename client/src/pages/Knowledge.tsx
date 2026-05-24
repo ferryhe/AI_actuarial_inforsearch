@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { ApiError, apiGet, apiPost, apiDelete } from "@/lib/api";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface KnowledgeBase {
@@ -169,6 +169,8 @@ export default function Knowledge() {
   const [selectableFilesLoading, setSelectableFilesLoading] = useState(false);
   const [categoryStats, setCategoryStats] = useState<Record<string, number> | null>(null);
   const [categoryStatsLoading, setCategoryStatsLoading] = useState(false);
+  const [kbActionError, setKbActionError] = useState<string | null>(null);
+  const [kbActionNotice, setKbActionNotice] = useState<string | null>(null);
 
   const [kbForm, setKbForm] = useState(emptyKbForm);
 
@@ -281,6 +283,8 @@ export default function Knowledge() {
     if (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0) return;
     const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
     setCreating(true);
+    setKbActionError(null);
+    setKbActionNotice(null);
     try {
       await apiPost("/api/rag/knowledge-bases", {
         kb_id: finalKbId,
@@ -300,9 +304,12 @@ export default function Knowledge() {
       setKbForm({ ...emptyKbForm, chunk_profile_id: defaultProfileId });
       setFileSearch("");
       closeCreateKB();
+      setKbActionNotice(createAndIndex ? t("knowledge.create_index_started") : t("knowledge.create_success"));
       loadData();
     } catch (err) {
       console.error("Failed to create KB:", err);
+      const detail = err instanceof ApiError ? err.detail || err.message : err instanceof Error ? err.message : "";
+      setKbActionError(detail || (createAndIndex ? t("knowledge.create_index_error") : t("knowledge.create_error")));
     } finally {
       setCreating(false);
     }
@@ -323,13 +330,18 @@ export default function Knowledge() {
 
   const handleReembedKB = async (kbId: string) => {
     setIndexingKb(kbId);
+    setKbActionError(null);
+    setKbActionNotice(null);
     try {
       await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`, {
         force_reindex: true,
       });
+      setKbActionNotice(t("knowledge.index_started"));
       loadData();
     } catch (err) {
       console.error("Failed to re-embed KB:", err);
+      const detail = err instanceof ApiError ? err.detail || err.message : err instanceof Error ? err.message : "";
+      setKbActionError(detail || t("knowledge.index_error"));
     } finally {
       setIndexingKb(null);
     }
@@ -391,6 +403,8 @@ export default function Knowledge() {
 
   const openCreateKB = () => {
     setShowCreateProfile(false);
+    setKbActionError(null);
+    setKbActionNotice(null);
     setShowCreateKB(true);
   };
 
@@ -451,6 +465,7 @@ export default function Knowledge() {
           </p>
         </div>
         <button
+          type="button"
           onClick={openCreateKB}
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
           data-testid="button-create-kb"
@@ -459,6 +474,19 @@ export default function Knowledge() {
           {t("knowledge.create")}
         </button>
       </motion.div>
+
+      {kbActionError && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" data-testid="alert-kb-action-error">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>{kbActionError}</span>
+        </div>
+      )}
+      {kbActionNotice && (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300" data-testid="alert-kb-action-notice">
+          <Check className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>{kbActionNotice}</span>
+        </div>
+      )}
 
       <AnimatePresence>
         {showCreateKB && (
@@ -699,6 +727,7 @@ export default function Knowledge() {
                 {t("common.cancel")}
               </button>
               <button
+                type="button"
                 onClick={() => handleCreateKB(false)}
                 disabled={
                   creating
@@ -714,6 +743,7 @@ export default function Knowledge() {
                 {t("knowledge.create")}
               </button>
               <button
+                type="button"
                 onClick={() => handleCreateKB(true)}
                 disabled={
                   creating

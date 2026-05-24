@@ -912,14 +912,28 @@ class KnowledgeBaseManager:
         if auto_sync:
             self._sync_category_files(kb_id, categories)
     
-    def _sync_category_files(self, kb_id: str, categories: List[str]):
+    def sync_category_files(self, kb_id: str, categories: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Automatically add all files from specified categories to KB.
         
         Args:
             kb_id: Knowledge base ID
-            categories: List of category names
+            categories: List of category names. Uses the KB's mapped categories when omitted.
         """
+        if categories is None:
+            categories = self.get_kb_categories(kb_id)
+        categories = [str(category or "").strip() for category in categories if str(category or "").strip()]
+        if not categories:
+            return {
+                "kb_id": kb_id,
+                "categories": [],
+                "file_urls": [],
+                "added_file_urls": [],
+                "added_count": 0,
+                "skipped_count": 0,
+                "total_files": self.get_kb_stats(kb_id).get("total_files", 0),
+            }
+
         # Build query to find all files matching categories
         category_conditions = []
         params = []
@@ -941,10 +955,31 @@ class KnowledgeBaseManager:
         """, params)
         
         file_urls = [row[0] for row in cursor.fetchall()]
-        
+
+        before_urls = {
+            str(row.get("file_url") or "").strip()
+            for row in self.get_kb_files(kb_id)
+            if str(row.get("file_url") or "").strip()
+        }
+        added_file_urls = [file_url for file_url in file_urls if file_url not in before_urls]
+
         # Add to KB (silently skip if already added)
+        add_result = {"added_count": 0, "skipped_count": 0, "total_files": len(before_urls)}
         if file_urls:
-            self.add_files_to_kb(kb_id, file_urls)
+            add_result = self.add_files_to_kb(kb_id, file_urls)
+
+        return {
+            "kb_id": kb_id,
+            "categories": categories,
+            "file_urls": file_urls,
+            "added_file_urls": added_file_urls,
+            "added_count": int(add_result.get("added_count") or 0),
+            "skipped_count": int(add_result.get("skipped_count") or 0),
+            "total_files": int(add_result.get("total_files") or 0),
+        }
+
+    def _sync_category_files(self, kb_id: str, categories: List[str]):
+        self.sync_category_files(kb_id, categories)
     
     def get_kb_categories(self, kb_id: str) -> List[str]:
         """

@@ -49,6 +49,19 @@ def test_knowledge_create_supports_document_and_category_multiselects():
     assert "`/api/rag/knowledge-bases/${encodeURIComponent(finalKbId)}/index`" in src
 
 
+def test_knowledge_create_surfaces_create_and_index_errors():
+    src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+
+    assert "ApiError" in src
+    assert "kbActionError" in src
+    assert "setKbActionError" in src
+    assert "kbActionNotice" in src
+    assert 'data-testid="alert-kb-action-error"' in src
+    assert 'data-testid="alert-kb-action-notice"' in src
+    assert "err instanceof ApiError" in src
+    assert 'type="button"' in src
+
+
 def test_knowledge_create_uses_existing_chunk_profile_not_inline_chunk_settings():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
 

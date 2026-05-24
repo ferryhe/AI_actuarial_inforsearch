@@ -575,6 +575,71 @@ def test_fastapi_rag_admin_category_stats_and_kb_profile_metadata(tmp_path: Path
     assert listed_kb["chunk_profile_name"] == "stats-profile"
 
 
+def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_incremental_index(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_profile = client.post(
+        "/api/chunk/profiles",
+        json={
+            "name": "category-sync-profile",
+            "chunk_size": 256,
+            "chunk_overlap": 32,
+        },
+    )
+    assert create_profile.status_code == 201, create_profile.text
+    profile_id = create_profile.json()["profile"]["profile_id"]
+    _seed_ready_chunk_set(db_path, alpha_url, profile_id, text="Initial alpha chunk")
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-category-sync",
+            "name": "Category Sync KB",
+            "kb_mode": "category",
+            "chunk_profile_id": profile_id,
+            "categories": ["AI"],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    files_before = client.get("/api/rag/knowledge-bases/kb-category-sync/files")
+    assert files_before.status_code == 200, files_before.text
+    assert [item["file_url"] for item in files_before.json()["files"]] == [alpha_url]
+
+    beta_sha = hashlib.sha256((PDF_BYTES + b"\n% beta")).hexdigest()
+    storage = Storage(str(db_path))
+    try:
+        storage.upsert_catalog_item(
+            item={
+                "url": beta_url,
+                "sha256": beta_sha,
+                "keywords": ["ai"],
+                "summary": "Beta moved into AI",
+                "category": "AI",
+            },
+            pipeline_version="v2",
+            status="ok",
+        )
+        _seed_ready_chunk_set(db_path, beta_url, profile_id, text="New beta AI chunk")
+    finally:
+        storage.close()
+
+    index = client.post(
+        "/api/rag/knowledge-bases/kb-category-sync/index",
+        json={"incremental": True},
+    )
+    assert index.status_code == 202, index.text
+    assert index.json()["file_count"] == 2
+    assert sorted(index.json()["category_sync"]["added_file_urls"]) == [beta_url]
+    assert index.json()["chunk_bindings"]["bound"] == 2
+
+    files_after = client.get("/api/rag/knowledge-bases/kb-category-sync/files")
+    assert files_after.status_code == 200, files_after.text
+    assert sorted(item["file_url"] for item in files_after.json()["files"]) == sorted([alpha_url, beta_url])
+
+
 def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     db_path = tmp_path / "index.db"
