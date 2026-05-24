@@ -20,9 +20,12 @@ class TestPermissionGroups:
 
     def test_guest_has_basic_read_permissions(self):
         """Guest should have read permissions but not write."""
-        assert "stats.read" in GUEST_PERMISSIONS
         assert "files.read" in GUEST_PERMISSIONS
-        assert "tasks.view" in GUEST_PERMISSIONS
+        assert "catalog.read" in GUEST_PERMISSIONS
+        assert "markdown.read" in GUEST_PERMISSIONS
+        assert "chat.query" in GUEST_PERMISSIONS
+        assert "stats.read" not in GUEST_PERMISSIONS
+        assert "tasks.view" not in GUEST_PERMISSIONS
         assert "files.download" not in GUEST_PERMISSIONS
         assert "tasks.run" not in GUEST_PERMISSIONS
 
@@ -35,20 +38,26 @@ class TestPermissionGroups:
         assert "tasks.view" in PREMIUM_PERMISSIONS
         assert "files.download" in PREMIUM_PERMISSIONS
 
-    def test_operator_has_write_permissions(self):
-        """Operator should have most write permissions."""
+    def test_operator_can_run_tasks_but_cannot_manage_important_settings(self):
+        """Operator can operate tasks, but important settings remain admin-only."""
         assert "tasks.run" in OPERATOR_PERMISSIONS
         assert "tasks.stop" in OPERATOR_PERMISSIONS
-        assert "config.write" in OPERATOR_PERMISSIONS
-        assert "users.manage" not in OPERATOR_PERMISSIONS  # Operator can't manage users
+        assert "schedule.write" in OPERATOR_PERMISSIONS
+        assert "config.write" not in OPERATOR_PERMISSIONS
+        assert "tokens.manage" not in OPERATOR_PERMISSIONS
+        assert "users.manage" not in OPERATOR_PERMISSIONS
 
     def test_admin_has_all_permissions(self):
         """Admin should have all permissions."""
         assert ADMIN_PERMISSIONS == PERMISSIONS
 
-    def test_operator_has_tokens_manage(self):
-        """Operator should have tokens.manage permission."""
-        assert "tokens.manage" in OPERATOR_PERMISSIONS
+    def test_registered_can_view_tasks_but_not_execute_them(self):
+        """Signed-in readers can view task status/history but cannot execute tasks."""
+        assert "tasks.view" in REGISTERED_PERMISSIONS
+        assert "logs.task.read" in REGISTERED_PERMISSIONS
+        assert "tasks.run" not in REGISTERED_PERMISSIONS
+        assert "tasks.stop" not in REGISTERED_PERMISSIONS
+        assert "schedule.write" not in REGISTERED_PERMISSIONS
 
     def test_guest_cannot_write(self):
         """Guest should not have any write permissions."""

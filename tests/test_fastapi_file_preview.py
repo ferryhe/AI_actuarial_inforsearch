@@ -84,10 +84,17 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
             is_active=True,
         )
+        admin_token = "admin-token"
+        storage.upsert_auth_token_by_hash(
+            subject="admin-token",
+            group_name="admin",
+            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
     finally:
         storage.close()
 
-    return {"file_url": "https://alpha.example/doc-a.pdf", "operator_token": operator_token}
+    return {"file_url": "https://alpha.example/doc-a.pdf", "operator_token": operator_token, "admin_token": admin_token}
 
 
 
@@ -165,7 +172,7 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
 def test_fastapi_file_chunk_generation_can_bind_generated_chunk_to_kb(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
-    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+    headers = {"Authorization": f"Bearer {seed['admin_token']}"}
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",

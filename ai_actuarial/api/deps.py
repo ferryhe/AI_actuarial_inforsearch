@@ -18,13 +18,11 @@ from ai_actuarial.storage import Storage
 
 _ANONYMOUS_PERMISSIONS: frozenset[str] = frozenset(
     {
-        "stats.read",
         "files.read",
         "catalog.read",
         "markdown.read",
         "chat.view",
         "chat.query",
-        "chat.conversations",
     }
 )
 

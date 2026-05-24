@@ -33,23 +33,24 @@ export function useTranslation() {
 }
 
 const baseNavItems = [
-  { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
-  { path: "/database", icon: Database, labelKey: "nav.database" },
-  { path: "/chat", icon: MessageSquare, labelKey: "nav.chat" },
-  { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks" },
-  { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge" },
-  { path: "/logs", icon: ScrollText, labelKey: "nav.logs" },
-  { path: "/settings", icon: Settings, labelKey: "nav.settings" },
+  { path: "/", icon: LayoutDashboard, labelKey: "nav.dashboard", permission: "stats.read" },
+  { path: "/database", icon: Database, labelKey: "nav.database", permission: "files.read" },
+  { path: "/chat", icon: MessageSquare, labelKey: "nav.chat", permission: "chat.view" },
+  { path: "/tasks", icon: ListTodo, labelKey: "nav.tasks", permission: "tasks.view" },
+  { path: "/knowledge", icon: BookOpen, labelKey: "nav.knowledge", permission: "catalog.read" },
+  { path: "/logs", icon: ScrollText, labelKey: "nav.logs", permission: "logs.task.read" },
+  { path: "/settings", icon: Settings, labelKey: "nav.settings", permission: "config.write" },
 ];
 
 function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { t } = useTranslation();
-  const { user, isLoggedIn } = useAuth();
+  const { user, isLoggedIn, permissions } = useAuth();
+  const can = (permission: string) => permissions.includes(permission);
   const navItems = [
-    ...baseNavItems,
+    ...baseNavItems.filter((item) => can(item.permission)),
     ...(isLoggedIn ? [{ path: "/profile", icon: UserCircle2, labelKey: "nav.profile" }] : []),
-    ...(user?.role === "admin" ? [{ path: "/users", icon: Users, labelKey: "nav.users" }] : []),
+    ...(can("users.manage") ? [{ path: "/users", icon: Users, labelKey: "nav.users" }] : []),
   ];
 
   return (
@@ -110,7 +111,7 @@ function Sidebar({ collapsed, onClose }: { collapsed: boolean; onClose: () => vo
 export default function Layout({ children }: { children: React.ReactNode }) {
   const i18n = useI18n();
   const { theme, toggleTheme } = useTheme();
-  const { user, isLoggedIn, logout } = useAuth();
+  const { user, isLoggedIn, logout, permissions } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -152,7 +153,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       <span className="max-w-32 truncate">{user?.display_name || user?.email || "User"}</span>
                     </div>
                   </Link>
-                  {user?.role === "admin" && (
+                  {permissions.includes("users.manage") && (
                     <Link href="/users">
                       <div className="hidden sm:flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
                         <Users className="w-4 h-4 text-muted-foreground" />

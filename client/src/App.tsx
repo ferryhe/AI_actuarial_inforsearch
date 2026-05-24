@@ -35,6 +35,28 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RequirePermission({ permission, children }: { permission: string; children: React.ReactNode }) {
+  const { isLoading, permissions, requireAuth, isLoggedIn } = useAuth();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && requireAuth && !isLoggedIn) {
+      navigate("/login");
+    }
+  }, [isLoading, requireAuth, isLoggedIn, navigate]);
+
+  if (isLoading) return null;
+  if (requireAuth && !isLoggedIn) return null;
+  if (!permissions.includes(permission)) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted-foreground" data-testid="text-forbidden">
+        403 — insufficient permissions
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 function Router() {
   return (
     <Switch>
@@ -43,40 +65,44 @@ function Router() {
       <Route>
         <Layout>
           <Switch>
-            <Route path="/" component={Dashboard} />
+            <Route path="/">
+              <RequirePermission permission="stats.read">
+                <Dashboard />
+              </RequirePermission>
+            </Route>
             <Route path="/database" component={Database} />
             <Route path="/file-detail" component={FileDetail} />
             <Route path="/file-preview" component={FilePreview} />
             <Route path="/chat" component={Chat} />
             <Route path="/tasks">
-              <RequireAuth>
+              <RequirePermission permission="tasks.view">
                 <Tasks />
-              </RequireAuth>
+              </RequirePermission>
             </Route>
             <Route path="/logs">
-              <RequireAuth>
+              <RequirePermission permission="logs.task.read">
                 <LogsPage />
-              </RequireAuth>
+              </RequirePermission>
             </Route>
             <Route path="/knowledge/:kbId">
-              <RequireAuth>
+              <RequirePermission permission="catalog.read">
                 <KBDetail />
-              </RequireAuth>
+              </RequirePermission>
             </Route>
             <Route path="/knowledge">
-              <RequireAuth>
+              <RequirePermission permission="catalog.read">
                 <Knowledge />
-              </RequireAuth>
+              </RequirePermission>
             </Route>
             <Route path="/settings">
-              <RequireAuth>
+              <RequirePermission permission="config.write">
                 <SettingsPage />
-              </RequireAuth>
+              </RequirePermission>
             </Route>
             <Route path="/users">
-              <RequireAuth>
+              <RequirePermission permission="users.manage">
                 <Users />
-              </RequireAuth>
+              </RequirePermission>
             </Route>
             <Route path="/profile">
               <RequireAuth>

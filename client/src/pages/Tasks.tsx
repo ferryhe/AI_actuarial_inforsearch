@@ -55,8 +55,11 @@ const fadeUp = {
 export default function Tasks() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
-  const { user, isLoggedIn } = useAuth();
-  const isGuest = !isLoggedIn || user?.role === "guest";
+  const { permissions } = useAuth();
+  const canRunTasks = permissions.includes("tasks.run");
+  const canStopTasks = permissions.includes("tasks.stop");
+  const canManageSchedules = permissions.includes("schedule.write");
+  const canReadTaskLogs = permissions.includes("logs.task.read");
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
   const [sites, setSites] = useState<SiteConfig[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,8 +136,8 @@ export default function Tasks() {
 
   const viewTaskLog = async (taskId: string | undefined, taskName: string | undefined, task?: HistoryTask) => {
     if (!taskId) return;
-    if (isGuest) {
-      setLogModal({ taskId, taskName: taskName || taskId, log: t("tasks.guest_detail_disabled"), task });
+    if (!canReadTaskLogs) {
+      setLogModal({ taskId, taskName: taskName || taskId, log: t("tasks.read_only_detail_disabled"), task });
       return;
     }
     setLogModalLoading(true);
@@ -150,8 +153,8 @@ export default function Tasks() {
   };
 
   const viewGlobalLogs = async () => {
-    if (isGuest) {
-      setLogModal({ taskId: "global", taskName: t("logs.title"), log: t("tasks.guest_detail_disabled") });
+    if (!permissions.includes("logs.system.read")) {
+      setLogModal({ taskId: "global", taskName: t("logs.title"), log: t("tasks.system_logs_admin_only") });
       return;
     }
     setLogModalLoading(true);
@@ -176,6 +179,10 @@ export default function Tasks() {
   };
 
   const stopTask = async (taskId: string) => {
+    if (!canStopTasks) {
+      setTaskNotice(t("tasks.run_permission_required"));
+      return;
+    }
     if (!window.confirm(t("tasks.confirm_stop"))) return;
     try {
       await apiPost(`/api/tasks/stop/${taskId}`);
@@ -189,6 +196,10 @@ export default function Tasks() {
   };
 
   const handleSubmitTask = async (data: Record<string, unknown>) => {
+    if (!canRunTasks) {
+      setSubmitError(t("tasks.run_permission_required"));
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     setSubmitSuccess(null);
@@ -262,7 +273,7 @@ export default function Tasks() {
           <Play className="w-4 h-4" />
           {t("tasks.view.run_tasks")}
         </button>
-        <button
+        {canManageSchedules && <button
           type="button"
           onClick={() => setTaskView("scheduled")}
           className={cn(
@@ -273,10 +284,10 @@ export default function Tasks() {
         >
           <Clock className="w-4 h-4" />
           {t("tasks.view.scheduled_tasks")}
-        </button>
+        </button>}
       </div>
 
-      {taskView === "scheduled" ? (
+      {taskView === "scheduled" && canManageSchedules ? (
         <ScheduledTasksSection />
       ) : (
         <>
@@ -288,7 +299,7 @@ export default function Tasks() {
         </div>
       )}
       {/* 1. All Tasks (task type selection grid) */}
-      <div>
+      {canRunTasks ? <div>
         <h2 className="text-lg font-semibold mb-3">{t("tasks.new_task")}</h2>
         <AnimatePresence mode="wait">
           {activeForm ? (
@@ -342,7 +353,11 @@ export default function Tasks() {
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
+      </div> : (
+        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground" data-testid="text-tasks-read-only">
+          {t("tasks.read_only_notice")}
+        </div>
+      )}
 
       {/* 2. Active Tasks */}
       <div>
@@ -358,7 +373,7 @@ export default function Tasks() {
         ) : (
           <div className="space-y-3">
             {activeTasks.map((task, i) => (
-              <TaskCard key={task.id} task={task} index={i} onStop={stopTask} />
+              <TaskCard key={task.id} task={task} index={i} onStop={canStopTasks ? stopTask : undefined} />
             ))}
           </div>
         )}

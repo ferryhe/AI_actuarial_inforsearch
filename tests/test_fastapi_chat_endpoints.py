@@ -128,14 +128,21 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
             is_active=True,
         )
+        admin_token = "admin-token"
+        storage.upsert_auth_token_by_hash(
+            subject="admin-token",
+            group_name="admin",
+            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
     finally:
         storage.close()
 
-    return {"alpha_url": alpha_url, "beta_url": beta_url, "operator_token": operator_token}
+    return {"alpha_url": alpha_url, "beta_url": beta_url, "operator_token": operator_token, "admin_token": admin_token}
 
 
 
-def _seed_knowledge_bases(client: TestClient) -> None:
+def _seed_knowledge_bases(client: TestClient, admin_token: str) -> None:
     for kb_id, name in [("chat-kb-a", "Chat KB A"), ("chat-kb-b", "Chat KB B")]:
         response = client.post(
             "/api/rag/knowledge-bases",
@@ -147,6 +154,7 @@ def _seed_knowledge_bases(client: TestClient) -> None:
                 "chunk_size": 300,
                 "chunk_overlap": 50,
             },
+            headers={"X-Auth-Token": admin_token},
         )
         assert response.status_code == 201, response.text
 
@@ -180,7 +188,7 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     app = create_app()
     client = TestClient(app)
     client.headers.update({"X-Auth-Token": seed["operator_token"]})
-    _seed_knowledge_bases(client)
+    _seed_knowledge_bases(client, seed["admin_token"])
     return client, app, seed
 
 

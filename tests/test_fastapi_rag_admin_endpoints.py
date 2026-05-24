@@ -109,10 +109,17 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
             is_active=True,
         )
+        admin_token = "admin-token"
+        storage.upsert_auth_token_by_hash(
+            subject="admin-token",
+            group_name="admin",
+            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
     finally:
         storage.close()
 
-    return {"alpha_url": alpha_url, "beta_url": beta_url, "operator_token": operator_token}
+    return {"alpha_url": alpha_url, "beta_url": beta_url, "operator_token": operator_token, "admin_token": admin_token}
 
 
 
@@ -126,7 +133,7 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
     client = TestClient(app)
-    client.headers.update({"X-Auth-Token": seed["operator_token"]})
+    client.headers.update({"X-Auth-Token": seed["admin_token"]})
     return client, app, seed
 
 

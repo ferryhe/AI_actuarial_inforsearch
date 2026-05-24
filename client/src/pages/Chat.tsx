@@ -194,6 +194,7 @@ function TypingIndicator() {
 }
 
 function CitationCard({ citation, index }: { citation: Citation; index: number }) {
+  const { t } = useTranslation();
   const title = citation.title || citation.filename || citation.source || "Source";
   const score = citation.similarity_score || citation.score;
   const snippet = citation.content || citation.quote;
@@ -228,7 +229,7 @@ function CitationCard({ citation, index }: { citation: Citation; index: number }
                 rel="noreferrer"
                 className="inline-flex items-center gap-1 text-primary hover:underline"
               >
-                文件详情
+                {t("chat.file_detail")}
                 <ExternalLink className="w-3 h-3" />
               </a>
             )}
@@ -239,7 +240,7 @@ function CitationCard({ citation, index }: { citation: Citation; index: number }
                 rel="noreferrer"
                 className="inline-flex items-center gap-1 text-primary hover:underline"
               >
-                预览
+                {t("chat.preview")}
                 <ExternalLink className="w-3 h-3" />
               </a>
             )}
@@ -268,6 +269,7 @@ function normalizeRetrievedBlocks(value: unknown): RetrievedBlock[] {
 }
 
 function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
+  const { t } = useTranslation();
   if (blocks.length === 0) {
     return null;
   }
@@ -303,7 +305,7 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-primary hover:underline"
                       >
-                        文件详情
+                        {t("chat.file_detail")}
                         <ExternalLink className="w-3 h-3" />
                       </a>
                     )}
@@ -314,7 +316,7 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-primary hover:underline"
                       >
-                        预览
+                        {t("chat.preview")}
                         <ExternalLink className="w-3 h-3" />
                       </a>
                     )}

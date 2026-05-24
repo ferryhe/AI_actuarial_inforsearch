@@ -36,15 +36,15 @@ PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# Permissions for anonymous users (when auth is disabled)
-# Only read-only, no downloads, limited chat
+# Permissions for anonymous users when the product is in public-browse mode.
+# Anonymous visitors may browse the database/file detail surfaces and use the
+# limited AI chat quota only; task, settings, logs, download, export, and any
+# mutating API remain authenticated role capabilities.
 PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
-        "stats.read",
         "files.read",
         "catalog.read",
         "markdown.read",
-        "tasks.view",
         "chat.view",
         "chat.query",
     }
@@ -54,57 +54,36 @@ PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
 # Group Permissions (new design)
 # ============================================================
 
-# Guest: Can browse but not download, limited chat
-# - Dashboard, catalog, knowledge base lists
-# - Chat with 5 message limit
-# - No file downloads, no write operations
-# NOTE: tasks.view grants API access to task list/detail endpoints.
-# The "no task details click" restriction is enforced FRONTEND-only.
-GUEST_PERMISSIONS: frozenset[str] = frozenset(
-    {
-        "stats.read",
-        "files.read",
-        "catalog.read",
-        "markdown.read",
-        "tasks.view",
-        "chat.view",
-        "chat.query",
-    }
-)
+# Guest/anonymous: public browse + 5 AI-chat messages. No dashboard stats,
+# task visibility, downloads, exports, logs, settings, or mutations.
+GUEST_PERMISSIONS: frozenset[str] = frozenset(PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED)
 
-# Registered: Guest + file download, more chat quota
+# Registered: a signed-in reader. They may view read-only product surfaces,
+# including task status/history, but cannot run/stop/schedule tasks or change
+# catalog/markdown/config/user/token state.
 REGISTERED_PERMISSIONS: frozenset[str] = frozenset(
-    {
-        "stats.read",
-        "files.read",
-        "files.download",   # Can download files
-        "catalog.read",
-        "markdown.read",
-        "tasks.view",
-        "chat.view",
-        "chat.query",
-        "chat.conversations",
-    }
-)
-
-# Premium: Registered + full task viewing (can click into details)
-# Cannot perform any operations
-PREMIUM_PERMISSIONS: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
         "files.download",
         "catalog.read",
         "markdown.read",
-        "tasks.view",        # Full view (can click into details)
+        "tasks.view",
+        "logs.task.read",
         "chat.view",
         "chat.query",
         "chat.conversations",
     }
 )
 
-# Operator: Premium + all write operations
-# Can do almost everything except user management and system logs
+# Premium is kept as a backwards-compatible reader tier. It intentionally has
+# the same read-only permission shape as registered; product authorization is
+# now organized around anonymous, registered, operator, and admin.
+PREMIUM_PERMISSIONS: frozenset[str] = REGISTERED_PERMISSIONS
+
+# Operator: can operate the ingestion/RAG task workflow and task settings, but
+# cannot edit important system settings, model/provider credentials, API tokens,
+# users, or global/system logs.
 OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
     {
         "stats.read",
@@ -115,15 +94,12 @@ OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
         "catalog.write",
         "markdown.read",
         "markdown.write",
-        "config.read",
-        "config.write",
         "schedule.write",
         "tasks.view",
         "tasks.run",
         "tasks.stop",
         "logs.task.read",
         "export.read",
-        "tokens.manage",      # API token management
         "chat.view",
         "chat.query",
         "chat.conversations",
@@ -195,7 +171,13 @@ def check_password(password: str, password_hash: str) -> bool:
 
 
 def permissions_for_group(group_name: str) -> frozenset[str]:
-    return GROUP_PERMISSIONS.get((group_name or "").strip().lower(), GUEST_PERMISSIONS)
+    normalized = (group_name or "").strip().lower()
+    legacy_aliases = {
+        "anonymous": "guest",
+        "reader": "registered",
+        "operator_ai": "operator",
+    }
+    return GROUP_PERMISSIONS.get(legacy_aliases.get(normalized, normalized), GUEST_PERMISSIONS)
 
 
 DUMMY_PASSWORD_HASH: str = hash_password("__timing_sentinel__")
