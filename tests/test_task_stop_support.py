@@ -11,6 +11,7 @@ from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_increment
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.crawler import Crawler, SiteConfig
 from ai_actuarial.rag.indexing import IndexingPipeline
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
 
@@ -295,6 +296,67 @@ def test_indexing_pipeline_records_current_embedding_index_version(tmp_path) -> 
         status="ready",
         artifact_path=str(tmp_path / kb_id / "index.faiss"),
     )
+
+
+def test_indexing_pipeline_force_reindex_removes_chunks_for_deleted_files(tmp_path) -> None:
+    kb_id = "kb-clean-removed"
+    old_url = "https://example.com/removed.pdf"
+    current_url = "https://example.com/current.pdf"
+    storage = Storage(str(tmp_path / "clean-removed.db"))
+    try:
+        for file_url, title in [(old_url, "Removed"), (current_url, "Current")]:
+            storage.insert_file(
+                url=file_url,
+                sha256=f"sha-{title}",
+                title=title,
+                source_site="example.com",
+                source_page_url="https://example.com",
+                original_filename=f"{title.lower()}.pdf",
+                local_path=str(tmp_path / f"{title.lower()}.pdf"),
+                bytes=1024,
+                content_type="application/pdf",
+            )
+        manager = KnowledgeBaseManager(storage)
+        manager.create_kb(kb_id, "Clean Removed KB", kb_mode="manual")
+        manager.add_files_to_kb(kb_id, [current_url])
+        storage._conn.execute(
+            """
+            INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"{kb_id}:removed:0", kb_id, old_url, 0, "Removed stale chunk", 3, "Removed", "hash-removed", "2026-05-24T02:00:00+00:00"),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"{kb_id}:current:0", kb_id, current_url, 0, "Current stale chunk", 3, "Current", "hash-current", "2026-05-24T02:00:00+00:00"),
+        )
+        storage._conn.commit()
+
+        manager.embedding_generator = MagicMock()
+        manager.embedding_generator.get_embedding_dimension.return_value = 3
+        with patch("ai_actuarial.rag.indexing.VectorStore") as mock_vector_store, patch.object(
+            IndexingPipeline,
+            "_index_single_file",
+            return_value={"success": True, "chunk_count": 1},
+        ):
+            pipeline = IndexingPipeline(manager)
+            stats = pipeline.index_files(kb_id=kb_id, file_urls=[current_url], force_reindex=True)
+
+        assert stats["indexed_files"] == 1
+        mock_vector_store.return_value.save_index.assert_called_once()
+        remaining_urls = [
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT DISTINCT file_url FROM rag_chunks WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchall()
+        ]
+        assert old_url not in remaining_urls
+    finally:
+        storage.close()
 
 
 def test_indexing_pipeline_keeps_index_when_version_recording_fails(tmp_path) -> None:

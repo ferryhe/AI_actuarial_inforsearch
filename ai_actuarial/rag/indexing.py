@@ -117,7 +117,7 @@ class IndexingPipeline:
         
         # If force_reindex is requested, ensure any existing index file is removed
         # so that the VectorStore starts from a clean state instead of appending.
-        if force_reindex and index_path.exists():
+        if force_reindex:
             if self.stop_check and self.stop_check():
                 stats['stopped'] = True
                 self._log_progress(
@@ -126,7 +126,7 @@ class IndexingPipeline:
                     len(file_urls),
                 )
                 return stats
-            index_path.unlink()
+            self._reset_kb_index_contents(kb_id, index_path)
         
         vector_store = VectorStore(
             dimension=embedding_dim,
@@ -206,6 +206,28 @@ class IndexingPipeline:
             )
         
         return stats
+
+    def _reset_kb_index_contents(self, kb_id: str, index_path: Path) -> None:
+        """Clear persisted vectors/chunks before a full KB rebuild."""
+        if index_path.exists():
+            index_path.unlink()
+        metadata_path = index_path.with_suffix('.meta.pkl')
+        if metadata_path.exists():
+            metadata_path.unlink()
+
+        conn = getattr(self.storage, "_conn", None)
+        if conn is None:
+            return
+        conn.execute("DELETE FROM rag_chunks WHERE kb_id = ?", (kb_id,))
+        conn.execute(
+            """
+            UPDATE rag_kb_files
+            SET indexed_at = NULL, chunk_count = 0
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        )
+        conn.commit()
     
     def _needs_indexing(self, kb_id: str, file_url: str) -> bool:
         """Check if file needs indexing."""

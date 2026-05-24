@@ -585,6 +585,9 @@ class Storage:
         if "chunk_profile_id" not in existing:
             self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN chunk_profile_id TEXT")
             changed = True
+        if "index_dirty_at" not in existing:
+            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN index_dirty_at TEXT")
+            changed = True
         rows = self._conn.execute(
             """
             SELECT kb_id, embedding_provider, embedding_model, embedding_dimension
@@ -2586,7 +2589,7 @@ class Storage:
         )
         kb_row = self._conn.execute(
             """
-            SELECT embedding_provider, embedding_model, embedding_dimension, chunk_count, file_count, updated_at
+            SELECT embedding_provider, embedding_model, embedding_dimension, chunk_count, file_count, updated_at, index_dirty_at
             FROM rag_knowledge_bases
             WHERE kb_id = ?
             """,
@@ -2598,6 +2601,7 @@ class Storage:
         kb_chunk_count = 0
         kb_file_count = 0
         kb_updated_at = None
+        index_dirty_at = None
         if kb_row:
             kb_provider = kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
             kb_model = kb_row[1] or ""
@@ -2605,6 +2609,7 @@ class Storage:
             kb_chunk_count = int((kb_row[3] or 0) or 0)
             kb_file_count = int((kb_row[4] or 0) or 0)
             kb_updated_at = kb_row[5]
+            index_dirty_at = kb_row[6]
 
         if self._table_exists("rag_kb_files"):
             kb_file_count_row = self._conn.execute(
@@ -2656,13 +2661,26 @@ class Storage:
             latest_index_time = legacy_index_time or kb_updated_at
 
         effective_file_count = max(binding_file_count, kb_file_count)
-        needs_reindex = bool(
-            effective_file_count > 0
+        dirty_after_index = bool(
+            index_dirty_at
             and (
-                pending_file_count > 0
-                or outdated_binding_count > 0
-                or not has_index
-                or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)
+                not latest_index_time
+                or index_dirty_at > latest_index_time
+            )
+        )
+        needs_reindex = bool(
+            (
+                effective_file_count > 0
+                and (
+                    pending_file_count > 0
+                    or outdated_binding_count > 0
+                    or not has_index
+                    or (latest_binding_at and latest_index_time and latest_binding_at > latest_index_time)
+                )
+            )
+            or (
+                has_index
+                and dirty_after_index
             )
         )
         latest_index_payload = None
@@ -2697,6 +2715,8 @@ class Storage:
             "chunk_set_count": chunk_set_count,
             "has_index": has_index,
             "latest_binding_at": latest_binding_at,
+            "index_dirty_at": index_dirty_at,
+            "dirty_after_index": dirty_after_index,
             "binding_mode_counts": {
                 "follow_latest": follow_latest_count,
                 "pin": pin_count,

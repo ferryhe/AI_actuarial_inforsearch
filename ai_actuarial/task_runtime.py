@@ -687,7 +687,7 @@ class NativeTaskRuntime:
             else:
                 file_urls = manager.get_files_needing_index(kb_id)
 
-        if not file_urls:
+        if not file_urls and not force_reindex:
             return CollectionResult(
                 success=True,
                 items_found=0,

@@ -312,6 +312,114 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
     assert not any(item["file_url"] == alpha_url for item in files_after_remove.json()["files"])
 
 
+def test_fastapi_rag_admin_kb_add_and_delete_mark_index_dirty(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-index-dirty",
+            "name": "Index Dirty KB",
+            "kb_mode": "manual",
+            "file_urls": [alpha_url],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        indexed_at = "2026-05-24T02:00:00+00:00"
+        storage._conn.execute(
+            "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
+            (indexed_at, 1, "kb-index-dirty", alpha_url),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("kb-index-dirty:alpha:0", "kb-index-dirty", alpha_url, 0, "Alpha indexed chunk", 3, "Alpha", "hash-alpha", indexed_at),
+        )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_count = ?, updated_at = ? WHERE kb_id = ?",
+            (1, indexed_at, "kb-index-dirty"),
+        )
+        storage._conn.commit()
+        storage.create_kb_index_version(
+            kb_id="kb-index-dirty",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dimension=3072,
+            index_type="Flat",
+            chunk_count=1,
+            status="ready",
+            built_at=indexed_at,
+        )
+        storage._conn.execute("UPDATE rag_knowledge_bases SET index_dirty_at = NULL WHERE kb_id = ?", ("kb-index-dirty",))
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    initial_detail = client.get("/api/rag/knowledge-bases/kb-index-dirty")
+    assert initial_detail.status_code == 200, initial_detail.text
+    assert initial_detail.json()["knowledge_base"]["needs_reindex"] is False
+
+    add_beta = client.post(
+        "/api/rag/knowledge-bases/kb-index-dirty/files",
+        json={"file_urls": [beta_url]},
+    )
+    assert add_beta.status_code == 200, add_beta.text
+
+    after_add = client.get("/api/rag/knowledge-bases/kb-index-dirty")
+    assert after_add.status_code == 200, after_add.text
+    assert after_add.json()["knowledge_base"]["needs_reindex"] is True
+
+    incremental = client.post(
+        "/api/rag/knowledge-bases/kb-index-dirty/index",
+        json={"incremental": True},
+    )
+    assert incremental.status_code == 202, incremental.text
+    assert incremental.json()["file_count"] == 1
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        beta_indexed_at = "2026-05-24T02:10:00+00:00"
+        storage._conn.execute(
+            "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
+            (beta_indexed_at, 1, "kb-index-dirty", beta_url),
+        )
+        storage._conn.commit()
+        storage.create_kb_index_version(
+            kb_id="kb-index-dirty",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dimension=3072,
+            index_type="Flat",
+            chunk_count=2,
+            status="ready",
+            built_at=beta_indexed_at,
+        )
+        storage._conn.execute("UPDATE rag_knowledge_bases SET index_dirty_at = NULL WHERE kb_id = ?", ("kb-index-dirty",))
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    remove_alpha = client.delete(f"/api/rag/knowledge-bases/kb-index-dirty/files/{alpha_url}")
+    assert remove_alpha.status_code == 200, remove_alpha.text
+
+    after_delete = client.get("/api/rag/knowledge-bases/kb-index-dirty")
+    assert after_delete.status_code == 200, after_delete.text
+    assert after_delete.json()["knowledge_base"]["needs_reindex"] is True
+
+    rebuild = client.post(
+        "/api/rag/knowledge-bases/kb-index-dirty/index",
+        json={"force_reindex": True},
+    )
+    assert rebuild.status_code == 202, rebuild.text
+    assert rebuild.json()["file_count"] == 1
+
 
 def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)

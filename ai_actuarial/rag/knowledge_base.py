@@ -186,6 +186,7 @@ class KnowledgeBaseManager:
                 updated_at TEXT NOT NULL,
                 file_count INTEGER DEFAULT 0,
                 chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT,
                 index_path TEXT,
                 metadata_path TEXT
             )
@@ -206,6 +207,7 @@ class KnowledgeBaseManager:
                 "updated_at": "TEXT",
                 "file_count": "INTEGER DEFAULT 0",
                 "chunk_count": "INTEGER DEFAULT 0",
+                "index_dirty_at": "TEXT",
                 "index_path": "TEXT",
                 "metadata_path": "TEXT",
             },
@@ -387,14 +389,14 @@ class KnowledgeBaseManager:
         conn.execute("""
             INSERT INTO rag_knowledge_bases 
             (kb_id, name, description, kb_mode, chunk_profile_id, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
-             index_type, created_at, updated_at, file_count, chunk_count,
+             index_type, created_at, updated_at, file_count, chunk_count, index_dirty_at,
              index_path, metadata_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             kb.kb_id, kb.name, kb.description, kb.kb_mode, kb.chunk_profile_id,
             kb.embedding_provider, kb.embedding_model, kb.embedding_dimension,
             kb.chunk_size, kb.chunk_overlap, kb.index_type,
-            kb.created_at, kb.updated_at, kb.file_count, kb.chunk_count,
+            kb.created_at, kb.updated_at, kb.file_count, kb.chunk_count, None,
             str(kb_dir / "index.faiss"),
             str(kb_dir / "index.meta.pkl")
         ))
@@ -605,9 +607,10 @@ class KnowledgeBaseManager:
             SET file_count = (
                 SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
             ),
-            updated_at = ?
+            updated_at = ?,
+            index_dirty_at = CASE WHEN ? > 0 THEN ? ELSE index_dirty_at END
             WHERE kb_id = ?
-        """, (kb_id, timestamp, kb_id))
+        """, (kb_id, timestamp, added_count, timestamp, kb_id))
         
         conn.commit()
         
@@ -644,9 +647,10 @@ class KnowledgeBaseManager:
             SET file_count = (
                 SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
             ),
-            updated_at = ?
+            updated_at = ?,
+            index_dirty_at = CASE WHEN ? > 0 THEN ? ELSE index_dirty_at END
             WHERE kb_id = ?
-        """, (kb_id, timestamp, kb_id))
+        """, (kb_id, timestamp, removed_count, timestamp, kb_id))
         
         conn.commit()
         

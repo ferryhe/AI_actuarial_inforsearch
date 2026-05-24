@@ -1380,7 +1380,7 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
                 files_to_index = [url for url in files_to_index if url]
             else:
                 files_to_index = manager.get_files_needing_index(kid)
-        if not files_to_index:
+        if not files_to_index and not force_reindex:
             raise RagAdminError("No files to index")
 
         skipped_no_markdown = 0
