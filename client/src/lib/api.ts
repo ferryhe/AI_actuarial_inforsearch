@@ -44,7 +44,7 @@ async function apiFetch<T = unknown>(url: string, options?: RequestInit): Promis
   const authToken = getStoredAuthToken();
   const method = (options?.method || "GET").toUpperCase();
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(options?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...(options?.headers as Record<string, string> | undefined),
   };
   if (authToken && !headers["X-Auth-Token"]) {
@@ -89,6 +89,13 @@ export function apiPost<T = unknown>(url: string, body?: unknown): Promise<T> {
   return apiFetch<T>(url, {
     method: "POST",
     body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+export function apiPostForm<T = unknown>(url: string, formData: FormData): Promise<T> {
+  return apiFetch<T>(url, {
+    method: "POST",
+    body: formData,
   });
 }
 

@@ -1054,18 +1054,16 @@ class NativeTaskRuntime:
         )
 
     def _collect_file_paths(self, data: dict[str, Any]) -> list[str]:
-        directory = Path(str(data.get("directory_path") or "")).resolve()
-        recursive = bool(data.get("recursive", False))
+        upload_batch_id = str(data.get("upload_batch_id") or "").strip()
+        if not upload_batch_id:
+            raise ValueError("File imports must use an upload batch")
+        from ai_actuarial.api.services.import_batches import file_paths_for_batch
+
         raw_exts = list(data.get("extensions") or [])
         allowed_exts = {str(ext).lower().lstrip('.') for ext in raw_exts if str(ext).strip()}
-        pattern_iter = directory.rglob("*") if recursive else directory.glob("*")
-        paths: list[str] = []
-        for path in pattern_iter:
-            if not path.is_file():
-                continue
-            if allowed_exts and path.suffix.lower().lstrip('.') not in allowed_exts:
-                continue
-            paths.append(str(path))
+        paths = file_paths_for_batch(upload_batch_id)
+        if allowed_exts:
+            paths = [path for path in paths if Path(path).suffix.lower().lstrip('.') in allowed_exts]
         return paths
 
     def _site_configs_for_run(self, config: dict[str, Any], data: dict[str, Any]) -> list[SiteConfig]:

@@ -42,6 +42,7 @@ from ai_actuarial.shared_runtime import (
     serialize_backend_settings,
 )
 from ai_actuarial.config import settings
+from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,6 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "scheduled",
     "quick_check",
     "url",
-    "file",
     "search",
     "catalog",
     "markdown_conversion",
@@ -1414,7 +1414,7 @@ def _reject_request(reason: str, *, collection_type: str, data: dict[str, Any], 
     raise OpsWriteError(reason)
 
 
-def start_collection(data: dict[str, Any], *, bridge: BridgeState) -> dict[str, Any]:
+def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: dict[str, Any] | None = None) -> dict[str, Any]:
     collection_type = str(data.get("type") or "").strip()
     if not collection_type or collection_type not in _VALID_COLLECTION_TYPES:
         _reject_request("Invalid collection type", collection_type=collection_type or "unknown", data=data, bridge=bridge)
@@ -1422,11 +1422,15 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState) -> dict[str, 
     if collection_type == "url" and not data.get("urls"):
         _reject_request("No URLs provided", collection_type=collection_type, data=data, bridge=bridge)
     if collection_type == "file":
-        directory_path = str(data.get("directory_path") or "").strip()
-        normalized_directory_path = os.path.abspath(directory_path) if directory_path else ""
-        if not normalized_directory_path or not os.path.isdir(normalized_directory_path):
-            _reject_request("Invalid directory path", collection_type=collection_type, data=data, bridge=bridge)
-        data["directory_path"] = normalized_directory_path
+        upload_batch_id = str(data.get("upload_batch_id") or "").strip()
+        if not upload_batch_id:
+            _reject_request("File imports must use an upload batch", collection_type=collection_type, data=data, bridge=bridge)
+        try:
+            load_import_batch(upload_batch_id, auth_token=auth_token)
+        except ImportBatchError as exc:
+            _reject_request(exc.message, collection_type=collection_type, data=data, bridge=bridge)
+        data.pop("directory_path", None)
+        data["upload_batch_id"] = upload_batch_id
     if collection_type == "catalog":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
