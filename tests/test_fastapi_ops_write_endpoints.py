@@ -227,7 +227,7 @@ def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monk
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     config_path = Path(os.environ["CONFIG_PATH"])
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     update_response = client.post(
         "/api/config/backend-settings",
@@ -313,7 +313,7 @@ def test_categories_and_ai_models_write_roundtrip_is_native_fastapi(tmp_path: Pa
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(nested_categories_path))
     config_path = Path(os.environ["CONFIG_PATH"])
     categories_path = nested_categories_path
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     categories_response = client.post(
         "/api/config/categories",
@@ -453,16 +453,16 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
     denied_response = client.get("/api/utils/browse-folder", params={"path": str(Path("/").resolve())}, headers=headers)
     assert denied_response.status_code == 403, denied_response.text
 
-    catalog_stats = client.get("/api/catalog/stats")
+    catalog_stats = client.get("/api/catalog/stats", headers=headers)
     assert catalog_stats.status_code == 200, catalog_stats.text
     assert catalog_stats.json()["total_local_files"] >= 1
 
-    markdown_stats = client.get("/api/markdown_conversion/stats")
+    markdown_stats = client.get("/api/markdown_conversion/stats", headers=headers)
     assert markdown_stats.status_code == 200, markdown_stats.text
     assert markdown_stats.json()["total_convertible"] >= 1
     assert markdown_stats.json()["total_with_markdown"] >= 1
 
-    chunk_stats = client.get("/api/chunk_generation/stats")
+    chunk_stats = client.get("/api/chunk_generation/stats", headers=headers)
     assert chunk_stats.status_code == 200, chunk_stats.text
     assert chunk_stats.json()["total_with_markdown"] >= 1
     assert chunk_stats.json()["total_with_chunks"] >= 1
@@ -583,7 +583,7 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     credential_upsert = client.post(
         "/api/config/provider-credentials",
@@ -672,7 +672,7 @@ def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path:
 def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
     alpha_url = "https://alpha.example/doc-a.pdf"
 
     create_kb = client.post(
@@ -743,7 +743,7 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     mistral = client.post(
         "/api/config/provider-credentials",
@@ -788,7 +788,7 @@ def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Pa
 def test_ai_routing_rejects_models_for_wrong_capability(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     chat_with_embedding_model = client.post(
         "/api/config/ai-routing",
@@ -823,7 +823,7 @@ def test_provider_credentials_import_env_bootstraps_default_instance(tmp_path: P
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     response = client.post(
         "/api/config/provider-credentials/import-env",
@@ -855,7 +855,7 @@ def test_provider_credentials_reencrypt_rotates_ciphertext(tmp_path: Path, monke
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
     monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", old_key)
     TokenEncryption._instance = None
 
@@ -908,7 +908,7 @@ def test_optional_api_key_provider_and_chatbot_alias_routing_write_endpoints(tmp
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     credential_upsert = client.post(
         "/api/config/provider-credentials",

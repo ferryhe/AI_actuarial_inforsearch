@@ -26,14 +26,27 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 'path="/register" component={Register}' in app_src
     assert 'path="/profile"' in app_src
     assert 'path="/users"' in app_src
+    assert 'function RequirePermission' in app_src
+    assert 'permission="tasks.view"' in app_src
+    assert 'permission="config.write"' in app_src
+    assert 'permission="users.manage"' in app_src
     assert 'navigate("/login")' in app_src
 
     assert 'apiPost("/api/auth/login"' in login_src
     assert 'setStoredAuthToken(token.trim(), false)' in login_src
     assert 'setStoredAuthToken("", true)' in login_src
+    assert 't("login.title")' in login_src
+    assert 't("auth.back_home")' in login_src
+    assert 'href="/"' in login_src
     assert 'apiPost("/api/auth/register"' in register_src
+    assert 't("register.title")' in register_src
+    assert 't("auth.back_home")' in register_src
+    assert 'href="/"' in register_src
     assert 'href="/login"' in profile_src
     assert 'button-logout' in layout_src
+    assert 'permission: "tasks.view"' in layout_src
+    assert 'permission: "config.write"' in layout_src
+    assert 'permissions.includes("users.manage")' in layout_src
     assert 'i18n.t("nav.users")' in layout_src
     assert 'i18n.t("auth.signIn")' in layout_src
     assert 'i18n.t("auth.register")' in layout_src
@@ -45,3 +58,9 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 'headers["X-CSRF-Token"] = csrfToken' in api_src
     assert '"auth.signIn"' in i18n_src
     assert '"auth.register"' in i18n_src
+    assert '"auth.back_home"' in i18n_src
+    assert '"login.title"' in i18n_src
+    assert '"register.title"' in i18n_src
+    assert '"auth.back_home": "返回主页"' in i18n_src
+    assert '"login.title": "登录"' in i18n_src
+    assert '"register.title": "创建账号"' in i18n_src

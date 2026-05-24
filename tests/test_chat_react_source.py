@@ -1,7 +1,9 @@
 from pathlib import Path
 
 
-CHAT_TSX = Path(__file__).resolve().parents[1] / "client" / "src" / "pages" / "Chat.tsx"
+ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
+CHAT_TSX = ROOT / "pages" / "Chat.tsx"
+I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 
 def test_chat_page_renders_citation_quote_fallback_and_retrieved_blocks():
@@ -75,3 +77,15 @@ def test_chat_citation_links_use_react_file_routes():
     assert "normalizeFileRouteHref" in src
     assert "buildFileDetailPath(fileUrl, \"/chat\")" in src
     assert "buildFilePreviewPath(fileUrl, \"/chat\")" in src
+
+
+def test_chat_citation_actions_are_i18n_labels():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+
+    assert 't("chat.file_detail")' in src
+    assert 't("chat.preview")' in src
+    assert '文件详情' not in src
+    assert '预览' not in src
+    assert '"chat.file_detail": "File details"' in i18n_src
+    assert '"chat.preview": "Preview"' in i18n_src

@@ -182,9 +182,10 @@ def _make_session_cookie(app, payload: dict[str, object]) -> str:
 
 
 def test_fastapi_stats_and_categories_are_native(tmp_path: Path, monkeypatch) -> None:
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"Authorization": f"Bearer {seed['token_plain']}"}
 
-    stats = client.get("/api/stats")
+    stats = client.get("/api/stats", headers=headers)
     assert stats.status_code == 200
     assert stats.json() == {
         "total_files": 2,
@@ -244,7 +245,7 @@ def test_fastapi_native_read_routes_keep_public_reads_available_under_require_au
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     public_stats = client.get("/api/stats")
-    assert public_stats.status_code == 200
+    assert public_stats.status_code == 401
 
     public_files = client.get("/api/files")
     assert public_files.status_code == 200

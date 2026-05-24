@@ -163,6 +163,12 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
             role="operator",
             display_name="Operator",
         )
+        admin_user_id = storage.create_user(
+            "admin@example.com",
+            "admin-password-hash",
+            role="admin",
+            display_name="Admin",
+        )
 
         reader_token = "reader-token"
         storage.upsert_auth_token_by_hash(
@@ -176,6 +182,13 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
             subject="operator-token",
             group_name="operator",
             token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
+        admin_token = "admin-token"
+        storage.upsert_auth_token_by_hash(
+            subject="admin-token",
+            group_name="admin",
+            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
             is_active=True,
         )
         storage.upsert_llm_provider(
@@ -213,6 +226,8 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
         "reader_token": reader_token,
         "operator_user_id": operator_user_id,
         "operator_token": operator_token,
+        "admin_user_id": admin_user_id,
+        "admin_token": admin_token,
     }
 
 
@@ -350,7 +365,7 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     _install_runtime_state(monkeypatch, app)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     endpoints = [
         "/api/config/sites",
@@ -445,7 +460,7 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     _install_runtime_state(monkeypatch, app)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": seed["admin_token"]}
 
     providers = client.get("/api/config/providers", headers=headers)
     assert providers.status_code == 200, providers.text
@@ -494,7 +509,7 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
 
 def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
-    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     monkeypatch.chdir(tmp_path)
     app.state.enable_global_logs_api = True
     data_dir = tmp_path / "data"
@@ -504,19 +519,8 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
         encoding="utf-8",
     )
 
-    storage = Storage(str(app.state.db_path))
-    try:
-        admin_user_id = storage.create_user(
-            "admin@example.com",
-            "admin-password-hash",
-            role="admin",
-            display_name="Admin",
-        )
-    finally:
-        storage.close()
-
     cookie_name = app.state.fastapi_session_cookie_name
-    session_cookie = _make_session_cookie(app, {"email_user_id": admin_user_id})
+    session_cookie = _make_session_cookie(app, {"email_user_id": seed["admin_user_id"]})
     client.cookies.set(cookie_name, session_cookie)
 
     response = client.get("/api/logs/global")

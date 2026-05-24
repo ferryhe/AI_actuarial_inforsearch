@@ -278,13 +278,13 @@ def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(tm
     assert "files.read" in body["permissions"]
     assert "chat.view" in body["permissions"]
     assert "chat.query" in body["permissions"]
-    assert "chat.conversations" in body["permissions"]
+    assert "chat.conversations" not in body["permissions"]
 
     files = client.get("/api/files")
     assert files.status_code == 200, files.text
 
     conv = client.post("/api/chat/conversations", json={"mode": "expert"})
-    assert conv.status_code == 201, conv.text
+    assert conv.status_code == 401, conv.text
 
 
 def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, monkeypatch) -> None:

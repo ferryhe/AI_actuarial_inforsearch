@@ -85,6 +85,7 @@ def test_retired_api_fallback_stays_blocked(monkeypatch) -> None:
 
 
 def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     config_path = tmp_path / "sites.yaml"
     categories_path = tmp_path / "categories.yaml"
     db_path = tmp_path / "index.db"
@@ -122,9 +123,10 @@ def test_fastapi_uses_rebound_legacy_task_history_reference(monkeypatch, tmp_pat
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-entrypoint-test-secret")
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_TOKEN", "entrypoint-admin-token")
 
     client = TestClient(create_app())
-    response = client.get("/api/tasks/history?limit=5")
+    response = client.get("/api/tasks/history?limit=5", headers={"X-Auth-Token": "entrypoint-admin-token"})
 
     assert response.status_code == 200
     body = response.json()

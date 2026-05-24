@@ -68,7 +68,7 @@ function formatDate(dateStr: string): string {
 interface TaskCardProps {
   task: Task;
   index: number;
-  onStop: (id: string) => void;
+  onStop?: (id: string) => void;
 }
 
 export function TaskCard({ task, index, onStop }: TaskCardProps) {
@@ -92,9 +92,11 @@ export function TaskCard({ task, index, onStop }: TaskCardProps) {
             <p className="text-xs text-muted-foreground mt-1 truncate" data-testid={`text-activity-${task.id}`}>{task.current_activity}</p>
           )}
         </div>
-        <button onClick={() => onStop(task.id)}
-          className="shrink-0 p-2 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500/20 transition-colors"
-          data-testid={`button-stop-task-${task.id}`} title={t("tasks.stop")}><Square className="w-4 h-4" /></button>
+        {onStop && (
+          <button onClick={() => onStop(task.id)}
+            className="shrink-0 p-2 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500/20 transition-colors"
+            data-testid={`button-stop-task-${task.id}`} title={t("tasks.stop")}><Square className="w-4 h-4" /></button>
+        )}
       </div>
       <div className="mt-3">
         <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
