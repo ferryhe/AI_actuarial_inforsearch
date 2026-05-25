@@ -21,7 +21,9 @@ PERMISSIONS: frozenset[str] = frozenset(
         "markdown.write",     # Write markdown content
         "config.read",        # Read system config
         "config.write",       # Write system config
+        "sites.write",        # Manage monitored site definitions and site-level crawl settings
         "schedule.write",    # Manage scheduled tasks
+        "files.import.server", # Use legacy server-side filesystem import helpers
         "tasks.view",        # View tasks (list/details)
         "tasks.run",         # Run/create tasks
         "tasks.stop",        # Stop tasks
@@ -81,9 +83,10 @@ REGISTERED_PERMISSIONS: frozenset[str] = frozenset(
 # now organized around anonymous, registered, operator, and admin.
 PREMIUM_PERMISSIONS: frozenset[str] = REGISTERED_PERMISSIONS
 
-# Operator: can operate the ingestion/RAG task workflow and task settings, but
-# cannot edit important system settings, model/provider credentials, API tokens,
-# users, or global/system logs.
+# Operator: can operate the ingestion/RAG task workflow, task settings, and
+# monitored site definitions, but cannot edit important system settings,
+# model/provider credentials, API tokens, users, server filesystem import, or
+# global/system logs.
 OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
     {
         "stats.read",
@@ -94,6 +97,7 @@ OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
         "catalog.write",
         "markdown.read",
         "markdown.write",
+        "sites.write",
         "schedule.write",
         "tasks.view",
         "tasks.run",

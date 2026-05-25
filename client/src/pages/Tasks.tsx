@@ -58,6 +58,7 @@ export default function Tasks() {
   const canRunTasks = permissions.includes("tasks.run");
   const canStopTasks = permissions.includes("tasks.stop");
   const canManageSchedules = permissions.includes("schedule.write");
+  const canManageSites = permissions.includes("sites.write");
   const canReadTaskLogs = permissions.includes("logs.task.read");
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
   const [sites, setSites] = useState<SiteConfig[]>([]);
@@ -250,7 +251,8 @@ export default function Tasks() {
     }
   }
 
-  const activeTaskType = taskTypes.find((tt) => tt.type === activeForm);
+  const visibleTaskTypes = taskTypes.filter((tt) => tt.type !== "site_config" || canManageSites);
+  const activeTaskType = visibleTaskTypes.find((tt) => tt.type === activeForm);
 
   return (
     <div className="space-y-8">
@@ -331,7 +333,7 @@ export default function Tasks() {
           ) : (
             <motion.div key="grid" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="grid grid-cols-3 sm:grid-cols-5 gap-3">
-              {taskTypes.map(({ type, icon: Icon, color, route }, i) => (
+              {visibleTaskTypes.map(({ type, icon: Icon, color, route }, i) => (
                 <motion.button key={type} custom={i} variants={fadeUp} initial="hidden" animate="visible"
                   onClick={() => {
                     if (route) {

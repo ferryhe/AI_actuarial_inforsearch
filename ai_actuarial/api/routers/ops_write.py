@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from ai_actuarial.config import settings
@@ -65,7 +65,7 @@ def _handle_ops_error(exc: OpsWriteError) -> JSONResponse:
 def api_config_sites_add(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     """
     Add a new site (data source) to the sites configuration.
@@ -83,7 +83,7 @@ def api_config_sites_add(
     Raises:
         400: If the payload is malformed or validation fails.
         401: If the request is not authenticated.
-        403: If the caller lacks the ``schedule.write`` permission.
+        403: If the caller lacks the ``sites.write`` permission.
         409: If a site with the same name already exists.
     """
     try:
@@ -96,7 +96,7 @@ def api_config_sites_add(
 def api_config_sites_update(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         return update_site(payload, bridge=_bridge(request))
@@ -108,7 +108,7 @@ def api_config_sites_update(
 def api_config_sites_delete(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         return delete_site(str(payload.get("name") or ""), bridge=_bridge(request))
@@ -120,7 +120,7 @@ def api_config_sites_delete(
 def api_config_sites_import(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         return import_sites(payload, bridge=_bridge(request))
@@ -131,7 +131,7 @@ def api_config_sites_import(
 @router.get("/config/sites/export")
 def api_config_sites_export(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         content, filename = export_sites_yaml()
@@ -147,7 +147,7 @@ def api_config_sites_export(
 @router.get("/config/sites/sample")
 def api_config_sites_sample(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         content, filename = sample_sites_yaml()
@@ -163,7 +163,7 @@ def api_config_sites_sample(
 @router.get("/config/backups")
 def api_config_backups(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         return list_backups()
@@ -175,7 +175,7 @@ def api_config_backups(
 def api_config_backups_create(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         label = str(payload.get("label", "manual") or "manual")
@@ -189,7 +189,7 @@ def api_config_backups_create(
 def api_config_backups_restore(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         return restore_backup(str(payload.get("filename") or ""), bridge=_bridge(request))
@@ -201,7 +201,7 @@ def api_config_backups_restore(
 def api_config_backups_delete(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
 ):
     try:
         return delete_backup(str(payload.get("filename") or ""))
@@ -478,6 +478,15 @@ def api_collections_run(
         403: If the caller lacks the ``tasks.run`` permission.
     """
     try:
+        has_server_path = str(payload.get("directory_path") or "").strip()
+        has_upload_batch = str(payload.get("upload_batch_id") or "").strip()
+        if (
+            str(payload.get("type") or "").strip() == "file"
+            and has_server_path
+            and not has_upload_batch
+            and "files.import.server" not in auth.permissions
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden")
         return start_collection(payload, bridge=_bridge(request), auth_token=auth.token)
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -486,7 +495,7 @@ def api_collections_run(
 @router.get("/utils/browse-folder")
 def api_utils_browse_folder(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+    _auth: AuthContext = Depends(require_permissions("files.import.server")),
 ):
     try:
         return browse_folder(request.query_params.get("path"))

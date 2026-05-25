@@ -542,7 +542,8 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
     _install_bridge(app, recorder)
     db_path = Path(app.state.db_path)
     _seed_stats_data(db_path)
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": str(seed["admin_token"])}
+    operator_headers = {"X-Auth-Token": str(seed["operator_token"])}
 
     allowed_root = tmp_path / "files"
     nested = allowed_root / "nested"
@@ -557,6 +558,9 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
 
     denied_response = client.get("/api/utils/browse-folder", params={"path": str(Path("/").resolve())}, headers=headers)
     assert denied_response.status_code == 403, denied_response.text
+
+    operator_browse = client.get(f"/api/utils/browse-folder?path={nested}", headers=operator_headers)
+    assert operator_browse.status_code == 403
 
     catalog_stats = client.get("/api/catalog/stats", headers=headers)
     assert catalog_stats.status_code == 200, catalog_stats.text
@@ -597,8 +601,15 @@ def test_upload_batch_then_run_file_collection_uses_batch_not_server_path(tmp_pa
     assert active_tasks["task-live"]["stop_requested"] is True
 
     server_path_response = client.post("/api/collections/run", json={"type": "file", "directory_path": "/does/not/exist"}, headers=headers)
-    assert server_path_response.status_code == 400
-    assert server_path_response.json()["error"] == "File imports must use an upload batch"
+    assert server_path_response.status_code == 403
+
+    admin_server_path_response = client.post(
+        "/api/collections/run",
+        json={"type": "file", "directory_path": "/does/not/exist"},
+        headers={"X-Auth-Token": str(seed["admin_token"])},
+    )
+    assert admin_server_path_response.status_code == 400
+    assert admin_server_path_response.json()["error"] == "File imports must use an upload batch"
 
     upload_response = client.post(
         "/api/files/import-batches",
@@ -627,6 +638,7 @@ def test_upload_batch_then_run_file_collection_uses_batch_not_server_path(tmp_pa
             "type": "file",
             "name": "Import PDFs",
             "upload_batch_id": batch_id,
+            "directory_path": "/stale/legacy/path",
         },
         headers=headers,
     )
@@ -733,6 +745,10 @@ def test_ops_write_routes_require_operator_when_auth_enabled(tmp_path: Path, mon
         json={"name": "Allowed Site", "url": "https://allowed.example"},
     )
     assert operator.status_code == 200, operator.text
+
+    operator_config_write = client.post("/api/config/backend-settings", json={"defaults": {"max_pages": 12}})
+    assert operator_config_write.status_code == 403
+
 
 
 def test_ai_provider_credentials_and_routing_write_endpoints_roundtrip(tmp_path: Path, monkeypatch) -> None:
