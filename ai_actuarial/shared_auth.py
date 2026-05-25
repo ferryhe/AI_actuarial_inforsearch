@@ -42,7 +42,7 @@ PERMISSIONS: frozenset[str] = frozenset(
 # Anonymous visitors may browse the database/file detail surfaces and use the
 # limited AI chat quota only; task, settings, logs, download, export, and any
 # mutating API remain authenticated role capabilities.
-PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
+PUBLIC_BROWSE_PERMISSIONS: frozenset[str] = frozenset(
     {
         "stats.read",
         "files.read",
@@ -53,13 +53,16 @@ PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     }
 )
 
+# Backwards-compatible alias for older imports/config references.
+PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = PUBLIC_BROWSE_PERMISSIONS
+
 # ============================================================
 # Group Permissions (new design)
 # ============================================================
 
 # Guest/anonymous: public browse + dashboard stats + 5 AI-chat messages. No task
 # visibility, downloads, exports, logs, settings, or mutations.
-GUEST_PERMISSIONS: frozenset[str] = frozenset(PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED)
+GUEST_PERMISSIONS: frozenset[str] = frozenset(PUBLIC_BROWSE_PERMISSIONS)
 
 # Registered: a signed-in reader. They may view read-only product surfaces,
 # including task status/history, but cannot run/stop/schedule tasks or change

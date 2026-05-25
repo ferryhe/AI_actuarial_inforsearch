@@ -20,6 +20,7 @@ PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 class SeedData(TypedDict):
     user_id: int
     admin_token: str
+    guest_token: str
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
@@ -89,6 +90,13 @@ def _seed_storage(db_path: Path, files_dir: Path) -> SeedData:
             token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
             is_active=True,
         )
+        guest_token = "guest-token-123"
+        storage.upsert_auth_token_by_hash(
+            subject="guest@example.com",
+            group_name="guest",
+            token_hash=hashlib.sha256(guest_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
         user_id = storage.create_user(
             "member@example.com",
             hash_password("password123"),
@@ -98,7 +106,7 @@ def _seed_storage(db_path: Path, files_dir: Path) -> SeedData:
     finally:
         storage.close()
 
-    return {"user_id": user_id, "admin_token": admin_token}
+    return {"user_id": user_id, "admin_token": admin_token, "guest_token": guest_token}
 
 
 def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool = True) -> tuple[TestClient, object, SeedData]:
@@ -275,7 +283,7 @@ def test_csrf_protection_exempts_api_token_mutations(tmp_path: Path, monkeypatch
 
 
 def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(tmp_path: Path, monkeypatch) -> None:
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     auth_me = client.get("/api/auth/me")
     assert auth_me.status_code == 200, auth_me.text
@@ -293,6 +301,18 @@ def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(tm
 
     metrics = client.get("/api/metrics")
     assert metrics.status_code == 401, metrics.text
+
+    guest_metrics = client.get(
+        "/api/metrics",
+        headers={"X-Auth-Token": seed["guest_token"]},
+    )
+    assert guest_metrics.status_code == 403, guest_metrics.text
+
+    authorized_metrics = client.get(
+        "/api/metrics",
+        headers={"X-Auth-Token": seed["admin_token"]},
+    )
+    assert authorized_metrics.status_code == 200, authorized_metrics.text
 
     files = client.get("/api/files")
     assert files.status_code == 200, files.text
