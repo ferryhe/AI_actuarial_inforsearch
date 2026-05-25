@@ -15,13 +15,15 @@ This project is currently in version 0.1.x. Security updates are provided for th
 If you discover a security vulnerability in this project:
 
 1. **Do not** create a public GitHub issue.
-2. Contact the maintainers privately with:
+2. Report privately through GitHub private vulnerability reporting: <https://github.com/ferryhe/AI_actuarial_inforsearch/security/advisories/new>.
+3. Use a concise title such as `Security report: <short summary>` and include:
    - vulnerability description;
+   - affected branch/version or commit, if known;
    - steps to reproduce;
    - potential impact;
    - suggested fix, if available.
-3. Allow reasonable time for triage and remediation.
-4. Public disclosure should be coordinated with the maintainers.
+4. Allow reasonable time for triage and remediation.
+5. Public disclosure should be coordinated with the maintainers.
 
 Do not include real API keys, tokens, database files, or private user documents in vulnerability reports unless explicitly requested through a private channel.
 
