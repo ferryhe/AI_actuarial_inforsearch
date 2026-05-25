@@ -76,6 +76,39 @@ def test_chat_document_sources_truncates_total_content_with_metadata() -> None:
         "used_chars": 12,
         "max_chars": 12,
         "truncated_sources": ["b.md"],
+        "skipped_sources": [],
+        "omitted_file_url_sources": [],
+    }
+
+
+def test_chat_document_sources_skips_empty_budget_chunks_and_omits_partial_urls() -> None:
+    from ai_actuarial.api.services.chat import _prepare_document_source_chunks
+
+    oversized_url = "https://example.test/" + ("x" * 600)
+    chunks, context_notice = _prepare_document_source_chunks(
+        document_content="fallback",
+        document_filename="fallback.md",
+        document_file_url="https://example.test/fallback",
+        document_sources=[
+            {"filename": "a.md", "file_url": oversized_url, "content": "A" * 8},
+            {"filename": "b.md", "file_url": "https://example.test/b", "content": "B" * 8},
+            {"filename": "c.md", "file_url": "https://example.test/c", "content": "C" * 8},
+        ],
+        max_total_chars=8,
+        max_content_chars=100,
+    )
+
+    assert [chunk["metadata"]["filename"] for chunk in chunks] == ["a.md"]
+    assert [chunk["content"] for chunk in chunks] == ["A" * 8]
+    assert chunks[0]["metadata"]["file_url"] == ""
+    assert context_notice == {
+        "context_truncated": True,
+        "original_chars": 24,
+        "used_chars": 8,
+        "max_chars": 8,
+        "truncated_sources": ["b.md", "c.md"],
+        "skipped_sources": ["b.md", "c.md"],
+        "omitted_file_url_sources": ["a.md"],
     }
 
 

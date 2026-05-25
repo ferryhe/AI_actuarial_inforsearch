@@ -1030,7 +1030,6 @@ export default function Chat() {
                                 e.stopPropagation();
                                 toggleCompareDocument(doc);
                               }}
-                              disabled={compareSelectionLimitReached}
                               className={cn(
                                 "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
                                 selectedForCompare
@@ -1040,6 +1039,7 @@ export default function Chat() {
                                     : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary"
                               )}
                               aria-label={compareSelectionLimitReached ? t("chat.compare_limit_reached") : t("chat.toggle_compare_document")}
+                              aria-disabled={compareSelectionLimitReached}
                               title={compareSelectionLimitReached ? t("chat.compare_limit_reached") : t("chat.toggle_compare_document")}
                               data-testid={`button-toggle-compare-document-${i}`}
                             >

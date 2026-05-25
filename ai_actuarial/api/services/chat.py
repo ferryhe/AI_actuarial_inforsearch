@@ -665,6 +665,15 @@ def _bounded_source_text(value: Any, *, fallback: str = "", max_chars: int = MAX
     return text[:max_chars]
 
 
+def _bounded_document_source_url(value: Any, *, max_chars: int = MAX_DOCUMENT_FIELD_CHARS) -> tuple[str, bool]:
+    text = _normalize_text(value)
+    if not text:
+        return "", False
+    if len(text) > max_chars:
+        return "", True
+    return text, False
+
+
 def _prepare_document_source_chunks(
     *,
     document_content: str,
@@ -685,17 +694,27 @@ def _prepare_document_source_chunks(
     original_chars = 0
     used_chars = 0
     truncated_sources: list[str] = []
+    skipped_sources: list[str] = []
+    omitted_file_url_sources: list[str] = []
 
     for index, source in enumerate(sources, start=1):
         source_dict = source if isinstance(source, dict) else {}
         filename = _bounded_source_text(source_dict.get("filename"), fallback=f"Document {index}") or f"Document {index}"
-        file_url = _bounded_source_text(source_dict.get("file_url"))
+        file_url, file_url_omitted = _bounded_document_source_url(source_dict.get("file_url"))
+        if file_url_omitted:
+            omitted_file_url_sources.append(filename)
         raw_content = _normalize_text(source_dict.get("content")) or document_content
         original_chars += len(raw_content)
 
         remaining_chars = max(0, max_total_chars - used_chars)
+        if remaining_chars == 0:
+            truncated_sources.append(filename)
+            skipped_sources.append(filename)
+            continue
         content_limit = min(max_content_chars, remaining_chars)
         content = raw_content[:content_limit]
+        if not content:
+            continue
         used_chars += len(content)
         if len(content) < len(raw_content):
             truncated_sources.append(filename)
@@ -721,6 +740,8 @@ def _prepare_document_source_chunks(
         "used_chars": used_chars,
         "max_chars": max_total_chars,
         "truncated_sources": truncated_sources,
+        "skipped_sources": skipped_sources,
+        "omitted_file_url_sources": omitted_file_url_sources,
     }
     return chunks, context_notice
 

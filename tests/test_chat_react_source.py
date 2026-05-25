@@ -79,6 +79,8 @@ def test_chat_document_comparison_limits_selection_and_shows_truncation_notice()
     assert "chat.compare_limit_reached" in src
     assert "chat.context_truncated_notice" in src
     assert "res.data?.metadata?.context_truncated" in src
+    assert "aria-disabled={compareSelectionLimitReached}" in src
+    assert '\n                              disabled={compareSelectionLimitReached}' not in src
     assert "最多选择 3 个文件" in i18n_src
     assert "已自动裁剪" in i18n_src
 
