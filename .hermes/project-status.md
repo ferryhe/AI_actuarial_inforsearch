@@ -1,23 +1,17 @@
 # Project Status
 
 - Date: 2026-05-25
-- Branch: `feat/auth-rate-limit-ui`
-- PR: #122 `fix: rate limit auth submissions`
-- Latest baseline: `origin/main` after PR #121 Chat/RAG request boundaries merged.
-- Scope: PR4 security hardening for login/register rate limiting plus 429/system-error UI, plus scoped PR #122 Copilot follow-up fixes. Sibling repositories were not read or modified.
-- Backend auth rate limit: `/api/auth/login` and `/api/auth/register` are rate-limited as public credential POST mutations before session mutation work.
-- Backend auth limit policy: default auth mutation limit is 5 requests/minute per endpoint and client IP.
-- Proxy handling: auth rate-limit IP key and auth/chat quota logging now share a centralized client-IP helper that respects trusted `X-Forwarded-For` only when `TRUST_PROXY` is enabled.
-- CORS handling: auth 429 responses include `Retry-After` and preserve allowed CORS headers so browser clients can surface the 429 UI.
-- Preflight handling: `OPTIONS` requests skip rate limiting.
-- Non-auth compatibility: existing role/default endpoint 429 detail remains human-readable and does not gain the auth-specific `error` field.
-- Frontend login/register UX: 429 errors show localized “too many attempts” copy; 5xx errors show localized service-unavailable copy via a shared frontend auth-error helper.
-- Copilot follow-up: accepted and fixed scoped comments for shared client IP helper, test bucket reset without spawning extra cleanup threads, shared frontend auth error helper, and updated rate-limit documentation.
-- Tests: FastAPI auth tests cover login limit, register limit, CORS preflight skip, trusted forwarded IP separation, CORS headers on auth 429, and non-auth 429 compatibility.
-- Tests: React auth source test covers shared auth error handling and Chinese translations.
-- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py -q` (20 passed, 3 warnings).
-- Additional verification passed for shared client-IP chat impact: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_chat_endpoints.py::test_fastapi_chat_query_enforces_anonymous_ip_quota tests/test_fastapi_chat_endpoints.py::test_fastapi_chat_admin_quota_is_unlimited tests/test_fastapi_chat_endpoints.py::test_chat_document_sources_rejects_more_than_three_before_quota -q` (3 passed, 3 warnings).
-- Frontend build passed: `npm run build` from `client/`.
-- Diff whitespace check passed: `git diff --check`.
-- Local Codex review gate passed after comment fixes: no discrete actionable bugs found.
-- Next step: commit/push PR #122 follow-up fixes, then re-check remote CI/comments and merge if clean.
+- Branch: `docs/security-rollout-completion`
+- Latest baseline: `origin/main` at merged PR #122 (`fix: rate limit auth submissions`).
+- Scope: documentation completion audit after security/RBAC rollout PRs #118-#122 were merged. Sibling repositories were not read or modified.
+- Repo/PR audit: `gh pr list --state open` returned no open PRs; recent merged rollout PRs #118, #119, #120, #121, #122 are present on `origin/main`.
+- README refresh: root English and Chinese READMEs now describe the current FastAPI + React stack, merged security rollout status, browser-upload file import contract, Chat/RAG source bounds, auth rate limiting, and current verification commands.
+- Security docs refresh: `SECURITY.md` now reflects maintained FastAPI + React posture, auth/RBAC, encrypted credentials, SSRF/file import/Chat-RAG boundaries, production checklist, and security-focused test commands.
+- Rate-limit docs refresh: `docs/rate-limit-config.md` now documents role/default endpoint limits plus separate login/register IP-scoped auth limits, `Retry-After`, CORS/preflight behavior, and `TRUST_PROXY` semantics.
+- Docs index refresh: `docs/README.md` now points to current references and explains archive areas.
+- Archive moves: stale Flask-era security review docs, stale quick-start/modular/chatbot roadmap guides, completed FastAPI migration plans, and the completed February hardening plan were moved under `docs/archive/` with archive notes.
+- Link cleanup: updated moved-document references in impacted implementation/API token docs.
+- Verification passed: repo-level markdown link checker over 143 Markdown files found 0 missing non-code internal links.
+- Verification passed: `git diff --check`.
+- Local Codex review gate: first pass found two doc issues (server-path import wording and archived roadmap references); both were fixed. Second pass found no discrete actionable issues.
+- Next step: commit/push/create PR for documentation completion audit.

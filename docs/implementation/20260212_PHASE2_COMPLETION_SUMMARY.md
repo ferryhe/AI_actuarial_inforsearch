@@ -10,7 +10,7 @@
 
 ## 🎉 Implementation Complete!
 
-Phase 2 (AI Chatbot) has been successfully implemented according to the roadmap in `docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md`. All planned features have been delivered, tested, and documented.
+Phase 2 (AI Chatbot) has been successfully implemented according to the roadmap archived at `docs/archive/guides/AI_CHATBOT_PROJECT_ROADMAP.md`. All planned features have been delivered, tested, and documented.
 
 ---
 

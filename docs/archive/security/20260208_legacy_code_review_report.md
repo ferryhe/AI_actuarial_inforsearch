@@ -1,3 +1,5 @@
+> **Archive note:** Archived legacy code review report. This document is kept for historical traceability and may describe superseded Flask-era or pre-rollout behavior. Use the root README, `SECURITY.md`, and `docs/README.md` for current guidance.
+
 # 代码审查报告 / Code Review Report
 
 **项目名称 / Project**: AI Actuarial Information Search  

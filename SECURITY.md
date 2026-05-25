@@ -2,265 +2,134 @@
 
 ## Supported Versions
 
-This project is currently in version 0.1.x. Security updates are provided for the latest release.
+This project is currently in version 0.1.x. Security updates are provided for the latest release on `main`.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| Version | Supported |
+| --- | --- |
+| 0.1.x | :white_check_mark: |
 
 ---
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in this project, please follow these steps:
+If you discover a security vulnerability in this project:
 
-1. **Do NOT** create a public GitHub issue
-2. Email the security team with details:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fixes (if any)
+1. **Do not** create a public GitHub issue.
+2. Contact the maintainers privately with:
+   - vulnerability description;
+   - steps to reproduce;
+   - potential impact;
+   - suggested fix, if available.
+3. Allow reasonable time for triage and remediation.
+4. Public disclosure should be coordinated with the maintainers.
 
-3. Allow reasonable time for the team to respond and fix the issue
-4. Disclosure will be coordinated with the reporter
-
----
-
-## Security Features
-
-### Current Security Measures
-
-#### Authentication & Authorization
-- **CONFIG_WRITE_AUTH_TOKEN**: Required for configuration changes (optional, but recommended)
-- **FILE_DELETION_AUTH_TOKEN**: Required for file deletion operations (optional)
-- **Token-based authentication**: X-Auth-Token header validation
-
-#### Input Validation
-- **SQL Injection Mitigations**: Parameterized queries (sqlite3) + allowlisted ORDER BY columns (optional SQLAlchemy backend available)
-- **Path Traversal Prevention**: Sanitized task IDs and path validation
-- **CSV Formula Injection Prevention**: Escaping of formula characters in CSV exports
-
-#### Client-Side Protection
-- **XSS Prevention**: Output escaping via `escapeHtml()` function
-- **Safe DOM Manipulation**: Using `textContent` instead of `innerHTML`
-- **Markdown Sanitization**: DOMPurify integration for markdown rendering
-
-#### Data Integrity
-- **SHA256 Checksums**: File deduplication and integrity verification
-- **Database Transactions**: Atomic operations with rollback support
+Do not include real API keys, tokens, database files, or private user documents in vulnerability reports unless explicitly requested through a private channel.
 
 ---
 
-## Known Security Limitations
+## Current Security Posture
 
-### Areas Requiring Additional Security Measures
+The active application is FastAPI + React. Legacy Flask-era guidance is archived under `docs/archive/security/` and should not be used as an implementation checklist.
 
-1. **No Default Authentication**: Most API endpoints are accessible without authentication
-   - **Mitigation**: Deploy behind network firewall or VPN
-   - **Recommendation**: Implement application-level authentication
+### Authentication And Authorization
 
-2. **No CSRF Protection**: POST/DELETE endpoints lack CSRF token validation
-   - **Recommendation**: Implement Flask-SeaSurf or Flask-WTF CSRF
+- Browser session login/register is implemented by native FastAPI auth endpoints.
+- Token-based access remains available for compatibility and admin/recovery flows.
+- `features.require_auth=true` requires session or token authentication.
+- `features.require_auth=false` allows read-only guest access while write/admin operations remain permission-gated.
+- Permissions are role-based and split by operation class, including `sites.write`, `schedule.write`, `tasks.run`, and `files.import.server`.
+- `operator` can manage configured sites but does not receive `files.import.server`; that permission is reserved for admin-only server filesystem helper surfaces.
+- `BOOTSTRAP_ADMIN_TOKEN` can be used as a local recovery mechanism. Do not commit real tokens.
 
-3. **No Rate Limiting**: API endpoints can be called without rate limits
-   - **Recommendation**: Implement Flask-Limiter
+### Credential And Secret Handling
 
-4. **No Security Headers**: Missing CSP, X-Frame-Options, HSTS headers
-   - **Recommendation**: Add security headers middleware
+- Provider API keys should be stored as encrypted database credentials managed from Settings.
+- `TOKEN_ENCRYPTION_KEY` must be stable for encrypted credential decryption.
+- `.env` is for process secrets and deployment overrides only; do not commit it.
+- Diagnostics scripts are expected to report key names/status without printing secret values.
 
-5. **Optional Token Authentication**: Config endpoints allow bypass if token not set
-   - **Recommendation**: Make authentication mandatory
+### Request Boundary Controls
+
+- Public login/register credential submissions are IP-scoped rate limited before session mutation.
+- Search/chat/collection endpoints have role/default rate limits when `features.enable_rate_limiting=true`.
+- `OPTIONS` CORS preflight requests skip rate limiting.
+- `TRUST_PROXY` controls whether `X-Forwarded-For` is trusted for client IP resolution; enable it only behind a trusted reverse proxy.
+- CSRF protection, security headers, error-detail exposure, and CORS origins are controlled by `config/sites.yaml -> features` and deployment environment overrides.
+
+### File And URL Handling
+
+- Normal file import uses browser-selected upload batches from the user's machine.
+- `type=file` collection runs require an `upload_batch_id`; requests that supply only `directory_path` are rejected.
+- API responses should not expose arbitrary absolute server paths.
+- Public URL fetching includes SSRF defenses: scheme checks, private/reserved address rejection, redirect revalidation, and DNS/IP drift checks.
+- File deduplication uses SHA256.
+
+### Chat/RAG Boundary Controls
+
+- Selected document comparison is limited to 3 document sources per request.
+- Document context has per-source and total-size bounds; the API returns truncation metadata and the UI displays a truncation notice.
+- Retrieved/document context is labeled as untrusted before being passed to the LLM and must not override system, developer, permission, tool, or output-format instructions.
 
 ---
 
-## Deployment Security Checklist
+## Production Deployment Checklist
 
-Use this checklist when deploying to production:
+### Required Secrets And Environment
 
-### Pre-Deployment
+- [ ] Set `FASTAPI_SESSION_SECRET` to a strong random value when session auth is enabled.
+- [ ] Set `TOKEN_ENCRYPTION_KEY` to a stable Fernet key before storing encrypted provider credentials.
+- [ ] Configure `FASTAPI_CORS_ORIGINS` with explicit browser origins in production.
+- [ ] Set `FASTAPI_SESSION_COOKIE_SECURE=true` behind HTTPS.
+- [ ] Set `TRUST_PROXY=true` only when direct API access is restricted to trusted reverse proxy traffic.
+- [ ] Keep any server `.env` file private and out of git.
 
-- [ ] Review and update all dependencies to latest secure versions
-- [ ] Run security audit: `pip install pip-audit && pip-audit`
-- [ ] Set strong random tokens for all authentication
-  ```bash
-  python -c "import secrets; print(secrets.token_urlsafe(32))"
-  ```
-- [ ] Copy `.env.example` to `.env` and fill in values
-- [ ] Ensure `.env` is in `.gitignore` and never committed
+Generate a Fernet key:
 
-### Infrastructure
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
-- [ ] Enable HTTPS with valid SSL certificate (Let's Encrypt recommended)
-- [ ] Configure reverse proxy (Caddy, Nginx, or Apache)
-- [ ] Set up firewall rules (allow only necessary ports)
-- [ ] Use PostgreSQL instead of SQLite for production
-- [ ] Enable database connection encryption
-- [ ] Configure database backups (daily minimum)
+Generate a random token:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
 
 ### Application Configuration
 
-- [ ] Set `FLASK_ENV=production`
-- [ ] Set `FLASK_DEBUG=false`
-- [ ] Set strong `FLASK_SECRET_KEY`
-- [ ] Set `CONFIG_WRITE_AUTH_TOKEN` (mandatory)
-- [ ] Set `FILE_DELETION_AUTH_TOKEN` (if file deletion enabled)
-- [ ] Configure `MAX_CONTENT_LENGTH` to prevent large uploads
-- [ ] Review and restrict file upload types
+- [ ] Enable `features.require_auth` for non-public deployments.
+- [ ] Enable `features.enable_rate_limiting` for public deployments.
+- [ ] Keep CSRF enabled unless there is a documented exception.
+- [ ] Keep security headers enabled and configure CSP consciously.
+- [ ] Review role assignments for admin/operator users.
+- [ ] Ensure only admins have `files.import.server`.
+- [ ] Store provider credentials through Settings rather than committing keys to config files.
 
-### Network Security
+### Infrastructure
 
-- [ ] Deploy behind firewall or VPN
-- [ ] Use IP whitelisting if possible
-- [ ] Enable DDoS protection
-- [ ] Configure rate limiting on reverse proxy
-- [ ] Set up intrusion detection system (IDS)
+- [ ] Serve over HTTPS.
+- [ ] Put FastAPI behind a trusted reverse proxy such as Caddy or Nginx.
+- [ ] Restrict direct API container/host access so only the trusted proxy can reach it when `TRUST_PROXY=true`.
+- [ ] Use explicit firewall rules and expose only necessary ports.
+- [ ] Configure backups for the database and uploaded/downloaded files.
+- [ ] For production scale-out, do not rely on process-local `memory://` rate limiting; add a shared backend first.
 
-### Monitoring & Logging
+### Monitoring And Maintenance
 
-- [ ] Configure centralized logging
-- [ ] Set up log rotation
-- [ ] Enable audit logging for sensitive operations
-- [ ] Configure alerting for:
-  - Failed authentication attempts
-  - Unusual API usage patterns
-  - System errors
-  - File system changes
-- [ ] Regular log review process
-
-### Data Protection
-
-- [ ] Encrypt database backups
-- [ ] Secure file storage permissions (chmod 600 for sensitive files)
-- [ ] Implement data retention policies
-- [ ] Plan for secure data disposal
-
-### Regular Maintenance
-
-- [ ] Weekly dependency updates check
-- [ ] Monthly security audit
-- [ ] Quarterly penetration testing
-- [ ] Annual security review
+- [ ] Review logs for failed login bursts, unexpected 429 spikes, SSRF rejection events, and repeated 5xx errors.
+- [ ] Rotate credentials when personnel or deployment ownership changes.
+- [ ] Run dependency audits periodically, for example `pip-audit` and npm audit tooling.
+- [ ] Re-run focused security tests after changing auth, rate limiting, file import, URL fetch, or Chat/RAG prompt-boundary code.
 
 ---
 
-## Security Best Practices for Developers
+## Security-Focused Verification Commands
 
-### Code Review Guidelines
-
-1. **Input Validation**: Always validate and sanitize user inputs
-2. **Output Encoding**: Escape outputs to prevent XSS
-3. **Authentication**: Use decorators to protect sensitive endpoints
-4. **Authorization**: Verify user permissions before operations
-5. **Error Handling**: Never expose sensitive information in error messages
-6. **Logging**: Log security events but never log sensitive data
-7. **Dependencies**: Keep all dependencies up to date
-8. **Secrets**: Never commit secrets to version control
-
-### Secure Coding Patterns
-
-```python
-# ✅ Good: Parameterized query
-result = db.execute(text("SELECT * FROM files WHERE url = :url"), {"url": user_input})
-
-# ❌ Bad: String concatenation
-result = db.execute(f"SELECT * FROM files WHERE url = '{user_input}'")
-
-# ✅ Good: Input validation
-limit = min(max(int(request.args.get('limit', 20)), 1), 1000)
-
-# ❌ Bad: No validation
-limit = int(request.args.get('limit', 20))
-
-# ✅ Good: Generic error message
-return jsonify({"error": "Operation failed"}), 500
-
-# ❌ Bad: Exposing exception details
-return jsonify({"error": str(e)}), 500
+```bash
+python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py -q
+python -m pytest tests/test_fastapi_chat_endpoints.py tests/test_chat_react_source.py -q
+python -m pytest tests/test_fastapi_ops_write_endpoints.py tests/test_tasks_react_source.py tests/unit/test_permissions.py -q
+npm run build
 ```
 
-### Testing Security Features
-
-Always include security tests:
-
-```python
-def test_authentication_required():
-    """Test that protected endpoint requires authentication"""
-    response = client.post('/api/config/categories', json={})
-    assert response.status_code == 403
-
-def test_input_validation():
-    """Test that invalid input is rejected"""
-    response = client.get('/api/files?limit=999999')
-    data = response.get_json()
-    # Should be capped at maximum allowed
-    assert len(data.get('files', [])) <= 1000
-
-def test_csrf_protection():
-    """Test that POST requests require CSRF token"""
-    response = client.post('/api/files/update', json={})
-    assert response.status_code in [400, 403]
-```
-
----
-
-## Incident Response Plan
-
-### In Case of Security Breach
-
-1. **Immediate Actions**:
-   - Isolate affected systems
-   - Preserve evidence and logs
-   - Notify security team
-
-2. **Investigation**:
-   - Determine scope of breach
-   - Identify compromised data
-   - Review access logs
-
-3. **Remediation**:
-   - Patch vulnerabilities
-   - Rotate all credentials and tokens
-   - Update security measures
-
-4. **Communication**:
-   - Notify affected users
-   - Document incident
-   - Update security policies
-
-5. **Post-Incident**:
-   - Conduct post-mortem
-   - Update security measures
-   - Improve monitoring
-
----
-
-## Security Resources
-
-### External Resources
-
-- **OWASP Top 10**: https://owasp.org/www-project-top-ten/
-- **Flask Security**: https://flask.palletsprojects.com/en/latest/security/
-- **Python Security**: https://python.readthedocs.io/en/stable/library/security_warnings.html
-- **SQLAlchemy Security**: https://docs.sqlalchemy.org/en/latest/core/security.html
-- **CWE Database**: https://cwe.mitre.org/
-
-### Tools
-
-- **pip-audit**: Check for known vulnerabilities in dependencies
-- **bandit**: Python security linter
-- **safety**: Dependency vulnerability scanner
-- **CodeQL**: Semantic code analysis
-
----
-
-## Version History
-
-### 2026-02-10
-- Initial security policy created
-- Documented current security measures
-- Added deployment checklist
-- Created incident response plan
-
----
-
-**For questions about this security policy, please contact the maintainers.**
+For production configuration notes, see [docs/guides/PRODUCTION_SECURITY_CONFIG.md](docs/guides/PRODUCTION_SECURITY_CONFIG.md). For rate-limit response details, see [docs/rate-limit-config.md](docs/rate-limit-config.md).

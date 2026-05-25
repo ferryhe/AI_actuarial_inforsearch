@@ -1,3 +1,5 @@
+> **Archive note:** This guide is archived because it describes legacy Flask-era or pre-FastAPI/React behavior. Use the root README and `docs/README.md` for current guidance.
+
 ﻿# Modular Collection System Guide
 
 ## Overview

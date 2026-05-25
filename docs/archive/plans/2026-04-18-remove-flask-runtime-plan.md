@@ -1,3 +1,5 @@
+> **Archive note:** Archived completed Flask runtime removal plan. This document is kept for historical traceability and may describe superseded Flask-era or pre-rollout behavior. Use the root README, `SECURITY.md`, and `docs/README.md` for current guidance.
+
 # Remove Flask Runtime Implementation Plan
 
 > 目标：把 `ai_actuarial.web` 从 FastAPI 产品运行时中彻底移除，让 React + FastAPI 成为唯一正式产品面；Flask/WSGI/legacy HTML 不再参与 API 启动、会话处理或边界测试。

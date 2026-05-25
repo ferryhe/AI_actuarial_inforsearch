@@ -1,3 +1,5 @@
+> **Archive note:** Archived legacy Flask-era security guide. This document is kept for historical traceability and may describe superseded Flask-era or pre-rollout behavior. Use the root README, `SECURITY.md`, and `docs/README.md` for current guidance.
+
 # 安全改进快速指南 / Quick Security Improvements Guide
 
 本指南提供了基于代码审查的快速安全改进步骤。
@@ -390,8 +392,8 @@ EOF
 
 ## 📚 更多资源 / Additional Resources
 
-- [完整代码审查报告](CODE_REVIEW_REPORT.md)
-- [安全策略](SECURITY.md)
+- [完整代码审查报告](20260208_legacy_code_review_report.md)
+- [当前安全策略](../../../SECURITY.md)
 - [Flask安全文档](https://flask.palletsprojects.com/en/latest/security/)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 

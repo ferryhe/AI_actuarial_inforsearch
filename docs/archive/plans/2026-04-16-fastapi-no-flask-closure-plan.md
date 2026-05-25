@@ -1,3 +1,5 @@
+> **Archive note:** Archived completed no-Flask closure plan. This document is kept for historical traceability and may describe superseded Flask-era or pre-rollout behavior. Use the root README, `SECURITY.md`, and `docs/README.md` for current guidance.
+
 # FastAPI 无 Flask 收口计划（PR8.1-PR8.4）
 
 > 只保留可执行下一步。

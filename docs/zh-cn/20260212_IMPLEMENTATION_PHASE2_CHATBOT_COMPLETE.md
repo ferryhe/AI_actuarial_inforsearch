@@ -1055,7 +1055,7 @@ echo "OPENAI_API_KEY=sk-your-key-here" >> .env
 
 ### Phase 2 Complete!
 
-All objectives from `docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md` Phase 2 have been achieved:
+All objectives from `docs/archive/guides/AI_CHATBOT_PROJECT_ROADMAP.md` Phase 2 have been achieved:
 
 ✅ Core chatbot engine with RAG integration  
 ✅ Multiple chatbot modes  

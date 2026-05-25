@@ -1,3 +1,5 @@
+> **Archive note:** This guide is archived because it describes legacy Flask-era or pre-FastAPI/React behavior. Use the root README and `docs/README.md` for current guidance.
+
 ﻿# UI优化方案 - 快速参考指南
 
 **Quick Reference Guide for UI Optimization Plan**
