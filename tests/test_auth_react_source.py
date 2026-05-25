@@ -9,6 +9,7 @@ PROFILE_TSX = ROOT / "pages" / "Profile.tsx"
 LAYOUT_TSX = ROOT / "components" / "Layout.tsx"
 AUTH_CONTEXT_TSX = ROOT / "context" / "AuthContext.tsx"
 API_TS = ROOT / "lib" / "api.ts"
+AUTH_ERRORS_TS = ROOT / "lib" / "auth-errors.ts"
 I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 
@@ -20,6 +21,7 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     layout_src = LAYOUT_TSX.read_text(encoding="utf-8")
     auth_ctx_src = AUTH_CONTEXT_TSX.read_text(encoding="utf-8")
     api_src = API_TS.read_text(encoding="utf-8")
+    auth_errors_src = AUTH_ERRORS_TS.read_text(encoding="utf-8")
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert 'path="/login" component={Login}' in app_src
@@ -40,13 +42,11 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 'href="/"' in login_src
     assert 'apiPost("/api/auth/register"' in register_src
     assert 'formatAuthSubmitError' in login_src
-    assert 'err.status === 429' in login_src
-    assert 'auth.error.rate_limited' in login_src
-    assert 'auth.error.system_unavailable' in login_src
     assert 'formatAuthSubmitError' in register_src
-    assert 'err.status === 429' in register_src
-    assert 'auth.error.rate_limited' in register_src
-    assert 'auth.error.system_unavailable' in register_src
+    assert 'export function formatAuthSubmitError' in auth_errors_src
+    assert 'err.status === 429' in auth_errors_src
+    assert 'auth.error.rate_limited' in auth_errors_src
+    assert 'auth.error.system_unavailable' in auth_errors_src
     assert '"auth.error.rate_limited": "尝试次数过多，请稍等一分钟再试。"' in i18n_src
     assert '"auth.error.system_unavailable": "服务暂时不可用，请稍后再试。"' in i18n_src
     assert 't("register.title")' in register_src

@@ -7,7 +7,8 @@ Applies per-user rate limits based on user role:
 - premium: 60 requests/minute
 - operator: 200 requests/minute
 
-Applies to search and chat endpoints by default.
+Applies to search, chat, collection mutation, and public auth credential
+submission endpoints by default.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.responses import Response
 
+from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.api.deps import get_auth_context
 from ai_actuarial.config import settings
 
@@ -43,7 +45,8 @@ ROLE_RATE_LIMITS: dict[str, int] = {
 # defaults from config/sites.yaml -> features add an additional global cap.
 DEFAULT_RATE_LIMIT = 10
 
-# Endpoints to apply rate limiting
+# Endpoints to apply rate limiting. Auth credential endpoints use a separate
+# anonymous IP-scoped policy; the rest use role/default request limits.
 RATE_LIMITED_PATHS = [
     "/api/search",
     "/api/chat/query",
@@ -231,14 +234,6 @@ def _get_rate_limit_key(request: Request) -> str:
     return f"ip:{client_host}"
 
 
-def _client_ip(request: Request) -> str:
-    if settings.TRUST_PROXY:
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
-
-
 def _should_rate_limit(request: Request) -> bool:
     """Check if the request path should be rate limited."""
     if request.method.upper() == "OPTIONS":
@@ -278,7 +273,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Rate limiting middleware for FastAPI.
 
     Applies per-user rate limits based on user role.
-    Only applies to configured paths (search, chat, collections).
+    Only applies to configured paths (search, chat, collections, auth submit endpoints).
     """
 
     def __init__(
@@ -303,7 +298,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         role = "anonymous" if is_auth_mutation else _get_user_role(request)
         if is_auth_mutation:
             rules = list(AUTH_RATE_LIMIT_RULES)
-            key = f"auth:{request.url.path}:ip:{_client_ip(request)}"
+            key = f"auth:{request.url.path}:ip:{client_ip(request)}"
         else:
             role_limit = ROLE_RATE_LIMITS.get(role, DEFAULT_RATE_LIMIT)
             rules = [RateLimitRule(limit=role_limit, window_seconds=60, label="minute")]

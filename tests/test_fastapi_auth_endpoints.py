@@ -119,6 +119,12 @@ def _make_session_cookie(app, payload: dict[str, object]) -> str:
     return serializer.dumps(payload)
 
 
+def _reset_rate_limit_store_buckets() -> None:
+    for store in rate_limit._rate_limit_stores.values():
+        store._buckets.clear()
+        store._bucket_windows.clear()
+
+
 def test_fastapi_auth_session_cookie_secure_can_be_enabled(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("FASTAPI_SESSION_COOKIE_SECURE", "true")
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
@@ -336,7 +342,7 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
 
 
 def test_fastapi_auth_login_is_rate_limited_before_session_mutation(tmp_path: Path, monkeypatch) -> None:
-    rate_limit._rate_limit_stores.clear()
+    _reset_rate_limit_store_buckets()
     monkeypatch.setattr(
         rate_limit,
         "AUTH_RATE_LIMIT_RULES",
@@ -364,7 +370,7 @@ def test_fastapi_auth_login_is_rate_limited_before_session_mutation(tmp_path: Pa
 
 
 def test_fastapi_auth_register_is_rate_limited_separately_from_login(tmp_path: Path, monkeypatch) -> None:
-    rate_limit._rate_limit_stores.clear()
+    _reset_rate_limit_store_buckets()
     monkeypatch.setattr(
         rate_limit,
         "AUTH_RATE_LIMIT_RULES",
@@ -390,7 +396,7 @@ def test_fastapi_auth_register_is_rate_limited_separately_from_login(tmp_path: P
 
 
 def test_fastapi_auth_rate_limit_skips_cors_preflight(tmp_path: Path, monkeypatch) -> None:
-    rate_limit._rate_limit_stores.clear()
+    _reset_rate_limit_store_buckets()
     monkeypatch.setattr(
         rate_limit,
         "AUTH_RATE_LIMIT_RULES",
@@ -413,7 +419,7 @@ def test_fastapi_auth_rate_limit_skips_cors_preflight(tmp_path: Path, monkeypatc
 
 
 def test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip(tmp_path: Path, monkeypatch) -> None:
-    rate_limit._rate_limit_stores.clear()
+    _reset_rate_limit_store_buckets()
     monkeypatch.setattr(rate_limit.settings, "TRUST_PROXY", True)
     monkeypatch.setattr(
         rate_limit,
@@ -434,7 +440,7 @@ def test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip(tmp_path: Path, monke
 
 
 def test_fastapi_non_auth_rate_limit_keeps_human_readable_error(tmp_path: Path, monkeypatch) -> None:
-    rate_limit._rate_limit_stores.clear()
+    _reset_rate_limit_store_buckets()
     client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     app.state.enable_rate_limiting = True
     app.state.rate_limit_defaults = "1/minute"

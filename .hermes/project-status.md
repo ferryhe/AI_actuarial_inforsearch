@@ -4,17 +4,20 @@
 - Branch: `feat/auth-rate-limit-ui`
 - Latest baseline: `origin/main` after PR #121 Chat/RAG request boundaries merged.
 - Scope: PR4 security hardening for login/register rate limiting plus 429/system-error UI. Sibling repositories were not read or modified.
-- Backend auth rate limit: `/api/auth/login` and `/api/auth/register` are now rate-limited as public credential POST mutations before session mutation work.
+- PR #122 status check follow-up: PR remains OPEN with merge state CLEAN before follow-up push; remote `python-smoke` was SUCCESS at commit `94e56738e90a33aee443869708d7daef8aaa5c64`.
+- PR #121 confirmation: state is MERGED, merged at 2026-05-25T14:50:10Z, and its `python-smoke` check was SUCCESS; no new comments required action.
+- PR #122 Copilot review comments were evaluated and confirmed in scope: centralized trusted-proxy client IP handling, removed duplicated React auth-submit error formatter, avoided rate-limit store recreation in focused tests, and refreshed rate-limit middleware docs for auth endpoints.
+- Backend auth rate limit: `/api/auth/login` and `/api/auth/register` are rate-limited as public credential POST mutations before session mutation work.
 - Backend auth limit policy: default auth mutation limit is 5 requests/minute per endpoint and client IP.
-- Proxy handling: auth rate-limit IP key respects trusted `X-Forwarded-For` only when `TRUST_PROXY` is enabled.
+- Proxy handling: auth rate-limit IP key and related auth/chat audit/quota IP handling now share `ai_actuarial.api.client_ip.client_ip`, respecting trusted `X-Forwarded-For` only when `TRUST_PROXY` is enabled.
 - CORS handling: auth 429 responses include `Retry-After` and preserve allowed CORS headers so browser clients can surface the 429 UI.
 - Preflight handling: `OPTIONS` requests skip rate limiting.
 - Non-auth compatibility: existing role/default endpoint 429 detail remains human-readable and does not gain the auth-specific `error` field.
-- Frontend login/register UX: 429 errors show localized “too many attempts” copy; 5xx errors show localized service-unavailable copy.
-- Tests: FastAPI auth tests cover login limit, register limit, CORS preflight skip, trusted forwarded IP separation, CORS headers on auth 429, and non-auth 429 compatibility.
-- Tests: React auth source test covers 429/system error handling and Chinese translations.
-- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py -q` (20 passed, 3 warnings).
-- Frontend build passed: `npm run build` from `client/`.
-- Diff whitespace check passed: `git diff --check`.
-- Local Codex review gate passed after fixing CORS and Retry-After rounding findings.
-- Next step: commit/push PR4 branch, create PR, then check remote CI/comments after the usual follow-up window.
+- Frontend login/register UX: 429 errors show localized “too many attempts” copy; 5xx errors show localized service-unavailable copy via shared `client/src/lib/auth-errors.ts`.
+- Tests: FastAPI auth tests cover login limit, register limit, CORS preflight skip, trusted forwarded IP separation, CORS headers on auth 429, and non-auth 429 compatibility; rate-limit store buckets are reset without recreating stores.
+- Tests: React auth source test covers the shared auth error helper and Chinese translations.
+- Verification passed after Copilot fixes: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py -q` (20 passed, 3 warnings).
+- Frontend build passed after Copilot fixes: `npm run build` from `client/`.
+- Diff whitespace check passed after Copilot fixes: `git diff --check`.
+- Local Codex review gate passed after Copilot fixes: `codex -c 'model="gpt-5.5"' review --uncommitted` reported no actionable correctness issues.
+- Next step: push the follow-up fixes to PR #122 and re-check remote CI/comments after GitHub updates.

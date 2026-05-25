@@ -1,18 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useLocation, Link } from "wouter";
-import { apiPost, ApiError } from "@/lib/api";
+import { apiPost } from "@/lib/api";
+import { formatAuthSubmitError } from "@/lib/auth-errors";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/hooks/use-i18n";
 import { BookOpen, Home } from "lucide-react";
-
-function formatAuthSubmitError(err: unknown, t: (key: string) => string, fallbackKey: string): string {
-  if (err instanceof ApiError) {
-    if (err.status === 429) return t("auth.error.rate_limited");
-    if (err.status >= 500) return t("auth.error.system_unavailable");
-    return typeof err.detail === "string" && err.detail ? err.detail : err.message;
-  }
-  return t(fallbackKey);
-}
 
 export default function Register() {
   const [, navigate] = useLocation();
