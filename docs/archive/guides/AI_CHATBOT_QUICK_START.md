@@ -1,3 +1,5 @@
+> **Archive note:** This guide is archived because it describes legacy Flask-era or pre-FastAPI/React behavior. Use the root README and `docs/README.md` for current guidance.
+
 # AI Chatbot Implementation - Quick Start Card
 
 **Project**: AI Chatbot with RAG Knowledge Base  
@@ -174,10 +176,10 @@ CHATBOT_MODEL=gpt-4-turbo
    `docs/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md`
 
 2. **Quick Roadmap** (11K words)  
-   `AI_CHATBOT_PROJECT_ROADMAP.md`
+   `docs/archive/guides/AI_CHATBOT_PROJECT_ROADMAP.md`
 
 3. **This Card** (Quick reference)  
-   `AI_CHATBOT_QUICK_START.md`
+   `docs/archive/guides/AI_CHATBOT_QUICK_START.md`
 
 ---
 

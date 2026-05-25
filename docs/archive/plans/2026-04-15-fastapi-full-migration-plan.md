@@ -1,3 +1,5 @@
+> **Archive note:** Archived completed FastAPI migration plan. This document is kept for historical traceability and may describe superseded Flask-era or pre-rollout behavior. Use the root README, `SECURITY.md`, and `docs/README.md` for current guidance.
+
 # FastAPI 全量迁移计划
 
 > 目标：把 React 产品面向用户的所有能力都切到原生 FastAPI；Flask 只保留临时兼容层与遗留 HTML，直到产品级 `/api/*` 全部清空为止。

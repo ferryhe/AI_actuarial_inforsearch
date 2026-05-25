@@ -370,7 +370,7 @@ When implementing the actual chatbot functionality:
 - **Planning Documents**: 
   - `docs/20260211_AI_CHATBOT_RAG_IMPLEMENTATION_PLAN.md`
   - `docs/20260211_AI_CHATBOT_PLANNING_COMPLETION_SUMMARY.md`
-  - `docs/guides/AI_CHATBOT_PROJECT_ROADMAP.md`
+  - `docs/archive/guides/AI_CHATBOT_PROJECT_ROADMAP.md`
 
 ---
 

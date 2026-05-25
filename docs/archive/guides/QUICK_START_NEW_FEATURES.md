@@ -1,3 +1,5 @@
+> **Archive note:** This guide is archived because it describes legacy Flask-era or pre-FastAPI/React behavior. Use the root README and `docs/README.md` for current guidance.
+
 ﻿# Quick Start Guide for New Features
 
 ## Overview
@@ -440,7 +442,7 @@ If you're already using the project:
 
 ## Need Help?
 
-- **Comprehensive Guide**: See `MODULAR_SYSTEM_GUIDE.md`
+- **Comprehensive Guide**: See `docs/archive/guides/MODULAR_SYSTEM_GUIDE.md`
 
 - **Implementation Details**: See `IMPLEMENTATION_SUMMARY.md`
 

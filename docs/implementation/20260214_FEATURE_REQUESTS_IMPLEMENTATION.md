@@ -11,7 +11,7 @@
 ### 1. 多AI Provider配置方案
 **状态**: 已完成设计文档
 
-详细设计见: [20260214_MULTI_AI_PROVIDER_DESIGN.md](./20260214_MULTI_AI_PROVIDER_DESIGN.md)
+详细设计见: [20260214_MULTI_AI_PROVIDER_DESIGN.md](../plans/20260214_MULTI_AI_PROVIDER_DESIGN.md)
 
 **实施计划**:
 - Phase 1: 配置结构重构 (下一版本)
@@ -306,11 +306,9 @@ Analysis should cover:
 
 ## 📚 相关文档
 
-- [多AI Provider设计](./20260214_MULTI_AI_PROVIDER_DESIGN.md)
-- [Chatbot配置](../ai_actuarial/chatbot/config.py)
-- [Chat路由](../ai_actuarial/web/chat_routes.py)
-- [File View模板](../ai_actuarial/web/templates/file_view.html)
-- [Chat模板](../ai_actuarial/web/templates/chat.html)
+- [多AI Provider设计](../plans/20260214_MULTI_AI_PROVIDER_DESIGN.md)
+- 当前 Chat/RAG 入口见 [Root README](../../README.md) 和 [Architecture](../ARCHITECTURE.md)
+- 旧 Flask `ai_actuarial/web` 模板和 chat route 已从当前 runtime 移除
 
 ---
 

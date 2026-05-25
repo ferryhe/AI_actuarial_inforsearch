@@ -1,3 +1,5 @@
+> **Archive note:** Archived legacy security review summary. This document is kept for historical traceability and may describe superseded Flask-era or pre-rollout behavior. Use the root README, `SECURITY.md`, and `docs/README.md` for current guidance.
+
 # 代码审查总结 / Code Review Summary
 
 **审查日期 / Review Date**: 2026-02-10  
