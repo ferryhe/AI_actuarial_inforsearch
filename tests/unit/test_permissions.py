@@ -43,7 +43,9 @@ class TestPermissionGroups:
         assert "tasks.run" in OPERATOR_PERMISSIONS
         assert "tasks.stop" in OPERATOR_PERMISSIONS
         assert "schedule.write" in OPERATOR_PERMISSIONS
+        assert "sites.write" in OPERATOR_PERMISSIONS
         assert "config.write" not in OPERATOR_PERMISSIONS
+        assert "files.import.server" not in OPERATOR_PERMISSIONS
         assert "tokens.manage" not in OPERATOR_PERMISSIONS
         assert "users.manage" not in OPERATOR_PERMISSIONS
 
@@ -62,7 +64,7 @@ class TestPermissionGroups:
     def test_guest_cannot_write(self):
         """Guest should not have any write permissions."""
         write_perms = ["files.delete", "catalog.write", "markdown.write",
-                       "config.write", "schedule.write", "tasks.run",
+                       "config.write", "sites.write", "schedule.write", "files.import.server", "tasks.run",
                        "tasks.stop", "logs.system.read", "export.read",
                        "tokens.manage", "users.manage"]
         for perm in write_perms:
@@ -71,7 +73,7 @@ class TestPermissionGroups:
     def test_registered_cannot_write(self):
         """Registered should not have write permissions."""
         write_perms = ["files.delete", "catalog.write", "markdown.write",
-                       "config.write", "schedule.write", "tasks.run",
+                       "config.write", "sites.write", "schedule.write", "files.import.server", "tasks.run",
                        "tasks.stop", "logs.system.read", "export.read",
                        "tokens.manage", "users.manage"]
         for perm in write_perms:
@@ -80,7 +82,7 @@ class TestPermissionGroups:
     def test_premium_cannot_write(self):
         """Premium should not have write permissions."""
         write_perms = ["files.delete", "catalog.write", "markdown.write",
-                       "config.write", "schedule.write", "tasks.run",
+                       "config.write", "sites.write", "schedule.write", "files.import.server", "tasks.run",
                        "tasks.stop", "logs.system.read", "export.read",
                        "tokens.manage", "users.manage"]
         for perm in write_perms:
