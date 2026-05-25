@@ -37,6 +37,10 @@ class ChatModules(dict):
 
 
 VALID_CHAT_MODES = {"expert", "summary", "tutorial", "comparison"}
+MAX_DOCUMENT_SOURCES = 3
+MAX_DOCUMENT_SOURCE_CONTENT_CHARS = 15000
+MAX_DOCUMENT_CONTEXT_CHARS = 45000
+MAX_DOCUMENT_FIELD_CHARS = 512
 
 
 def _ensure_conversation_schema(storage: Storage) -> None:
@@ -656,6 +660,71 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
     return citations, retrieved_blocks
 
 
+def _bounded_source_text(value: Any, *, fallback: str = "", max_chars: int = MAX_DOCUMENT_FIELD_CHARS) -> str:
+    text = _normalize_text(value) or fallback
+    return text[:max_chars]
+
+
+def _prepare_document_source_chunks(
+    *,
+    document_content: str,
+    document_filename: str,
+    document_file_url: str,
+    document_sources: list[Any],
+    max_total_chars: int = MAX_DOCUMENT_CONTEXT_CHARS,
+    max_content_chars: int = MAX_DOCUMENT_SOURCE_CONTENT_CHARS,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    sources = document_sources or [
+        {
+            "file_url": document_file_url,
+            "filename": document_filename,
+            "content": document_content,
+        }
+    ]
+    chunks: list[dict[str, Any]] = []
+    original_chars = 0
+    used_chars = 0
+    truncated_sources: list[str] = []
+
+    for index, source in enumerate(sources, start=1):
+        source_dict = source if isinstance(source, dict) else {}
+        filename = _bounded_source_text(source_dict.get("filename"), fallback=f"Document {index}") or f"Document {index}"
+        file_url = _bounded_source_text(source_dict.get("file_url"))
+        raw_content = _normalize_text(source_dict.get("content")) or document_content
+        original_chars += len(raw_content)
+
+        remaining_chars = max(0, max_total_chars - used_chars)
+        content_limit = min(max_content_chars, remaining_chars)
+        content = raw_content[:content_limit]
+        used_chars += len(content)
+        if len(content) < len(raw_content):
+            truncated_sources.append(filename)
+
+        chunks.append(
+            {
+                "content": content,
+                "metadata": {
+                    "filename": filename,
+                    "kb_id": "document_explanation",
+                    "kb_name": "Full Document",
+                    "similarity_score": 1.0,
+                    "chunk_id": f"document_{index}",
+                    "file_url": file_url,
+                    "untrusted_context": True,
+                },
+            }
+        )
+
+    context_notice = {
+        "context_truncated": bool(truncated_sources),
+        "original_chars": original_chars,
+        "used_chars": used_chars,
+        "max_chars": max_total_chars,
+        "truncated_sources": truncated_sources,
+    }
+    return chunks, context_notice
+
+
 def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, Any]) -> tuple[dict[str, Any], SessionUpdate | None]:
     modules = _full_chat_modules()
     if not isinstance(payload, dict):
@@ -673,7 +742,10 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     document_content = _normalize_text(payload.get("document_content"))
     document_filename = _normalize_text(payload.get("document_filename")) or "Document"
     document_file_url = _normalize_text(payload.get("document_file_url"))
-    document_sources = payload.get("document_sources") if isinstance(payload.get("document_sources"), list) else []
+    raw_document_sources = payload.get("document_sources")
+    document_sources = raw_document_sources if isinstance(raw_document_sources, list) else []
+    if len(document_sources) > MAX_DOCUMENT_SOURCES:
+        raise ChatApiError("Too many files selected; choose up to 3.", status_code=400)
 
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
@@ -706,32 +778,23 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         conversation_history = conversation_manager.get_context(conversation_id)
 
         chunks: list[dict[str, Any]] = []
+        context_notice: dict[str, Any] = {
+            "context_truncated": False,
+            "original_chars": 0,
+            "used_chars": 0,
+            "max_chars": MAX_DOCUMENT_CONTEXT_CHARS,
+            "truncated_sources": [],
+        }
         no_results = False
         used_threshold = getattr(config, "similarity_threshold", None)
 
         if document_content:
-            sources = document_sources or [{
-                "file_url": document_file_url,
-                "filename": document_filename,
-                "content": document_content,
-            }]
-            for index, source in enumerate(sources, start=1):
-                file_url = _normalize_text(source.get("file_url") if isinstance(source, dict) else "")
-                filename = _normalize_text(source.get("filename") if isinstance(source, dict) else "") or f"Document {index}"
-                content = _normalize_text(source.get("content") if isinstance(source, dict) else "") or document_content
-                chunks.append(
-                    {
-                        "content": content[:15000],
-                        "metadata": {
-                            "filename": filename,
-                            "kb_id": "document_explanation",
-                            "kb_name": "Full Document",
-                            "similarity_score": 1.0,
-                            "chunk_id": f"document_{index}",
-                            "file_url": file_url,
-                        },
-                    }
-                )
+            chunks, context_notice = _prepare_document_source_chunks(
+                document_content=document_content,
+                document_filename=document_filename,
+                document_file_url=document_file_url,
+                document_sources=document_sources,
+            )
         else:
             retriever = modules["retrieval"].RAGRetriever(storage, config)
             normalized_kb_ids: Any = kb_ids
@@ -792,6 +855,8 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
             "no_results": no_results,
             "used_threshold": used_threshold,
             "retrieved_blocks": retrieved_blocks,
+            "context_truncated": context_notice["context_truncated"],
+            "context_notice": context_notice,
         }
         message_id = conversation_manager.add_message(
             conversation_id,
@@ -817,6 +882,8 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                     "num_chunks": len(chunks),
                     "no_results": no_results,
                     "used_threshold": used_threshold,
+                    "context_truncated": context_notice["context_truncated"],
+                    "context_notice": context_notice,
                 },
             },
         }, session_update

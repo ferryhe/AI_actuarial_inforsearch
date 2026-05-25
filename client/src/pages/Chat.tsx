@@ -122,6 +122,7 @@ interface ChatRouteState {
 }
 
 const MODES = ["expert", "summary", "tutorial", "comparison"] as const;
+const MAX_DOCUMENT_CONTEXT_SOURCES = 3;
 type ChatMode = (typeof MODES)[number];
 
 function splitCategoryNames(value: string): string[] {
@@ -572,6 +573,10 @@ export default function Chat() {
       if (current.some((item) => item.file_url === fileUrl)) {
         return current.filter((item) => item.file_url !== fileUrl);
       }
+      if (current.length >= MAX_DOCUMENT_CONTEXT_SOURCES) {
+        setErrorMsg(t("chat.compare_limit_reached"));
+        return current;
+      }
       return [...current, doc];
     });
   }
@@ -725,6 +730,9 @@ export default function Chat() {
           retrieved_blocks: retrievedBlocks,
         },
       };
+      if (res.data?.metadata?.context_truncated) {
+        setQuotaWarning(t("chat.context_truncated_notice"));
+      }
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err: unknown) {
       const errorDetail = err instanceof Error ? err.message : t("chat.error_sending");
@@ -992,6 +1000,7 @@ export default function Chat() {
                       )}
                       {documents.map((doc, i) => {
                         const selectedForCompare = selectedCompareDocs.some((item) => item.file_url === doc.file_url);
+                        const compareSelectionLimitReached = !selectedForCompare && selectedCompareDocs.length >= MAX_DOCUMENT_CONTEXT_SOURCES;
                         return (
                           <div
                             key={doc.file_url || i}
@@ -1021,14 +1030,17 @@ export default function Chat() {
                                 e.stopPropagation();
                                 toggleCompareDocument(doc);
                               }}
+                              disabled={compareSelectionLimitReached}
                               className={cn(
                                 "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
                                 selectedForCompare
                                   ? "border-primary bg-primary text-primary-foreground"
-                                  : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary"
+                                  : compareSelectionLimitReached
+                                    ? "border-border text-muted-foreground/50 cursor-not-allowed"
+                                    : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary"
                               )}
-                              aria-label={t("chat.toggle_compare_document")}
-                              title={t("chat.toggle_compare_document")}
+                              aria-label={compareSelectionLimitReached ? t("chat.compare_limit_reached") : t("chat.toggle_compare_document")}
+                              title={compareSelectionLimitReached ? t("chat.compare_limit_reached") : t("chat.toggle_compare_document")}
                               data-testid={`button-toggle-compare-document-${i}`}
                             >
                               {selectedForCompare ? <Check className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}

@@ -70,6 +70,19 @@ def test_chat_document_sidebar_supports_multi_document_comparison():
     assert 'event.key === "Enter" || event.key === " "' in src
 
 
+def test_chat_document_comparison_limits_selection_and_shows_truncation_notice():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+
+    assert "MAX_DOCUMENT_CONTEXT_SOURCES = 3" in src
+    assert "current.length >= MAX_DOCUMENT_CONTEXT_SOURCES" in src
+    assert "chat.compare_limit_reached" in src
+    assert "chat.context_truncated_notice" in src
+    assert "res.data?.metadata?.context_truncated" in src
+    assert "最多选择 3 个文件" in i18n_src
+    assert "已自动裁剪" in i18n_src
+
+
 def test_chat_citation_links_use_react_file_routes():
     src = CHAT_TSX.read_text(encoding="utf-8")
 
