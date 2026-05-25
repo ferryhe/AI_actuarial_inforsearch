@@ -44,6 +44,7 @@ PERMISSIONS: frozenset[str] = frozenset(
 # mutating API remain authenticated role capabilities.
 PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
     {
+        "stats.read",
         "files.read",
         "catalog.read",
         "markdown.read",
@@ -56,8 +57,8 @@ PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED: frozenset[str] = frozenset(
 # Group Permissions (new design)
 # ============================================================
 
-# Guest/anonymous: public browse + 5 AI-chat messages. No dashboard stats,
-# task visibility, downloads, exports, logs, settings, or mutations.
+# Guest/anonymous: public browse + dashboard stats + 5 AI-chat messages. No task
+# visibility, downloads, exports, logs, settings, or mutations.
 GUEST_PERMISSIONS: frozenset[str] = frozenset(PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED)
 
 # Registered: a signed-in reader. They may view read-only product surfaces,

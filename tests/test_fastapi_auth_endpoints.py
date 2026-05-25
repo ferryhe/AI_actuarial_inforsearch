@@ -282,10 +282,17 @@ def test_auth_me_allows_anonymous_database_and_chat_browse_when_auth_required(tm
     body = auth_me.json()["data"]
     assert body["require_auth"] is True
     assert body["authenticated"] is False
+    assert "stats.read" in body["permissions"]
     assert "files.read" in body["permissions"]
     assert "chat.view" in body["permissions"]
     assert "chat.query" in body["permissions"]
     assert "chat.conversations" not in body["permissions"]
+
+    stats = client.get("/api/stats")
+    assert stats.status_code == 200, stats.text
+
+    metrics = client.get("/api/metrics")
+    assert metrics.status_code == 401, metrics.text
 
     files = client.get("/api/files")
     assert files.status_code == 200, files.text

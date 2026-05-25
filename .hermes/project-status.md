@@ -1,17 +1,15 @@
 # Project Status
 
 - Date: 2026-05-25
-- Branch: `docs/security-rollout-completion`
-- Latest baseline: `origin/main` at merged PR #122 (`fix: rate limit auth submissions`).
-- Scope: documentation completion audit after security/RBAC rollout PRs #118-#122 were merged. Sibling repositories were not read or modified.
-- Repo/PR audit: `gh pr list --state open` returned no open PRs; recent merged rollout PRs #118, #119, #120, #121, #122 are present on `origin/main`.
-- README refresh: root English and Chinese READMEs now describe the current FastAPI + React stack, merged security rollout status, browser-upload file import contract, Chat/RAG source bounds, auth rate limiting, and current verification commands.
-- Security docs refresh: `SECURITY.md` now reflects maintained FastAPI + React posture, auth/RBAC, encrypted credentials, SSRF/file import/Chat-RAG boundaries, production checklist, and security-focused test commands.
-- Rate-limit docs refresh: `docs/rate-limit-config.md` now documents role/default endpoint limits plus separate login/register IP-scoped auth limits, `Retry-After`, CORS/preflight behavior, and `TRUST_PROXY` semantics.
-- Docs index refresh: `docs/README.md` now points to current references and explains archive areas.
-- Archive moves: stale Flask-era security review docs, stale quick-start/modular/chatbot roadmap guides, completed FastAPI migration plans, and the completed February hardening plan were moved under `docs/archive/` with archive notes.
-- Link cleanup: updated moved-document references in impacted implementation/API token docs.
-- Verification passed: repo-level markdown link checker over 143 Markdown files found 0 missing non-code internal links.
+- Branch: `fix/public-stats-read`
+- Latest baseline: `origin/main` at `16f44c0` (`docs: refresh security rollout documentation (#123)`).
+- Scope: Open anonymous/public `stats.read` so the dashboard home route can render without redirecting to login while preserving read-only public browsing of database and file detail.
+- Permission change: `PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED` / guest permissions now include `stats.read` alongside `files.read`, `catalog.read`, `markdown.read`, `chat.view`, and `chat.query`.
+- Metrics safety: added `require_authenticated_permissions(...)` for endpoints that should ignore public permissions; `/api/metrics` now requires authenticated `stats.read`, so raw uptime/request/rate-limit metrics remain login-gated even though dashboard `/api/stats` is public.
+- Tests updated: auth endpoint coverage asserts anonymous `/api/auth/me` includes `stats.read`, `/api/stats` returns 200, `/api/metrics` remains 401, `/api/files` remains 200, and conversation creation remains 401. Permission unit test now expects guest `stats.read`.
+- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_auth_endpoints.py tests/unit/test_permissions.py -q` (39 passed).
+- Verification passed: `npm run build`.
 - Verification passed: `git diff --check`.
-- Local Codex review gate: first pass found two doc issues (server-path import wording and archived roadmap references); both were fixed. Second pass found no discrete actionable issues.
-- Next step: commit/push/create PR for documentation completion audit.
+- Browser/API smoke passed with local FastAPI + Vite under auth-required mode: anonymous `/` renders dashboard instead of login, `/database` renders, clicking a file opens file detail, browser console has no JS errors, `/api/auth/me` includes `stats.read`, `/api/stats` returns 200, and `/api/metrics` returns 401.
+- Local Codex review gate: first pass flagged global `stats.read` could expose `/api/metrics`; fixed by adding authenticated-only dependency and moving `/api/metrics` to it. Second pass found no discrete actionable regressions.
+- Next step: commit, push, create PR, then follow up on GitHub checks/review comments after the standard wait window.

@@ -137,10 +137,14 @@ def public_permissions_for_request(request: Request) -> frozenset[str]:
     return PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
 
 
-def require_permissions(*required: str):
+def _validate_required_permissions(required: tuple[str, ...]) -> None:
     for permission in required:
         if permission not in PERMISSIONS:
             raise ValueError(f"Unknown permission: {permission}")
+
+
+def require_permissions(*required: str):
+    _validate_required_permissions(required)
 
     def dependency(request: Request) -> AuthContext:
         public_permissions = public_permissions_for_request(request)
@@ -151,6 +155,22 @@ def require_permissions(*required: str):
                     return context
             return AuthContext(token=None, permissions=frozenset())
 
+        context = _load_auth_context(request)
+        if not context.token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+        if any(permission not in context.permissions for permission in required):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        return context
+
+    return dependency
+
+
+def require_authenticated_permissions(*required: str):
+    _validate_required_permissions(required)
+
+    def dependency(request: Request) -> AuthContext:
         context = _load_auth_context(request)
         if not context.token:
             raise HTTPException(status_code=401, detail="Unauthorized")
