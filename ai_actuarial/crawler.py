@@ -1,28 +1,24 @@
 from __future__ import annotations
 
+import http.client
+import ipaddress
 import logging
 import os
 import re
+import socket
+import ssl
 import time
-import urllib.request
 import xml.etree.ElementTree as ET
 import hashlib
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
-try:
-    import curl_cffi.requests as _curl_requests  # type: ignore
-    _CURL_CFFI_AVAILABLE = True
-    logger.debug("curl_cffi available; using Chrome impersonation for HTTP requests")
-except ImportError:
-    _curl_requests = None  # type: ignore
-    _CURL_CFFI_AVAILABLE = False
-
 from .storage import Storage
+from .security import SafeUrlResolution, UnsafeUrlError, resolve_safe_http_url
 from .utils import (
     extract_metadata,
     html_to_text,
@@ -33,6 +29,34 @@ from .utils import (
 
 
 DEFAULT_FILE_EXTS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
+_MAX_REDIRECT_HOPS = 10
+
+
+class _PinnedHTTPResponse:
+    def __init__(self, conn: http.client.HTTPConnection, response: http.client.HTTPResponse, url: str) -> None:
+        self._conn = conn
+        self._response = response
+        self._url = url
+        self.status = response.status
+        self.headers = {k.lower(): v for k, v in response.getheaders()}
+
+    def read(self, size: int = -1) -> bytes:
+        return self._response.read(size)
+
+    def geturl(self) -> str:
+        return self._url
+
+    def getcode(self) -> int:
+        return self.status
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
 
 @dataclass
@@ -87,30 +111,20 @@ class Crawler:
             logger.info("Cleaned up %d stale temporary files", cleaned)
 
     def _request(self, url: str) -> tuple[bytes, dict[str, str], str]:
-        if _CURL_CFFI_AVAILABLE:
-            try:
-                resp = _curl_requests.get(
-                    url,
-                    impersonate="chrome",
-                    headers={"User-Agent": self.user_agent},
-                    timeout=30,
-                    allow_redirects=True,
-                )
-                resp.raise_for_status()
-                data = resp.content
-                headers = {k.lower(): v for k, v in resp.headers.items()}
-                return data, headers, resp.url
-            except Exception as exc:
-                logger.debug("curl_cffi request failed for %s, falling back to urllib: %s", url, exc)
+        current_url = url
+        for _hop in range(_MAX_REDIRECT_HOPS):
+            resolution = resolve_safe_http_url(current_url)
+            with self._open_pinned_http(current_url, resolution, timeout=30) as resp:
+                headers = {k.lower(): str(v) for k, v in resp.headers.items()}
+                redirect_target = self._redirect_target(current_url, self._response_code(resp), headers)
+                if redirect_target:
+                    current_url = redirect_target
+                    continue
+                self._raise_for_status(current_url, self._response_code(resp))
+                data = resp.read()
+                return data, headers, resp.geturl()
 
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": self.user_agent},
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read()
-            headers = {k.lower(): v for k, v in resp.headers.items()}
-            return data, headers, resp.geturl()
+        raise UnsafeUrlError(f"Too many redirects while fetching {url}")
 
     def _download_file(self, url: str, target_dir: Path) -> tuple[Path, dict[str, str], str, str, int]:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -121,58 +135,30 @@ class Crawler:
         size = 0
         success = False
         try:
-            if _CURL_CFFI_AVAILABLE:
-                try:
-                    resp = _curl_requests.get(
-                        url,
-                        impersonate="chrome",
-                        headers={"User-Agent": self.user_agent},
-                        timeout=60,
-                        allow_redirects=True,
-                        stream=True,
-                    )
-                    resp.raise_for_status()
-                    headers = {k.lower(): v for k, v in resp.headers.items()}
-                    final_url = resp.url
+            current_url = url
+            for _hop in range(_MAX_REDIRECT_HOPS):
+                resolution = resolve_safe_http_url(current_url)
+                with self._open_pinned_http(current_url, resolution, timeout=60) as resp:
+                    headers = {k.lower(): str(v) for k, v in resp.headers.items()}
+                    redirect_target = self._redirect_target(current_url, self._response_code(resp), headers)
+                    if redirect_target:
+                        current_url = redirect_target
+                        continue
+                    self._raise_for_status(current_url, self._response_code(resp))
+                    final_url = resp.geturl()
                     with open(tmp_path, "wb") as f:
-                        for chunk in resp.iter_content(chunk_size=1024 * 128):
-                            if chunk:
-                                f.write(chunk)
-                                hasher.update(chunk)
-                                size += len(chunk)
-                    success = True
-                    logger.debug("Downloaded %s (%d bytes) via curl_cffi", url, size)
-                    return tmp_path, headers, final_url, hasher.hexdigest(), size
-                except Exception as exc:
-                    logger.debug("curl_cffi download failed for %s, falling back to urllib: %s", url, exc)
-                    # Reset state for fallback attempt
-                    try:
-                        if tmp_path.exists():
-                            tmp_path.unlink()
-                    except Exception:
-                        pass
-                    tmp_path = tmp_dir / f"download_{time.time_ns()}.part"
-                    hasher = hashlib.sha256()
-                    size = 0
+                        while True:
+                            chunk = resp.read(1024 * 128)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            hasher.update(chunk)
+                            size += len(chunk)
+                success = True
+                logger.debug("Downloaded %s (%d bytes)", current_url, size)
+                return tmp_path, headers, final_url, hasher.hexdigest(), size
 
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": self.user_agent},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                headers = {k.lower(): v for k, v in resp.headers.items()}
-                final_url = resp.geturl()
-                with open(tmp_path, "wb") as f:
-                    while True:
-                        chunk = resp.read(1024 * 128)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        hasher.update(chunk)
-                        size += len(chunk)
-            success = True
-            logger.debug("Downloaded %s (%d bytes)", url, size)
-            return tmp_path, headers, final_url, hasher.hexdigest(), size
+            raise UnsafeUrlError(f"Too many redirects while downloading {url}")
         finally:
             if not success and tmp_path.exists():
                 try:
@@ -184,6 +170,59 @@ class Crawler:
     def _is_file_url(self, url: str, exts: set[str]) -> bool:
         path = urlparse(url).path.lower()
         return any(path.endswith(ext) for ext in exts)
+
+    def _open_pinned_http(self, url: str, resolution: SafeUrlResolution, *, timeout: int):
+        parsed = urlsplit(url)
+        scheme = parsed.scheme.lower()
+        port = parsed.port or (443 if scheme == "https" else 80)
+        target = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        host_header = resolution.host
+        try:
+            if isinstance(ipaddress.ip_address(resolution.host), ipaddress.IPv6Address):
+                host_header = f"[{resolution.host}]"
+        except ValueError:
+            pass
+        if (scheme == "http" and port != 80) or (scheme == "https" and port != 443):
+            host_header = f"{host_header}:{port}"
+
+        last_error: Exception | None = None
+        for address in resolution.addresses:
+            conn = http.client.HTTPConnection(resolution.host, port=port, timeout=timeout)
+            try:
+                sock = socket.create_connection((str(address), port), timeout=timeout)
+                if scheme == "https":
+                    sock = ssl.create_default_context().wrap_socket(sock, server_hostname=resolution.host)
+                conn.sock = sock
+                conn.request("GET", target, headers={"User-Agent": self.user_agent, "Host": host_header})
+                response = conn.getresponse()
+                return _PinnedHTTPResponse(conn, response, url)
+            except Exception as exc:
+                conn.close()
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise UnsafeUrlError(f"No validated address available for {url}")
+
+    @staticmethod
+    def _response_code(resp) -> int:
+        code = getattr(resp, "status", None)
+        if code is None:
+            code = resp.getcode()
+        return int(code)
+
+    @staticmethod
+    def _redirect_target(current_url: str, status_code: int | None, headers: dict[str, str]) -> str | None:
+        if status_code is None or not (300 <= int(status_code) < 400):
+            return None
+        location = str(headers.get("location") or "").strip()
+        if not location:
+            raise UnsafeUrlError(f"Redirect response from {current_url} is missing Location header")
+        return urljoin(current_url, location)
+
+    @staticmethod
+    def _raise_for_status(url: str, status_code: int) -> None:
+        if status_code >= 400:
+            raise RuntimeError(f"HTTP Error {status_code} for {url}")
 
     def _is_excluded(self, text: str, exclude: list[str]) -> bool:
         """Check if text contains any excluded keyword."""

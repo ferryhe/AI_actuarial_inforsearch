@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_actuarial.collectors import CollectionConfig, WebPageCollector
+from ai_actuarial.security import UnsafeUrlError
 from ai_actuarial.storage import Storage
 
 
@@ -248,6 +249,27 @@ class TestWebPageCollectorBasics(unittest.TestCase):
                 CollectionConfig(name="Test", source_type="web_page"),
             )
         self.assertIsNone(result)
+
+    def test_fetch_html_uses_crawler_safe_request_path(self):
+        """_fetch_html should reuse crawler SSRF-safe request/download logic."""
+        with patch("ai_actuarial.collectors.web_page.Crawler._request") as request:
+            request.return_value = (
+                SAMPLE_HTML.encode("utf-8"),
+                {"content-type": "text/html"},
+                "https://example.com/article",
+            )
+
+            data, headers, final_url = self.collector._fetch_html("https://example.com/article")
+
+        request.assert_called_once_with("https://example.com/article")
+        self.assertIn(b"AI in Actuarial Science", data)
+        self.assertEqual("text/html", headers["content-type"])
+        self.assertEqual("https://example.com/article", final_url)
+
+    def test_fetch_html_rejects_unsafe_url_before_network(self):
+        """Localhost/private URLs should be rejected by the shared URL safety layer."""
+        with self.assertRaises(UnsafeUrlError):
+            self.collector._fetch_html("http://127.0.0.1/admin")
 
 
 # ---------------------------------------------------------------------------

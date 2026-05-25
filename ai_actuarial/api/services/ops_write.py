@@ -43,6 +43,7 @@ from ai_actuarial.shared_runtime import (
 )
 from ai_actuarial.config import settings
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
+from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -336,6 +337,7 @@ def add_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict
         "name": str(data["name"]).strip(),
         "url": str(data["url"]).strip(),
     }
+    _validate_site_url(new_site["url"])
     max_pages = _coerce_optional_int(data.get("max_pages"))
     max_depth = _coerce_optional_int(data.get("max_depth"))
     if max_pages is not None:
@@ -382,6 +384,7 @@ def update_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> d
             continue
         site["name"] = new_name
         site["url"] = str(data.get("url") or "").strip()
+        _validate_site_url(site["url"])
         max_pages = _coerce_optional_int(data.get("max_pages"))
         max_depth = _coerce_optional_int(data.get("max_depth"))
         if max_pages is not None:
@@ -472,7 +475,12 @@ def import_sites(data: dict[str, Any], *, bridge: BridgeState | None = None) -> 
         raise OpsWriteError("sites array is required (provide 'sites' or 'yaml_text')")
 
     if preview_only:
-        valid = [site for site in incoming_sites if isinstance(site, dict) and site.get("name") and site.get("url")]
+        valid = []
+        for site in incoming_sites:
+            if not isinstance(site, dict) or not site.get("name") or not site.get("url"):
+                continue
+            if _site_url_is_safe(str(site.get("url") or "")):
+                valid.append(site)
         return {"success": True, "count": len(valid), "names": [str(site.get("name") or "") for site in valid]}
 
     _backup_config("before_import")
@@ -490,6 +498,8 @@ def import_sites(data: dict[str, Any], *, bridge: BridgeState | None = None) -> 
             if not isinstance(site, dict) or not site.get("name") or not site.get("url"):
                 errors.append(f"Invalid site entry: {site}")
                 continue
+            if not _site_url_is_safe(str(site.get("url") or ""), errors=errors, site_name=str(site.get("name") or "")):
+                continue
             valid_sites.append(site)
         config_data["sites"] = valid_sites
         imported = len(valid_sites)
@@ -498,6 +508,8 @@ def import_sites(data: dict[str, Any], *, bridge: BridgeState | None = None) -> 
         for site in incoming_sites:
             if not isinstance(site, dict) or not site.get("name") or not site.get("url"):
                 errors.append(f"Invalid site entry: {site}")
+                continue
+            if not _site_url_is_safe(str(site.get("url") or ""), errors=errors, site_name=str(site.get("name") or "")):
                 continue
             site_name = str(site["name"])
             if site_name in existing_names:
@@ -519,6 +531,24 @@ def import_sites(data: dict[str, Any], *, bridge: BridgeState | None = None) -> 
     if errors:
         result["errors"] = errors
     return result
+
+
+def _validate_site_url(url: str) -> None:
+    try:
+        ensure_safe_http_url(url)
+    except UnsafeUrlError as exc:
+        raise OpsWriteError(f"Unsafe site URL: {exc}") from exc
+
+
+def _site_url_is_safe(url: str, *, errors: list[str] | None = None, site_name: str = "") -> bool:
+    try:
+        ensure_safe_http_url(url)
+        return True
+    except UnsafeUrlError as exc:
+        if errors is not None:
+            label = f" for site '{site_name}'" if site_name else ""
+            errors.append(f"Unsafe site URL{label}: {exc}")
+        return False
 
 
 def export_sites_yaml() -> tuple[str, str]:

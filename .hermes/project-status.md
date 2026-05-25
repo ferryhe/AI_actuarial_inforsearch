@@ -1,21 +1,19 @@
 # Project Status
 
 - Date: 2026-05-24
-- Branch: `feat/browser-file-import-batches`
-- Latest baseline: latest `origin/main` when this branch was created.
-- Scope: PR1 security hardening for browser-selected local file import batches. Sibling repositories were not read or modified.
-- Backend: Added `/api/files/import-batches` multipart upload endpoint gated by `tasks.run`; uploaded files are staged under an import-batch root with per-file/total limits, path traversal checks, owner checks, duplicate relative-path checks, and an allowlist covering supported import extensions including EPUB.
-- Backend: Immediate file collections now require `upload_batch_id`; `directory_path` is rejected and removed from task payloads so the server no longer imports arbitrary server filesystem paths from user input.
-- Backend: Runtime file collection consumes staged batch file paths and applies the selected extension filter during collection. Browser-selected original relative paths and filenames are preserved for staged files.
-- Backend: Scheduled `file` tasks are rejected server-side because browser upload batches are one-shot immediate imports and cannot be safely replayed by the scheduler.
-- Frontend: File import UI now uses browser file/folder pickers plus `FormData`, removes the server-side `FolderBrowser`, filters selected files by the chosen extensions before upload, and disables scheduling for file imports.
-- Frontend i18n: Added Chinese/English strings for browser-based file upload labels, hints, errors, and uploading state.
-- Local browser smoke passed on Vite/FastAPI: `/tasks` as operator, opened File Import, uploaded a PDF plus TXT sidecar batch through `/api/files/import-batches`, launched `/api/collections/run` with `upload_batch_id`, and confirmed task completion with no browser console errors.
-- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_ops_write_endpoints.py tests/test_fastapi_ops_read_endpoints.py tests/test_tasks_react_source.py -q` (39 passed, 3 warnings).
-- Verification passed: `npm run build` (passed with existing Vite large-chunk warning).
-- Verification passed: `git diff --check` (passed).
-- PR follow-up: Copilot comments were reviewed against the current diff. Confirmed and fixed: upload-batch API response no longer returns absolute `stored_path` values; frontend import response type no longer models unreachable `{error}` success bodies and relies on HTTP error handling.
-- CI follow-up: `python-smoke` had failed because CI lacked `python-multipart`; added it to `requirements.txt`. Also updated the no-Flask runtime smoke to use upload batches instead of legacy `directory_path`.
-- CI smoke reproduced locally with CI-equivalent required env present: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py -q` (13 passed, 3 warnings).
-- Local Codex review gate: first run found valid issues around scheduled file tasks and upload allowlist; fixes were applied. Latest `codex -c 'model="gpt-5.5"' review --uncommitted` completed with no discrete correctness issues.
-- Next step: commit/push PR1 follow-up and wait for refreshed GitHub CI/review state before moving to PR2 SSRF protection.
+- Branch: `feat/ssrf-url-safety`
+- Latest baseline: latest `origin/main` when this branch was created after PR118 merged.
+- Scope: PR2 security hardening for SSRF protection on user/crawler URLs. Sibling repositories were not read or modified.
+- Backend security: Added centralized `ai_actuarial.security.url_safety` validator for HTTP/HTTPS-only URL validation, malformed URL/port normalization, localhost/private/link-local/metadata/non-global IP rejection, and DNS resolution checks.
+- Backend security: Site configuration writes now validate URLs on add/update/import/preview paths and map unsafe URLs to controlled ops-write validation errors instead of server errors.
+- Crawler security: `Crawler._request` and `_download_file` now validate each request and each redirect hop, manually enforce redirect revalidation, and reject unsafe redirects.
+- Crawler security: Removed crawler fetch/download use of independent DNS resolution clients. Actual connections are opened directly to the already validated IP address while preserving the original host for Host/SNI, avoiding DNS-rebinding gaps without process-global DNS monkey-patching.
+- Crawler security: Web page collection now reuses the crawler request path instead of calling `urllib.request.urlopen` directly, so page fetches inherit URL validation, redirect revalidation, and DNS pinning.
+- Follow-up fix: Local Codex review found IPv6 literal Host headers needed bracket preservation in the pinned HTTP path; fixed and covered with a regression test.
+- Tests: Added `tests/test_url_safety.py` covering public URL allow, scheme/local/private/metadata blocking, private DNS blocking, malformed URLs, invalid ports, crawler DNS pinning handoff, redirect-to-private rejection for request/download paths, and IPv6 literal Host header formatting.
+- Tests: Extended FastAPI ops-write endpoint tests to cover unsafe site URL rejection in add/update/import flows with deterministic public DNS resolver fixtures.
+- Tests: Extended WebPageCollector tests to prove `_fetch_html` uses `Crawler._request` and rejects unsafe loopback URLs before network access.
+- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_url_safety.py tests/test_web_page_collector.py tests/test_fastapi_ops_write_endpoints.py tests/test_crawler_allow_patterns.py -q && git diff --check` (55 passed, 3 warnings).
+- Full suite status: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest -q` currently reports 462 passed, 11 failed, 4 warnings. Failures are in pre-existing non-SSRF areas (`ai_actuarial/web` cleanup expectations, FastAPI entrypoint 503 responses, one RAG admin dirty-state assertion, and safe-pickle tests); no evidence links them to this PR2 SSRF diff.
+- Local Codex review gate: Latest `codex -c 'model="gpt-5.5"' review --uncommitted` completed with no discrete correctness/security/maintainability issues after the IPv6 Host header fix.
+- Next step: commit, push, create the PR from `feat/ssrf-url-safety`, then check remote Copilot/comments after the requested wait window.

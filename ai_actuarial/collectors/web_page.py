@@ -12,11 +12,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
 from .base import BaseCollector, CollectionConfig, CollectionResult
+from ..crawler import Crawler
 from ..storage import Storage
 from ..utils import extract_metadata
 
@@ -174,15 +174,18 @@ class WebPageCollector(BaseCollector):
             Tuple of ``(raw_bytes, response_headers, final_url)``.
 
         Raises:
-            urllib.error.URLError: On network errors.
+            UnsafeUrlError: When the URL or any redirect target is unsafe.
+            OSError/HTTPError-like exceptions: On network errors.
         """
-        req = urllib.request.Request(
-            url, headers={"User-Agent": self.user_agent}
+        # Reuse the crawler request path so web-page collection gets the same
+        # SSRF protections as crawl/download flows: HTTP(S)-only validation,
+        # per-hop redirect revalidation, and per-connection pinned DNS.
+        crawler = Crawler(
+            storage=self.storage,
+            download_dir=str(self.download_dir),
+            user_agent=self.user_agent,
         )
-        with urllib.request.urlopen(req, timeout=_DEFAULT_FETCH_TIMEOUT) as resp:
-            data = resp.read()
-            headers = {k.lower(): v for k, v in resp.headers.items()}
-            return data, headers, resp.geturl()
+        return crawler._request(url)
 
     def _extract_text(self, html: str, url: str) -> str | None:
         """Extract clean article text from *html* using trafilatura.

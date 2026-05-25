@@ -82,6 +82,17 @@ def _seed_stats_data(db_path: Path) -> None:
         storage.close()
 
 
+
+def _install_public_dns_resolver(monkeypatch, *hosts: str) -> None:
+    def fake_getaddrinfo(host, port, type=0, proto=0, *args, **kwargs):
+        if host in set(hosts):
+            return [(2, type, proto, "", ("93.184.216.34", 0))]
+        raise AssertionError(f"Unexpected DNS lookup in test: {host}")
+
+    monkeypatch.setattr("ai_actuarial.security.url_safety.socket.getaddrinfo", fake_getaddrinfo)
+
+
+
 class _BridgeRecorder:
     def __init__(self) -> None:
         self.started: list[tuple[str, dict[str, object], str | None, dict[str, object] | None]] = []
@@ -128,6 +139,13 @@ def test_ops_write_routes_are_listed_in_native_inventory(tmp_path: Path, monkeyp
 
 def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
+    _install_public_dns_resolver(
+        monkeypatch,
+        "www.soa.org",
+        "preview.example",
+        "import.example",
+        "duplicate.example",
+    )
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
@@ -221,6 +239,78 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
     restore_filename = restore_source.json()["backups"][0]["filename"]
     restore_response = client.post("/api/config/backups/restore", json={"filename": restore_filename}, headers=headers)
     assert restore_response.status_code == 200, restore_response.text
+
+
+
+def test_site_config_write_rejects_unsafe_urls(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    _install_public_dns_resolver(monkeypatch, "safe.example", "preview.example", "import.example")
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    config_path = Path(os.environ["CONFIG_PATH"])
+    headers = {"X-Auth-Token": seed["operator_token"]}
+
+    add_response = client.post(
+        "/api/config/sites/add",
+        json={"name": "Blocked", "url": "http://127.0.0.1/internal"},
+        headers=headers,
+    )
+    assert add_response.status_code == 400, add_response.text
+    assert "Unsafe site URL" in add_response.text
+
+    safe_add = client.post(
+        "/api/config/sites/add",
+        json={"name": "Safe", "url": "https://safe.example/reports"},
+        headers=headers,
+    )
+    assert safe_add.status_code == 200, safe_add.text
+
+    update_response = client.post(
+        "/api/config/sites/update",
+        json={"original_name": "Safe", "name": "Safe", "url": "http://localhost/admin"},
+        headers=headers,
+    )
+    assert update_response.status_code == 400, update_response.text
+    safe_site = next(site for site in _read_sites(config_path) if site["name"] == "Safe")
+    assert safe_site["url"] == "https://safe.example/reports"
+
+    preview_response = client.post(
+        "/api/config/sites/import",
+        json={
+            "preview": True,
+            "yaml_text": (
+                "sites:\n"
+                "  - name: Preview Safe\n"
+                "    url: https://preview.example\n"
+                "  - name: Preview Blocked\n"
+                "    url: http://127.0.0.1/hidden\n"
+            ),
+        },
+        headers=headers,
+    )
+    assert preview_response.status_code == 200, preview_response.text
+    assert preview_response.json()["count"] == 1
+
+    import_response = client.post(
+        "/api/config/sites/import",
+        json={
+            "mode": "merge",
+            "yaml_text": (
+                "sites:\n"
+                "  - name: Import Safe\n"
+                "    url: https://import.example\n"
+                "  - name: Import Blocked\n"
+                "    url: http://127.0.0.1/secret\n"
+            ),
+        },
+        headers=headers,
+    )
+    assert import_response.status_code == 200, import_response.text
+    body = import_response.json()
+    assert body["imported"] == 1
+    assert any("Unsafe site URL" in message for message in body.get("errors", []))
+    site_names = {site["name"] for site in _read_sites(config_path)}
+    assert "Import Safe" in site_names
+    assert "Import Blocked" not in site_names
 
 
 
@@ -617,6 +707,7 @@ def test_schedule_reinit_and_file_collection_work_with_native_bridge(tmp_path: P
 
 def test_ops_write_routes_require_operator_when_auth_enabled(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
+    _install_public_dns_resolver(monkeypatch, "blocked.example", "allowed.example")
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
