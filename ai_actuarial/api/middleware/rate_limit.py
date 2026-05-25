@@ -7,11 +7,13 @@ Applies per-user rate limits based on user role:
 - premium: 60 requests/minute
 - operator: 200 requests/minute
 
-Applies to search and chat endpoints by default.
+Applies to search, chat, collection mutation, and public auth credential
+submission endpoints by default.
 """
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from collections import defaultdict
@@ -23,7 +25,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.responses import Response
 
+from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.api.deps import get_auth_context
+from ai_actuarial.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +45,15 @@ ROLE_RATE_LIMITS: dict[str, int] = {
 # defaults from config/sites.yaml -> features add an additional global cap.
 DEFAULT_RATE_LIMIT = 10
 
-# Endpoints to apply rate limiting
+# Endpoints to apply rate limiting. Auth credential endpoints use a separate
+# anonymous IP-scoped policy; the rest use role/default request limits.
 RATE_LIMITED_PATHS = [
     "/api/search",
     "/api/chat/query",
     "/api/chat/conversations",
     "/api/collections/run",
+    "/api/auth/login",
+    "/api/auth/register",
 ]
 
 
@@ -79,6 +86,12 @@ class RateLimitRule:
     limit: int
     window_seconds: int
     label: str
+
+
+# Public credential endpoints need a small IP-scoped limit even before a user
+# can be authenticated. Keep these separate from role limits so a logged-in
+# user's chat/search quota does not dilute login/register brute-force limits.
+AUTH_RATE_LIMIT_RULES = [RateLimitRule(limit=5, window_seconds=60, label="minute")]
 
 
 class RateLimitStore:
@@ -223,8 +236,36 @@ def _get_rate_limit_key(request: Request) -> str:
 
 def _should_rate_limit(request: Request) -> bool:
     """Check if the request path should be rate limited."""
+    if request.method.upper() == "OPTIONS":
+        return False
     path = request.url.path
     return any(path.startswith(p) for p in RATE_LIMITED_PATHS)
+
+
+def _is_auth_mutation(request: Request) -> bool:
+    return request.method.upper() == "POST" and request.url.path in {"/api/auth/login", "/api/auth/register"}
+
+
+def _retry_after_seconds(bucket: RateLimitBucket, window_seconds: int, now: float) -> int:
+    bucket.prune(now, window_seconds)
+    if not bucket.timestamps:
+        return window_seconds
+    oldest = min(bucket.timestamps)
+    return max(1, math.ceil(window_seconds - (now - oldest)))
+
+
+def _cors_headers_for_rate_limit(request: Request) -> dict[str, str]:
+    origin = request.headers.get("Origin")
+    if not origin:
+        return {}
+    allowed_origins = set(settings.CORS_ORIGINS or [])
+    if "*" not in allowed_origins and origin not in allowed_origins:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -232,7 +273,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Rate limiting middleware for FastAPI.
 
     Applies per-user rate limits based on user role.
-    Only applies to configured paths (search, chat, collections).
+    Only applies to configured paths (search, chat, collections, auth submit endpoints).
     """
 
     def __init__(
@@ -253,11 +294,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not _should_rate_limit(request):
             return await call_next(request)
 
-        role = _get_user_role(request)
-        role_limit = ROLE_RATE_LIMITS.get(role, DEFAULT_RATE_LIMIT)
-        rules = [RateLimitRule(limit=role_limit, window_seconds=60, label="minute")]
-        rules.extend(parse_rate_limit_rules(getattr(request.app.state, "rate_limit_defaults", "")))
-        key = _get_rate_limit_key(request)
+        is_auth_mutation = _is_auth_mutation(request)
+        role = "anonymous" if is_auth_mutation else _get_user_role(request)
+        if is_auth_mutation:
+            rules = list(AUTH_RATE_LIMIT_RULES)
+            key = f"auth:{request.url.path}:ip:{client_ip(request)}"
+        else:
+            role_limit = ROLE_RATE_LIMITS.get(role, DEFAULT_RATE_LIMIT)
+            rules = [RateLimitRule(limit=role_limit, window_seconds=60, label="minute")]
+            rules.extend(parse_rate_limit_rules(getattr(request.app.state, "rate_limit_defaults", "")))
+            key = _get_rate_limit_key(request)
         store = self.store
         if store is None:
             store = get_rate_limit_store(getattr(request.app.state, "rate_limit_storage_uri", "memory://"))
@@ -269,11 +315,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             buckets.append((rule, bucket))
             if not bucket.is_allowed(rule.limit, rule.window_seconds, now=now):
                 logger.warning("Rate limit exceeded for %s (role: %s)", key, role)
+                retry_after = _retry_after_seconds(bucket, rule.window_seconds, now)
+                detail = f"Rate limit exceeded. Limit: {rule.limit} requests/{rule.label}."
+                content: dict[str, int | str] = {"detail": detail, "retry_after": retry_after}
+                if is_auth_mutation:
+                    content["error"] = "rate_limit_exceeded"
+                headers = {"Retry-After": str(retry_after)}
+                headers.update(_cors_headers_for_rate_limit(request))
                 return JSONResponse(
                     status_code=429,
-                    content={
-                        "detail": f"Rate limit exceeded. Limit: {rule.limit} requests/{rule.label} for {role} role."
-                    },
+                    content=content,
+                    headers=headers,
                 )
 
         for _rule, bucket in buckets:

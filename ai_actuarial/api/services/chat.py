@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from itsdangerous import URLSafeSerializer
+from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.api.deps import _decode_signed_session, AuthContext
 from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.config import settings
@@ -572,16 +573,6 @@ def _today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _client_ip(request) -> str:
-    trust_proxy = settings.TRUST_PROXY
-    if trust_proxy:
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
-    client = getattr(request, "client", None)
-    return getattr(client, "host", None) or "unknown"
-
-
 def _chat_quota_role(token: dict[str, Any]) -> str:
     role = _normalize_text(token.get("group_name")).lower()
     email_user = token.get("_email_user")
@@ -604,7 +595,7 @@ def _enforce_chat_quota(*, storage: Storage, request, auth: AuthContext) -> None
     if email_user:
         allowed, _count = storage.check_and_increment_ai_chat_quota(today, limit, user_id=int(email_user["id"]))
     else:
-        allowed, _count = storage.check_and_increment_ai_chat_quota(today, limit, ip_address=_client_ip(request))
+        allowed, _count = storage.check_and_increment_ai_chat_quota(today, limit, ip_address=client_ip(request))
 
     if not allowed:
         upgrade_hint = (

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useLocation, Link } from "wouter";
-import { apiPost, ApiError, setStoredAuthToken } from "@/lib/api";
+import { apiPost, setStoredAuthToken } from "@/lib/api";
+import { formatAuthSubmitError } from "@/lib/auth-errors";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/hooks/use-i18n";
 import { BookOpen, Clipboard, Eye, EyeOff, Home } from "lucide-react";
@@ -33,11 +34,7 @@ export default function Login() {
       await refresh();
       navigate("/");
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.detail || err.message);
-      } else {
-        setError(t("auth.error.login_failed"));
-      }
+      setError(formatAuthSubmitError(err, t, "auth.error.login_failed"));
     } finally {
       setLoading(false);
     }
@@ -57,11 +54,7 @@ export default function Login() {
       await refresh();
       navigate("/");
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.detail || err.message);
-      } else {
-        setError(t("auth.error.token_login_failed"));
-      }
+      setError(formatAuthSubmitError(err, t, "auth.error.token_login_failed"));
     } finally {
       setLoading(false);
     }

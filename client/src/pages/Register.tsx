@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useLocation, Link } from "wouter";
-import { apiPost, ApiError } from "@/lib/api";
+import { apiPost } from "@/lib/api";
+import { formatAuthSubmitError } from "@/lib/auth-errors";
 import { useAuth } from "@/context/AuthContext";
 import { useI18n } from "@/hooks/use-i18n";
 import { BookOpen, Home } from "lucide-react";
@@ -37,11 +38,7 @@ export default function Register() {
       await refresh();
       navigate("/");
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.detail || err.message);
-      } else {
-        setError(t("register.error.failed"));
-      }
+      setError(formatAuthSubmitError(err, t, "register.error.failed"));
     } finally {
       setLoading(false);
     }

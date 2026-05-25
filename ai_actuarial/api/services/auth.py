@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import Request, Response
 from itsdangerous import URLSafeSerializer
 
-from ai_actuarial.config import settings
+from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.shared_auth import (
     AI_CHAT_QUOTA,
     DUMMY_PASSWORD_HASH,
@@ -58,16 +58,6 @@ def _db_path(request: Request) -> str:
 
 def _now_date() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-def _client_ip(request: Request) -> str:
-    trust_proxy = settings.TRUST_PROXY
-    if trust_proxy:
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
-    client = request.client.host if request.client else None
-    return client or "unknown"
 
 
 def _session_cookie_name(request: Request) -> str:
@@ -171,7 +161,7 @@ def register_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[st
             role="registered",
             display_name=display_name or None,
         )
-        storage.log_user_activity("register", user_id=user_id, ip_address=_client_ip(request), detail=f"email={email}")
+        storage.log_user_activity("register", user_id=user_id, ip_address=client_ip(request), detail=f"email={email}")
     except ValueError as exc:
         raise AuthApiError(str(exc), status_code=409) from exc
     finally:
@@ -247,7 +237,7 @@ def login_user(*, request: Request, payload: dict[str, Any]) -> tuple[dict[str, 
         if not user.get("is_active"):
             raise AuthApiError("Account disabled", status_code=403)
         storage.update_user_last_login(int(user["id"]))
-        storage.log_user_activity("login", user_id=int(user["id"]), ip_address=_client_ip(request))
+        storage.log_user_activity("login", user_id=int(user["id"]), ip_address=client_ip(request))
     finally:
         storage.close()
 
@@ -305,7 +295,7 @@ def user_me(*, request: Request, auth: AuthContext) -> dict[str, Any]:
 
         role = str(auth.token.get("group_name") or "reader").lower()
         limit = AI_CHAT_QUOTA.get(role, 5)
-        used = storage.get_ai_chat_quota_used(today, ip_address=_client_ip(request))
+        used = storage.get_ai_chat_quota_used(today, ip_address=client_ip(request))
         return {
             "success": True,
             "user": {
@@ -382,7 +372,7 @@ def update_profile(*, request: Request, auth: AuthContext, payload: dict[str, An
         storage.log_user_activity(
             "profile_updated",
             user_id=int(email_user["id"]),
-            ip_address=_client_ip(request),
+            ip_address=client_ip(request),
             detail=", ".join(detail_parts),
         )
         return {"success": True, "updated": detail_parts}
@@ -496,7 +486,7 @@ def set_user_role(*, request: Request, auth: AuthContext, user_id: int, payload:
         storage.log_user_activity(
             "admin_set_role",
             user_id=user_id,
-            ip_address=_client_ip(request),
+            ip_address=client_ip(request),
             detail=f"new_role={new_role} by {actor.get('subject', 'unknown')}",
         )
         return {"success": True, "user_id": user_id, "role": new_role}
@@ -514,7 +504,7 @@ def set_user_active(*, request: Request, auth: AuthContext, user_id: int, is_act
         storage.log_user_activity(
             "admin_set_active",
             user_id=user_id,
-            ip_address=_client_ip(request),
+            ip_address=client_ip(request),
             detail=f"is_active={is_active} by {actor.get('subject', 'unknown')}",
         )
         return {"success": True, "user_id": user_id, "is_active": is_active}
@@ -535,7 +525,7 @@ def reset_user_quota(*, request: Request, auth: AuthContext, user_id: int, paylo
         storage.log_user_activity(
             "admin_reset_quota",
             user_id=user_id,
-            ip_address=_client_ip(request),
+            ip_address=client_ip(request),
             detail=f"date={quota_date} by {actor.get('subject', 'unknown')}",
         )
         return {"success": True, "user_id": user_id, "quota_date": quota_date}

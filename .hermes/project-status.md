@@ -1,22 +1,23 @@
 # Project Status
 
 - Date: 2026-05-25
-- Branch: `feat/chat-rag-request-boundaries`
-- PR: #121 `fix: bound chat document context`
-- Latest baseline: `origin/main` after PR120 permission split merged.
-- Scope: PR5 security hardening request boundaries for Chat/RAG document context, plus scoped PR #121 Copilot follow-up fixes. Sibling repositories were not read or modified.
-- Backend request boundary: `/api/chat` rejects `document_sources` payloads with more than 3 selected documents before quota/session work.
-- Backend context boundary: user-selected document context is bounded to 15,000 characters per source and 45,000 characters total across the selected set.
-- Backend follow-up fix: source preparation no longer appends empty chunks after total context budget is exhausted; skipped sources are recorded in `context_notice`.
-- Backend follow-up fix: overlong `file_url` values are omitted instead of sliced into partial invalid URLs; omitted source names are recorded in `context_notice`.
-- Backend UX metadata: when selected document content is clipped, assistant response metadata includes `context_truncated` plus `context_notice` with original/used/max char counts, truncated source names, skipped source names, and omitted URL source names.
-- Prompt safety: retrieved RAG passages and user-selected document contents are labeled as untrusted context and cannot override system/developer instructions, permissions, tools, safety rules, or formatting requirements.
-- Frontend boundary: document comparison selection is capped at 3 files; limit-reached toggles remain clickable and expose a localized limit message via the click handler while using `aria-disabled` for state.
-- Frontend UX metadata: if the API reports clipped context, the chat page shows a localized warning that extra text was automatically clipped.
-- Tests: FastAPI chat tests cover >3 document rejection, truncation metadata, no empty chunks after exhausted budget, omitted partial URLs, and untrusted context prompt wording.
-- Tests: React source test covers the 3-file compare cap, aria-disabled/non-disabled toggle behavior, and clipping notice translations.
-- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_chat_endpoints.py tests/test_chat_react_source.py -q` (25 passed, 3 warnings).
+- Branch: `feat/auth-rate-limit-ui`
+- PR: #122 `fix: rate limit auth submissions`
+- Latest baseline: `origin/main` after PR #121 Chat/RAG request boundaries merged.
+- Scope: PR4 security hardening for login/register rate limiting plus 429/system-error UI, plus scoped PR #122 Copilot follow-up fixes. Sibling repositories were not read or modified.
+- Backend auth rate limit: `/api/auth/login` and `/api/auth/register` are rate-limited as public credential POST mutations before session mutation work.
+- Backend auth limit policy: default auth mutation limit is 5 requests/minute per endpoint and client IP.
+- Proxy handling: auth rate-limit IP key and auth/chat quota logging now share a centralized client-IP helper that respects trusted `X-Forwarded-For` only when `TRUST_PROXY` is enabled.
+- CORS handling: auth 429 responses include `Retry-After` and preserve allowed CORS headers so browser clients can surface the 429 UI.
+- Preflight handling: `OPTIONS` requests skip rate limiting.
+- Non-auth compatibility: existing role/default endpoint 429 detail remains human-readable and does not gain the auth-specific `error` field.
+- Frontend login/register UX: 429 errors show localized “too many attempts” copy; 5xx errors show localized service-unavailable copy via a shared frontend auth-error helper.
+- Copilot follow-up: accepted and fixed scoped comments for shared client IP helper, test bucket reset without spawning extra cleanup threads, shared frontend auth error helper, and updated rate-limit documentation.
+- Tests: FastAPI auth tests cover login limit, register limit, CORS preflight skip, trusted forwarded IP separation, CORS headers on auth 429, and non-auth 429 compatibility.
+- Tests: React auth source test covers shared auth error handling and Chinese translations.
+- Verification passed: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py -q` (20 passed, 3 warnings).
+- Additional verification passed for shared client-IP chat impact: `/home/ec2-user/.hermes/hermes-agent/venv/bin/python -m pytest tests/test_fastapi_chat_endpoints.py::test_fastapi_chat_query_enforces_anonymous_ip_quota tests/test_fastapi_chat_endpoints.py::test_fastapi_chat_admin_quota_is_unlimited tests/test_fastapi_chat_endpoints.py::test_chat_document_sources_rejects_more_than_three_before_quota -q` (3 passed, 3 warnings).
 - Frontend build passed: `npm run build` from `client/`.
 - Diff whitespace check passed: `git diff --check`.
-- Local Codex review gate passed: `codex -c 'model="gpt-5.5"' review --uncommitted` completed with no discrete correctness/security/maintainability issues.
-- Next step: commit/push follow-up fixes to PR #121, confirm remote checks/comments, then squash merge PR #121 and sync PR4 onto updated `origin/main`.
+- Local Codex review gate passed after comment fixes: no discrete actionable bugs found.
+- Next step: commit/push PR #122 follow-up fixes, then re-check remote CI/comments and merge if clean.
