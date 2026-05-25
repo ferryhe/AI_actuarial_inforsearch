@@ -39,6 +39,16 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 't("auth.back_home")' in login_src
     assert 'href="/"' in login_src
     assert 'apiPost("/api/auth/register"' in register_src
+    assert 'formatAuthSubmitError' in login_src
+    assert 'err.status === 429' in login_src
+    assert 'auth.error.rate_limited' in login_src
+    assert 'auth.error.system_unavailable' in login_src
+    assert 'formatAuthSubmitError' in register_src
+    assert 'err.status === 429' in register_src
+    assert 'auth.error.rate_limited' in register_src
+    assert 'auth.error.system_unavailable' in register_src
+    assert '"auth.error.rate_limited": "尝试次数过多，请稍等一分钟再试。"' in i18n_src
+    assert '"auth.error.system_unavailable": "服务暂时不可用，请稍后再试。"' in i18n_src
     assert 't("register.title")' in register_src
     assert 't("auth.back_home")' in register_src
     assert 'href="/"' in register_src

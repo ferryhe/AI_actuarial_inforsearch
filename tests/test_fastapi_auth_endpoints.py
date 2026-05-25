@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.middleware import rate_limit
 from ai_actuarial.shared_auth import hash_password
 from ai_actuarial.storage import Storage
 
@@ -332,6 +333,121 @@ def test_fastapi_auth_register_login_logout_and_profile_flow(tmp_path: Path, mon
     refreshed_user = client.get("/api/user/me")
     assert refreshed_user.status_code == 200, refreshed_user.text
     assert refreshed_user.json()["user"]["display_name"] == "Renamed User"
+
+
+def test_fastapi_auth_login_is_rate_limited_before_session_mutation(tmp_path: Path, monkeypatch) -> None:
+    rate_limit._rate_limit_stores.clear()
+    monkeypatch.setattr(
+        rate_limit,
+        "AUTH_RATE_LIMIT_RULES",
+        [rate_limit.RateLimitRule(limit=2, window_seconds=60, label="minute")],
+    )
+    monkeypatch.setattr(rate_limit.settings, "CORS_ORIGINS", ["https://app.example"])
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_rate_limiting = True
+
+    payload = {"email": "member@example.com", "password": "wrong-password"}
+    headers = {"Origin": "https://app.example"}
+    first = client.post("/api/auth/login", json=payload, headers=headers)
+    second = client.post("/api/auth/login", json=payload, headers=headers)
+    limited = client.post("/api/auth/login", json=payload, headers=headers)
+
+    assert first.status_code == 401, first.text
+    assert second.status_code == 401, second.text
+    assert limited.status_code == 429, limited.text
+    body = limited.json()
+    assert body["error"] == "rate_limit_exceeded"
+    assert body["retry_after"] >= 1
+    assert limited.headers["Retry-After"]
+    assert limited.headers["Access-Control-Allow-Origin"] == "https://app.example"
+    assert limited.headers["Access-Control-Allow-Credentials"] == "true"
+
+
+def test_fastapi_auth_register_is_rate_limited_separately_from_login(tmp_path: Path, monkeypatch) -> None:
+    rate_limit._rate_limit_stores.clear()
+    monkeypatch.setattr(
+        rate_limit,
+        "AUTH_RATE_LIMIT_RULES",
+        [rate_limit.RateLimitRule(limit=1, window_seconds=60, label="minute")],
+    )
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_rate_limiting = True
+
+    login = client.post("/api/auth/login", json={"email": "member@example.com", "password": "wrong-password"})
+    assert login.status_code == 401, login.text
+
+    first_register = client.post(
+        "/api/auth/register",
+        json={"email": "limit-one@example.com", "password": "password123", "display_name": "Limit One"},
+    )
+    second_register = client.post(
+        "/api/auth/register",
+        json={"email": "limit-two@example.com", "password": "password123", "display_name": "Limit Two"},
+    )
+
+    assert first_register.status_code == 201, first_register.text
+    assert second_register.status_code == 429, second_register.text
+
+
+def test_fastapi_auth_rate_limit_skips_cors_preflight(tmp_path: Path, monkeypatch) -> None:
+    rate_limit._rate_limit_stores.clear()
+    monkeypatch.setattr(
+        rate_limit,
+        "AUTH_RATE_LIMIT_RULES",
+        [rate_limit.RateLimitRule(limit=1, window_seconds=60, label="minute")],
+    )
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_rate_limiting = True
+
+    headers = {"Origin": "https://app.example", "Access-Control-Request-Method": "POST"}
+    first_preflight = client.options("/api/auth/login", headers=headers)
+    second_preflight = client.options("/api/auth/login", headers=headers)
+    limited_login = client.post(
+        "/api/auth/login",
+        json={"email": "member@example.com", "password": "wrong-password"},
+    )
+
+    assert first_preflight.status_code != 429, first_preflight.text
+    assert second_preflight.status_code != 429, second_preflight.text
+    assert limited_login.status_code == 401, limited_login.text
+
+
+def test_fastapi_auth_rate_limit_uses_trusted_forwarded_ip(tmp_path: Path, monkeypatch) -> None:
+    rate_limit._rate_limit_stores.clear()
+    monkeypatch.setattr(rate_limit.settings, "TRUST_PROXY", True)
+    monkeypatch.setattr(
+        rate_limit,
+        "AUTH_RATE_LIMIT_RULES",
+        [rate_limit.RateLimitRule(limit=1, window_seconds=60, label="minute")],
+    )
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_rate_limiting = True
+    payload = {"email": "member@example.com", "password": "wrong-password"}
+
+    first_ip = client.post("/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.10"})
+    second_ip = client.post("/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.11"})
+    limited_first_ip = client.post("/api/auth/login", json=payload, headers={"X-Forwarded-For": "203.0.113.10"})
+
+    assert first_ip.status_code == 401, first_ip.text
+    assert second_ip.status_code == 401, second_ip.text
+    assert limited_first_ip.status_code == 429, limited_first_ip.text
+
+
+def test_fastapi_non_auth_rate_limit_keeps_human_readable_error(tmp_path: Path, monkeypatch) -> None:
+    rate_limit._rate_limit_stores.clear()
+    client, app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_rate_limiting = True
+    app.state.rate_limit_defaults = "1/minute"
+    payload = {"type": "file", "directory_path": "/does/not/exist"}
+
+    first = client.post("/api/collections/run", json=payload)
+    limited = client.post("/api/collections/run", json=payload)
+
+    assert first.status_code != 429, first.text
+    assert limited.status_code == 429, limited.text
+    body = limited.json()
+    assert body["detail"] == "Rate limit exceeded. Limit: 1 requests/minute."
+    assert "error" not in body
 
 
 

@@ -7,6 +7,15 @@ import { BookOpen, Clipboard, Eye, EyeOff, Home } from "lucide-react";
 
 type LoginMode = "email" | "token";
 
+function formatAuthSubmitError(err: unknown, t: (key: string) => string, fallbackKey: string): string {
+  if (err instanceof ApiError) {
+    if (err.status === 429) return t("auth.error.rate_limited");
+    if (err.status >= 500) return t("auth.error.system_unavailable");
+    return typeof err.detail === "string" && err.detail ? err.detail : err.message;
+  }
+  return t(fallbackKey);
+}
+
 export default function Login() {
   const [, navigate] = useLocation();
   const { refresh } = useAuth();
@@ -33,11 +42,7 @@ export default function Login() {
       await refresh();
       navigate("/");
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.detail || err.message);
-      } else {
-        setError(t("auth.error.login_failed"));
-      }
+      setError(formatAuthSubmitError(err, t, "auth.error.login_failed"));
     } finally {
       setLoading(false);
     }
@@ -57,11 +62,7 @@ export default function Login() {
       await refresh();
       navigate("/");
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.detail || err.message);
-      } else {
-        setError(t("auth.error.token_login_failed"));
-      }
+      setError(formatAuthSubmitError(err, t, "auth.error.token_login_failed"));
     } finally {
       setLoading(false);
     }
