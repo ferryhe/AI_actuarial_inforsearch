@@ -185,7 +185,7 @@ class WebPageCollector(BaseCollector):
             download_dir=str(self.download_dir),
             user_agent=self.user_agent,
         )
-        return crawler._request(url)
+        return crawler._request(url, timeout=_DEFAULT_FETCH_TIMEOUT)
 
     def _extract_text(self, html: str, url: str) -> str | None:
         """Extract clean article text from *html* using trafilatura.

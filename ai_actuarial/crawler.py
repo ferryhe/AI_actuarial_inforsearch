@@ -30,6 +30,7 @@ from .utils import (
 
 DEFAULT_FILE_EXTS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
 _MAX_REDIRECT_HOPS = 10
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
 
 class _PinnedHTTPResponse:
@@ -110,11 +111,11 @@ class Crawler:
         if cleaned > 0:
             logger.info("Cleaned up %d stale temporary files", cleaned)
 
-    def _request(self, url: str) -> tuple[bytes, dict[str, str], str]:
+    def _request(self, url: str, *, timeout: int = 30) -> tuple[bytes, dict[str, str], str]:
         current_url = url
         for _hop in range(_MAX_REDIRECT_HOPS):
             resolution = resolve_safe_http_url(current_url)
-            with self._open_pinned_http(current_url, resolution, timeout=30) as resp:
+            with self._open_pinned_http(current_url, resolution, timeout=timeout) as resp:
                 headers = {k.lower(): str(v) for k, v in resp.headers.items()}
                 redirect_target = self._redirect_target(current_url, self._response_code(resp), headers)
                 if redirect_target:
@@ -186,12 +187,13 @@ class Crawler:
             host_header = f"{host_header}:{port}"
 
         last_error: Exception | None = None
+        ssl_context = ssl.create_default_context() if scheme == "https" else None
         for address in resolution.addresses:
             conn = http.client.HTTPConnection(resolution.host, port=port, timeout=timeout)
             try:
                 sock = socket.create_connection((str(address), port), timeout=timeout)
-                if scheme == "https":
-                    sock = ssl.create_default_context().wrap_socket(sock, server_hostname=resolution.host)
+                if ssl_context is not None:
+                    sock = ssl_context.wrap_socket(sock, server_hostname=resolution.host)
                 conn.sock = sock
                 conn.request("GET", target, headers={"User-Agent": self.user_agent, "Host": host_header})
                 response = conn.getresponse()
@@ -212,7 +214,7 @@ class Crawler:
 
     @staticmethod
     def _redirect_target(current_url: str, status_code: int | None, headers: dict[str, str]) -> str | None:
-        if status_code is None or not (300 <= int(status_code) < 400):
+        if status_code is None or int(status_code) not in _REDIRECT_STATUS_CODES:
             return None
         location = str(headers.get("location") or "").strip()
         if not location:

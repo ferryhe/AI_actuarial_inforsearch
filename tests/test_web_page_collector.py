@@ -261,7 +261,7 @@ class TestWebPageCollectorBasics(unittest.TestCase):
 
             data, headers, final_url = self.collector._fetch_html("https://example.com/article")
 
-        request.assert_called_once_with("https://example.com/article")
+        request.assert_called_once_with("https://example.com/article", timeout=30)
         self.assertIn(b"AI in Actuarial Science", data)
         self.assertEqual("text/html", headers["content-type"])
         self.assertEqual("https://example.com/article", final_url)

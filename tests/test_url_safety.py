@@ -90,7 +90,7 @@ class TestEnsureSafeHttpUrl(unittest.TestCase):
             ensure_safe_http_url("http://[::1", resolver=_resolver)
 
     def test_invalid_port_raises_unsafe_url_error(self) -> None:
-        for url in ("http://public.example:abc", "http://public.example:99999"):
+        for url in ("http://public.example:abc", "http://public.example:99999", "http://public.example:0"):
             with self.subTest(url=url):
                 with self.assertRaises(UnsafeUrlError):
                     ensure_safe_http_url(url, resolver=_resolver)
@@ -142,6 +142,27 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
                     crawler._request("https://public.example/start")
 
             self.assertEqual(["https://public.example/start"], seen_urls)
+
+    def test_request_treats_non_redirect_3xx_without_location_as_final_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            crawler = self._make_crawler(tmp_dir)
+
+            def fake_open(url, resolution, *, timeout: int):
+                return _FakeResponse(
+                    304,
+                    headers={},
+                    body=b"",
+                    url=url,
+                )
+
+            with patch(
+                "ai_actuarial.security.url_safety.socket.getaddrinfo",
+                side_effect=_resolver,
+            ), patch.object(crawler, "_open_pinned_http", side_effect=fake_open):
+                body, _headers, final_url = crawler._request("https://public.example/not-modified")
+
+            self.assertEqual(b"", body)
+            self.assertEqual("https://public.example/not-modified", final_url)
 
     def test_download_rejects_redirect_to_private_ip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

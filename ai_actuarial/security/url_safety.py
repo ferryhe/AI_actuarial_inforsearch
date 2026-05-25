@@ -44,9 +44,11 @@ def resolve_safe_http_url(url: str, *, resolver: Resolver | None = None) -> Safe
 
     host = _normalized_host(parsed.hostname)
     try:
-        parsed.port
+        port = parsed.port
     except ValueError as exc:
         raise UnsafeUrlError(f"Invalid URL port: {exc}") from exc
+    if port == 0:
+        raise UnsafeUrlError("Invalid URL port: port must be in the range 1-65535")
     if not host:
         raise UnsafeUrlError("URL host is required")
     if host == "localhost":
