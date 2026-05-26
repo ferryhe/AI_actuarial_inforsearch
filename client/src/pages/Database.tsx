@@ -25,6 +25,7 @@ import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
+import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
 
 interface FileItem {
@@ -288,6 +289,10 @@ function normalizeCategories(items: Array<string | CategoryOption> | undefined):
 
 export default function DatabasePage() {
   const { t } = useTranslation();
+  const { permissions, isLoading: authLoading } = useAuth();
+  const canDeleteFiles = permissions.includes("files.delete");
+  const canDownloadFiles = permissions.includes("files.download");
+  const canExportFiles = permissions.includes("export.read");
   const [, navigate] = useLocation();
   const searchStr = useSearch();
 
@@ -365,7 +370,7 @@ export default function DatabasePage() {
     query: debouncedQuery,
     source,
     category,
-    includeDeleted,
+    includeDeleted: !authLoading && canDeleteFiles && includeDeleted,
     orderBy,
     orderDir,
   };
@@ -374,8 +379,9 @@ export default function DatabasePage() {
 
   // Persist current state to URL so back-navigation restores filters/page
   useEffect(() => {
+    if (authLoading) return;
     window.history.replaceState(null, "", locationKey);
-  }, [locationKey]);
+  }, [authLoading, locationKey]);
 
   useEffect(() => {
     const cachedMeta = getCachedMeta();
@@ -416,7 +422,7 @@ export default function DatabasePage() {
         query: debouncedQuery,
         source,
         category,
-        includeDeleted,
+        includeDeleted: !authLoading && canDeleteFiles && includeDeleted,
         orderBy,
         orderDir,
       };
@@ -460,15 +466,16 @@ export default function DatabasePage() {
         }
       }
     },
-    [offset, debouncedQuery, source, category, includeDeleted, orderBy, orderDir]
+    [offset, debouncedQuery, source, category, authLoading, canDeleteFiles, includeDeleted, orderBy, orderDir]
   );
 
   useEffect(() => {
+    if (authLoading) return;
     void fetchFiles();
-  }, [fetchFiles, requestKey]);
+  }, [authLoading, fetchFiles, requestKey]);
 
   useEffect(() => {
-    if (loading || total <= 0) return;
+    if (authLoading || loading || total <= 0) return;
     const prevOffset = offset - PAGE_SIZE;
     const nextOffset = offset + PAGE_SIZE;
     if (prevOffset >= 0) {
@@ -477,7 +484,7 @@ export default function DatabasePage() {
     if (nextOffset < total) {
       void fetchFiles({ targetOffset: nextOffset });
     }
-  }, [fetchFiles, loading, offset, total]);
+  }, [authLoading, fetchFiles, loading, offset, total]);
 
   useEffect(() => {
     return () => {
@@ -626,8 +633,8 @@ export default function DatabasePage() {
     }
   }
 
-  const activeFilterCount = [source, category, includeDeleted ? "y" : ""].filter(Boolean).length;
-  const selectableVisibleUrls = files.filter((file) => !file.deleted_at).map((file) => file.url);
+  const activeFilterCount = [source, category, canDeleteFiles && includeDeleted ? "y" : ""].filter(Boolean).length;
+  const selectableVisibleUrls = canDeleteFiles ? files.filter((file) => !file.deleted_at).map((file) => file.url) : [];
   const allVisibleSelected = selectableVisibleUrls.length > 0 && selectableVisibleUrls.every((url) => selectedUrls.includes(url));
 
   return (
@@ -641,18 +648,20 @@ export default function DatabasePage() {
           <p className="text-muted-foreground mt-1 text-sm">{t("db.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <button
-            onClick={exportCsv}
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-            data-testid="button-export-csv"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            {t("db.export_csv")}
-          </button>
+          {canExportFiles && (
+            <button
+              onClick={exportCsv}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+              data-testid="button-export-csv"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              {t("db.export_csv")}
+            </button>
+          )}
         </div>
       </motion.div>
 
-      {(files.length > 0 || selectedUrls.length > 0) && (
+      {canDeleteFiles && (files.length > 0 || selectedUrls.length > 0) && (
         <div className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
@@ -781,16 +790,18 @@ export default function DatabasePage() {
             </select>
           </div>
           <div className="flex items-end gap-3">
-            <label className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-border bg-card text-sm" data-testid="checkbox-include-deleted">
-              <input
-                type="checkbox"
-                checked={includeDeleted}
-                onChange={(e) => setIncludeDeleted(e.target.checked)}
-                className="rounded border-border"
-              />
-              <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
-              {t("db.include_deleted")}
-            </label>
+            {canDeleteFiles && (
+              <label className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-border bg-card text-sm" data-testid="checkbox-include-deleted">
+                <input
+                  type="checkbox"
+                  checked={includeDeleted}
+                  onChange={(e) => setIncludeDeleted(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                {t("db.include_deleted")}
+              </label>
+            )}
             {activeFilterCount > 0 && (
               <button
                 onClick={() => { setSource(""); setCategory(""); setIncludeDeleted(false); }}
@@ -827,15 +838,17 @@ export default function DatabasePage() {
         </motion.div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="hidden lg:grid grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px] gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            <button
-              type="button"
-              onClick={toggleSelectAllVisible}
-              className="flex items-center justify-center hover:text-foreground transition-colors"
-              data-testid="checkbox-select-all-header"
-            >
-              {allVisibleSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4 opacity-70" />}
-            </button>
+          <div className={cn("hidden lg:grid gap-3 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider", canDeleteFiles ? "grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px]" : "grid-cols-[1fr_110px_120px_50px_70px_90px_136px]")}>
+            {canDeleteFiles && (
+              <button
+                type="button"
+                onClick={toggleSelectAllVisible}
+                className="flex items-center justify-center hover:text-foreground transition-colors"
+                data-testid="checkbox-select-all-header"
+              >
+                {allVisibleSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4 opacity-70" />}
+              </button>
+            )}
             <button onClick={() => handleSort("title")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-title">
               {t("table.title")} <SortIcon field="title" />
             </button>
@@ -866,27 +879,30 @@ export default function DatabasePage() {
                 initial="hidden"
                 animate="visible"
                 className={cn(
-                  "grid lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px] gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
+                  "grid gap-1 lg:gap-3 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer",
+                  canDeleteFiles ? "lg:grid-cols-[36px_1fr_110px_120px_50px_70px_90px_176px]" : "lg:grid-cols-[1fr_110px_120px_50px_70px_90px_136px]",
                   isDeleted && "opacity-50"
                 )}
                 onClick={() => navigateToFile(file)}
                 data-testid={`file-row-${i}`}
               >
-                <div className="hidden lg:flex items-center justify-center">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isDeleted) return;
-                      toggleSelected(file.url);
-                    }}
-                    disabled={isDeleted}
-                    className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
-                    data-testid={`checkbox-select-${i}`}
-                  >
-                    {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                  </button>
-                </div>
+                {canDeleteFiles && (
+                  <div className="hidden lg:flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isDeleted) return;
+                        toggleSelected(file.url);
+                      }}
+                      disabled={isDeleted}
+                      className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-testid={`checkbox-select-${i}`}
+                    >
+                      {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                    </button>
+                  </div>
+                )}
 
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 min-w-0">
@@ -968,34 +984,38 @@ export default function DatabasePage() {
                   >
                     <Eye className="w-4 h-4" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      downloadFile(file);
-                    }}
-                    className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    data-testid={`button-download-${i}`}
-                    title={t("db.download")}
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
+                  {canDownloadFiles && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(file);
+                      }}
+                      className="inline-flex items-center justify-center rounded-md border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      data-testid={`button-download-${i}`}
+                      title={t("db.download")}
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 sm:hidden mt-1">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isDeleted) return;
-                      toggleSelected(file.url);
-                    }}
-                    disabled={isDeleted}
-                    className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
-                    data-testid={`checkbox-select-mobile-${i}`}
-                  >
-                    {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                  </button>
+                  {canDeleteFiles && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isDeleted) return;
+                        toggleSelected(file.url);
+                      }}
+                      disabled={isDeleted}
+                      className="text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-testid={`checkbox-select-mobile-${i}`}
+                    >
+                      {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                    </button>
+                  )}
                   <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
                     {contentTypeLabel(file.content_type)}
                   </span>
@@ -1029,18 +1049,20 @@ export default function DatabasePage() {
                     <Eye className="w-3.5 h-3.5" />
                     {t("db.preview")}
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      downloadFile(file);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                    data-testid={`button-download-mobile-${i}`}
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    {t("db.download")}
-                  </button>
+                  {canDownloadFiles && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(file);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      data-testid={`button-download-mobile-${i}`}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      {t("db.download")}
+                    </button>
+                  )}
                 </div>
               </motion.div>
             );

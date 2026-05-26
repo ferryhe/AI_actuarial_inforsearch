@@ -26,6 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 
 interface KBMeta {
   kb_id: string;
@@ -114,12 +115,15 @@ function StatusDot({ status }: { status?: string }) {
 
 export default function KBDetail() {
   const { t } = useTranslation();
+  const { permissions } = useAuth();
+  const canManageKnowledge = permissions.includes("config.write");
+  const canRunKnowledgeTasks = permissions.includes("tasks.run");
   const [, navigate] = useLocation();
   const [match, params] = useRoute("/knowledge/:kbId");
   const kbId = params?.kbId ? decodeURIComponent(params.kbId) : "";
 
   const [meta, setMeta] = useState<KBMeta | null>(null);
-  const canBindFiles = Boolean(meta?.chunk_profile_id);
+  const canBindFiles = canManageKnowledge && Boolean(meta?.chunk_profile_id);
   const [stats, setStats] = useState<KBStats | null>(null);
   const [files, setFiles] = useState<KBFile[]>([]);
   const [categories, setCategories] = useState<KBCategory[]>([]);
@@ -488,29 +492,41 @@ export default function KBDetail() {
               <BookOpen className="w-6 h-6" strokeWidth={1.8} />
             </div>
             <div className="flex-1 min-w-0">
-              <input
-                value={editName}
-                onChange={(e) => {
-                  setEditName(e.target.value);
-                  setHasEdits(true);
-                }}
-                className="text-xl font-serif font-bold tracking-tight bg-transparent border-none outline-none w-full focus:ring-0 p-0"
-                data-testid="input-kb-edit-name"
-              />
-              <textarea
-                value={editDesc}
-                onChange={(e) => {
-                  setEditDesc(e.target.value);
-                  setHasEdits(true);
-                }}
-                placeholder={t("kb.desc_placeholder")}
-                className="mt-2 w-full text-sm text-muted-foreground bg-transparent border-none outline-none resize-none focus:ring-0 p-0 leading-relaxed"
-                rows={2}
-                data-testid="input-kb-edit-desc"
-              />
-              <p className="text-[10px] text-muted-foreground/60 mt-1">{t("kb.desc_guidance")}</p>
+              {canManageKnowledge && (
+                <>
+                  <input
+                    value={editName}
+                    onChange={(e) => {
+                      setEditName(e.target.value);
+                      setHasEdits(true);
+                    }}
+                    className="text-xl font-serif font-bold tracking-tight bg-transparent border-none outline-none w-full focus:ring-0 p-0"
+                    data-testid="input-kb-edit-name"
+                  />
+                  <textarea
+                    value={editDesc}
+                    onChange={(e) => {
+                      setEditDesc(e.target.value);
+                      setHasEdits(true);
+                    }}
+                    placeholder={t("kb.desc_placeholder")}
+                    className="mt-2 w-full text-sm text-muted-foreground bg-transparent border-none outline-none resize-none focus:ring-0 p-0 leading-relaxed"
+                    rows={2}
+                    data-testid="input-kb-edit-desc"
+                  />
+                  <p className="text-[10px] text-muted-foreground/60 mt-1">{t("kb.desc_guidance")}</p>
+                </>
+              )}
+              {!canManageKnowledge && (
+                <>
+                  <h1 className="text-xl font-serif font-bold tracking-tight" data-testid="text-kb-name-readonly">{meta.name}</h1>
+                  {meta.description && (
+                    <p className="mt-2 text-sm text-muted-foreground leading-relaxed" data-testid="text-kb-desc-readonly">{meta.description}</p>
+                  )}
+                </>
+              )}
             </div>
-            {hasEdits && (
+            {canManageKnowledge && hasEdits && (
               <button
                 onClick={handleSave}
                 disabled={saving}
@@ -562,7 +578,7 @@ export default function KBDetail() {
         </div>
       )}
 
-      {needsEmbeddingRebuild && (
+      {canRunKnowledgeTasks && needsEmbeddingRebuild && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -598,7 +614,7 @@ export default function KBDetail() {
         </motion.div>
       )}
 
-      {isCategoryMode && pendingCount > 0 && !needsEmbeddingRebuild && (
+      {canRunKnowledgeTasks && isCategoryMode && pendingCount > 0 && !needsEmbeddingRebuild && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -653,12 +669,13 @@ export default function KBDetail() {
         ))}
       </motion.div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15, duration: 0.4 }}
-        className="flex items-center gap-2"
-      >
+      {canRunKnowledgeTasks && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15, duration: 0.4 }}
+          className="flex items-center gap-2"
+        >
         <button
           onClick={() => handleBuildIndex(false)}
           disabled={indexing || pendingCount === 0}
@@ -693,9 +710,10 @@ export default function KBDetail() {
             {t("kb.view_pending")} ({pendingCount})
           </button>
         )}
-      </motion.div>
+        </motion.div>
+      )}
 
-      {showPendingFiles && (
+      {canRunKnowledgeTasks && showPendingFiles && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -772,17 +790,19 @@ export default function KBDetail() {
               <span className="text-sm font-semibold">{t("kb.categories")}</span>
               <span className="text-xs text-muted-foreground">({categories.length})</span>
             </div>
-            <button
-              onClick={() => setShowAddCategory(!showAddCategory)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-muted transition-colors"
-              data-testid="button-add-category"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              {t("kb.add_category")}
-            </button>
+            {canManageKnowledge && (
+              <button
+                onClick={() => setShowAddCategory(!showAddCategory)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-muted transition-colors"
+                data-testid="button-add-category"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                {t("kb.add_category")}
+              </button>
+            )}
           </div>
 
-          {showAddCategory && (
+          {canManageKnowledge && showAddCategory && (
             <div className="px-4 py-3 border-b border-border bg-muted/10 flex items-center gap-2">
               <input
                 value={newCategory}
@@ -829,13 +849,15 @@ export default function KBDetail() {
                   {cat.file_count != null && (
                     <span className="text-[10px] text-primary/60">({cat.file_count})</span>
                   )}
-                  <button
-                    onClick={() => handleRemoveCategory(cat.name)}
-                    className="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all"
-                    data-testid={`button-remove-category-${cat.name}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                  {canManageKnowledge && (
+                    <button
+                      onClick={() => handleRemoveCategory(cat.name)}
+                      className="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-all"
+                      data-testid={`button-remove-category-${cat.name}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
                 </span>
               ))
             )}
@@ -863,16 +885,18 @@ export default function KBDetail() {
               className="w-48 px-3 py-1.5 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
               data-testid="input-search-kb-files"
             />
-            <button
-              onClick={handleOpenBindDialog}
-              disabled={!canBindFiles}
-              title={!canBindFiles ? t("knowledge.select_chunk_profile_first") : undefined}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              data-testid="button-bind-files"
-            >
-              <LinkIcon className="w-3.5 h-3.5" />
-              {isManualMode ? t("kb.add_files") : t("kb.bind_file")}
-            </button>
+            {canManageKnowledge && (
+              <button
+                onClick={handleOpenBindDialog}
+                disabled={!canBindFiles}
+                title={!canBindFiles ? t("knowledge.select_chunk_profile_first") : undefined}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                data-testid="button-bind-files"
+              >
+                <LinkIcon className="w-3.5 h-3.5" />
+                {isManualMode ? t("kb.add_files") : t("kb.bind_file")}
+              </button>
+            )}
           </div>
         </div>
 
@@ -927,14 +951,16 @@ export default function KBDetail() {
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleRemoveFile(file.file_url)}
-                    className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors shrink-0"
-                    title={t("kb.remove_file")}
-                    data-testid={`button-remove-file-${i}`}
-                  >
-                    <Unlink className="w-3.5 h-3.5" />
-                  </button>
+                  {canManageKnowledge && (
+                    <button
+                      onClick={() => handleRemoveFile(file.file_url)}
+                      className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors shrink-0"
+                      title={t("kb.remove_file")}
+                      data-testid={`button-remove-file-${i}`}
+                    >
+                      <Unlink className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -942,7 +968,7 @@ export default function KBDetail() {
         )}
       </motion.div>
 
-      {showBindDialog && (
+      {canManageKnowledge && showBindDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-testid="dialog-bind-files">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}

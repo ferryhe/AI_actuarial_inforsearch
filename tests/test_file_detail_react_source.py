@@ -37,7 +37,8 @@ def test_file_detail_uses_permission_gates_for_mutating_actions():
     assert 'permissions.includes("files.delete")' in src
     assert 'permissions.includes("catalog.write")' in src
     assert 'permissions.includes("markdown.write")' in src
-    assert 'permissions.includes("rag.write")' in src
+    assert 'permissions.includes("tasks.run")' in src
+    assert 'permissions.includes("rag.write")' not in src
 
 
 def test_file_detail_chunk_modal_can_bind_generated_chunks_to_kb():
