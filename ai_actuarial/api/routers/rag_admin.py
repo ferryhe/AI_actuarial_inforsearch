@@ -53,7 +53,7 @@ def _error_response(exc: RagAdminError) -> JSONResponse:
 @router.get("/chunk/profiles")
 def api_chunk_profiles(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
     try:
         return list_chunk_profiles(db_path=_db_path(request))
@@ -225,7 +225,7 @@ def api_remove_knowledge_base_file(
 @router.get("/rag/categories/unmapped")
 def api_unmapped_categories(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return get_unmapped_categories(db_path=_db_path(request))
@@ -236,7 +236,7 @@ def api_unmapped_categories(
 @router.get("/rag/categories/mapping")
 def api_categories_mapping(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return get_categories_mapping(db_path=_db_path(request))
@@ -248,7 +248,7 @@ def api_categories_mapping(
 def api_category_stats(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return get_category_stats(db_path=_db_path(request), payload=payload)
@@ -259,7 +259,7 @@ def api_category_stats(
 @router.get("/rag/files/selectable")
 def api_selectable_files(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return list_selectable_files(db_path=_db_path(request), query=request.query_params)
@@ -296,7 +296,7 @@ def api_set_kb_categories(
 def api_pending_files(
     kb_id: str,
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
     try:
         return get_pending_files(db_path=_db_path(request), kb_id=kb_id)
@@ -321,7 +321,7 @@ def api_bind_chunk_sets(
 def api_get_kb_bindings(
     kb_id: str,
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return get_kb_bindings(db_path=_db_path(request), kb_id=kb_id)

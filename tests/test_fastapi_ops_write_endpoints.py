@@ -226,18 +226,22 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
     assert delete_site_response.status_code == 200, delete_site_response.text
     assert all(site["name"] != "Import Site" for site in _read_sites(config_path))
 
-    backups_response = client.get("/api/config/backups", headers=headers)
+    operator_backups_response = client.get("/api/config/backups", headers=headers)
+    assert operator_backups_response.status_code == 403
+
+    admin_headers = {"X-Auth-Token": seed["admin_token"]}
+    backups_response = client.get("/api/config/backups", headers=admin_headers)
     assert backups_response.status_code == 200
     backups = backups_response.json()["backups"]
     assert backups, backups_response.text
     backup_filename = backups[0]["filename"]
 
-    delete_backup_response = client.post("/api/config/backups/delete", json={"filename": backup_filename}, headers=headers)
+    delete_backup_response = client.post("/api/config/backups/delete", json={"filename": backup_filename}, headers=admin_headers)
     assert delete_backup_response.status_code == 200, delete_backup_response.text
 
-    restore_source = client.get("/api/config/backups", headers=headers)
+    restore_source = client.get("/api/config/backups", headers=admin_headers)
     restore_filename = restore_source.json()["backups"][0]["filename"]
-    restore_response = client.post("/api/config/backups/restore", json={"filename": restore_filename}, headers=headers)
+    restore_response = client.post("/api/config/backups/restore", json={"filename": restore_filename}, headers=admin_headers)
     assert restore_response.status_code == 200, restore_response.text
 
 

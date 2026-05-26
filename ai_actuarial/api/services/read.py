@@ -7,31 +7,44 @@ from typing import Any, Mapping
 from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
 from ai_actuarial.storage import Storage
 
-FILE_LIST_FIELDS: tuple[str, ...] = (
+PUBLIC_FILE_LIST_FIELDS: tuple[str, ...] = (
     "url",
-    "sha256",
     "title",
     "source_site",
     "source_page_url",
     "original_filename",
-    "local_path",
     "bytes",
     "content_type",
     "last_modified",
-    "etag",
     "published_time",
     "first_seen",
     "last_seen",
     "crawl_time",
-    "deleted_at",
     "category",
     "summary",
     "keywords",
-    "markdown_content",
     "markdown_source",
     "markdown_updated_at",
     "rag_chunk_count",
     "rag_indexed_at",
+)
+
+SENSITIVE_FILE_FIELDS: tuple[str, ...] = (
+    "sha256",
+    "local_path",
+    "etag",
+    "deleted_at",
+    "markdown_content",
+)
+
+FILE_LIST_FIELDS: tuple[str, ...] = PUBLIC_FILE_LIST_FIELDS + SENSITIVE_FILE_FIELDS
+
+PUBLIC_FILE_DETAIL_FIELDS: tuple[str, ...] = PUBLIC_FILE_LIST_FIELDS + (
+    "catalog_status",
+    "catalog_version",
+    "catalog_processed_at",
+    "catalog_updated_at",
+    "rag_kb_entries",
 )
 
 
@@ -60,8 +73,9 @@ def parse_file_list_query(raw_query: Mapping[str, str | None]) -> FileListQuery:
     )
 
 
-def _project_file_row(file_row: dict[str, Any]) -> dict[str, Any]:
-    return {field: file_row.get(field) for field in FILE_LIST_FIELDS}
+def _project_file_row(file_row: dict[str, Any], *, include_sensitive: bool = False) -> dict[str, Any]:
+    fields = FILE_LIST_FIELDS if include_sensitive else PUBLIC_FILE_LIST_FIELDS
+    return {field: file_row.get(field) for field in fields}
 
 
 def project_recent_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -69,8 +83,8 @@ def project_recent_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{field: item.get(field) for field in fields} for item in files]
 
 
-def project_database_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_project_file_row(item) for item in files]
+def project_database_files(files: list[dict[str, Any]], *, include_sensitive: bool = False) -> list[dict[str, Any]]:
+    return [_project_file_row(item, include_sensitive=include_sensitive) for item in files]
 
 
 def get_dashboard_stats(*, db_path: str, active_tasks: int) -> dict[str, int]:
@@ -120,12 +134,17 @@ def list_sources(*, db_path: str) -> dict[str, list[str]]:
     return {"sources": sources}
 
 
-def get_file_detail(*, db_path: str, url: str) -> dict[str, Any] | None:
+def get_file_detail(*, db_path: str, url: str, include_sensitive: bool = False) -> dict[str, Any] | None:
     storage = Storage(db_path)
     try:
-        return storage.get_file_with_catalog(url)
+        file_data = storage.get_file_with_catalog(url)
     finally:
         storage.close()
+    if not file_data:
+        return None
+    if include_sensitive:
+        return file_data
+    return {field: file_data.get(field) for field in PUBLIC_FILE_DETAIL_FIELDS}
 
 
 def get_file_markdown(*, db_path: str, url: str) -> dict[str, Any]:
@@ -147,7 +166,7 @@ def get_file_markdown(*, db_path: str, url: str) -> dict[str, Any]:
     }
 
 
-def list_files(*, db_path: str, query: FileListQuery) -> dict[str, Any]:
+def list_files(*, db_path: str, query: FileListQuery, include_sensitive: bool = False) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
         files, total = storage.query_files_with_catalog(
@@ -164,7 +183,7 @@ def list_files(*, db_path: str, query: FileListQuery) -> dict[str, Any]:
         storage.close()
 
     return {
-        "files": project_database_files(files),
+        "files": project_database_files(files, include_sensitive=include_sensitive),
         "total": total,
         "limit": query.limit,
         "offset": query.offset,
