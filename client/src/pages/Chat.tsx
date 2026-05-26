@@ -386,7 +386,8 @@ export default function Chat() {
   const { t } = useTranslation();
   const [location, navigate] = useLocation();
   const routeState = useHistoryState<ChatRouteState | null>();
-  const { user, isLoggedIn } = useAuth();
+  const { user, isLoggedIn, permissions, isLoading: authLoading } = useAuth();
+  const canUseConversations = permissions.includes("chat.conversations");
   const isGuest = !isLoggedIn || user?.role === "guest";
   const GUEST_CHAT_QUOTA = 5;
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -423,11 +424,23 @@ export default function Chat() {
   }, [messages, sending, scrollToBottom]);
 
   useEffect(() => {
-    loadConversations();
+    if (authLoading) return;
+    if (canUseConversations) {
+      setSidebarTab("conversations");
+      loadConversations();
+    } else {
+      setLoadingConvs(false);
+      setConversations([]);
+      setActiveConvId(null);
+      if (sidebarTab === "conversations") {
+        setSidebarTab("documents");
+      }
+    }
     loadKnowledgeBases();
-  }, []);
+  }, [authLoading, canUseConversations]);
 
   async function loadConversations() {
+    if (!canUseConversations) return;
     setLoadingConvs(true);
     try {
       const res = await apiGet<{ success?: boolean; data?: { conversations?: Conversation[] }; conversations?: Conversation[] }>("/api/chat/conversations");
@@ -514,6 +527,7 @@ export default function Chat() {
   }
 
   async function loadConversation(id: string) {
+    if (!canUseConversations) return;
     setActiveConvId(id);
     setErrorMsg(null);
     try {
@@ -527,6 +541,7 @@ export default function Chat() {
   }
 
   async function createConversation() {
+    if (!canUseConversations) return;
     setErrorMsg(null);
     try {
       const res = await apiPost<{ success?: boolean; data?: { conversation_id?: string; conversation?: Conversation }; conversation?: Conversation }>("/api/chat/conversations", {
@@ -551,6 +566,7 @@ export default function Chat() {
   }
 
   async function deleteConversation(id: string) {
+    if (!canUseConversations) return;
     try {
       await apiDelete(`/api/chat/conversations/${id}`);
       setConversations((prev) => prev.filter((c) => c.id !== id));
@@ -563,7 +579,7 @@ export default function Chat() {
 
   async function askAboutDocument(doc: AvailableDocument) {
     const questionText = `${t("chat.explain_document")}: "${doc.filename || doc.title}"`;
-    setSidebarTab("conversations");
+    if (canUseConversations) setSidebarTab("conversations");
     await sendMessage({ text: questionText, document: doc });
   }
 
@@ -718,7 +734,7 @@ export default function Chat() {
 
       if (res.data?.conversation_id && !activeConvId) {
         setActiveConvId(res.data.conversation_id);
-        loadConversations();
+        if (canUseConversations) loadConversations();
       }
 
       const assistantMsg: Message = {
@@ -778,14 +794,16 @@ export default function Chat() {
           >
             <div className="p-3 border-b border-border space-y-2">
               <div className="flex items-center gap-2">
-                <button
-                  onClick={createConversation}
-                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-                  data-testid="button-new-conversation"
-                >
-                  <Plus className="w-4 h-4" />
-                  {t("chat.new_conversation")}
-                </button>
+                {canUseConversations && (
+                  <button
+                    onClick={createConversation}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+                    data-testid="button-new-conversation"
+                  >
+                    <Plus className="w-4 h-4" />
+                    {t("chat.new_conversation")}
+                  </button>
+                )}
                 <button
                   onClick={() => setSidebarOpen(false)}
                   className="p-2 rounded-lg hover:bg-muted text-muted-foreground"
@@ -796,19 +814,21 @@ export default function Chat() {
               </div>
 
               <div className="flex rounded-lg bg-muted p-0.5">
-                <button
-                  onClick={() => setSidebarTab("conversations")}
-                  className={cn(
-                    "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
-                    sidebarTab === "conversations"
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                  data-testid="tab-conversations"
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  {t("chat.tab_history")}
-                </button>
+                {canUseConversations && (
+                  <button
+                    onClick={() => setSidebarTab("conversations")}
+                    className={cn(
+                      "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
+                      sidebarTab === "conversations"
+                        ? "bg-card text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    data-testid="tab-conversations"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    {t("chat.tab_history")}
+                  </button>
+                )}
                 <button
                   onClick={() => setSidebarTab("documents")}
                   className={cn(
@@ -825,7 +845,7 @@ export default function Chat() {
               </div>
             </div>
 
-            {sidebarTab === "conversations" ? (
+            {sidebarTab === "conversations" && canUseConversations ? (
               <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
                 {loadingConvs ? (
                   <div className="flex justify-center py-8">
@@ -859,16 +879,18 @@ export default function Chat() {
                           </span>
                         )}
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteConversation(conv.id);
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-all"
-                        data-testid={`button-delete-conversation-${conv.id}`}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {canUseConversations && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteConversation(conv.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-all"
+                          data-testid={`button-delete-conversation-${conv.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   ))
                 )}

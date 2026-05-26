@@ -763,7 +763,7 @@ export default function FileDetail() {
   const canDeleteFile = permissions.includes("files.delete");
   const canCatalogWrite = permissions.includes("catalog.write");
   const canMarkdownWrite = permissions.includes("markdown.write");
-  const canRagWrite = permissions.includes("rag.write");
+  const canRunTasks = permissions.includes("tasks.run");
 
   const canEdit = canCatalogWrite && !anyTaskRunning && !mdEditMode;
   const canCatalog = canCatalogWrite && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
@@ -771,7 +771,8 @@ export default function FileDetail() {
   const canDownload = hasLocalFile && canDownloadFile;
   const canPreview = hasLocalFile;
   const canDelete = canDeleteFile && !isDeleted && !anyTaskRunning;
-  const canModifyChunk = canRagWrite && hasMarkdown && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
+  const canModifyMarkdown = canMarkdownWrite && hasMarkdown && !isDeleted && !anyTaskRunning && !editing;
+  const canModifyChunk = canRunTasks && hasMarkdown && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
   const canSwitchMdEdit = canMarkdownWrite && !editing && !anyTaskRunning;
   const canConvert = canMarkdownWrite && hasLocalFile && !editing && !anyTaskRunning;
 
