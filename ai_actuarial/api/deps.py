@@ -9,7 +9,7 @@ from itsdangerous import BadSignature, URLSafeSerializer
 
 from ai_actuarial.shared_auth import (
     PERMISSIONS,
-    PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED,
+    PUBLIC_BROWSE_PERMISSIONS,
     hash_token,
     permissions_for_group,
 )
@@ -134,13 +134,25 @@ def get_auth_context(request: Request) -> AuthContext:
 
 
 def public_permissions_for_request(request: Request) -> frozenset[str]:
-    return PUBLIC_PERMISSIONS_WHEN_AUTH_DISABLED
+    return PUBLIC_BROWSE_PERMISSIONS
 
 
-def require_permissions(*required: str):
+def _validate_required_permissions(required: tuple[str, ...]) -> None:
     for permission in required:
         if permission not in PERMISSIONS:
             raise ValueError(f"Unknown permission: {permission}")
+
+
+def _assert_context_has_permissions(context: AuthContext, required: tuple[str, ...]) -> None:
+    if not context.token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if any(permission not in context.permissions for permission in required):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def require_permissions(*required: str):
+    _validate_required_permissions(required)
 
     def dependency(request: Request) -> AuthContext:
         public_permissions = public_permissions_for_request(request)
@@ -152,12 +164,21 @@ def require_permissions(*required: str):
             return AuthContext(token=None, permissions=frozenset())
 
         context = _load_auth_context(request)
-        if not context.token:
+        _assert_context_has_permissions(context, required)
+        return context
+
+    return dependency
+
+
+def require_authenticated_permissions(*required: str):
+    _validate_required_permissions(required)
+
+    def dependency(request: Request) -> AuthContext:
+        if not _has_presented_auth_material(request):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        if any(permission not in context.permissions for permission in required):
-            raise HTTPException(status_code=403, detail="Forbidden")
-
+        context = _load_auth_context(request)
+        _assert_context_has_permissions(context, required)
         return context
 
     return dependency

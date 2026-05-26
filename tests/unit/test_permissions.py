@@ -24,7 +24,7 @@ class TestPermissionGroups:
         assert "catalog.read" in GUEST_PERMISSIONS
         assert "markdown.read" in GUEST_PERMISSIONS
         assert "chat.query" in GUEST_PERMISSIONS
-        assert "stats.read" not in GUEST_PERMISSIONS
+        assert "stats.read" in GUEST_PERMISSIONS
         assert "tasks.view" not in GUEST_PERMISSIONS
         assert "files.download" not in GUEST_PERMISSIONS
         assert "tasks.run" not in GUEST_PERMISSIONS
