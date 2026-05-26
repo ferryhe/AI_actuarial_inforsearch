@@ -771,7 +771,6 @@ export default function FileDetail() {
   const canDownload = hasLocalFile && canDownloadFile;
   const canPreview = hasLocalFile;
   const canDelete = canDeleteFile && !isDeleted && !anyTaskRunning;
-  const canModifyMarkdown = canMarkdownWrite && hasMarkdown && !isDeleted && !anyTaskRunning && !editing;
   const canModifyChunk = canRunTasks && hasMarkdown && !isDeleted && !anyTaskRunning && !editing && !mdEditMode;
   const canSwitchMdEdit = canMarkdownWrite && !editing && !anyTaskRunning;
   const canConvert = canMarkdownWrite && hasLocalFile && !editing && !anyTaskRunning;

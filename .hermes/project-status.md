@@ -3,7 +3,7 @@
 - Date: 2026-05-26
 - Branch: `fix/frontend-rbac-action-gates`
 - Latest baseline: `origin/main` before this branch was created.
-- Scope: PR A frontend RBAC action gates for Knowledge, KB detail, Database, Chat, and File Detail.
+- Scope: Frontend RBAC action gates for Knowledge, KB detail, Database, Chat, and File Detail.
 - Permission changes are UI-only in this PR: public/guest users keep read-only browsing/chat surfaces but no longer see or can use KB admin, persistent conversation management, export/download/delete/include-deleted, or task/chunk-generation controls without the matching permission.
 - Knowledge/KB controls now distinguish `catalog.read` browsing, `tasks.run` indexing/pending task actions, and `config.write` management/configuration actions.
 - Database controls now gate include-deleted and selection/delete behind `files.delete`, downloads behind `files.download`, and CSV export behind `export.read`; auth-loading is handled before URL rewrite/request generation so direct admin links preserve `include_deleted` until permissions are known.
