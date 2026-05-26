@@ -188,6 +188,37 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/chunk-sets/cleanup" in body["native_paths"]
 
 
+def test_fastapi_rag_admin_read_routes_require_task_or_config_permissions(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    client.headers.clear()
+
+    public_kbs = client.get("/api/rag/knowledge-bases")
+    assert public_kbs.status_code == 200, public_kbs.text
+
+    for path in (
+        "/api/chunk/profiles",
+        "/api/rag/categories/unmapped",
+        "/api/rag/categories/mapping",
+        "/api/rag/files/selectable",
+        "/api/rag/knowledge-bases/kb-missing/bindings",
+    ):
+        response = client.get(path)
+        assert response.status_code == 401, path
+
+    category_stats = client.post("/api/rag/categories/stats", json={"categories": ["AI"]})
+    assert category_stats.status_code == 401
+
+    pending = client.get("/api/rag/knowledge-bases/kb-missing/files/pending")
+    assert pending.status_code == 401
+
+    operator_headers = {"X-Auth-Token": seed["operator_token"]}
+    assert client.get("/api/rag/knowledge-bases/kb-missing/files/pending", headers=operator_headers).status_code in {200, 404}
+    assert client.get("/api/chunk/profiles", headers=operator_headers).status_code == 200
+
+    admin_headers = {"X-Auth-Token": seed["admin_token"]}
+    assert client.get("/api/chunk/profiles", headers=admin_headers).status_code == 200
+
+
 def test_fastapi_rag_admin_categories_mapping_uses_catalog_items_without_legacy_table(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     storage = Storage(str(tmp_path / "index.db"))
@@ -343,11 +374,19 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: 
             (indexed_at, 1, "kb-index-dirty", alpha_url),
         )
         storage._conn.execute(
+            "UPDATE catalog_items SET markdown_updated_at = ? WHERE file_url = ?",
+            (indexed_at, alpha_url),
+        )
+        storage._conn.execute(
             """
             INSERT INTO rag_chunks (chunk_id, kb_id, file_url, chunk_index, content, token_count, section_hierarchy, embedding_hash, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             ("kb-index-dirty:alpha:0", "kb-index-dirty", alpha_url, 0, "Alpha indexed chunk", 3, "Alpha", "hash-alpha", indexed_at),
+        )
+        storage._conn.execute(
+            "UPDATE kb_chunk_bindings SET bound_at = ? WHERE kb_id = ? AND file_url = ?",
+            (indexed_at, "kb-index-dirty", alpha_url),
         )
         storage._conn.execute(
             "UPDATE rag_knowledge_bases SET chunk_count = ?, updated_at = ? WHERE kb_id = ?",
@@ -396,6 +435,10 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: 
         storage._conn.execute(
             "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
             (beta_indexed_at, 1, "kb-index-dirty", beta_url),
+        )
+        storage._conn.execute(
+            "UPDATE catalog_items SET markdown_updated_at = ? WHERE file_url = ?",
+            (beta_indexed_at, beta_url),
         )
         storage._conn.commit()
         storage.create_kb_index_version(

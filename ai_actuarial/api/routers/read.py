@@ -67,6 +67,14 @@ def _decode_file_url_path(request: Request, file_url: str, *, suffix: str) -> st
         return file_url
 
 
+def _can_view_sensitive_file_fields(auth: AuthContext) -> bool:
+    return bool(auth.token) and (
+        "files.download" in auth.permissions
+        or "files.delete" in auth.permissions
+        or "catalog.write" in auth.permissions
+    )
+
+
 @router.get("/stats")
 def api_stats(
     request: Request,
@@ -98,22 +106,33 @@ def api_categories(
 @router.get("/files")
 def api_files(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("files.read")),
+    auth: AuthContext = Depends(require_permissions("files.read")),
 ) -> dict[str, object]:
     query = parse_file_list_query(request.query_params)
-    return list_files(db_path=_get_db_path(request), query=query)
+    if query.include_deleted and "files.delete" not in auth.permissions:
+        status_code = 401 if not auth.token else 403
+        raise HTTPException(status_code=status_code, detail="include_deleted requires files.delete")
+    return list_files(
+        db_path=_get_db_path(request),
+        query=query,
+        include_sensitive=_can_view_sensitive_file_fields(auth),
+    )
 
 
 @router.get("/files/detail")
 def api_file_detail(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("files.read")),
+    auth: AuthContext = Depends(require_permissions("files.read")),
 ) -> dict[str, object]:
     url = str(request.query_params.get("url", "") or "").strip()
     if not url:
         return JSONResponse(status_code=400, content={"error": "url parameter is required"})
 
-    file_data = get_file_detail(db_path=_get_db_path(request), url=url)
+    file_data = get_file_detail(
+        db_path=_get_db_path(request),
+        url=url,
+        include_sensitive=_can_view_sensitive_file_fields(auth),
+    )
     if not file_data:
         return JSONResponse(status_code=404, content={"error": "File not found"})
 

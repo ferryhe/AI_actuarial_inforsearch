@@ -163,7 +163,7 @@ def api_config_sites_sample(
 @router.get("/config/backups")
 def api_config_backups(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("sites.write")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return list_backups()
@@ -175,7 +175,7 @@ def api_config_backups(
 def api_config_backups_create(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("sites.write")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         label = str(payload.get("label", "manual") or "manual")
@@ -189,7 +189,7 @@ def api_config_backups_create(
 def api_config_backups_restore(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("sites.write")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return restore_backup(str(payload.get("filename") or ""), bridge=_bridge(request))
@@ -201,7 +201,7 @@ def api_config_backups_restore(
 def api_config_backups_delete(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("sites.write")),
+    _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
         return delete_backup(str(payload.get("filename") or ""))

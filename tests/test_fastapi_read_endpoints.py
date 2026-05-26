@@ -139,6 +139,13 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
             token_hash=hashlib.sha256(token_plain.encode("utf-8")).hexdigest(),
             is_active=True,
         )
+        operator_token_plain = "operator-token"
+        storage.upsert_auth_token_by_hash(
+            subject="operator-token",
+            group_name="operator",
+            token_hash=hashlib.sha256(operator_token_plain.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
 
         storage._conn.execute(
             "UPDATE files SET last_seen = ? WHERE url = ?",
@@ -156,7 +163,7 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
     finally:
         storage.close()
 
-    return {"user_id": user_id, "token_plain": token_plain}
+    return {"user_id": user_id, "token_plain": token_plain, "operator_token_plain": operator_token_plain}
 
 
 def _build_test_client(tmp_path: Path, monkeypatch, *, require_auth: bool) -> tuple[TestClient, object, dict[str, object]]:
@@ -230,7 +237,10 @@ def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monk
     assert filtered_body["files"][0]["title"] == "Alpha Document"
     assert filtered_body["files"][0]["category"] == "AI; Risk"
 
-    deleted = client.get("/api/files?include_deleted=true&order_by=title&order_dir=asc")
+    deleted = client.get(
+        "/api/files?include_deleted=true&order_by=title&order_dir=asc",
+        headers={"Authorization": f"Bearer {_seed['operator_token_plain']}"},
+    )
     assert deleted.status_code == 200
     deleted_body = deleted.json()
     assert deleted_body["total"] == 3
@@ -245,18 +255,29 @@ def test_fastapi_native_read_routes_keep_public_reads_available_under_require_au
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
 
     public_stats = client.get("/api/stats")
-    assert public_stats.status_code == 401
+    assert public_stats.status_code == 200
 
     public_files = client.get("/api/files")
     assert public_files.status_code == 200
-    assert public_files.json()["total"] == 2
+    public_files_body = public_files.json()
+    assert public_files_body["total"] == 2
+    assert "local_path" not in public_files_body["files"][0]
+    assert "sha256" not in public_files_body["files"][0]
+    assert "markdown_content" not in public_files_body["files"][0]
+
+    public_deleted = client.get("/api/files?include_deleted=true")
+    assert public_deleted.status_code == 401
 
     authorized = client.get(
         "/api/files",
         headers={"Authorization": f"Bearer {seed['token_plain']}"},
     )
     assert authorized.status_code == 200
-    assert authorized.json()["total"] == 2
+    authorized_body = authorized.json()
+    assert authorized_body["total"] == 2
+    assert "local_path" in authorized_body["files"][0]
+    assert "sha256" in authorized_body["files"][0]
+    assert "markdown_content" in authorized_body["files"][0]
 
 
 def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(tmp_path: Path, monkeypatch) -> None:
@@ -274,6 +295,9 @@ def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(tmp_path
     assert detail_body["file"]["url"] == "https://alpha.example/doc-a.pdf"
     assert detail_body["file"]["title"] == "Alpha Document"
     assert detail_body["file"]["markdown_source"] == "manual"
+    assert "local_path" not in detail_body["file"]
+    assert "sha256" not in detail_body["file"]
+    assert "markdown_content" not in detail_body["file"]
 
     missing_param = client.get("/api/files/detail")
     assert missing_param.status_code == 400
