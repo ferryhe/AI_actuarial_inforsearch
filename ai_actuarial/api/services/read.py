@@ -39,6 +39,14 @@ SENSITIVE_FILE_FIELDS: tuple[str, ...] = (
 
 FILE_LIST_FIELDS: tuple[str, ...] = PUBLIC_FILE_LIST_FIELDS + SENSITIVE_FILE_FIELDS
 
+PUBLIC_FILE_DETAIL_FIELDS: tuple[str, ...] = PUBLIC_FILE_LIST_FIELDS + (
+    "catalog_status",
+    "catalog_version",
+    "catalog_processed_at",
+    "catalog_updated_at",
+    "rag_kb_entries",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class FileListQuery:
@@ -136,7 +144,7 @@ def get_file_detail(*, db_path: str, url: str, include_sensitive: bool = False) 
         return None
     if include_sensitive:
         return file_data
-    return {key: value for key, value in file_data.items() if key not in SENSITIVE_FILE_FIELDS}
+    return {field: file_data.get(field) for field in PUBLIC_FILE_DETAIL_FIELDS}
 
 
 def get_file_markdown(*, db_path: str, url: str) -> dict[str, Any]:

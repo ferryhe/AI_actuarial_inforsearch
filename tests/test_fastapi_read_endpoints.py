@@ -220,7 +220,7 @@ def test_fastapi_stats_and_categories_are_native(tmp_path: Path, monkeypatch) ->
 
 
 def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monkeypatch) -> None:
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
 
     response = client.get("/api/files?limit=10&order_by=title&order_dir=asc")
     assert response.status_code == 200
@@ -239,7 +239,7 @@ def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monk
 
     deleted = client.get(
         "/api/files?include_deleted=true&order_by=title&order_dir=asc",
-        headers={"Authorization": f"Bearer {_seed['operator_token_plain']}"},
+        headers={"Authorization": f"Bearer {seed['operator_token_plain']}"},
     )
     assert deleted.status_code == 200
     deleted_body = deleted.json()
