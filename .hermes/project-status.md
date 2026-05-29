@@ -13,3 +13,4 @@
 - Focused verification completed locally: `python -m pip install --dry-run --no-deps -r requirements.txt`, full dependency dry-run with a forbidden GPU/package parse, 13 focused pytest tests, `git diff --check`, dependency/path searches.
 - Local Codex review gate found and prompted fixes for the KeyBERT determinism/version issue, Java package availability, the plain `docling` heavy transitive dependency path, the Docling Slim PDF backend gap, and lightweight keyword stop-word filtering; fixes implemented.
 - Final local Codex review gate reruns timed out twice after 15 minutes each: `codex review --uncommitted` and `codex review --base origin/main`. This is recorded as a tooling blocker before PR publication.
+- PR #127 created from `chore/slim-runtime-requirements`; GitHub `python-smoke` passed and Copilot PR review produced no actionable comments.
