@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,10 @@ class DoclingEngine(Engine):
         self._max_pages = settings.docling_max_pages
         self._raises_on_error = settings.docling_raise_on_error
         self._converter: Any | None = None
+
+    @staticmethod
+    def _full_pdf_pipeline_dependencies_available() -> bool:
+        return find_spec("docling_ibm_models") is not None and find_spec("torch") is not None
 
     def _ensure_converter(self) -> Any:
         if self._converter is not None:
@@ -56,7 +61,37 @@ class DoclingEngine(Engine):
         self._converter = DocumentConverter()
         return self._converter
 
+    def _convert_pdf_with_slim_text_fallback(self, path: Path) -> EngineResponse:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(path))
+        pages = reader.pages
+        if self._max_pages is not None:
+            pages = pages[: self._max_pages]
+
+        parts: list[str] = []
+        failed_pages = 0
+        for index, page in enumerate(pages, start=1):
+            try:
+                page_text = page.extract_text() or ""
+            except Exception as exc:  # noqa: BLE001
+                page_text = f"[Page {index} extraction failed: {exc}]"
+                failed_pages += 1
+
+            if page_text.strip():
+                parts.append(page_text.strip())
+
+        markdown = "\n\n".join(parts).strip()
+        if not markdown:
+            markdown = "_No textual content could be extracted by Docling Slim text fallback._"
+        if failed_pages:
+            markdown = f"_Note: {failed_pages} page(s) failed to extract._\n\n{markdown}"
+        return EngineResponse(markdown=f"# {path.stem}\n\n{markdown}\n", model="docling-slim-text")
+
     def convert(self, path: Path) -> EngineResponse:  # pragma: no cover - heavy dependency
+        if path.suffix.lower() == ".pdf" and not self._full_pdf_pipeline_dependencies_available():
+            return self._convert_pdf_with_slim_text_fallback(path)
+
         converter = self._ensure_converter()
         kwargs: dict[str, Any] = {"raises_on_error": self._raises_on_error}
         if self._max_pages is not None:

@@ -44,6 +44,7 @@ Requirements:
 
 - Python 3.10+
 - Node.js 18+
+- Java 11+ on `PATH` when using OpenDataLoader PDF conversion
 - `FASTAPI_SESSION_SECRET` in `.env` when session login is enabled
 - `TOKEN_ENCRYPTION_KEY` in `.env` when provider credentials are stored in the database
 - Provider credentials saved in Settings as encrypted DB credentials

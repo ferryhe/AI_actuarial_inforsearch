@@ -1,13 +1,15 @@
 # Project Status
 
-- Date: 2026-05-26
-- Branch: `fix/backend-public-rbac-tightening`
-- Baseline: latest `origin/main` after PR A (`fix: gate frontend RBAC actions`) was merged.
-- Scope: Backend RBAC/payload tightening for public file read payloads, deleted-file access, RAG/KB admin read endpoints, and config backup permissions.
-- `/api/files` and `/api/files/detail` now project public responses through explicit public allowlists and only include sensitive fields (`sha256`, `local_path`, `etag`, `deleted_at`, `markdown_content`) for authenticated users with operational file/catalog permissions.
-- Anonymous or unauthorized `include_deleted=true` requests are rejected with standard auth messages (`401 Unauthorized` for anonymous, `403 Forbidden` for authenticated users without `files.delete`).
-- RAG/KB admin read endpoints are split by operational need: public KB browsing remains readable, pending-files and chunk profile reads are available to task runners, and category mapping/selectable/bindings admin surfaces require `config.write`.
-- Config backup list/create/restore/delete endpoints now require `config.write` instead of `sites.write`.
-- Tests updated for read payload filtering, include_deleted authorization, RAG admin endpoint permission split, config backup admin guard, and index dirty fixture consistency.
-- Local verification completed: 49 selected tests passed, focused 38-test backend suite passed after PR comments, `git diff --check` passed, Codex CLI review passed after addressing findings about operator chunk profile reads, markdown availability, public detail allowlist, auth messages, and test naming.
-- PR #126 created; CI python-smoke passed; Copilot comments addressed locally and ready to push follow-up commit.
+- Date: 2026-05-29
+- Branch: `chore/slim-runtime-requirements`
+- Baseline: latest `origin/main`.
+- Scope: Slim standard runtime dependencies, remove local embedding/GPU-heavy optional packages from the default install path, document Java as an OS prerequisite for OpenDataLoader, and remove the private host path from `AGENTS.md`.
+- `requirements.txt` is grouped by runtime area and no longer directly includes `keybert`, `sentence-transformers`, `marker-pdf`, or explicit GPU-heavy packages. It keeps OpenAI/ChatGPT-compatible, Mistral, OpenDataLoader, MarkItDown, Docling Slim plus CPU PDF backend pieces, and core FastAPI/RAG/vector-search dependencies.
+- Java is documented as a system prerequisite for OpenDataLoader in `requirements.txt` comments and README quick-start requirements; Docker installs `default-jre-headless` because pip cannot install a JVM.
+- Docker no longer installs explicit torch/torchvision/easyocr/onnxruntime side packages or the old `mistralai==1.0.0` override.
+- Catalog keyword extraction now always uses the lightweight deterministic path after removing KeyBERT, filters common English stop words, and the catalog version was bumped to `v3-light-keywords` so existing catalog rows can be reprocessed instead of sharing the old `v2-keybert` version.
+- `AGENTS.md` now identifies the repo as the current checkout root instead of exposing a host-specific absolute checkout path.
+- `DoclingEngine` keeps the `docling` engine usable in the slim runtime by using a CPU text fallback for PDF files when the optional full Docling model stack is not installed; full `DocumentConverter` remains available when those optional dependencies are installed separately.
+- Focused verification completed locally: `python -m pip install --dry-run --no-deps -r requirements.txt`, full dependency dry-run with a forbidden GPU/package parse, 13 focused pytest tests, `git diff --check`, dependency/path searches.
+- Local Codex review gate found and prompted fixes for the KeyBERT determinism/version issue, Java package availability, the plain `docling` heavy transitive dependency path, the Docling Slim PDF backend gap, and lightweight keyword stop-word filtering; fixes implemented.
+- Final local Codex review gate reruns timed out twice after 15 minutes each: `codex review --uncommitted` and `codex review --base origin/main`. This is recorded as a tooling blocker before PR publication.

@@ -745,7 +745,7 @@ def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(tm
 
     assert result.success is True
     assert result.metadata["provider"] == "openai"
-    assert result.metadata["catalog_version"] == "v2-keybert:openai:markdown"
+    assert result.metadata["catalog_version"] == "v3-light-keywords:openai:markdown"
     mock_incremental.assert_not_called()
     kwargs = mock_for_urls.call_args.kwargs
     assert kwargs["file_urls"] == ["https://example.com/a.pdf"]
@@ -798,7 +798,7 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(tmp
 
     assert result.success is True
     assert result.metadata["provider"] == "mistral"
-    assert result.metadata["catalog_version"] == "v2-keybert:mistral:source"
+    assert result.metadata["catalog_version"] == "v3-light-keywords:mistral:source"
     mock_for_urls.assert_not_called()
     kwargs = mock_incremental.call_args.kwargs
     assert kwargs["provider"] == "mistral"
