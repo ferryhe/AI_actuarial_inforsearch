@@ -399,7 +399,16 @@ def _build_kb_embedding_status(
 
 
 
-def _require_config_write_token(headers: Mapping[str, str]) -> None:
+def _request_already_authorized(auth: Any | None) -> bool:
+    if auth is None or not getattr(auth, "token", None):
+        return False
+    permissions = getattr(auth, "permissions", frozenset())
+    return bool({"catalog.write", "config.write", "tasks.run"} & set(permissions))
+
+
+def _require_config_write_token(headers: Mapping[str, str], auth: Any | None = None) -> None:
+    if _request_already_authorized(auth):
+        return
     expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
     if not expected_token:
         return
@@ -418,8 +427,8 @@ def list_chunk_profiles(*, db_path: str) -> dict[str, Any]:
 
 
 
-def create_chunk_profile(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def create_chunk_profile(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     name = _norm(payload.get("name"))
@@ -450,8 +459,8 @@ def create_chunk_profile(*, db_path: str, payload: dict[str, Any], headers: Mapp
 
 
 
-def delete_chunk_profile(*, db_path: str, profile_id: str, headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def delete_chunk_profile(*, db_path: str, profile_id: str, headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     normalized_profile_id = _norm(profile_id)
     if not normalized_profile_id:
         raise RagAdminError("profile_id is required")
@@ -465,8 +474,8 @@ def delete_chunk_profile(*, db_path: str, profile_id: str, headers: Mapping[str,
         storage.close()
 
 
-def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     normalized_profile_id = _norm(profile_id)
     if not normalized_profile_id:
         raise RagAdminError("profile_id is required")
@@ -679,8 +688,8 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
 
 
 
-def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     kb_id = _kb_id(payload.get("kb_id"))
@@ -795,8 +804,8 @@ def get_knowledge_base(*, db_path: str, kb_id: str) -> dict[str, Any]:
 
 
 
-def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -816,8 +825,8 @@ def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], 
 
 
 
-def delete_knowledge_base(*, db_path: str, kb_id: str, headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def delete_knowledge_base(*, db_path: str, kb_id: str, headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
@@ -921,8 +930,8 @@ def list_knowledge_base_files(*, db_path: str, kb_id: str, query: Mapping[str, A
 
 
 
-def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -966,8 +975,8 @@ def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any
 
 
 
-def remove_knowledge_base_file(*, db_path: str, kb_id: str, file_url: str, headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def remove_knowledge_base_file(*, db_path: str, kb_id: str, file_url: str, headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     normalized_file_url = _norm(file_url)
     if not normalized_file_url:
@@ -1152,8 +1161,8 @@ def get_knowledge_base_categories(*, db_path: str, kb_id: str) -> dict[str, Any]
 
 
 
-def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -1265,8 +1274,8 @@ def get_pending_files(*, db_path: str, kb_id: str) -> dict[str, Any]:
 
 
 
-def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -1333,8 +1342,8 @@ def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], header
 
 
 
-def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], bridge_state: Any) -> tuple[dict[str, Any], int]:
-    _require_config_write_token(headers)
+def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], bridge_state: Any, auth: Any | None = None) -> tuple[dict[str, Any], int]:
+    _require_config_write_token(headers, auth)
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -1454,8 +1463,8 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
 
 
 
-def cleanup_chunk_sets(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str]) -> dict[str, Any]:
-    _require_config_write_token(headers)
+def cleanup_chunk_sets(*, db_path: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
     older_than_days = parse_int_clamped(payload.get("older_than_days") or 30, default=30, min_value=1, max_value=3650)

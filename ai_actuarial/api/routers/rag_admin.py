@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import os
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from ..deps import AuthContext, require_permissions
+from ai_actuarial.config import settings
+
+from ..deps import AuthContext, get_auth_context, require_permissions
 from ..services.rag_admin import (
     RagAdminError,
     add_knowledge_base_files,
@@ -33,6 +38,43 @@ from ..services.rag_admin import (
 )
 
 router = APIRouter()
+
+
+def _presented_token(request: Request) -> str | None:
+    auth = request.headers.get("Authorization", "") or ""
+    parts = auth.strip().split(None, 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1].strip()
+    token = request.headers.get("X-API-Token") or request.headers.get("X-Auth-Token")
+    return token.strip() if token else None
+
+
+def _legacy_rag_write_context(request: Request) -> AuthContext | None:
+    expected = os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
+    presented = _presented_token(request)
+    if not expected or not presented or not secrets.compare_digest(presented, expected):
+        return None
+    return AuthContext(
+        token={
+            "id": None,
+            "subject": "legacy-config-write-token",
+            "group_name": "legacy_config_write",
+            "is_active": True,
+        },
+        permissions=frozenset({"catalog.write", "config.write", "tasks.run", "tasks.view"}),
+    )
+
+
+def require_rag_write(request: Request) -> AuthContext:
+    context = get_auth_context(request)
+    if context.token and "catalog.write" in context.permissions:
+        return context
+    legacy_context = _legacy_rag_write_context(request)
+    if legacy_context:
+        return legacy_context
+    if not context.token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    raise HTTPException(status_code=403, detail="Forbidden")
 
 
 def _db_path(request: Request) -> str:
@@ -68,7 +110,7 @@ def api_create_chunk_profile(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        result = create_chunk_profile(db_path=_db_path(request), payload=payload, headers=dict(request.headers))
+        result = create_chunk_profile(db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth)
         return JSONResponse(status_code=201, content=result)
     except RagAdminError as exc:
         return _error_response(exc)
@@ -82,7 +124,7 @@ def api_update_chunk_profile(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        return update_chunk_profile(db_path=_db_path(request), profile_id=profile_id, payload=payload, headers=dict(request.headers))
+        return update_chunk_profile(db_path=_db_path(request), profile_id=profile_id, payload=payload, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -94,7 +136,7 @@ def api_delete_chunk_profile(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        return delete_chunk_profile(db_path=_db_path(request), profile_id=profile_id, headers=dict(request.headers))
+        return delete_chunk_profile(db_path=_db_path(request), profile_id=profile_id, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -106,7 +148,7 @@ def api_chunk_sets_cleanup(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        return cleanup_chunk_sets(db_path=_db_path(request), payload=payload, headers=dict(request.headers))
+        return cleanup_chunk_sets(db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -126,10 +168,10 @@ def api_list_knowledge_bases(
 def api_create_knowledge_base(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        result = create_knowledge_base(db_path=_db_path(request), payload=payload, headers=dict(request.headers))
+        result = create_knowledge_base(db_path=_db_path(request), payload=payload, headers=dict(request.headers), auth=_auth)
         return JSONResponse(status_code=201, content=result)
     except RagAdminError as exc:
         return _error_response(exc)
@@ -152,10 +194,10 @@ def api_update_knowledge_base(
     kb_id: str,
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return update_knowledge_base(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers))
+        return update_knowledge_base(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -164,10 +206,10 @@ def api_update_knowledge_base(
 def api_delete_knowledge_base(
     kb_id: str,
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return delete_knowledge_base(db_path=_db_path(request), kb_id=kb_id, headers=dict(request.headers))
+        return delete_knowledge_base(db_path=_db_path(request), kb_id=kb_id, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -201,10 +243,10 @@ def api_add_knowledge_base_files(
     kb_id: str,
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return add_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers))
+        return add_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -214,10 +256,10 @@ def api_remove_knowledge_base_file(
     kb_id: str,
     file_url: str,
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return remove_knowledge_base_file(db_path=_db_path(request), kb_id=kb_id, file_url=file_url, headers=dict(request.headers))
+        return remove_knowledge_base_file(db_path=_db_path(request), kb_id=kb_id, file_url=file_url, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -225,7 +267,7 @@ def api_remove_knowledge_base_file(
 @router.get("/rag/categories/unmapped")
 def api_unmapped_categories(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
         return get_unmapped_categories(db_path=_db_path(request))
@@ -236,7 +278,7 @@ def api_unmapped_categories(
 @router.get("/rag/categories/mapping")
 def api_categories_mapping(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
         return get_categories_mapping(db_path=_db_path(request))
@@ -248,7 +290,7 @@ def api_categories_mapping(
 def api_category_stats(
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
         return get_category_stats(db_path=_db_path(request), payload=payload)
@@ -259,7 +301,7 @@ def api_category_stats(
 @router.get("/rag/files/selectable")
 def api_selectable_files(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
         return list_selectable_files(db_path=_db_path(request), query=request.query_params)
@@ -284,10 +326,10 @@ def api_set_kb_categories(
     kb_id: str,
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return set_knowledge_base_categories(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers))
+        return set_knowledge_base_categories(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -309,10 +351,10 @@ def api_bind_chunk_sets(
     kb_id: str,
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
-        return bind_chunk_sets(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers))
+        return bind_chunk_sets(db_path=_db_path(request), kb_id=kb_id, payload=payload, headers=dict(request.headers), auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -321,7 +363,7 @@ def api_bind_chunk_sets(
 def api_get_kb_bindings(
     kb_id: str,
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("config.write")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
         return get_kb_bindings(db_path=_db_path(request), kb_id=kb_id)
@@ -334,7 +376,7 @@ def api_create_index_task(
     kb_id: str,
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+    _auth: AuthContext = Depends(require_rag_write),
 ):
     try:
         result, status_code = create_index_task(
@@ -343,6 +385,7 @@ def api_create_index_task(
             payload=payload,
             headers=dict(request.headers),
             bridge_state=_bridge_state(request),
+            auth=_auth,
         )
         return JSONResponse(status_code=status_code, content=result)
     except RagAdminError as exc:
