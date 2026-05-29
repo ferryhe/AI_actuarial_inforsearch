@@ -9,3 +9,4 @@
 - Focused tests added for anonymous 401, registered 403, operator/admin session success, legacy RAG token success, and unrelated config write denial with the legacy token.
 - Verification completed locally: `git diff --check`; `python -m pytest tests/test_fastapi_rag_admin_endpoints.py -q` (16 passed); `python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_fastapi_ops_write_endpoints.py -q` (37 passed).
 - Independent review gate completed: delegate review PASS, delegate focused verification PASS, Codex CLI pre-PR review PASS. Codex read-only pytest attempt could not start due sandbox temp-dir limitation, but local pytest runs above passed.
+- PR #128 follow-up on 2026-05-29: addressed Copilot's note by preserving `tasks.run` for `create_index_task` while keeping the scoped legacy RAG token fallback; focused auth/RAG tests pass locally.

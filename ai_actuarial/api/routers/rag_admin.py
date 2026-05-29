@@ -65,9 +65,9 @@ def _legacy_rag_write_context(request: Request) -> AuthContext | None:
     )
 
 
-def require_rag_write(request: Request) -> AuthContext:
+def _require_permission_or_legacy_rag_write(request: Request, permission: str) -> AuthContext:
     context = get_auth_context(request)
-    if context.token and "catalog.write" in context.permissions:
+    if context.token and permission in context.permissions:
         return context
     legacy_context = _legacy_rag_write_context(request)
     if legacy_context:
@@ -75,6 +75,14 @@ def require_rag_write(request: Request) -> AuthContext:
     if not context.token:
         raise HTTPException(status_code=401, detail="Unauthorized")
     raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def require_rag_write(request: Request) -> AuthContext:
+    return _require_permission_or_legacy_rag_write(request, "catalog.write")
+
+
+def require_rag_task_run(request: Request) -> AuthContext:
+    return _require_permission_or_legacy_rag_write(request, "tasks.run")
 
 
 def _db_path(request: Request) -> str:
@@ -376,7 +384,7 @@ def api_create_index_task(
     kb_id: str,
     payload: dict[str, object],
     request: Request,
-    _auth: AuthContext = Depends(require_rag_write),
+    _auth: AuthContext = Depends(require_rag_task_run),
 ):
     try:
         result, status_code = create_index_task(

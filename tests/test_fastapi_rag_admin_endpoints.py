@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 import yaml
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.routers import rag_admin as rag_admin_router
 from ai_actuarial.storage import Storage
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
@@ -167,6 +171,39 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
 def _make_session_cookie(app, payload: dict[str, object]) -> str:
     serializer = URLSafeSerializer(app.state.fastapi_session_secret, salt="fastapi-session")
     return serializer.dumps(payload)
+
+
+def test_rag_index_auth_preserves_tasks_run_permission_boundary(monkeypatch) -> None:
+    request = SimpleNamespace(headers={})
+
+    monkeypatch.setattr(
+        rag_admin_router,
+        "get_auth_context",
+        lambda _request: rag_admin_router.AuthContext(
+            token={"subject": "catalog-only"},
+            permissions=frozenset({"catalog.write"}),
+        ),
+    )
+
+    assert rag_admin_router.require_rag_write(request).token["subject"] == "catalog-only"
+    with pytest.raises(HTTPException) as exc_info:
+        rag_admin_router.require_rag_task_run(request)
+    assert exc_info.value.status_code == 403
+
+
+def test_rag_task_auth_preserves_legacy_config_token_fallback(monkeypatch) -> None:
+    request = SimpleNamespace(headers={"X-Auth-Token": "legacy-config-token"})
+    monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "legacy-config-token")
+    monkeypatch.setattr(
+        rag_admin_router,
+        "get_auth_context",
+        lambda _request: rag_admin_router.AuthContext(token=None, permissions=frozenset()),
+    )
+
+    auth = rag_admin_router.require_rag_task_run(request)
+
+    assert auth.token["subject"] == "legacy-config-write-token"
+    assert "tasks.run" in auth.permissions
 
 
 
