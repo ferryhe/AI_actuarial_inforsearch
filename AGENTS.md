@@ -3,7 +3,7 @@
 ## Identity
 
 - Project: `AI_actuarial_inforsearch`
-- Repo path: `/home/ec2-user/work/AI_actuarial_inforsearch`
+- Repo path: current checkout root for `AI_actuarial_inforsearch`
 - Remote: `https://github.com/ferryhe/AI_actuarial_inforsearch`
 - Worker role: 旧的一体化信息检索/RAG 产品，作为经验和可抽取代码来源。
 

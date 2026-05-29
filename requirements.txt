@@ -1,35 +1,42 @@
-PyYAML>=6.0
-trafilatura>=1.9.0
-pypdf>=6.0.0
-python-docx>=1.2.0
-python-pptx>=1.0.2
-keybert>=0.9.0
-sentence-transformers>=5.0.0
+# Core runtime
 fastapi>=0.115.0
 python-multipart>=0.0.20
 uvicorn>=0.30.0
 itsdangerous>=2.2.0
+pydantic-settings>=2.0.0
+PyYAML>=6.0
+requests>=2.31.0
+curl_cffi>=0.7.0
+schedule>=1.2.2
+
+# Database and security
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 cryptography>=41.0.0
-schedule>=1.2.2
-curl_cffi>=0.7.0
 
-# Convert-to-Markdown engines (doc_to_md integration)
-pydantic-settings>=2.0.0
-openai>=1.68.0
-mistralai==1.12.4
-requests>=2.31.0
-tiktoken>=0.5.0
-pypdfium2>=4.0.0
+# Document and content extraction
+trafilatura>=1.9.0
+pypdf>=6.0.0
+python-docx>=1.2.0
+python-pptx>=1.0.2
 Pillow>=10.2.0
 
-# Heavy optional engines (install when you want these conversion backends)
+# AI providers: ChatGPT/OpenAI-compatible and Mistral
+openai>=1.68.0
+mistralai==1.12.4
+tiktoken>=0.5.0
+
+# Markdown/OCR conversion engines for standard runtime
+# System prerequisite: OpenDataLoader requires Java 11+ on PATH.
+# Install Java with the OS/package manager; pip requirements cannot install it.
 opendataloader-pdf>=2.0.0
 markitdown[pdf]>=0.1.3
-docling>=2.0.0
-marker-pdf>=1.0.0
+# Use Docling Slim to avoid Docling's heavyweight standard extras.
+docling-slim>=2.0.0
+# CPU PDF backend pieces; PDFs fall back to text extraction without the full model stack.
+docling-parse>=6.0.0
+pypdfium2>=4.30.0
 
-# RAG (Retrieval-Augmented Generation) dependencies
+# RAG/vector search dependencies
 faiss-cpu>=1.7.4
 numpy>=1.24.0

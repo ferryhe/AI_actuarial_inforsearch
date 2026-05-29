@@ -185,8 +185,37 @@ except FileNotFoundError as e:
         ],
     }
 
-_KEYBERT_MODEL = None
-CATALOG_VERSION = "v2-keybert"
+CATALOG_VERSION = "v3-light-keywords"
+_LIGHT_KEYWORD_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "has",
+    "have",
+    "in",
+    "is",
+    "it",
+    "its",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "their",
+    "this",
+    "to",
+    "was",
+    "were",
+    "will",
+    "with",
+}
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -615,19 +644,7 @@ def is_ai_related(text: str, keywords: list[str], title: str | None = None) -> b
 def extract_keywords(text: str, title: str | None = None, top_n: int = 8) -> list[str]:
     if not text and not title:
         return []
-    if os.getenv("KEYBERT_DISABLE") == "1":
-        return _light_keywords(text, title, top_n)
-    global _KEYBERT_MODEL
-    try:
-        from keybert import KeyBERT
-
-        if _KEYBERT_MODEL is None:
-            _KEYBERT_MODEL = KeyBERT()
-        base = (title or "") + "\n" + text
-        kw = _KEYBERT_MODEL.extract_keywords(base, top_n=top_n, stop_words="english")
-        return [k for k, _ in kw]
-    except Exception:
-        return _light_keywords(text, title, top_n)
+    return _light_keywords(text, title, top_n)
 
 
 def _light_keywords(text: str, title: str | None, top_n: int) -> list[str]:
@@ -642,26 +659,31 @@ def _light_keywords(text: str, title: str | None, top_n: int) -> list[str]:
     def tokens(s: str) -> list[str]:
         return re.findall(r"[a-zA-Z][a-zA-Z0-9\-]*", s.lower())
 
-    text_tokens = tokens(text or "")
-    title_tokens = tokens(title or "")
+    def is_keyword_token(token: str) -> bool:
+        return len(token) >= 3 and not token.isdigit() and token not in _LIGHT_KEYWORD_STOP_WORDS
+
+    raw_text_tokens = tokens(text or "")
+    raw_title_tokens = tokens(title or "")
+    text_tokens = [t for t in raw_text_tokens if is_keyword_token(t)]
+    title_tokens = [t for t in raw_title_tokens if is_keyword_token(t)]
 
     freq: dict[str, int] = {}
     for t in text_tokens:
-        if len(t) < 3:
-            continue
-        if t.isdigit():
-            continue
         freq[t] = freq.get(t, 0) + 1
 
     bigrams: dict[str, int] = {}
-    for a, b in zip(text_tokens, text_tokens[1:]):
-        if a.isdigit() and b.isdigit():
+    for a, b in zip(raw_text_tokens, raw_text_tokens[1:]):
+        if not is_keyword_token(a) or not is_keyword_token(b):
             continue
         phrase = f"{a} {b}"
         bigrams[phrase] = bigrams.get(phrase, 0) + 1
 
     title_set = set(title_tokens)
-    title_bigrams = set(f"{a} {b}" for a, b in zip(title_tokens, title_tokens[1:]))
+    title_bigrams = {
+        f"{a} {b}"
+        for a, b in zip(raw_title_tokens, raw_title_tokens[1:])
+        if is_keyword_token(a) and is_keyword_token(b)
+    }
 
     scored: dict[str, int] = {}
     for t, c in freq.items():

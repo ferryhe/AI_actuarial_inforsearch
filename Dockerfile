@@ -2,11 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for PDF conversion (docling, marker) and other features
+# Install system dependencies for PDF conversion and OpenDataLoader.
 RUN apt-get update && apt-get install -y \
     # Basic utilities
     curl \
-    # For docling/marker PDF conversion (X11 libraries)
+    # OpenDataLoader requires Java 11+ on PATH
+    default-jre-headless \
+    # For docling PDF conversion (X11 libraries)
     libxcb1 \
     libxcb-xinerama0 \
     libxrender1 \
@@ -20,25 +22,11 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     libtesseract-dev \
     libtesseract5 \
-    # For other ML libraries
+    # For CPU document processing libraries
     libomp-dev \
-    # For easyocr
     libsm6 \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
-
-# Install docling OCR dependencies
-RUN pip install --no-cache-dir \
-    torch \
-    torchvision \
-    --index-url https://download.pytorch.org/whl/cpu
-
-RUN pip install --no-cache-dir \
-    easyocr \
-    onnxruntime
-
-# Install specific package versions for compatibility
-RUN pip install --no-cache-dir mistralai==1.0.0
 
 # Copy requirements first for better caching
 COPY requirements.txt .
