@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 import yaml
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.routers import rag_admin as rag_admin_router
 from ai_actuarial.storage import Storage
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
@@ -42,7 +47,7 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
 
 
 
-def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
+def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
     alpha_path = files_dir / "alpha.pdf"
     alpha_path.write_bytes(PDF_BYTES)
     beta_path = files_dir / "beta.pdf"
@@ -116,14 +121,40 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
             is_active=True,
         )
+        registered_user_id = storage.create_user(
+            "registered@example.com",
+            "registered-password-hash",
+            role="registered",
+            display_name="Registered",
+        )
+        operator_user_id = storage.create_user(
+            "operator@example.com",
+            "operator-password-hash",
+            role="operator",
+            display_name="Operator",
+        )
+        admin_user_id = storage.create_user(
+            "admin@example.com",
+            "admin-password-hash",
+            role="admin",
+            display_name="Admin",
+        )
     finally:
         storage.close()
 
-    return {"alpha_url": alpha_url, "beta_url": beta_url, "operator_token": operator_token, "admin_token": admin_token}
+    return {
+        "alpha_url": alpha_url,
+        "beta_url": beta_url,
+        "operator_token": operator_token,
+        "admin_token": admin_token,
+        "registered_user_id": registered_user_id,
+        "operator_user_id": operator_user_id,
+        "admin_user_id": admin_user_id,
+    }
 
 
 
-def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, str]]:
+def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -135,6 +166,44 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     client = TestClient(app)
     client.headers.update({"X-Auth-Token": seed["admin_token"]})
     return client, app, seed
+
+
+def _make_session_cookie(app, payload: dict[str, object]) -> str:
+    serializer = URLSafeSerializer(app.state.fastapi_session_secret, salt="fastapi-session")
+    return serializer.dumps(payload)
+
+
+def test_rag_index_auth_preserves_tasks_run_permission_boundary(monkeypatch) -> None:
+    request = SimpleNamespace(headers={})
+
+    monkeypatch.setattr(
+        rag_admin_router,
+        "get_auth_context",
+        lambda _request: rag_admin_router.AuthContext(
+            token={"subject": "catalog-only"},
+            permissions=frozenset({"catalog.write"}),
+        ),
+    )
+
+    assert rag_admin_router.require_rag_write(request).token["subject"] == "catalog-only"
+    with pytest.raises(HTTPException) as exc_info:
+        rag_admin_router.require_rag_task_run(request)
+    assert exc_info.value.status_code == 403
+
+
+def test_rag_task_auth_preserves_legacy_config_token_fallback(monkeypatch) -> None:
+    request = SimpleNamespace(headers={"X-Auth-Token": "legacy-config-token"})
+    monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "legacy-config-token")
+    monkeypatch.setattr(
+        rag_admin_router,
+        "get_auth_context",
+        lambda _request: rag_admin_router.AuthContext(token=None, permissions=frozenset()),
+    )
+
+    auth = rag_admin_router.require_rag_task_run(request)
+
+    assert auth.token["subject"] == "legacy-config-write-token"
+    assert "tasks.run" in auth.permissions
 
 
 
@@ -217,6 +286,97 @@ def test_fastapi_rag_admin_read_routes_require_task_or_config_permissions(tmp_pa
 
     admin_headers = {"X-Auth-Token": seed["admin_token"]}
     assert client.get("/api/chunk/profiles", headers=admin_headers).status_code == 200
+
+
+def test_fastapi_rag_admin_kb_writes_accept_admin_operator_sessions_with_legacy_token_configured(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "legacy-config-token")
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    client.headers.clear()
+    app.state.start_background_task = lambda *args, **kwargs: "task-session-rag-index"
+
+    anonymous = client.post(
+        "/api/rag/knowledge-bases",
+        json={"kb_id": "kb-anonymous-denied", "name": "Anonymous Denied", "kb_mode": "manual"},
+    )
+    assert anonymous.status_code == 401
+
+    cookie_name = app.state.fastapi_session_cookie_name
+    client.cookies.set(
+        cookie_name,
+        _make_session_cookie(app, {"email_user_id": seed["registered_user_id"]}),
+    )
+    registered = client.post(
+        "/api/rag/knowledge-bases",
+        json={"kb_id": "kb-registered-denied", "name": "Registered Denied", "kb_mode": "manual"},
+    )
+    assert registered.status_code == 403
+
+    client.cookies.clear()
+    client.cookies.set(
+        cookie_name,
+        _make_session_cookie(app, {"email_user_id": seed["operator_user_id"]}),
+    )
+    operator_create = client.post(
+        "/api/rag/knowledge-bases",
+        json={"kb_id": "kb-session-operator", "name": "Operator Session KB", "kb_mode": "manual"},
+    )
+    assert operator_create.status_code == 201, operator_create.text
+
+    operator_add_file = client.post(
+        "/api/rag/knowledge-bases/kb-session-operator/files",
+        json={"file_urls": [seed["alpha_url"]]},
+    )
+    assert operator_add_file.status_code == 200, operator_add_file.text
+
+    operator_categories = client.post(
+        "/api/rag/knowledge-bases/kb-session-operator/categories",
+        json={"categories": ["AI"], "action": "replace"},
+    )
+    assert operator_categories.status_code == 200, operator_categories.text
+
+    operator_index = client.post(
+        "/api/rag/knowledge-bases/kb-session-operator/index",
+        json={"file_urls": [seed["alpha_url"]]},
+    )
+    assert operator_index.status_code == 202, operator_index.text
+
+    client.cookies.clear()
+    client.cookies.set(
+        cookie_name,
+        _make_session_cookie(app, {"email_user_id": seed["admin_user_id"]}),
+    )
+    admin_update = client.put(
+        "/api/rag/knowledge-bases/kb-session-operator",
+        json={"name": "Admin Updated KB"},
+    )
+    assert admin_update.status_code == 200, admin_update.text
+
+    admin_delete = client.delete("/api/rag/knowledge-bases/kb-session-operator")
+    assert admin_delete.status_code == 200, admin_delete.text
+
+
+def test_fastapi_rag_admin_kb_writes_preserve_legacy_config_token_access(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "legacy-config-token")
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    client.headers.clear()
+
+    legacy = client.post(
+        "/api/rag/knowledge-bases",
+        json={"kb_id": "kb-legacy-token", "name": "Legacy Token KB", "kb_mode": "manual"},
+        headers={"X-Auth-Token": "legacy-config-token"},
+    )
+
+    assert legacy.status_code == 201, legacy.text
+
+    unrelated_config_write = client.post(
+        "/api/config/backend-settings",
+        json={"defaults": {"max_pages": 12}},
+        headers={"X-Auth-Token": "legacy-config-token"},
+    )
+    assert unrelated_config_write.status_code == 401
 
 
 def test_fastapi_rag_admin_categories_mapping_uses_catalog_items_without_legacy_table(tmp_path: Path, monkeypatch) -> None:
