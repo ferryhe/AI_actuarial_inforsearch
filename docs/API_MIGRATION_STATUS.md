@@ -127,7 +127,7 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 
 - Add product APIs under `ai_actuarial/api/routers/`.
 - Use `GET /api/migration/inventory` only in explicit ops/debug environments.
-- Keep historical migration notes under `docs/archive` or dated planning documents when they are useful as project history.
+- Keep historical migration notes as dated planning documents when they are useful as project history.
 
 ### Not Allowed
 

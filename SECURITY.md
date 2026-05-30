@@ -31,7 +31,7 @@ Do not include real API keys, tokens, database files, or private user documents 
 
 ## Current Security Posture
 
-The active application is FastAPI + React. Legacy Flask-era guidance is archived under `docs/archive/security/` and should not be used as an implementation checklist.
+The active application is FastAPI + React. Legacy Flask-era guidance has been removed and should not be used as an implementation checklist.
 
 ### Authentication And Authorization
 
