@@ -182,7 +182,7 @@ class RAGRetriever:
             formatted_results.append({
                 'content': metadata.get('content', ''),
                 'metadata': {
-                    'filename': metadata.get('filename', 'unknown'),
+                    'filename': metadata.get('filename') or metadata.get('title') or 'unknown',
                     'kb_id': kb_id,
                     'kb_name': kb.name,
                     'similarity_score': result['score'],

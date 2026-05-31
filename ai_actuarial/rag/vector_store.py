@@ -261,11 +261,10 @@ class VectorStore:
             # neighbors just below deleted hits can still be returned.
             distances, indices = self.index.search(query_vector, search_k)
             
-            # Convert distances to similarity scores (L2 distance to cosine-like score)
-            # Lower distance = higher similarity
-            # Normalize to 0-1 range approximately
-            max_distance = np.max(distances) if np.max(distances) > 0 else 1.0
-            similarities = 1.0 - (distances / (max_distance + 1e-8))
+            # Convert L2 distances to cosine similarity (unit-normalized vectors).
+            # For unit vectors: cos(u,v) = 1 - ||u-v||^2 / 2
+            # OpenAI / text-embedding-* outputs are L2-normalized.
+            similarities = 1.0 - (distances ** 2 / 2.0)
             
             # Build results
             results = []
