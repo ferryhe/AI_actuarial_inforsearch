@@ -72,6 +72,44 @@ class TestRagRuntime(unittest.TestCase):
         self.assertTrue(config.credential_configured)
         self.assertEqual(config.credential_error, "")
 
+    def test_rag_config_caps_qwen_batch_size_from_yaml(self):
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "batch_size": 64,
+                }
+            }
+        }
+
+        with self.assertLogs("ai_actuarial.rag.config", level="WARNING") as logs:
+            config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
+
+        self.assertEqual(config.embedding_provider, "qwen")
+        self.assertEqual(config.embedding_batch_size, 10)
+        self.assertIn("capped to 10", "\n".join(logs.output))
+
+    def test_rag_config_caps_qwen_batch_size_from_env(self):
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
+        os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+        os.environ["RAG_EMBEDDING_BATCH_SIZE"] = "64"
+
+        config = RAGConfig.from_env()
+
+        self.assertEqual(config.embedding_provider, "qwen")
+        self.assertEqual(config.embedding_batch_size, 10)
+
+    def test_rag_config_caps_dashscope_batch_size_from_constructor_default(self):
+        config = RAGConfig(embedding_provider="dashscope", embedding_model="text-embedding-v3")
+
+        self.assertEqual(config.embedding_batch_size, 10)
+
+    def test_rag_config_keeps_non_dashscope_batch_size(self):
+        config = RAGConfig(embedding_provider="openai", embedding_batch_size=64)
+
+        self.assertEqual(config.embedding_batch_size, 64)
+
     def test_rag_config_from_env_uses_provider_default_base_url(self):
         os.environ["RAG_EMBEDDING_PROVIDER"] = "siliconflow"
         os.environ["SILICONFLOW_API_KEY"] = "env-siliconflow-key"
@@ -102,6 +140,29 @@ class TestRagRuntime(unittest.TestCase):
             timeout=45,
         )
         self.assertIsNotNone(generator.openai_client)
+
+    @patch("ai_actuarial.rag.embeddings.OpenAI")
+    def test_qwen_embedding_generator_batches_at_provider_limit(self, mock_openai):
+        config = RAGConfig(
+            embedding_provider="qwen",
+            embedding_model="text-embedding-v3",
+            embedding_batch_size=64,
+            embedding_cache_enabled=False,
+            api_key="runtime-key",
+        )
+        generator = EmbeddingGenerator(config)
+        texts = [f"chunk-{i}" for i in range(25)]
+
+        with patch.object(
+            generator,
+            "_generate_openai_batch_with_retry",
+            side_effect=lambda batch: [[float(len(batch))] for _ in batch],
+        ) as mock_batch:
+            result = generator.generate_embeddings(texts)
+
+        self.assertEqual([len(call.args[0]) for call in mock_batch.call_args_list], [10, 10, 5])
+        self.assertEqual(len(result), 25)
+        mock_openai.assert_called_once()
 
     def test_embedding_generator_missing_key_reports_runtime_context(self):
         config = RAGConfig(

@@ -7,6 +7,7 @@ environment variable support and sensible defaults.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -19,6 +20,10 @@ from ai_actuarial.ai_runtime import (
     is_embedding_provider_supported,
     resolve_ai_function_runtime,
 )
+
+
+logger = logging.getLogger(__name__)
+DASHSCOPE_EMBEDDING_BATCH_SIZE_LIMIT = 10
 
 
 @dataclass
@@ -60,6 +65,22 @@ class RAGConfig:
 
     # Storage paths
     data_dir: str = "data/rag"
+
+    def __post_init__(self) -> None:
+        """Apply provider-specific runtime safety limits."""
+        provider = str(self.embedding_provider or "").strip().lower()
+        if (
+            provider in {"qwen", "dashscope"}
+            and self.embedding_batch_size > DASHSCOPE_EMBEDDING_BATCH_SIZE_LIMIT
+        ):
+            configured_batch_size = self.embedding_batch_size
+            self.embedding_batch_size = DASHSCOPE_EMBEDDING_BATCH_SIZE_LIMIT
+            logger.warning(
+                "Embedding batch_size %s exceeds provider '%s' limit; capped to %s.",
+                configured_batch_size,
+                provider,
+                self.embedding_batch_size,
+            )
 
     @classmethod
     def from_env(cls) -> "RAGConfig":
