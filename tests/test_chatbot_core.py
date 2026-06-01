@@ -89,7 +89,7 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.temperature, 0.5)
         self.assertEqual(config.max_tokens, 500)
         self.assertEqual(config.top_k, 3)
-        self.assertEqual(config.similarity_threshold, 0.6)
+        self.assertEqual(config.similarity_threshold, 0.4)
 
     def test_from_env_uses_provider_specific_api_key(self):
         """Provider-specific chatbot env config should not require OpenAI."""
@@ -142,6 +142,133 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.model, "deepseek-chat")
         self.assertEqual(config.temperature, 0.5)
     
+    def test_from_env_uses_static_default_threshold_without_embedding_env_fallback(self):
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
+        os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+        os.environ["RAG_SIMILARITY_THRESHOLD"] = "0.02"
+
+        config = ChatbotConfig.from_env()
+
+        self.assertEqual(config.similarity_threshold, 0.4)
+
+    def test_direct_init_uses_static_default_threshold_without_embedding_env_fallback(self):
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
+        os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+
+        config = ChatbotConfig()
+
+        self.assertEqual(config.similarity_threshold, 0.4)
+
+    def test_from_yaml_uses_embeddings_similarity_threshold_fallback(self):
+        """Chat retrieval should honor the existing embeddings threshold setting."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-large",
+                    "similarity_threshold": 0.55,
+                },
+                "chatbot": {
+                    "provider": "openai",
+                    "model": "gpt-4-turbo",
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+
+        config = ChatbotConfig.from_yaml(yaml_config)
+
+        self.assertEqual(config.similarity_threshold, 0.55)
+
+    def test_from_yaml_deprecates_chatbot_similarity_threshold_and_uses_embeddings(self):
+        """Deprecated chatbot threshold is warned and ignored."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-large",
+                    "similarity_threshold": 0.55,
+                },
+                "chatbot": {
+                    "provider": "openai",
+                    "model": "gpt-4-turbo",
+                    "similarity_threshold": 0.45,
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+
+        with self.assertLogs("ai_actuarial.chatbot.config", level="WARNING") as logs:
+            config = ChatbotConfig.from_yaml(yaml_config)
+
+        self.assertEqual(config.similarity_threshold, 0.55)
+        self.assertIn("deprecated and ignored", "\n".join(logs.output))
+
+    def test_from_yaml_qwen_similarity_threshold_defaults_to_provider_value(self):
+        """Qwen text-embedding-v3 should work when threshold is omitted."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                },
+                "chatbot": {
+                    "provider": "openai",
+                    "model": "gpt-4-turbo",
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+
+        config = ChatbotConfig.from_yaml(yaml_config)
+
+        self.assertEqual(config.similarity_threshold, 0.02)
+
+    def test_from_config_uses_embeddings_threshold_when_chatbot_section_missing(self):
+        """Runtime config still inherits embeddings when ai_config.chatbot is absent."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "similarity_threshold": 0.02,
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+
+        with patch("config.yaml_config.load_yaml_config", return_value=yaml_config):
+            config = ChatbotConfig.from_config()
+
+        self.assertEqual(config.similarity_threshold, 0.02)
+
+    def test_from_yaml_env_similarity_threshold_does_not_override_embeddings(self):
+        """Embeddings config is the single threshold source for chat retrieval."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-large",
+                    "similarity_threshold": 0.55,
+                },
+                "chatbot": {
+                    "provider": "openai",
+                    "model": "gpt-4-turbo",
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+        os.environ["RAG_SIMILARITY_THRESHOLD"] = "0.62"
+
+        config = ChatbotConfig.from_yaml(yaml_config)
+
+        self.assertEqual(config.similarity_threshold, 0.55)
+
+    def test_chat_retrieval_uses_configured_similarity_threshold(self):
+        config = ChatbotConfig(similarity_threshold=0.4, _apply_env_defaults=False)
+        self.assertEqual(config.similarity_threshold, 0.4)
+
     def test_validation_success(self):
         """Test successful configuration validation."""
         config = ChatbotConfig(api_key="test-key")

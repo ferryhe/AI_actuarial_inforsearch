@@ -55,6 +55,7 @@ class RAGRetriever:
         
         # Cache for loaded vector stores
         self._vector_store_cache: Dict[str, VectorStore] = {}
+        self.last_effective_threshold: float | None = None
 
     def get_current_embedding_metadata(self) -> Dict[str, Any]:
         """Return the current query embedding runtime used by chat retrieval."""
@@ -63,7 +64,7 @@ class RAGRetriever:
             "model": str(self.embedding_generator.config.embedding_model or "text-embedding-3-large").strip() or "text-embedding-3-large",
             "dimension": self.embedding_generator.get_embedding_dimension(),
         }
-    
+
     def retrieve(
         self,
         query: str,
@@ -92,7 +93,7 @@ class RAGRetriever:
             NoResultsException: If no results above threshold
         """
         top_k = top_k or self.config.top_k
-        threshold = threshold or self.config.similarity_threshold
+        threshold = self.config.similarity_threshold if threshold is None else threshold
         
         try:
             # Normalize KB IDs
@@ -112,6 +113,7 @@ class RAGRetriever:
                     raise InvalidKBException(f"Knowledge base '{kb_id}' not found")
             
             current_embedding = self.get_current_embedding_metadata()
+            self.last_effective_threshold = threshold
             for kb_id in kb_ids:
                 kb = self.kb_manager.get_kb(kb_id)
                 if not kb:

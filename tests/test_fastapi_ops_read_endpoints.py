@@ -347,6 +347,9 @@ def _patch_available_models(monkeypatch) -> None:
             {"name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "types": ["embeddings"]},
             {"name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "types": ["embeddings"]},
         ],
+        "qwen": [
+            {"name": "text-embedding-v3", "display_name": "Qwen Text Embedding V3", "types": ["embeddings"]},
+        ],
         "mistral": [
             {"name": "mistral-small-latest", "display_name": "Mistral Small Latest", "types": ["catalog", "chatbot"]},
         ],

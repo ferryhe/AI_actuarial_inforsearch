@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from functools import lru_cache
 
+from ai_actuarial.rag.defaults import (
+    get_embedding_batch_size_default,
+    get_similarity_threshold_default,
+)
+
 logger = logging.getLogger(__name__)
 
 # Configuration cache version for invalidation
@@ -188,6 +193,10 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
         "mathpix": ("mathpix", "mathpix"),
     }
     ocr_provider, ocr_model = engine_provider_model.get(default_engine, ("local", default_engine or "docling"))
+    embedding_provider = os.getenv("RAG_EMBEDDING_PROVIDER", "openai")
+    embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large")
+    embedding_batch_size_default = get_embedding_batch_size_default(embedding_provider, embedding_model)
+    similarity_threshold_default = get_similarity_threshold_default(embedding_provider, embedding_model)
 
     return {
         "catalog": {
@@ -197,10 +206,10 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
             "timeout_seconds": _safe_int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"),
         },
         "embeddings": {
-            "provider": os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
-            "model": os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-            "batch_size": _safe_int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "64"), "RAG_EMBEDDING_BATCH_SIZE"),
-            "similarity_threshold": _safe_float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.4"), "RAG_SIMILARITY_THRESHOLD"),
+            "provider": embedding_provider,
+            "model": embedding_model,
+            "batch_size": embedding_batch_size_default,
+            "similarity_threshold": similarity_threshold_default,
         },
         "chatbot": {
             "provider": os.getenv("CHATBOT_LLM_PROVIDER", "openai"),

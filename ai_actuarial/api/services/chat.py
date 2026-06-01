@@ -816,7 +816,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 normalized_kb_ids = modules["router"].QueryRouter(storage, config).select_kb(message)
             try:
                 chunks = retriever.retrieve(message, normalized_kb_ids)
+                used_threshold = getattr(retriever, "last_effective_threshold", used_threshold)
             except exceptions.NoResultsException:
+                used_threshold = getattr(retriever, "last_effective_threshold", used_threshold)
                 no_results = True
                 chunks = []
             except exceptions.EmbeddingConfigurationMismatchException as exc:

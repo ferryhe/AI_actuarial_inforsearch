@@ -72,6 +72,162 @@ class TestRagRuntime(unittest.TestCase):
         self.assertTrue(config.credential_configured)
         self.assertEqual(config.credential_error, "")
 
+    def test_rag_config_uses_yaml_qwen_batch_size_without_hidden_cap(self):
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "batch_size": 64,
+                }
+            }
+        }
+
+        config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
+
+        self.assertEqual(config.embedding_provider, "qwen")
+        self.assertEqual(config.embedding_batch_size_configured, 64)
+        self.assertEqual(config.embedding_batch_size, 64)
+        self.assertEqual(config.embedding_config_source, "sites.yaml")
+        self.assertEqual(config.embedding_batch_size_limit_reason, "")
+
+    def test_rag_config_from_env_ignores_embedding_batch_size_override(self):
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
+        os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+        os.environ["RAG_EMBEDDING_BATCH_SIZE"] = "64"
+
+        config = RAGConfig.from_env()
+
+        self.assertEqual(config.embedding_provider, "qwen")
+        self.assertEqual(config.embedding_batch_size_configured, 10)
+        self.assertEqual(config.embedding_batch_size, 10)
+        self.assertEqual(config.embedding_config_source, "env")
+
+    def test_rag_config_keeps_explicit_qwen_similarity_threshold_from_yaml(self):
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "batch_size": 10,
+                    "similarity_threshold": 0.4,
+                }
+            }
+        }
+
+        config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
+
+        self.assertEqual(config.similarity_threshold_configured, 0.4)
+        self.assertEqual(config.similarity_threshold, 0.4)
+        self.assertEqual(config.similarity_threshold_limit_reason, "")
+
+    def test_rag_config_defaults_qwen_similarity_threshold_from_yaml(self):
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "batch_size": 10,
+                }
+            }
+        }
+
+        config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
+
+        self.assertEqual(config.similarity_threshold_configured, 0.02)
+        self.assertEqual(config.similarity_threshold, 0.02)
+        self.assertEqual(config.similarity_threshold_limit_reason, "")
+
+    def test_rag_config_env_similarity_threshold_does_not_override_yaml(self):
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-large",
+                    "batch_size": 10,
+                    "similarity_threshold": 0.55,
+                }
+            }
+        }
+        os.environ["RAG_SIMILARITY_THRESHOLD"] = "0.62"
+
+        config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
+
+        self.assertEqual(config.similarity_threshold_configured, 0.55)
+        self.assertEqual(config.similarity_threshold, 0.55)
+
+    def test_rag_config_defaults_qwen_similarity_threshold_from_env(self):
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
+        os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+
+        config = RAGConfig.from_env()
+
+        self.assertEqual(config.similarity_threshold_configured, 0.02)
+        self.assertEqual(config.similarity_threshold, 0.02)
+        self.assertEqual(config.similarity_threshold_limit_reason, "")
+
+    def test_rag_config_from_env_ignores_similarity_threshold_override(self):
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
+        os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+        os.environ["RAG_SIMILARITY_THRESHOLD"] = "0.4"
+
+        config = RAGConfig.from_env()
+
+        self.assertEqual(config.similarity_threshold_configured, 0.02)
+        self.assertEqual(config.similarity_threshold, 0.02)
+        self.assertEqual(config.embedding_config_source, "env")
+
+    def test_rag_config_keeps_openai_similarity_threshold(self):
+        config = RAGConfig(
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            similarity_threshold=0.4,
+        )
+
+        self.assertEqual(config.similarity_threshold_configured, 0.4)
+        self.assertEqual(config.similarity_threshold, 0.4)
+        self.assertEqual(config.similarity_threshold_limit_reason, "")
+
+    def test_rag_config_keeps_other_qwen_similarity_threshold(self):
+        config = RAGConfig(
+            embedding_provider="qwen",
+            embedding_model="qwen3-vl-embedding",
+            similarity_threshold=0.4,
+        )
+
+        self.assertEqual(config.similarity_threshold_configured, 0.4)
+        self.assertEqual(config.similarity_threshold, 0.4)
+        self.assertEqual(config.similarity_threshold_limit_reason, "")
+
+    def test_rag_config_rejects_invalid_configured_qwen_similarity_threshold(self):
+        config = RAGConfig(
+            embedding_provider="qwen",
+            embedding_model="text-embedding-v3",
+            similarity_threshold=1.5,
+            api_key="runtime-key",
+            credential_configured=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "similarity_threshold must be between 0 and 1"):
+            config.validate()
+
+    def test_rag_config_keeps_other_qwen_models_uncapped(self):
+        config = RAGConfig(
+            embedding_provider="qwen",
+            embedding_model="qwen3-vl-embedding",
+            embedding_batch_size=64,
+        )
+
+        self.assertEqual(config.embedding_batch_size_configured, 64)
+        self.assertEqual(config.embedding_batch_size, 64)
+        self.assertEqual(config.embedding_batch_size_limit_reason, "")
+
+    def test_rag_config_keeps_non_qwen_batch_size(self):
+        config = RAGConfig(embedding_provider="openai", embedding_batch_size=64)
+
+        self.assertEqual(config.embedding_batch_size_configured, 64)
+        self.assertEqual(config.embedding_batch_size, 64)
+
     def test_rag_config_from_env_uses_provider_default_base_url(self):
         os.environ["RAG_EMBEDDING_PROVIDER"] = "siliconflow"
         os.environ["SILICONFLOW_API_KEY"] = "env-siliconflow-key"
@@ -102,6 +258,29 @@ class TestRagRuntime(unittest.TestCase):
             timeout=45,
         )
         self.assertIsNotNone(generator.openai_client)
+
+    @patch("ai_actuarial.rag.embeddings.OpenAI")
+    def test_qwen_embedding_generator_uses_configured_model_default_batch_size(self, mock_openai):
+        config = RAGConfig(
+            embedding_provider="qwen",
+            embedding_model="text-embedding-v3",
+            embedding_batch_size=10,
+            embedding_cache_enabled=False,
+            api_key="runtime-key",
+        )
+        generator = EmbeddingGenerator(config)
+        texts = [f"chunk-{i}" for i in range(25)]
+
+        with patch.object(
+            generator,
+            "_generate_openai_batch_with_retry",
+            side_effect=lambda batch: [[float(len(batch))] for _ in batch],
+        ) as mock_batch:
+            result = generator.generate_embeddings(texts)
+
+        self.assertEqual([len(call.args[0]) for call in mock_batch.call_args_list], [10, 10, 5])
+        self.assertEqual(len(result), 25)
+        mock_openai.assert_called_once()
 
     def test_embedding_generator_missing_key_reports_runtime_context(self):
         config = RAGConfig(
