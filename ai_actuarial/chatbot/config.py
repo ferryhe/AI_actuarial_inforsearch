@@ -15,6 +15,7 @@ from ai_actuarial.ai_runtime import (
     is_chat_provider_supported,
     resolve_ai_function_runtime,
 )
+from ai_actuarial.rag.defaults import DEFAULT_RAG_SIMILARITY_THRESHOLD
 
 
 def _safe_int(value: Any, key: str, default: int) -> int:
@@ -50,7 +51,7 @@ class ChatbotConfig:
 
     # Retrieval Settings
     top_k: int = 5
-    similarity_threshold: float = 0.4
+    similarity_threshold: float = DEFAULT_RAG_SIMILARITY_THRESHOLD
     min_results: int = 1
 
     # Conversation Settings
@@ -150,7 +151,7 @@ class ChatbotConfig:
             similarity_threshold=_safe_float(
                 os.getenv("RAG_SIMILARITY_THRESHOLD"),
                 "RAG_SIMILARITY_THRESHOLD",
-                0.4,
+                DEFAULT_RAG_SIMILARITY_THRESHOLD,
             ),
             min_results=_safe_int(os.getenv("CHATBOT_MIN_RESULTS"), "CHATBOT_MIN_RESULTS", 1),
             max_messages=_safe_int(os.getenv("CHATBOT_MAX_MESSAGES"), "CHATBOT_MAX_MESSAGES", 20),
@@ -194,6 +195,12 @@ class ChatbotConfig:
     ) -> "ChatbotConfig":
         """Create configuration from sites.yaml ai_config.chatbot."""
         section = get_ai_function_section("chatbot", yaml_config=yaml_config)
+        embeddings_section = get_ai_function_section("embeddings", yaml_config=yaml_config)
+        embeddings_threshold = _safe_float(
+            embeddings_section.get("similarity_threshold"),
+            "embeddings.similarity_threshold",
+            DEFAULT_RAG_SIMILARITY_THRESHOLD,
+        )
         runtime = resolve_ai_function_runtime("chatbot", storage=storage, yaml_config=yaml_config)
 
         try:
@@ -209,7 +216,7 @@ class ChatbotConfig:
                 similarity_threshold=_safe_float(
                     section.get("similarity_threshold"),
                     "chatbot.similarity_threshold",
-                    0.4,
+                    embeddings_threshold,
                 ),
                 min_results=_safe_int(section.get("min_results"), "chatbot.min_results", 1),
                 max_messages=_safe_int(section.get("max_messages"), "chatbot.max_messages", 20),

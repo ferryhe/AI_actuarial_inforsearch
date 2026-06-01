@@ -142,6 +142,67 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.model, "deepseek-chat")
         self.assertEqual(config.temperature, 0.5)
     
+    def test_from_yaml_uses_embeddings_similarity_threshold_fallback(self):
+        """Chat retrieval should honor the existing embeddings threshold setting."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-large",
+                    "similarity_threshold": 0.55,
+                },
+                "chatbot": {
+                    "provider": "openai",
+                    "model": "gpt-4-turbo",
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+
+        config = ChatbotConfig.from_yaml(yaml_config)
+
+        self.assertEqual(config.similarity_threshold, 0.55)
+
+    def test_from_yaml_chatbot_similarity_threshold_overrides_embeddings(self):
+        """Explicit chatbot threshold wins over embeddings fallback."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-large",
+                    "similarity_threshold": 0.55,
+                },
+                "chatbot": {
+                    "provider": "openai",
+                    "model": "gpt-4-turbo",
+                    "similarity_threshold": 0.45,
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+
+        config = ChatbotConfig.from_yaml(yaml_config)
+
+        self.assertEqual(config.similarity_threshold, 0.45)
+
+    def test_chat_retrieval_caps_qwen_text_embedding_v3_threshold(self):
+        self.assertEqual(
+            RAGRetriever._apply_embedding_similarity_threshold_limit(
+                0.4,
+                "qwen",
+                "text-embedding-v3",
+            ),
+            0.03,
+        )
+        self.assertEqual(
+            RAGRetriever._apply_embedding_similarity_threshold_limit(
+                0.4,
+                "openai",
+                "text-embedding-3-large",
+            ),
+            0.4,
+        )
+
     def test_validation_success(self):
         """Test successful configuration validation."""
         config = ChatbotConfig(api_key="test-key")

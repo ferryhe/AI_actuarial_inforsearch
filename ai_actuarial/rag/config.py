@@ -22,7 +22,9 @@ from ai_actuarial.ai_runtime import (
 )
 from ai_actuarial.rag.defaults import (
     DEFAULT_RAG_EMBEDDING_BATCH_SIZE,
+    DEFAULT_RAG_SIMILARITY_THRESHOLD,
     get_embedding_batch_size_limit,
+    get_similarity_threshold_limit,
 )
 
 
@@ -51,7 +53,9 @@ class RAGConfig:
     embedding_batch_size_limit_reason: str = ""
 
     # Vector store configuration
-    similarity_threshold: float = 0.4
+    similarity_threshold: float = DEFAULT_RAG_SIMILARITY_THRESHOLD
+    similarity_threshold_configured: float | None = None
+    similarity_threshold_limit_reason: str = ""
     index_type: str = "Flat"
 
     # API configuration
@@ -94,6 +98,24 @@ class RAGConfig:
                 self.embedding_batch_size_limit_reason,
             )
 
+        if self.similarity_threshold_configured is None:
+            self.similarity_threshold_configured = self.similarity_threshold
+
+        threshold_limit = get_similarity_threshold_limit(provider, model)
+        if threshold_limit is not None and self.similarity_threshold > threshold_limit:
+            configured_threshold = self.similarity_threshold
+            self.similarity_threshold = threshold_limit
+            self.similarity_threshold_limit_reason = f"provider_model_limit:{provider}:{model}"
+            logger.warning(
+                "Similarity threshold configured=%s effective=%s provider='%s' model='%s' source='%s' reason='%s'.",
+                configured_threshold,
+                self.similarity_threshold,
+                provider,
+                model,
+                self.embedding_config_source,
+                self.similarity_threshold_limit_reason,
+            )
+
     @classmethod
     def from_env(cls) -> "RAGConfig":
         """Create configuration from environment variables."""
@@ -132,7 +154,7 @@ class RAGConfig:
             embedding_batch_size=int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", str(DEFAULT_RAG_EMBEDDING_BATCH_SIZE))),
             embedding_cache_enabled=os.getenv("RAG_EMBEDDING_CACHE_ENABLED", "true").lower() == "true",
             embedding_config_source="env",
-            similarity_threshold=float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.4")),
+            similarity_threshold=float(os.getenv("RAG_SIMILARITY_THRESHOLD", str(DEFAULT_RAG_SIMILARITY_THRESHOLD))),
             index_type=os.getenv("RAG_INDEX_TYPE", "Flat"),
             api_key=api_key,
             api_base_url=api_base_url,
@@ -245,7 +267,7 @@ class RAGConfig:
                 similarity_threshold=safe_float(
                     section.get("similarity_threshold"),
                     "ai_config.embeddings.similarity_threshold",
-                    0.4,
+                    DEFAULT_RAG_SIMILARITY_THRESHOLD,
                 ),
                 index_type=str(rag_cfg.get("index_type", "Flat")),
                 api_key=api_key,
@@ -324,4 +346,9 @@ class RAGConfig:
             raise ValueError("max_chunk_tokens must be greater than min_chunk_tokens")
 
         if not 0 <= self.similarity_threshold <= 1:
+            raise ValueError("similarity_threshold must be between 0 and 1")
+        if (
+            self.similarity_threshold_configured is not None
+            and not 0 <= self.similarity_threshold_configured <= 1
+        ):
             raise ValueError("similarity_threshold must be between 0 and 1")
