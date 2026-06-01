@@ -23,9 +23,8 @@ from ai_actuarial.ai_runtime import (
 from ai_actuarial.rag.defaults import (
     DEFAULT_RAG_EMBEDDING_BATCH_SIZE,
     DEFAULT_RAG_SIMILARITY_THRESHOLD,
-    get_embedding_batch_size_limit,
+    get_embedding_batch_size_default,
     get_similarity_threshold_default,
-    get_similarity_threshold_limit,
 )
 
 
@@ -78,44 +77,11 @@ class RAGConfig:
     data_dir: str = "data/rag"
 
     def __post_init__(self) -> None:
-        """Apply provider/model-specific runtime safety limits."""
-        provider = str(self.embedding_provider or "").strip().lower()
-        model = str(self.embedding_model or "").strip()
+        """Record configured values without applying hidden runtime overrides."""
         if self.embedding_batch_size_configured is None:
             self.embedding_batch_size_configured = self.embedding_batch_size
-
-        batch_size_limit = get_embedding_batch_size_limit(provider, model)
-        if batch_size_limit is not None and self.embedding_batch_size > batch_size_limit:
-            configured_batch_size = self.embedding_batch_size
-            self.embedding_batch_size = batch_size_limit
-            self.embedding_batch_size_limit_reason = f"provider_model_limit:{provider}:{model}"
-            logger.warning(
-                "Embedding batch_size configured=%s effective=%s provider='%s' model='%s' source='%s' reason='%s'.",
-                configured_batch_size,
-                self.embedding_batch_size,
-                provider,
-                model,
-                self.embedding_config_source,
-                self.embedding_batch_size_limit_reason,
-            )
-
         if self.similarity_threshold_configured is None:
             self.similarity_threshold_configured = self.similarity_threshold
-
-        threshold_limit = get_similarity_threshold_limit(provider, model)
-        if threshold_limit is not None and self.similarity_threshold > threshold_limit:
-            configured_threshold = self.similarity_threshold
-            self.similarity_threshold = threshold_limit
-            self.similarity_threshold_limit_reason = f"provider_model_limit:{provider}:{model}"
-            logger.warning(
-                "Similarity threshold configured=%s effective=%s provider='%s' model='%s' source='%s' reason='%s'.",
-                configured_threshold,
-                self.similarity_threshold,
-                provider,
-                model,
-                self.embedding_config_source,
-                self.similarity_threshold_limit_reason,
-            )
 
     @classmethod
     def from_env(cls) -> "RAGConfig":
@@ -144,6 +110,7 @@ class RAGConfig:
             credential_configured = False
             credential_error = "env_api_key_missing"
         embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large")
+        batch_size_default = get_embedding_batch_size_default(provider, embedding_model)
         threshold_default = get_similarity_threshold_default(provider, embedding_model)
         return cls(
             chunk_strategy=os.getenv("RAG_CHUNK_STRATEGY", "semantic_structure"),
@@ -154,10 +121,10 @@ class RAGConfig:
             include_hierarchy=os.getenv("RAG_INCLUDE_HIERARCHY", "true").lower() == "true",
             embedding_provider=provider,
             embedding_model=embedding_model,
-            embedding_batch_size=int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", str(DEFAULT_RAG_EMBEDDING_BATCH_SIZE))),
+            embedding_batch_size=batch_size_default,
             embedding_cache_enabled=os.getenv("RAG_EMBEDDING_CACHE_ENABLED", "true").lower() == "true",
             embedding_config_source="env",
-            similarity_threshold=float(os.getenv("RAG_SIMILARITY_THRESHOLD", str(threshold_default))),
+            similarity_threshold=threshold_default,
             index_type=os.getenv("RAG_INDEX_TYPE", "Flat"),
             api_key=api_key,
             api_base_url=api_base_url,
@@ -227,13 +194,14 @@ class RAGConfig:
         try:
             api_key = str(runtime.api_key or "").strip()
             api_base_url = str(runtime.base_url or "").strip()
-            threshold_from_env = os.getenv("RAG_SIMILARITY_THRESHOLD")
+            batch_size_default = get_embedding_batch_size_default(
+                runtime.provider,
+                runtime.model or "text-embedding-3-large",
+            )
             threshold_default = get_similarity_threshold_default(
                 runtime.provider,
                 runtime.model or "text-embedding-3-large",
             )
-            threshold_value = threshold_from_env if threshold_from_env not in (None, "") else section.get("similarity_threshold")
-            threshold_key = "RAG_SIMILARITY_THRESHOLD" if threshold_from_env not in (None, "") else "ai_config.embeddings.similarity_threshold"
             return cls(
                 chunk_strategy=str(rag_cfg.get("chunk_strategy", "semantic_structure")),
                 max_chunk_tokens=safe_int(
@@ -266,7 +234,7 @@ class RAGConfig:
                 embedding_batch_size=safe_int(
                     section.get("batch_size"),
                     "ai_config.embeddings.batch_size",
-                    DEFAULT_RAG_EMBEDDING_BATCH_SIZE,
+                    batch_size_default,
                 ),
                 embedding_cache_enabled=safe_bool(
                     section.get("cache_enabled"),
@@ -275,8 +243,8 @@ class RAGConfig:
                 ),
                 embedding_config_source="sites.yaml",
                 similarity_threshold=safe_float(
-                    threshold_value,
-                    threshold_key,
+                    section.get("similarity_threshold"),
+                    "ai_config.embeddings.similarity_threshold",
                     threshold_default,
                 ),
                 index_type=str(rag_cfg.get("index_type", "Flat")),

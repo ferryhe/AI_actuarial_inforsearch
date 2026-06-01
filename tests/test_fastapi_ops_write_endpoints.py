@@ -915,6 +915,40 @@ def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(tmp_pat
     assert kb["usable"] is False
 
 
+def test_ai_routing_embedding_model_selection_persists_model_defaults(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {
+                    "function_name": "embeddings",
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "batch_size": 64,
+                    "similarity_threshold": 0.4,
+                },
+            ]
+        },
+        headers=headers,
+    )
+
+    assert routing_update.status_code == 200, routing_update.text
+    embeddings_binding = next(item for item in routing_update.json()["bindings"] if item["function_name"] == "embeddings")
+    assert embeddings_binding["embedding_batch_size_default"] == 10
+    assert embeddings_binding["similarity_threshold_default"] == 0.02
+
+    config_data = yaml.safe_load(Path(os.environ["CONFIG_PATH"]).read_text(encoding="utf-8"))
+    embeddings_config = config_data["ai_config"]["embeddings"]
+    assert embeddings_config["provider"] == "qwen"
+    assert embeddings_config["model"] == "text-embedding-v3"
+    assert embeddings_config["batch_size"] == 10
+    assert embeddings_config["similarity_threshold"] == 0.02
+
+
 def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)

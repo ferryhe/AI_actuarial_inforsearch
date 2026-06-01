@@ -238,6 +238,21 @@ class TestYAMLConfigLoader:
             assert ai_config["chatbot"]["model"] == "test-chatbot"
             assert ai_config["chatbot"]["temperature"] == 0.9
             assert ai_config["chatbot"]["max_tokens"] == 2000
+
+    def test_extract_ai_config_from_env_uses_embedding_model_defaults(self):
+        """Legacy env extraction ignores direct size/threshold overrides."""
+        with patch.dict(os.environ, {
+            'RAG_EMBEDDING_PROVIDER': 'qwen',
+            'RAG_EMBEDDING_MODEL': 'text-embedding-v3',
+            'RAG_EMBEDDING_BATCH_SIZE': '64',
+            'RAG_SIMILARITY_THRESHOLD': '0.4',
+        }, clear=False):
+            ai_config = _extract_ai_config_from_env()
+
+            assert ai_config["embeddings"]["provider"] == "qwen"
+            assert ai_config["embeddings"]["model"] == "text-embedding-v3"
+            assert ai_config["embeddings"]["batch_size"] == 10
+            assert ai_config["embeddings"]["similarity_threshold"] == 0.02
     
     def test_extract_rag_config_from_env(self):
         """Test extracting RAG config from environment variables."""

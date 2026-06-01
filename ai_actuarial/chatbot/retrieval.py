@@ -14,7 +14,6 @@ from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_p
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.embeddings import EmbeddingGenerator
 from ai_actuarial.rag.vector_store import VectorStore
-from ai_actuarial.rag.defaults import get_similarity_threshold_limit
 from ai_actuarial.storage import Storage
 from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.exceptions import (
@@ -66,30 +65,6 @@ class RAGRetriever:
             "dimension": self.embedding_generator.get_embedding_dimension(),
         }
 
-    @staticmethod
-    def _apply_embedding_similarity_threshold_limit(
-        threshold: float,
-        provider: str,
-        model: str,
-    ) -> float:
-        """Apply provider/model-specific threshold caps for chat retrieval."""
-        limit = get_similarity_threshold_limit(provider, model)
-        if limit is None or threshold <= limit:
-            return threshold
-
-        normalized_provider = str(provider or "").strip().lower()
-        normalized_model = str(model or "").strip()
-        logger.warning(
-            "Chat retrieval similarity threshold configured=%s effective=%s provider='%s' model='%s' reason='provider_model_limit:%s:%s'.",
-            threshold,
-            limit,
-            normalized_provider,
-            normalized_model,
-            normalized_provider,
-            normalized_model,
-        )
-        return limit
-    
     def retrieve(
         self,
         query: str,
@@ -138,11 +113,6 @@ class RAGRetriever:
                     raise InvalidKBException(f"Knowledge base '{kb_id}' not found")
             
             current_embedding = self.get_current_embedding_metadata()
-            threshold = self._apply_embedding_similarity_threshold_limit(
-                threshold,
-                current_embedding["provider"],
-                current_embedding["model"],
-            )
             self.last_effective_threshold = threshold
             for kb_id in kb_ids:
                 kb = self.kb_manager.get_kb(kb_id)

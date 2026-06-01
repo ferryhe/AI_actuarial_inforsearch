@@ -16,10 +16,7 @@ from ai_actuarial.ai_runtime import (
     is_chat_provider_supported,
     resolve_ai_function_runtime,
 )
-from ai_actuarial.rag.defaults import (
-    DEFAULT_RAG_SIMILARITY_THRESHOLD,
-    get_similarity_threshold_default,
-)
+from ai_actuarial.rag.defaults import DEFAULT_RAG_SIMILARITY_THRESHOLD, get_similarity_threshold_default
 
 
 logger = logging.getLogger(__name__)
@@ -41,13 +38,6 @@ def _safe_float(value: Any, key: str, default: float) -> float:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid value for {key}: {value!r}. Expected float.") from exc
-
-
-def _env_embedding_similarity_threshold_default() -> float:
-    return get_similarity_threshold_default(
-        os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
-        os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-    )
 
 
 @dataclass
@@ -130,14 +120,6 @@ class ChatbotConfig:
         self.temperature = float(os.getenv("CHATBOT_TEMPERATURE", str(self.temperature)))
         self.max_tokens = int(os.getenv("CHATBOT_MAX_TOKENS", str(self.max_tokens)))
         self.top_k = int(os.getenv("CHATBOT_TOP_K", str(self.top_k)))
-        threshold_default = (
-            _env_embedding_similarity_threshold_default()
-            if self.similarity_threshold == DEFAULT_RAG_SIMILARITY_THRESHOLD
-            else self.similarity_threshold
-        )
-        self.similarity_threshold = float(
-            os.getenv("RAG_SIMILARITY_THRESHOLD", str(threshold_default))
-        )
 
     @classmethod
     def from_env(cls) -> "ChatbotConfig":
@@ -167,11 +149,7 @@ class ChatbotConfig:
             ) or get_provider_default_base_url(provider),
             _apply_env_defaults=False,
             top_k=_safe_int(os.getenv("CHATBOT_TOP_K"), "CHATBOT_TOP_K", 5),
-            similarity_threshold=_safe_float(
-                os.getenv("RAG_SIMILARITY_THRESHOLD"),
-                "RAG_SIMILARITY_THRESHOLD",
-                _env_embedding_similarity_threshold_default(),
-            ),
+            similarity_threshold=DEFAULT_RAG_SIMILARITY_THRESHOLD,
             min_results=_safe_int(os.getenv("CHATBOT_MIN_RESULTS"), "CHATBOT_MIN_RESULTS", 1),
             max_messages=_safe_int(os.getenv("CHATBOT_MAX_MESSAGES"), "CHATBOT_MAX_MESSAGES", 20),
             max_context_tokens=_safe_int(
@@ -216,12 +194,9 @@ class ChatbotConfig:
         section = get_ai_function_section("chatbot", yaml_config=yaml_config)
         embeddings_section = get_ai_function_section("embeddings", yaml_config=yaml_config)
         embedding_runtime = resolve_ai_function_runtime("embeddings", storage=storage, yaml_config=yaml_config)
-        threshold_from_env = os.getenv("RAG_SIMILARITY_THRESHOLD")
-        threshold_value = threshold_from_env if threshold_from_env not in (None, "") else embeddings_section.get("similarity_threshold")
-        threshold_key = "RAG_SIMILARITY_THRESHOLD" if threshold_from_env not in (None, "") else "embeddings.similarity_threshold"
         embeddings_threshold = _safe_float(
-            threshold_value,
-            threshold_key,
+            embeddings_section.get("similarity_threshold"),
+            "embeddings.similarity_threshold",
             get_similarity_threshold_default(
                 embedding_runtime.provider,
                 embedding_runtime.model or "text-embedding-3-large",
@@ -230,7 +205,7 @@ class ChatbotConfig:
         if section.get("similarity_threshold") not in (None, ""):
             logger.warning(
                 "ai_config.chatbot.similarity_threshold is deprecated and ignored; "
-                "set ai_config.embeddings.similarity_threshold or RAG_SIMILARITY_THRESHOLD instead."
+                "set ai_config.embeddings.similarity_threshold instead."
             )
         runtime = resolve_ai_function_runtime("chatbot", storage=storage, yaml_config=yaml_config)
 
@@ -302,7 +277,7 @@ class ChatbotConfig:
             except (FileNotFoundError, OSError):
                 config = cls.from_env()
             else:
-                if "ai_config" in yaml_config and "chatbot" in yaml_config.get("ai_config", {}):
+                if "ai_config" in yaml_config:
                     config = cls.from_yaml(yaml_config, storage=storage)
                 else:
                     config = cls.from_env()

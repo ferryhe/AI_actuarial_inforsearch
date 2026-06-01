@@ -692,8 +692,13 @@ def get_ai_routing(*, storage: Any | None = None, yaml_config: Mapping[str, Any]
             "raw_config": runtime.raw_config,
         }
         if function_name == "embeddings":
+            from ai_actuarial.rag.defaults import get_embedding_model_defaults
+
+            defaults = get_embedding_model_defaults(runtime.provider, runtime.model)
             binding["embedding_dimension"] = infer_embedding_dimension(runtime.model)
             binding["embedding_fingerprint"] = build_embedding_fingerprint(runtime.provider, runtime.model)
+            binding["embedding_batch_size_default"] = defaults.batch_size
+            binding["similarity_threshold_default"] = defaults.similarity_threshold
         bindings.append(binding)
     return {"bindings": bindings}
 

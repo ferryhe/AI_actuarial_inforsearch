@@ -27,7 +27,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ai_actuarial.rag.defaults import DEFAULT_RAG_EMBEDDING_BATCH_SIZE
+from ai_actuarial.rag.defaults import (
+    get_embedding_batch_size_default,
+    get_similarity_threshold_default,
+)
 
 
 def get_bool_env(key: str, default: str = "false") -> bool:
@@ -71,6 +74,10 @@ def extract_ai_config() -> dict:
             "mathpix": ("mathpix", "mathpix"),
         }
         ocr_provider, ocr_model = engine_provider_model.get(default_engine, ("local", default_engine or "docling"))
+        embedding_provider = os.getenv("RAG_EMBEDDING_PROVIDER", "openai")
+        embedding_model = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large")
+        embedding_batch_size_default = get_embedding_batch_size_default(embedding_provider, embedding_model)
+        similarity_threshold_default = get_similarity_threshold_default(embedding_provider, embedding_model)
 
         return {
             "catalog": {
@@ -80,13 +87,10 @@ def extract_ai_config() -> dict:
                 "timeout_seconds": get_int_env("OPENAI_TIMEOUT_SECONDS", "60"),
             },
             "embeddings": {
-                "provider": os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
-                "model": os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-                "batch_size": get_int_env(
-                    "RAG_EMBEDDING_BATCH_SIZE",
-                    str(DEFAULT_RAG_EMBEDDING_BATCH_SIZE),
-                ),
-                "similarity_threshold": get_float_env("RAG_SIMILARITY_THRESHOLD", "0.4"),
+                "provider": embedding_provider,
+                "model": embedding_model,
+                "batch_size": embedding_batch_size_default,
+                "similarity_threshold": similarity_threshold_default,
                 "cache_enabled": get_bool_env("RAG_EMBEDDING_CACHE_ENABLED", "true"),
             },
             "chatbot": {

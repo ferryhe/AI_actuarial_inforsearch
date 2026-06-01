@@ -42,6 +42,7 @@ from ai_actuarial.shared_runtime import (
     serialize_backend_settings,
 )
 from ai_actuarial.config import settings
+from ai_actuarial.rag.defaults import get_embedding_model_defaults
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
 from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
@@ -1243,6 +1244,11 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
                 raise OpsWriteError(f"Model for binding '{binding_name}' must be non-empty")
             _validate_ai_routing_model(binding_name, provider_norm, model)
             section["model"] = model
+        if binding_name == "embeddings":
+            model = str(section.get("model") or "").strip()
+            defaults = get_embedding_model_defaults(provider_norm, model)
+            section["batch_size"] = defaults.batch_size
+            section["similarity_threshold"] = defaults.similarity_threshold
         if binding_name in {"chat", "catalog"}:
             for field in ["temperature", "max_tokens", "timeout_seconds"]:
                 if field in item and item.get(field) not in (None, ""):

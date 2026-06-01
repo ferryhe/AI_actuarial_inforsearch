@@ -89,7 +89,7 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.temperature, 0.5)
         self.assertEqual(config.max_tokens, 500)
         self.assertEqual(config.top_k, 3)
-        self.assertEqual(config.similarity_threshold, 0.6)
+        self.assertEqual(config.similarity_threshold, 0.4)
 
     def test_from_env_uses_provider_specific_api_key(self):
         """Provider-specific chatbot env config should not require OpenAI."""
@@ -142,22 +142,23 @@ class TestChatbotConfig(unittest.TestCase):
         self.assertEqual(config.model, "deepseek-chat")
         self.assertEqual(config.temperature, 0.5)
     
-    def test_from_env_qwen_similarity_threshold_defaults_to_provider_value(self):
+    def test_from_env_uses_static_default_threshold_without_embedding_env_fallback(self):
         os.environ["OPENAI_API_KEY"] = "test-key"
         os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
         os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+        os.environ["RAG_SIMILARITY_THRESHOLD"] = "0.02"
 
         config = ChatbotConfig.from_env()
 
-        self.assertEqual(config.similarity_threshold, 0.02)
+        self.assertEqual(config.similarity_threshold, 0.4)
 
-    def test_direct_init_qwen_similarity_threshold_defaults_to_provider_value(self):
+    def test_direct_init_uses_static_default_threshold_without_embedding_env_fallback(self):
         os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
         os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
 
         config = ChatbotConfig()
 
-        self.assertEqual(config.similarity_threshold, 0.02)
+        self.assertEqual(config.similarity_threshold, 0.4)
 
     def test_from_yaml_uses_embeddings_similarity_threshold_fallback(self):
         """Chat retrieval should honor the existing embeddings threshold setting."""
@@ -224,8 +225,26 @@ class TestChatbotConfig(unittest.TestCase):
 
         self.assertEqual(config.similarity_threshold, 0.02)
 
-    def test_from_yaml_env_similarity_threshold_overrides_embeddings(self):
-        """RAG_SIMILARITY_THRESHOLD stays the global override."""
+    def test_from_config_uses_embeddings_threshold_when_chatbot_section_missing(self):
+        """Runtime config still inherits embeddings when ai_config.chatbot is absent."""
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "similarity_threshold": 0.02,
+                },
+            }
+        }
+        os.environ["OPENAI_API_KEY"] = "openai-key-123"
+
+        with patch("config.yaml_config.load_yaml_config", return_value=yaml_config):
+            config = ChatbotConfig.from_config()
+
+        self.assertEqual(config.similarity_threshold, 0.02)
+
+    def test_from_yaml_env_similarity_threshold_does_not_override_embeddings(self):
+        """Embeddings config is the single threshold source for chat retrieval."""
         yaml_config = {
             "ai_config": {
                 "embeddings": {
@@ -244,25 +263,11 @@ class TestChatbotConfig(unittest.TestCase):
 
         config = ChatbotConfig.from_yaml(yaml_config)
 
-        self.assertEqual(config.similarity_threshold, 0.62)
+        self.assertEqual(config.similarity_threshold, 0.55)
 
-    def test_chat_retrieval_caps_qwen_text_embedding_v3_threshold(self):
-        self.assertEqual(
-            RAGRetriever._apply_embedding_similarity_threshold_limit(
-                0.4,
-                "qwen",
-                "text-embedding-v3",
-            ),
-            0.02,
-        )
-        self.assertEqual(
-            RAGRetriever._apply_embedding_similarity_threshold_limit(
-                0.4,
-                "openai",
-                "text-embedding-3-large",
-            ),
-            0.4,
-        )
+    def test_chat_retrieval_uses_configured_similarity_threshold(self):
+        config = ChatbotConfig(similarity_threshold=0.4, _apply_env_defaults=False)
+        self.assertEqual(config.similarity_threshold, 0.4)
 
     def test_validation_success(self):
         """Test successful configuration validation."""
