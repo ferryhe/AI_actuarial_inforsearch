@@ -17,7 +17,11 @@ EMBEDDING_BATCH_SIZE_LIMITS: dict[tuple[str, str], int] = {
 # codebase's L2-derived scoring path, so the OpenAI-oriented 0.4 threshold can
 # filter every otherwise-useful result.
 SIMILARITY_THRESHOLD_LIMITS: dict[tuple[str, str], float] = {
-    ("qwen", "text-embedding-v3"): 0.03,
+    ("qwen", "text-embedding-v3"): 0.02,
+}
+
+SIMILARITY_THRESHOLD_DEFAULTS: dict[tuple[str, str], float] = {
+    ("qwen", "text-embedding-v3"): 0.02,
 }
 
 
@@ -33,3 +37,11 @@ def get_embedding_batch_size_limit(provider: str, model: str) -> int | None:
 def get_similarity_threshold_limit(provider: str, model: str) -> float | None:
     """Return the max similarity threshold for a provider/model pair, if known."""
     return SIMILARITY_THRESHOLD_LIMITS.get(_normalize_provider_model(provider, model))
+
+
+def get_similarity_threshold_default(provider: str, model: str) -> float:
+    """Return the default similarity threshold for a provider/model pair."""
+    return SIMILARITY_THRESHOLD_DEFAULTS.get(
+        _normalize_provider_model(provider, model),
+        DEFAULT_RAG_SIMILARITY_THRESHOLD,
+    )

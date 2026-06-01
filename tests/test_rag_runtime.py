@@ -125,12 +125,57 @@ class TestRagRuntime(unittest.TestCase):
             config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
 
         self.assertEqual(config.similarity_threshold_configured, 0.4)
-        self.assertEqual(config.similarity_threshold, 0.03)
+        self.assertEqual(config.similarity_threshold, 0.02)
         self.assertEqual(
             config.similarity_threshold_limit_reason,
             "provider_model_limit:qwen:text-embedding-v3",
         )
-        self.assertIn("Similarity threshold configured=0.4 effective=0.03", "\n".join(logs.output))
+        self.assertIn("Similarity threshold configured=0.4 effective=0.02", "\n".join(logs.output))
+
+    def test_rag_config_defaults_qwen_similarity_threshold_from_yaml(self):
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "batch_size": 10,
+                }
+            }
+        }
+
+        config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
+
+        self.assertEqual(config.similarity_threshold_configured, 0.02)
+        self.assertEqual(config.similarity_threshold, 0.02)
+        self.assertEqual(config.similarity_threshold_limit_reason, "")
+
+    def test_rag_config_env_similarity_threshold_overrides_yaml(self):
+        yaml_config = {
+            "ai_config": {
+                "embeddings": {
+                    "provider": "openai",
+                    "model": "text-embedding-3-large",
+                    "batch_size": 10,
+                    "similarity_threshold": 0.55,
+                }
+            }
+        }
+        os.environ["RAG_SIMILARITY_THRESHOLD"] = "0.62"
+
+        config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
+
+        self.assertEqual(config.similarity_threshold_configured, 0.62)
+        self.assertEqual(config.similarity_threshold, 0.62)
+
+    def test_rag_config_defaults_qwen_similarity_threshold_from_env(self):
+        os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
+        os.environ["RAG_EMBEDDING_MODEL"] = "text-embedding-v3"
+
+        config = RAGConfig.from_env()
+
+        self.assertEqual(config.similarity_threshold_configured, 0.02)
+        self.assertEqual(config.similarity_threshold, 0.02)
+        self.assertEqual(config.similarity_threshold_limit_reason, "")
 
     def test_rag_config_caps_qwen_similarity_threshold_from_env(self):
         os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
@@ -140,7 +185,7 @@ class TestRagRuntime(unittest.TestCase):
         config = RAGConfig.from_env()
 
         self.assertEqual(config.similarity_threshold_configured, 0.4)
-        self.assertEqual(config.similarity_threshold, 0.03)
+        self.assertEqual(config.similarity_threshold, 0.02)
         self.assertEqual(config.embedding_config_source, "env")
 
     def test_rag_config_keeps_openai_similarity_threshold(self):
