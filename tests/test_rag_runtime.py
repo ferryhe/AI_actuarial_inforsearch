@@ -87,8 +87,15 @@ class TestRagRuntime(unittest.TestCase):
             config = RAGConfig.from_yaml(yaml_config, storage=self.storage)
 
         self.assertEqual(config.embedding_provider, "qwen")
+        self.assertEqual(config.embedding_batch_size_configured, 64)
         self.assertEqual(config.embedding_batch_size, 10)
-        self.assertIn("capped to 10", "\n".join(logs.output))
+        self.assertEqual(config.embedding_config_source, "sites.yaml")
+        self.assertEqual(
+            config.embedding_batch_size_limit_reason,
+            "provider_model_limit:qwen:text-embedding-v3",
+        )
+        self.assertIn("configured=64 effective=10", "\n".join(logs.output))
+        self.assertIn("source='sites.yaml'", "\n".join(logs.output))
 
     def test_rag_config_caps_qwen_batch_size_from_env(self):
         os.environ["RAG_EMBEDDING_PROVIDER"] = "qwen"
@@ -98,16 +105,25 @@ class TestRagRuntime(unittest.TestCase):
         config = RAGConfig.from_env()
 
         self.assertEqual(config.embedding_provider, "qwen")
+        self.assertEqual(config.embedding_batch_size_configured, 64)
         self.assertEqual(config.embedding_batch_size, 10)
+        self.assertEqual(config.embedding_config_source, "env")
 
-    def test_rag_config_caps_dashscope_batch_size_from_constructor_default(self):
-        config = RAGConfig(embedding_provider="dashscope", embedding_model="text-embedding-v3")
+    def test_rag_config_keeps_other_qwen_models_uncapped(self):
+        config = RAGConfig(
+            embedding_provider="qwen",
+            embedding_model="qwen3-vl-embedding",
+            embedding_batch_size=64,
+        )
 
-        self.assertEqual(config.embedding_batch_size, 10)
+        self.assertEqual(config.embedding_batch_size_configured, 64)
+        self.assertEqual(config.embedding_batch_size, 64)
+        self.assertEqual(config.embedding_batch_size_limit_reason, "")
 
-    def test_rag_config_keeps_non_dashscope_batch_size(self):
+    def test_rag_config_keeps_non_qwen_batch_size(self):
         config = RAGConfig(embedding_provider="openai", embedding_batch_size=64)
 
+        self.assertEqual(config.embedding_batch_size_configured, 64)
         self.assertEqual(config.embedding_batch_size, 64)
 
     def test_rag_config_from_env_uses_provider_default_base_url(self):

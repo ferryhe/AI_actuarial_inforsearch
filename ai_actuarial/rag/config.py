@@ -20,10 +20,13 @@ from ai_actuarial.ai_runtime import (
     is_embedding_provider_supported,
     resolve_ai_function_runtime,
 )
+from ai_actuarial.rag.defaults import (
+    DEFAULT_RAG_EMBEDDING_BATCH_SIZE,
+    get_embedding_batch_size_limit,
+)
 
 
 logger = logging.getLogger(__name__)
-DASHSCOPE_EMBEDDING_BATCH_SIZE_LIMIT = 10
 
 
 @dataclass
@@ -41,8 +44,11 @@ class RAGConfig:
     # Embedding configuration
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-large"
-    embedding_batch_size: int = 64
+    embedding_batch_size: int = DEFAULT_RAG_EMBEDDING_BATCH_SIZE
     embedding_cache_enabled: bool = True
+    embedding_config_source: str = "default"
+    embedding_batch_size_configured: int | None = None
+    embedding_batch_size_limit_reason: str = ""
 
     # Vector store configuration
     similarity_threshold: float = 0.4
@@ -67,19 +73,25 @@ class RAGConfig:
     data_dir: str = "data/rag"
 
     def __post_init__(self) -> None:
-        """Apply provider-specific runtime safety limits."""
+        """Apply provider/model-specific runtime safety limits."""
         provider = str(self.embedding_provider or "").strip().lower()
-        if (
-            provider in {"qwen", "dashscope"}
-            and self.embedding_batch_size > DASHSCOPE_EMBEDDING_BATCH_SIZE_LIMIT
-        ):
+        model = str(self.embedding_model or "").strip()
+        if self.embedding_batch_size_configured is None:
+            self.embedding_batch_size_configured = self.embedding_batch_size
+
+        batch_size_limit = get_embedding_batch_size_limit(provider, model)
+        if batch_size_limit is not None and self.embedding_batch_size > batch_size_limit:
             configured_batch_size = self.embedding_batch_size
-            self.embedding_batch_size = DASHSCOPE_EMBEDDING_BATCH_SIZE_LIMIT
+            self.embedding_batch_size = batch_size_limit
+            self.embedding_batch_size_limit_reason = f"provider_model_limit:{provider}:{model}"
             logger.warning(
-                "Embedding batch_size %s exceeds provider '%s' limit; capped to %s.",
+                "Embedding batch_size configured=%s effective=%s provider='%s' model='%s' source='%s' reason='%s'.",
                 configured_batch_size,
-                provider,
                 self.embedding_batch_size,
+                provider,
+                model,
+                self.embedding_config_source,
+                self.embedding_batch_size_limit_reason,
             )
 
     @classmethod
@@ -117,8 +129,9 @@ class RAGConfig:
             include_hierarchy=os.getenv("RAG_INCLUDE_HIERARCHY", "true").lower() == "true",
             embedding_provider=provider,
             embedding_model=os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-            embedding_batch_size=int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "64")),
+            embedding_batch_size=int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", str(DEFAULT_RAG_EMBEDDING_BATCH_SIZE))),
             embedding_cache_enabled=os.getenv("RAG_EMBEDDING_CACHE_ENABLED", "true").lower() == "true",
+            embedding_config_source="env",
             similarity_threshold=float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.4")),
             index_type=os.getenv("RAG_INDEX_TYPE", "Flat"),
             api_key=api_key,
@@ -221,13 +234,14 @@ class RAGConfig:
                 embedding_batch_size=safe_int(
                     section.get("batch_size"),
                     "ai_config.embeddings.batch_size",
-                    64,
+                    DEFAULT_RAG_EMBEDDING_BATCH_SIZE,
                 ),
                 embedding_cache_enabled=safe_bool(
                     section.get("cache_enabled"),
                     "ai_config.embeddings.cache_enabled",
                     True,
                 ),
+                embedding_config_source="sites.yaml",
                 similarity_threshold=safe_float(
                     section.get("similarity_threshold"),
                     "ai_config.embeddings.similarity_threshold",

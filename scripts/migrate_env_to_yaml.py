@@ -23,6 +23,12 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ai_actuarial.rag.defaults import DEFAULT_RAG_EMBEDDING_BATCH_SIZE
+
 
 def get_bool_env(key: str, default: str = "false") -> bool:
     """Get boolean value from environment."""
@@ -76,7 +82,10 @@ def extract_ai_config() -> dict:
             "embeddings": {
                 "provider": os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
                 "model": os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-                "batch_size": get_int_env("RAG_EMBEDDING_BATCH_SIZE", "64"),
+                "batch_size": get_int_env(
+                    "RAG_EMBEDDING_BATCH_SIZE",
+                    str(DEFAULT_RAG_EMBEDDING_BATCH_SIZE),
+                ),
                 "similarity_threshold": get_float_env("RAG_SIMILARITY_THRESHOLD", "0.4"),
                 "cache_enabled": get_bool_env("RAG_EMBEDDING_CACHE_ENABLED", "true"),
             },

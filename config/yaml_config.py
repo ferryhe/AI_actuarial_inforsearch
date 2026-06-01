@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from functools import lru_cache
 
+from ai_actuarial.rag.defaults import DEFAULT_RAG_EMBEDDING_BATCH_SIZE
+
 logger = logging.getLogger(__name__)
 
 # Configuration cache version for invalidation
@@ -199,7 +201,10 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
         "embeddings": {
             "provider": os.getenv("RAG_EMBEDDING_PROVIDER", "openai"),
             "model": os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-large"),
-            "batch_size": _safe_int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "64"), "RAG_EMBEDDING_BATCH_SIZE"),
+            "batch_size": _safe_int(
+                os.getenv("RAG_EMBEDDING_BATCH_SIZE", str(DEFAULT_RAG_EMBEDDING_BATCH_SIZE)),
+                "RAG_EMBEDDING_BATCH_SIZE",
+            ),
             "similarity_threshold": _safe_float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.4"), "RAG_SIMILARITY_THRESHOLD"),
         },
         "chatbot": {
