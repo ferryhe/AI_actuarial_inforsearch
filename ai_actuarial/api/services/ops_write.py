@@ -1187,9 +1187,12 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
         section = config_data["ai_config"].get(section_name) or {}
         if not isinstance(section, dict):
             section = {}
-        provider_norm = str(section.get("provider") or "").strip().lower()
+        old_provider = str(section.get("provider") or "").strip().lower()
+        old_model = str(section.get("model") or "").strip()
+        provider_norm = old_provider
         provider = item.get("provider")
         provider_changed = False
+        model_changed = False
         if provider is not None:
             provider_norm = str(provider).strip().lower()
             if provider_norm and provider_norm not in AI_SUPPORTED_PROVIDERS:
@@ -1200,10 +1203,12 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support catalog binding")
             if binding_name == "embeddings" and provider_norm and not is_embedding_provider_supported(provider_norm):
                 raise OpsWriteError(f"Provider '{provider_norm}' does not support embeddings binding")
-            provider_changed = provider_norm != str(section.get("provider") or "").strip().lower()
+            provider_changed = provider_norm != old_provider
             section["provider"] = provider_norm
             if provider_changed:
                 section.pop("credential_id", None)
+        if binding_name == "embeddings" and provider_changed and "model" not in item:
+            raise OpsWriteError("Model is required when changing embeddings provider")
         if "credential_id" in item:
             credential_id = str(item.get("credential_id") or "").strip()
             if credential_id:
@@ -1243,8 +1248,9 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
             if not model:
                 raise OpsWriteError(f"Model for binding '{binding_name}' must be non-empty")
             _validate_ai_routing_model(binding_name, provider_norm, model)
+            model_changed = model != old_model
             section["model"] = model
-        if binding_name == "embeddings":
+        if binding_name == "embeddings" and (provider_changed or model_changed):
             model = str(section.get("model") or "").strip()
             defaults = get_embedding_model_defaults(provider_norm, model)
             section["batch_size"] = defaults.batch_size

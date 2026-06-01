@@ -16,10 +16,10 @@ class EmbeddingModelDefaults:
     similarity_threshold: float = DEFAULT_RAG_SIMILARITY_THRESHOLD
 
 
-# Embedding runtime knobs are model properties. Keep provider/model-specific
-# values here so changing the embeddings binding updates both indexing and chat
-# retrieval consistently. UI/config migration code can persist these defaults
-# when an embedding model is selected; code remains the source of truth.
+# Embedding runtime knobs are model-aware defaults. Keep provider/model-specific
+# values here so model-selection writes consistent indexing and chat retrieval
+# defaults into ai_config.embeddings. Runtime code reads ai_config.embeddings as
+# the single source of truth.
 EMBEDDING_MODEL_DEFAULTS: dict[tuple[str, str], EmbeddingModelDefaults] = {
     ("qwen", "text-embedding-v3"): EmbeddingModelDefaults(
         batch_size=10,

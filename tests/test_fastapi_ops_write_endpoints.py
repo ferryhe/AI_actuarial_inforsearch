@@ -949,6 +949,209 @@ def test_ai_routing_embedding_model_selection_persists_model_defaults(tmp_path: 
     assert embeddings_config["similarity_threshold"] == 0.02
 
 
+def test_ai_routing_embedding_credential_update_preserves_existing_runtime_knobs(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+
+    primary = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "qwen",
+            "instance_id": "primary",
+            "label": "Qwen Primary",
+            "api_key": "***",
+            "api_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        },
+        headers=headers,
+    )
+    assert primary.status_code == 200, primary.text
+    backup = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "qwen",
+            "instance_id": "backup",
+            "label": "Qwen Backup",
+            "api_key": "***",
+            "api_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        },
+        headers=headers,
+    )
+    assert backup.status_code == 200, backup.text
+
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["embeddings"] = {
+        "provider": "qwen",
+        "credential_id": primary.json()["stable_credential_id"],
+        "model": "text-embedding-v3",
+        "batch_size": 7,
+        "similarity_threshold": 0.03,
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {
+                    "function_name": "embeddings",
+                    "provider": "qwen",
+                    "credential_id": backup.json()["stable_credential_id"],
+                    "model": "text-embedding-v3",
+                },
+            ]
+        },
+        headers=headers,
+    )
+
+    assert routing_update.status_code == 200, routing_update.text
+    assert routing_update.json().get("rebuild_required") is not True
+    embeddings_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ai_config"]["embeddings"]
+    assert embeddings_config["credential_id"] == backup.json()["stable_credential_id"]
+    assert embeddings_config["batch_size"] == 7
+    assert embeddings_config["similarity_threshold"] == 0.03
+
+
+def test_ai_routing_embedding_credential_only_update_preserves_runtime_knobs(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+
+    backup = client.post(
+        "/api/config/provider-credentials",
+        json={
+            "provider_id": "qwen",
+            "instance_id": "backup",
+            "label": "Qwen Backup",
+            "api_key": "***",
+            "api_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        },
+        headers=headers,
+    )
+    assert backup.status_code == 200, backup.text
+
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["embeddings"] = {
+        "provider": "qwen",
+        "model": "text-embedding-v3",
+        "batch_size": 7,
+        "similarity_threshold": 0.03,
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={"bindings": [{"function_name": "embeddings", "credential_id": backup.json()["stable_credential_id"]}]},
+        headers=headers,
+    )
+
+    assert routing_update.status_code == 200, routing_update.text
+    assert routing_update.json().get("rebuild_required") is not True
+    embeddings_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ai_config"]["embeddings"]
+    assert embeddings_config["credential_id"] == backup.json()["stable_credential_id"]
+    assert embeddings_config["batch_size"] == 7
+    assert embeddings_config["similarity_threshold"] == 0.03
+
+
+def test_ai_routing_embedding_same_model_payload_ignores_request_runtime_knobs(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["embeddings"] = {
+        "provider": "qwen",
+        "model": "text-embedding-v3",
+        "batch_size": 7,
+        "similarity_threshold": 0.03,
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {
+                    "function_name": "embeddings",
+                    "provider": "qwen",
+                    "model": "text-embedding-v3",
+                    "batch_size": 64,
+                    "similarity_threshold": 0.4,
+                },
+            ]
+        },
+        headers=headers,
+    )
+
+    assert routing_update.status_code == 200, routing_update.text
+    embeddings_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ai_config"]["embeddings"]
+    assert embeddings_config["batch_size"] == 7
+    assert embeddings_config["similarity_threshold"] == 0.03
+
+
+def test_ai_routing_embedding_model_change_overwrites_stale_yaml_values(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["embeddings"] = {
+        "provider": "openai",
+        "model": "text-embedding-3-large",
+        "batch_size": 64,
+        "similarity_threshold": 0.4,
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "embeddings", "provider": "qwen", "model": "text-embedding-v3"},
+            ]
+        },
+        headers=headers,
+    )
+
+    assert routing_update.status_code == 200, routing_update.text
+    embeddings_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ai_config"]["embeddings"]
+    assert embeddings_config["provider"] == "qwen"
+    assert embeddings_config["model"] == "text-embedding-v3"
+    assert embeddings_config["batch_size"] == 10
+    assert embeddings_config["similarity_threshold"] == 0.02
+
+
+def test_ai_routing_embedding_provider_change_requires_model(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_data.setdefault("ai_config", {})["embeddings"] = {
+        "provider": "openai",
+        "model": "text-embedding-3-large",
+        "batch_size": 64,
+        "similarity_threshold": 0.4,
+    }
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={"bindings": [{"function_name": "embeddings", "provider": "qwen"}]},
+        headers=headers,
+    )
+
+    assert routing_update.status_code == 400
+    assert "Model is required when changing embeddings provider" in routing_update.text
+    embeddings_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ai_config"]["embeddings"]
+    assert embeddings_config["provider"] == "openai"
+    assert embeddings_config["model"] == "text-embedding-3-large"
+    assert embeddings_config["batch_size"] == 64
+    assert embeddings_config["similarity_threshold"] == 0.4
+
+
 def test_ai_routing_provider_change_clears_stale_credential_binding(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
