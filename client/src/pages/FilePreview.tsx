@@ -160,27 +160,15 @@ function loadPdfjsLib(): Promise<any> {
     const existing = (window as any).pdfjsLib;
     if (existing) { resolve(existing); return; }
     const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.src = "/vendor/pdfjs/pdf.min.js";
     script.onload = () => {
       const lib = (window as any).pdfjsLib;
       if (lib) {
-        lib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        lib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.js";
         resolve(lib);
       } else reject(new Error("pdfjsLib not found after script load"));
     };
-    script.onerror = () => {
-      const fallback = document.createElement("script");
-      fallback.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
-      fallback.onload = () => {
-        const lib2 = (window as any).pdfjsLib;
-        if (lib2) {
-          lib2.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
-          resolve(lib2);
-        } else reject(new Error("pdfjsLib not found after fallback load"));
-      };
-      fallback.onerror = () => reject(new Error("Failed to load PDF.js"));
-      document.head.appendChild(fallback);
-    };
+    script.onerror = () => reject(new Error("Failed to load PDF.js"));
     document.head.appendChild(script);
   }).catch((err) => {
     _pdfjsLibPromise = null;
