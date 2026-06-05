@@ -153,22 +153,30 @@ function PdfViewer({ fileUrl }: { fileUrl: string }) {
   );
 }
 
+const PDFJS_SCRIPT_URL = "/vendor/pdfjs/pdf.min.js";
+const PDFJS_WORKER_URL = "/vendor/pdfjs/pdf.worker.min.js";
+
 let _pdfjsLibPromise: Promise<any> | null = null;
 function loadPdfjsLib(): Promise<any> {
   if (_pdfjsLibPromise) return _pdfjsLibPromise;
   _pdfjsLibPromise = new Promise((resolve, reject) => {
+    const configureAndResolve = (lib: any) => {
+      lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      resolve(lib);
+    };
+
     const existing = (window as any).pdfjsLib;
-    if (existing) { resolve(existing); return; }
+    if (existing) { configureAndResolve(existing); return; }
+
     const script = document.createElement("script");
-    script.src = "/vendor/pdfjs/pdf.min.js";
+    script.src = PDFJS_SCRIPT_URL;
     script.onload = () => {
       const lib = (window as any).pdfjsLib;
       if (lib) {
-        lib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.min.js";
-        resolve(lib);
-      } else reject(new Error("pdfjsLib not found after script load"));
+        configureAndResolve(lib);
+      } else reject(new Error(`pdfjsLib not found after loading ${PDFJS_SCRIPT_URL}`));
     };
-    script.onerror = () => reject(new Error("Failed to load PDF.js"));
+    script.onerror = () => reject(new Error(`Failed to load PDF.js from ${PDFJS_SCRIPT_URL}`));
     document.head.appendChild(script);
   }).catch((err) => {
     _pdfjsLibPromise = null;
