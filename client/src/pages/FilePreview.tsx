@@ -153,34 +153,30 @@ function PdfViewer({ fileUrl }: { fileUrl: string }) {
   );
 }
 
+const PDFJS_SCRIPT_URL = "/vendor/pdfjs/pdf.min.js";
+const PDFJS_WORKER_URL = "/vendor/pdfjs/pdf.worker.min.js";
+
 let _pdfjsLibPromise: Promise<any> | null = null;
 function loadPdfjsLib(): Promise<any> {
   if (_pdfjsLibPromise) return _pdfjsLibPromise;
   _pdfjsLibPromise = new Promise((resolve, reject) => {
+    const configureAndResolve = (lib: any) => {
+      lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      resolve(lib);
+    };
+
     const existing = (window as any).pdfjsLib;
-    if (existing) { resolve(existing); return; }
+    if (existing) { configureAndResolve(existing); return; }
+
     const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.src = PDFJS_SCRIPT_URL;
     script.onload = () => {
       const lib = (window as any).pdfjsLib;
       if (lib) {
-        lib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-        resolve(lib);
-      } else reject(new Error("pdfjsLib not found after script load"));
+        configureAndResolve(lib);
+      } else reject(new Error(`pdfjsLib not found after loading ${PDFJS_SCRIPT_URL}`));
     };
-    script.onerror = () => {
-      const fallback = document.createElement("script");
-      fallback.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
-      fallback.onload = () => {
-        const lib2 = (window as any).pdfjsLib;
-        if (lib2) {
-          lib2.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
-          resolve(lib2);
-        } else reject(new Error("pdfjsLib not found after fallback load"));
-      };
-      fallback.onerror = () => reject(new Error("Failed to load PDF.js"));
-      document.head.appendChild(fallback);
-    };
+    script.onerror = () => reject(new Error(`Failed to load PDF.js from ${PDFJS_SCRIPT_URL}`));
     document.head.appendChild(script);
   }).catch((err) => {
     _pdfjsLibPromise = null;
