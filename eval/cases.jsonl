@@ -1,0 +1,36 @@
+# Eval cases for Agentic RAG retrieval quality (PR0 baseline).
+#
+# Each line is a JSON object with:
+#   case_id             - unique identifier
+#   query               - natural language query
+#   expected_doc_ids    - file URLs / doc_ids that should appear in top results
+#   expected_categories - categories results should match
+#   min_hits            - minimum expected_doc_ids required (default 1)
+#   top_k               - number of results to retrieve (default 5)
+#   notes               - human-readable explanation
+#
+# Category-only cases (no expected_doc_ids, with expected_categories):
+#   The evaluator requires at least 1 category hit to pass.
+#   Place cases that cannot yet match any category with empty expected_categories
+#   and min_hits=0 — they document unsupported features without failing.
+#
+{"case_id": "locate_soa_bulletin", "query": "SOA actuarial intelligence bulletin", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 5, "notes": "Exact document lookup by well-known publication name"}
+{"case_id": "locate_ppc_grille", "query": "Grille PPC Institut des Actuaires", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "French actuarial document lookup — may or may not be indexed"}
+{"case_id": "category_filter_ai", "query": "artificial intelligence in actuarial work", "expected_doc_ids": [], "expected_categories": ["AI"], "min_hits": 0, "top_k": 5, "notes": "Category-only: any AI-category result counts as a category hit. Tests category-based retrieval works."}
+{"case_id": "empty_query", "query": "", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Empty query should return empty results gracefully"}
+{"case_id": "chinese_query_actuarial", "query": "精算师 人工智能 公告", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Chinese-language query — simple keyword retriever cannot match Chinese to English metadata. Placeholder for cross-lingual retrieval."}
+{"case_id": "exact_pdf_filename", "query": "2025-03-ai-bulletin.pdf", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Filename lookup — simple retriever does NOT search file_url. Will pass when search_titles uses URL-based matching in PR3."}
+{"case_id": "keyword_bulletin", "query": "bulletin", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 5, "notes": "Single keyword retrieval — baseline precision"}
+{"case_id": "nonexistent_topic", "query": "quantum computing insurance pricing models 2099", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Query with no matching documents — should return empty, not hallucinate"}
+{"case_id": "multi_term_actuarial_ai", "query": "actuarial AI machine learning risk", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Multi-term query — current DB has no matching AI catalog items for these specific English terms. Placeholder for richer indexing."}
+{"case_id": "short_query_soa", "query": "SOA", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 5, "notes": "Very short query matching source field SOA in catalog metadata"}
+{"case_id": "regulation_locate", "query": "偿付能力监管规则 寿险", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Chinese regulation query — placeholder for when regulation docs are indexed (PR4)"}
+{"case_id": "formula_math_reserve", "query": "mathematical reserve formula life insurance", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Formula-oriented query — placeholder for L2 formula manifest (PR6)"}
+{"case_id": "case_insensitive_bulletin", "query": "BULLETIN", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 5, "notes": "Case-insensitive matching"}
+{"case_id": "partial_word_bullet", "query": "bullet", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 5, "notes": "Substring matching on 'bullet' -> 'bulletin'"}
+{"case_id": "source_site_soa", "query": "Society of Actuaries", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Organization name lookup — simple retriever does NOT search source_site. Will pass with doc_catalog / search_summaries in PR3."}
+{"case_id": "top_k_1_bulletin", "query": "bulletin", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 1, "notes": "Top-1 retrieval test: most relevant document should be first"}
+{"case_id": "top_k_10_bulletin", "query": "bulletin", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 10, "notes": "Wider top-k: document should still appear"}
+{"case_id": "special_chars_query", "query": "research-report/2025", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "URL path segment query — word-split does NOT parse URL segments. Will pass with file_url-aware retrieval."}
+{"case_id": "native_file_locate", "query": "native local import", "expected_doc_ids": [], "expected_categories": [], "min_hits": 0, "top_k": 5, "notes": "Locally imported file — may or may not have catalog entry"}
+{"case_id": "multi_category_test", "query": "actuarial intelligence AI bulletin", "expected_doc_ids": ["https://www.soa.org/globalassets/assets/files/resources/research-report/2025/2025-03-ai-bulletin.pdf"], "expected_categories": ["AI"], "min_hits": 1, "top_k": 5, "notes": "Multiple relevant terms all pointing to same document"}
