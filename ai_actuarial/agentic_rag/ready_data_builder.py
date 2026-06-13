@@ -23,12 +23,22 @@ from typing import Any
 
 from .manifest_profiles import L0_GENERAL, PROFILES
 
+try:
+    from ai_actuarial.config import settings
+
+    _DB_PATH_FROM_SETTINGS = settings.DB_PATH
+except ImportError:
+    _DB_PATH_FROM_SETTINGS = None
+
 logger = logging.getLogger(__name__)
 
 
 def get_db_path() -> str:
-    """Resolve the SQLite DB path (same logic as config)."""
-    db_path = os.getenv("DB_PATH", "data/index.db")
+    """Resolve the SQLite DB path from settings, env, or default."""
+    if _DB_PATH_FROM_SETTINGS:
+        db_path = _DB_PATH_FROM_SETTINGS
+    else:
+        db_path = os.getenv("DB_PATH", "data/index.db")
     if not os.path.isabs(db_path):
         db_path = os.path.abspath(db_path)
     return db_path
@@ -110,7 +120,18 @@ def build_l0(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    profile_def = PROFILES.get(profile, L0_GENERAL)
+    if profile not in PROFILES:
+        raise ValueError(
+            f"Unknown profile {profile!r}. Use one of: {', '.join(PROFILES)}"
+        )
+    profile_def = PROFILES[profile]
+
+    # MVP only supports L0 general; fail fast for L1/L2
+    if profile != "general":
+        raise NotImplementedError(
+            f"Profile {profile!r} (L1/L2) is not yet implemented. "
+            f"Only 'general' (L0) is supported in this MVP."
+        )
     if output_dir is None:
         output_dir = os.path.join("data", "agentic_ready_data", profile, profile_def.version)
     os.makedirs(output_dir, exist_ok=True)
@@ -195,6 +216,7 @@ def build_l0(
             section_count += 1
 
     # ── 3. Build ready_data_manifest.json ─────────────────────────────────
+    profile_def_artifacts = profile_def.artifacts
     manifest = {
         "built_at": now_utc,
         "profile": profile,
@@ -202,7 +224,7 @@ def build_l0(
         "source_db": db_path,
         "doc_count": doc_count,
         "section_count": section_count,
-        "artifact_files": ["doc_catalog.jsonl", "sections.jsonl", "ready_data_manifest.json"],
+        "artifact_files": profile_def_artifacts,
         "schema_versions": {
             "doc_catalog_fields": DOC_CATALOG_FIELDS,
             "section_fields": SECTION_FIELDS,
@@ -222,10 +244,28 @@ def build_l0(
     return manifest
 
 
+def _safe_jsonl_load(file_path: str) -> tuple[list[dict], list[str]]:
+    """Load a JSONL file, returning parsed entries and parse-error line numbers."""
+    entries: list[dict] = []
+    errors: list[str] = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                errors.append(f"{os.path.basename(file_path)}:{i} invalid JSON")
+                if len(errors) > 3:
+                    break
+    return entries, errors
+
+
 def validate(output_dir: str) -> dict:
     """Validate built ready_data artifacts.
 
-    Checks: files exist, JSONL lines are valid JSON, required fields present,
+    Checks: files exist, JSONL lines are valid JSON,
     doc_id references consistent between catalog and sections.
     """
     errors: list[str] = []
@@ -236,8 +276,12 @@ def validate(output_dir: str) -> dict:
         errors.append(f"manifest not found: {manifest_path}")
         return {"valid": False, "errors": errors, "warnings": warnings}
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    except json.JSONDecodeError as e:
+        errors.append(f"ready_data_manifest.json: invalid JSON: {e}")
+        return {"valid": False, "errors": errors, "warnings": warnings}
 
     for artifact in manifest.get("artifact_files", []):
         path = os.path.join(output_dir, artifact)
@@ -271,21 +315,13 @@ def validate(output_dir: str) -> dict:
     doc_catalog_path = os.path.join(output_dir, "doc_catalog.jsonl")
     sections_path = os.path.join(output_dir, "sections.jsonl")
     if os.path.isfile(doc_catalog_path) and os.path.isfile(sections_path):
-        catalog_doc_ids: set[str] = set()
-        with open(doc_catalog_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                catalog_doc_ids.add(json.loads(line).get("doc_id", ""))
+        catalog_entries, cat_errors = _safe_jsonl_load(doc_catalog_path)
+        errors.extend(cat_errors)
+        catalog_doc_ids: set[str] = {e.get("doc_id", "") for e in catalog_entries}
 
-        section_doc_ids: set[str] = set()
-        with open(sections_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                section_doc_ids.add(json.loads(line).get("doc_id", ""))
+        section_entries, sec_errors = _safe_jsonl_load(sections_path)
+        errors.extend(sec_errors)
+        section_doc_ids: set[str] = {e.get("doc_id", "") for e in section_entries}
 
         orphan_sections = section_doc_ids - catalog_doc_ids
         if orphan_sections:
@@ -323,8 +359,8 @@ def main():
     parser.add_argument(
         "--profile",
         default="general",
-        choices=["general", "regulation", "formula"],
-        help="Manifest profile",
+        choices=["general"],
+        help="Manifest profile (only 'general' L0 supported in this MVP)",
     )
     parser.add_argument("--validate", action="store_true", help="Validate after build")
     args = parser.parse_args()
@@ -339,7 +375,7 @@ def main():
     if args.validate:
         result = validate(
             args.output_dir
-            or os.path.join("data", "agentic_ready_data", args.profile, "1")
+            or os.path.join("data", "agentic_ready_data", args.profile, L0_GENERAL.version)
         )
         status = "✅ valid" if result["valid"] else "❌ invalid"
         print(f"\nValidation: {status}")
