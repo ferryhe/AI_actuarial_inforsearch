@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -245,6 +246,8 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/rag/knowledge-bases" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/stats" in body["native_paths"]
+    assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest" in body["native_paths"]
+    assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files/{file_url:path}" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/categories" in body["native_paths"]
@@ -473,6 +476,231 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
     delete_kb = client.delete("/api/rag/knowledge-bases/kb-pr4-test")
     assert delete_kb.status_code == 200, delete_kb.text
 
+
+
+def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    alpha_url = seed["alpha_url"]
+    beta_url = seed["beta_url"]
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-agentic-manifest",
+            "name": "Agentic Manifest KB",
+            "kb_mode": "manual",
+            "file_urls": [alpha_url],
+            "manifest_profile": "general",
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    created_manifest = create_kb.json()["knowledge_base"]["agentic_ready_manifest"]
+    assert created_manifest["status"] == "missing"
+    assert created_manifest["fallback_mode"] == "standard"
+    assert create_kb.json()["knowledge_base"]["manifest_profile"] == "general"
+
+    status_before_build = client.get("/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest")
+    assert status_before_build.status_code == 200, status_before_build.text
+    assert status_before_build.json()["manifest"]["status"] == "missing"
+
+    build = client.post(
+        "/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest/build",
+        json={},
+    )
+    assert build.status_code == 200, build.text
+    manifest = build.json()["manifest"]
+    assert manifest["status"] == "ready"
+    assert manifest["usable"] is True
+    assert manifest["fallback_mode"] == "agentic"
+    assert manifest["doc_count"] == 1
+    output_dir = Path(manifest["output_dir"])
+    assert output_dir.is_dir()
+
+    catalog_rows = [
+        json.loads(line)
+        for line in (output_dir / "doc_catalog.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [row["file_url"] for row in catalog_rows] == [alpha_url]
+    assert beta_url not in {row["file_url"] for row in catalog_rows}
+
+    list_kbs = client.get("/api/rag/knowledge-bases")
+    assert list_kbs.status_code == 200, list_kbs.text
+    listed = next(item for item in list_kbs.json()["knowledge_bases"] if item["kb_id"] == "kb-agentic-manifest")
+    assert listed["agentic_ready_manifest"]["status"] == "ready"
+
+    add_beta = client.post(
+        "/api/rag/knowledge-bases/kb-agentic-manifest/files",
+        json={"file_urls": [beta_url]},
+    )
+    assert add_beta.status_code == 200, add_beta.text
+
+    stale = client.get("/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest")
+    assert stale.status_code == 200, stale.text
+    stale_manifest = stale.json()["manifest"]
+    assert stale_manifest["status"] == "stale"
+    assert stale_manifest["usable"] is False
+    assert stale_manifest["fallback_mode"] == "standard"
+    assert stale_manifest["stale_reason"]
+
+
+def test_fastapi_rag_admin_agentic_ready_manifest_records_unsupported_profile_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-regulation-manifest",
+            "name": "Regulation Manifest KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+            "manifest_profile": "regulation",
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    build = client.post(
+        "/api/rag/knowledge-bases/kb-regulation-manifest/agentic-ready-manifest/build",
+        json={},
+    )
+    assert build.status_code == 200, build.text
+    manifest = build.json()["manifest"]
+    assert manifest["profile"] == "regulation"
+    assert manifest["status"] == "failed"
+    assert manifest["usable"] is False
+    assert manifest["fallback_mode"] == "standard"
+    assert "not implemented" in manifest["error_message"]
+
+
+def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-output-dir-guard",
+            "name": "Output Dir Guard KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    ready_build = client.post(
+        "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
+        json={},
+    )
+    assert ready_build.status_code == 200, ready_build.text
+    ready_manifest = ready_build.json()["manifest"]
+    assert ready_manifest["status"] == "ready"
+
+    traversal = client.post(
+        "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
+        json={"output_dir": "../escape"},
+    )
+    assert traversal.status_code == 400
+    assert "output_dir" in traversal.json()["error"]
+
+    after_traversal = client.get("/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest")
+    assert after_traversal.status_code == 200, after_traversal.text
+    after_traversal_manifest = after_traversal.json()["manifest"]
+    assert after_traversal_manifest["status"] == "ready"
+    assert after_traversal_manifest["output_dir"] == ready_manifest["output_dir"]
+
+    absolute_outside = client.post(
+        "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
+        json={"output_dir": str(tmp_path.parent / "outside-agentic-ready-data")},
+    )
+    assert absolute_outside.status_code == 400
+    assert "output_dir" in absolute_outside.json()["error"]
+
+    after_absolute = client.get("/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest")
+    assert after_absolute.status_code == 200, after_absolute.text
+    after_absolute_manifest = after_absolute.json()["manifest"]
+    assert after_absolute_manifest["status"] == "ready"
+    assert after_absolute_manifest["output_dir"] == ready_manifest["output_dir"]
+
+
+def test_fastapi_rag_admin_agentic_manifest_stale_uses_bound_chunks_and_catalog_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = seed["alpha_url"]
+
+    storage = Storage(str(db_path))
+    try:
+        profile_one = storage.create_chunk_profile(
+            name="agentic-bound-profile",
+            chunk_size=300,
+            chunk_overlap=50,
+        )
+        profile_two = storage.create_chunk_profile(
+            name="agentic-unbound-profile",
+            chunk_size=301,
+            chunk_overlap=51,
+        )
+    finally:
+        storage.close()
+    _seed_ready_chunk_set(db_path, alpha_url, profile_one["profile_id"], text="Bound profile chunk")
+    _seed_ready_chunk_set(db_path, alpha_url, profile_two["profile_id"], text="Unbound profile chunk")
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-bound-manifest",
+            "name": "Bound Manifest KB",
+            "kb_mode": "manual",
+            "file_urls": [alpha_url],
+            "chunk_profile_id": profile_one["profile_id"],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    build = client.post(
+        "/api/rag/knowledge-bases/kb-bound-manifest/agentic-ready-manifest/build",
+        json={},
+    )
+    assert build.status_code == 200, build.text
+    manifest = build.json()["manifest"]
+    assert manifest["status"] == "ready"
+    section_text = (Path(manifest["output_dir"]) / "sections.jsonl").read_text(encoding="utf-8")
+    assert "Bound profile chunk" in section_text
+    assert "Unbound profile chunk" not in section_text
+
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE file_chunk_sets SET updated_at = ? WHERE profile_id = ?",
+            ("2099-01-01T00:00:00+00:00", profile_two["profile_id"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    still_ready = client.get("/api/rag/knowledge-bases/kb-bound-manifest/agentic-ready-manifest")
+    assert still_ready.status_code == 200, still_ready.text
+    assert still_ready.json()["manifest"]["status"] == "ready"
+
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET summary = ?, updated_at = ? WHERE file_url = ?",
+            ("Updated summary", "2099-01-02T00:00:00+00:00", alpha_url),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    stale = client.get("/api/rag/knowledge-bases/kb-bound-manifest/agentic-ready-manifest")
+    assert stale.status_code == 200, stale.text
+    assert stale.json()["manifest"]["status"] == "stale"
 
 
 def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkeypatch) -> None:

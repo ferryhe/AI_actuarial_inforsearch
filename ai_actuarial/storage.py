@@ -47,6 +47,7 @@ class Storage:
             "kb_chunk_bindings",
             "kb_index_versions",
             "kb_index_items",
+            "agentic_ready_manifests",
             "rag_knowledge_bases",
             "users",
             "user_quotas",
@@ -480,6 +481,29 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS agentic_ready_manifests (
+                manifest_id TEXT PRIMARY KEY,
+                kb_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                profile_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                output_dir TEXT,
+                artifact_files_json TEXT,
+                doc_count INTEGER NOT NULL DEFAULT 0,
+                section_count INTEGER NOT NULL DEFAULT 0,
+                built_at TEXT,
+                source_db TEXT,
+                schema_versions_json TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(kb_id, profile),
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_file_url
             ON file_chunk_sets(file_url)
             """
@@ -512,6 +536,12 @@ class Storage:
             """
             CREATE INDEX IF NOT EXISTS idx_kb_index_versions_kb_id
             ON kb_index_versions(kb_id)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_agentic_ready_manifests_kb_profile
+            ON agentic_ready_manifests(kb_id, profile)
             """
         )
         self._ensure_columns(
@@ -2780,6 +2810,139 @@ class Storage:
                 }
             )
         return out
+
+    def upsert_agentic_ready_manifest(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        profile_version: str,
+        status: str,
+        output_dir: str = "",
+        artifact_files: list[str] | None = None,
+        doc_count: int = 0,
+        section_count: int = 0,
+        built_at: str | None = None,
+        source_db: str = "",
+        schema_versions: dict[str, Any] | None = None,
+        error_message: str = "",
+    ) -> dict[str, Any]:
+        """Create or replace the latest Agentic ready-data manifest registry row."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        normalized_status = str(status or "missing").strip().lower() or "missing"
+        now = self._utcnow_iso()
+        existing = self._conn.execute(
+            """
+            SELECT manifest_id, created_at
+            FROM agentic_ready_manifests
+            WHERE kb_id = ? AND profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        manifest_id = existing[0] if existing else f"arm_{uuid.uuid4().hex}"
+        created_at = existing[1] if existing else now
+        artifact_files_json = json.dumps(artifact_files or [], ensure_ascii=False)
+        schema_versions_json = json.dumps(schema_versions or {}, ensure_ascii=False, sort_keys=True)
+        self._conn.execute(
+            """
+            INSERT INTO agentic_ready_manifests (
+                manifest_id, kb_id, profile, profile_version, status, output_dir,
+                artifact_files_json, doc_count, section_count, built_at, source_db,
+                schema_versions_json, error_message, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(kb_id, profile) DO UPDATE SET
+                profile_version = excluded.profile_version,
+                status = excluded.status,
+                output_dir = excluded.output_dir,
+                artifact_files_json = excluded.artifact_files_json,
+                doc_count = excluded.doc_count,
+                section_count = excluded.section_count,
+                built_at = excluded.built_at,
+                source_db = excluded.source_db,
+                schema_versions_json = excluded.schema_versions_json,
+                error_message = excluded.error_message,
+                updated_at = excluded.updated_at
+            """,
+            (
+                manifest_id,
+                kb_id,
+                normalized_profile,
+                str(profile_version or "1"),
+                normalized_status,
+                output_dir,
+                artifact_files_json,
+                int(doc_count or 0),
+                int(section_count or 0),
+                built_at,
+                source_db,
+                schema_versions_json,
+                error_message,
+                created_at,
+                now,
+            ),
+        )
+        self._maybe_commit()
+        return self.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile) or {}
+
+    def get_agentic_ready_manifest(self, *, kb_id: str, profile: str = "general") -> dict[str, Any] | None:
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = self._conn.execute(
+            """
+            SELECT manifest_id, kb_id, profile, profile_version, status, output_dir,
+                   artifact_files_json, doc_count, section_count, built_at, source_db,
+                   schema_versions_json, error_message, created_at, updated_at
+            FROM agentic_ready_manifests
+            WHERE kb_id = ? AND profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        if not row:
+            return None
+        return self._agentic_manifest_row_to_dict(row)
+
+    def list_agentic_ready_manifests(self, kb_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT manifest_id, kb_id, profile, profile_version, status, output_dir,
+                   artifact_files_json, doc_count, section_count, built_at, source_db,
+                   schema_versions_json, error_message, created_at, updated_at
+            FROM agentic_ready_manifests
+            WHERE kb_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (kb_id,),
+        ).fetchall()
+        return [self._agentic_manifest_row_to_dict(row) for row in rows]
+
+    def _agentic_manifest_row_to_dict(self, row: Any) -> dict[str, Any]:
+        try:
+            artifact_files = json.loads(row[6] or "[]")
+        except Exception:
+            artifact_files = []
+        try:
+            schema_versions = json.loads(row[11] or "{}")
+        except Exception:
+            schema_versions = {}
+        return {
+            "manifest_id": row[0],
+            "kb_id": row[1],
+            "profile": row[2],
+            "profile_version": row[3],
+            "status": row[4],
+            "output_dir": row[5] or "",
+            "artifact_files": artifact_files if isinstance(artifact_files, list) else [],
+            "doc_count": row[7] or 0,
+            "section_count": row[8] or 0,
+            "built_at": row[9],
+            "source_db": row[10] or "",
+            "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
+            "error_message": row[12] or "",
+            "created_at": row[13],
+            "updated_at": row[14],
+        }
 
     def create_kb_index_version(
         self,

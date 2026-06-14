@@ -46,6 +46,22 @@ interface KnowledgeBase {
     dimension?: number;
   };
   kb_mode?: string;
+  manifest_profile?: string;
+  agentic_ready_manifest?: AgenticReadyManifest;
+}
+
+interface AgenticReadyManifest {
+  kb_id: string;
+  profile: string;
+  status: "missing" | "ready" | "building" | "failed" | "stale";
+  usable: boolean;
+  output_dir?: string;
+  built_at?: string;
+  doc_count?: number;
+  section_count?: number;
+  error_message?: string;
+  stale_reason?: string;
+  fallback_mode?: string;
 }
 
 interface ChunkProfile {
@@ -89,6 +105,7 @@ const emptyKbForm = {
   file_urls: [] as string[],
   kb_mode: "manual",
   chunk_profile_id: "",
+  manifest_profile: "general",
 };
 
 const fadeUp = {
@@ -117,6 +134,64 @@ function StatusBadge({ status }: { status?: string }) {
       {status || "unknown"}
     </span>
   );
+}
+
+function getManifestStatusClass(status?: AgenticReadyManifest["status"]) {
+  switch (status) {
+    case "ready":
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "building":
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "failed":
+      return "bg-red-500/10 text-red-700 dark:text-red-300";
+    case "stale":
+      return "bg-orange-500/10 text-orange-700 dark:text-orange-300";
+    case "missing":
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
+type Translate = (key: string) => string;
+
+function formatTranslated(t: Translate, key: string, replacements: Record<string, string>) {
+  return Object.entries(replacements).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key));
+}
+
+function getManifestDetail(t: Translate, detail?: string | null) {
+  return detail ? formatTranslated(t, "knowledge.manifest_detail", { detail }) : "";
+}
+
+function getManifestFallbackMode(t: Translate, manifest?: AgenticReadyManifest) {
+  const fallback = manifest?.fallback_mode || "standard";
+  return fallback === "standard" ? t("knowledge.manifest_standard_fallback") : fallback;
+}
+
+function getManifestFallbackMessage(manifest: AgenticReadyManifest | undefined, t: Translate) {
+  const status = manifest?.status || "missing";
+  const fallback = getManifestFallbackMode(t, manifest);
+  if (status === "ready" && manifest?.usable) return "";
+  if (status === "building") return t("knowledge.manifest_building_message");
+  if (status === "failed") {
+    return formatTranslated(t, "knowledge.manifest_failed_fallback", {
+      detail: getManifestDetail(t, manifest?.error_message),
+      fallback,
+    });
+  }
+  if (status === "stale") {
+    return formatTranslated(t, "knowledge.manifest_stale_fallback", {
+      detail: getManifestDetail(t, manifest?.stale_reason),
+      fallback,
+    });
+  }
+  return formatTranslated(t, "knowledge.manifest_missing_fallback", { fallback });
+}
+
+function getManifestActionLabel(manifest: AgenticReadyManifest | undefined, t: Translate) {
+  const status = manifest?.status || "missing";
+  if (status === "ready" || status === "stale" || status === "failed") return t("knowledge.manifest_rebuild");
+  if (status === "building") return t("knowledge.manifest_building_action");
+  return t("knowledge.manifest_build");
 }
 
 function ModeBadge({ mode }: { mode?: string }) {
@@ -169,6 +244,7 @@ export default function Knowledge() {
   const [deleteProfileConfirm, setDeleteProfileConfirm] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [indexingKb, setIndexingKb] = useState<string | null>(null);
+  const [buildingManifestKb, setBuildingManifestKb] = useState<string | null>(null);
   const [currentEmbedding, setCurrentEmbedding] = useState<CurrentEmbedding | null>(null);
   const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
   const [selectableFiles, setSelectableFiles] = useState<SelectableFile[]>([]);
@@ -304,6 +380,7 @@ export default function Knowledge() {
         file_urls: kbForm.kb_mode === "manual" ? kbForm.file_urls : [],
         kb_mode: kbForm.kb_mode,
         chunk_profile_id: kbForm.chunk_profile_id,
+        manifest_profile: kbForm.manifest_profile,
       });
       let indexFailed = false;
       let indexErrorDetail = "";
@@ -371,6 +448,45 @@ export default function Knowledge() {
       setKbActionError(detail || t("knowledge.index_error"));
     } finally {
       setIndexingKb(null);
+    }
+  };
+
+  const handleBuildAgenticManifest = async (kbId: string) => {
+    setBuildingManifestKb(kbId);
+    setKbActionError(null);
+    setKbActionNotice(null);
+    try {
+      const res = await apiPost<{ manifest?: AgenticReadyManifest; validation?: { valid?: boolean; errors?: string[] } }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`,
+        {}
+      );
+      if (res.manifest) {
+        const manifest = res.manifest;
+        setKbs((current) =>
+          current.map((kb) =>
+            getKbId(kb) === kbId
+              ? {
+                  ...kb,
+                  manifest_profile: manifest.profile || kb.manifest_profile,
+                  agentic_ready_manifest: manifest,
+                }
+              : kb
+          )
+        );
+      }
+      const status = res.manifest?.status || "missing";
+      if (status === "ready" && res.validation?.valid !== false) {
+        setKbActionNotice(t("knowledge.manifest_build_completed"));
+      } else {
+        const detail = res.validation?.errors?.join("; ") || res.manifest?.error_message || res.manifest?.stale_reason || status;
+        setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", detail));
+      }
+    } catch (err) {
+      console.error("Failed to build agentic manifest:", err);
+      const detail = formatApiErrorDetail(err);
+      setKbActionError(detail || t("knowledge.manifest_build_failed"));
+    } finally {
+      setBuildingManifestKb(null);
     }
   };
 
@@ -628,6 +744,24 @@ export default function Knowledge() {
                 </select>
                 <p className="text-[10px] text-muted-foreground mt-1">{t("knowledge.chunk_profile_hint")}</p>
               </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  {t("knowledge.manifest_profile")}
+                </label>
+                <select
+                  value={kbForm.manifest_profile}
+                  onChange={(e) => setKbForm({ ...kbForm, manifest_profile: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  data-testid="select-kb-manifest-profile"
+                >
+                  <option value="general">{t("knowledge.manifest_profile_general")}</option>
+                  <option value="regulation">{t("knowledge.manifest_profile_regulation")}</option>
+                  <option value="formula">{t("knowledge.manifest_profile_formula")}</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {t("knowledge.manifest_profile_hint")}
+                </p>
+              </div>
               <div className="sm:col-span-2">
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.description")}
@@ -859,6 +993,11 @@ export default function Knowledge() {
             const kbId = getKbId(kb);
             const needsReembed = kb.needs_reindex || kb.embedding_compatible === false;
             const status = kb.availability || kb.status;
+            const manifest = kb.agentic_ready_manifest;
+            const manifestStatus = manifest?.status || "missing";
+            const manifestProfile = manifest?.profile || kb.manifest_profile || t("knowledge.manifest_default_profile");
+            const manifestMessage = getManifestFallbackMessage(manifest, t);
+            const manifestBusy = buildingManifestKb === kbId || manifestStatus === "building";
             const cardEmbeddingLabel = kb.current_embeddings?.model || currentEmbedding?.model || kb.embedding_model || "";
             return (
               <motion.div
@@ -897,6 +1036,50 @@ export default function Knowledge() {
                       {kb.embedding_model}
                     </p>
                   )}
+                  <div className="mt-3 rounded-lg border border-border bg-muted/20 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span
+                            className={cn(
+                              "inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full",
+                              getManifestStatusClass(manifestStatus)
+                            )}
+                            data-testid={`badge-agentic-manifest-${kbId}`}
+                          >
+                            {t("knowledge.manifest_label")} {manifestStatus}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-mono truncate">
+                            {manifestProfile}
+                          </span>
+                        </div>
+                        {manifestMessage && (
+                          <p
+                            className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground"
+                            data-testid={`message-agentic-manifest-${kbId}`}
+                          >
+                            {manifestMessage}
+                          </p>
+                        )}
+                      </div>
+                      {canRunKnowledgeTasks && (
+                        <button
+                          type="button"
+                          onClick={() => handleBuildAgenticManifest(kbId)}
+                          disabled={manifestBusy}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50 transition-colors"
+                          data-testid={`button-build-agentic-manifest-${kbId}`}
+                        >
+                          {buildingManifestKb === kbId ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className={cn("w-3.5 h-3.5", manifestStatus === "building" && "animate-spin")} />
+                          )}
+                          {buildingManifestKb === kbId ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, t)}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   {canRunKnowledgeTasks && needsReembed && (
                     <div
                       className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"

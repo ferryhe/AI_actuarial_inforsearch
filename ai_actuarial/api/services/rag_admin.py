@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Mapping
 
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
+from ai_actuarial.agentic_rag.manifest_profiles import PROFILES
 from ai_actuarial.config import settings
 from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage, _split_visible_categories
@@ -262,6 +264,7 @@ def _serialize_kb(kb: Any) -> dict[str, Any]:
         "description": kb.description,
         "kb_mode": kb.kb_mode,
         "chunk_profile_id": getattr(kb, "chunk_profile_id", "") or "",
+        "manifest_profile": getattr(kb, "manifest_profile", "general") or "general",
         "embedding_provider": getattr(kb, "embedding_provider", "openai"),
         "embedding_model": kb.embedding_model,
         "embedding_dimension": getattr(kb, "embedding_dimension", None),
@@ -305,6 +308,213 @@ def _decorate_kb_chunk_profile(storage: Storage, payload: dict[str, Any]) -> dic
         payload["chunk_profile_name"] = ""
     return payload
 
+
+
+def _manifest_profile(value: Any) -> str:
+    profile = _norm(value or "general").lower() or "general"
+    if profile not in PROFILES:
+        raise RagAdminError(f"manifest_profile must be one of: {', '.join(sorted(PROFILES))}")
+    return profile
+
+
+def _latest_iso(storage: Storage, *values: Any) -> str | None:
+    best_raw = ""
+    best_dt = None
+    for value in values:
+        raw = _norm(value)
+        if not raw:
+            continue
+        dt = storage._parse_iso_to_utc(raw)
+        if dt is None:
+            if best_dt is None and raw > best_raw:
+                best_raw = raw
+            continue
+        if best_dt is None or dt > best_dt:
+            best_dt = dt
+            best_raw = raw
+    return best_raw or None
+
+
+def _iso_after(storage: Storage, left: Any, right: Any) -> bool:
+    left_raw = _norm(left)
+    right_raw = _norm(right)
+    if not left_raw or not right_raw:
+        return False
+    left_dt = storage._parse_iso_to_utc(left_raw)
+    right_dt = storage._parse_iso_to_utc(right_raw)
+    if left_dt is not None and right_dt is not None:
+        return left_dt > right_dt
+    return left_raw > right_raw
+
+
+def _resolve_agentic_output_dir(
+    *,
+    db_path: str,
+    kb_id: str,
+    profile: str,
+    profile_version: str,
+    requested_output_dir: Any,
+) -> str:
+    base_dir = (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+    safe_kb_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in kb_id)
+    requested = _norm(requested_output_dir)
+    if requested:
+        requested_path = Path(requested)
+        if not requested_path.is_absolute():
+            requested_path = base_dir / requested_path
+        resolved = requested_path.resolve()
+    else:
+        resolved = (base_dir / "kbs" / safe_kb_id / profile / profile_version).resolve()
+    try:
+        resolved.relative_to(base_dir)
+    except ValueError as exc:
+        raise RagAdminError("output_dir must stay under the database agentic_ready_data directory", status_code=400) from exc
+    return str(resolved)
+
+
+def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]:
+    row = storage._conn.execute(
+        """
+        SELECT updated_at
+        FROM rag_knowledge_bases
+        WHERE kb_id = ?
+        """,
+        (kb_id,),
+    ).fetchone()
+    kb_updated_at = row[0] if row else None
+    doc_count = int(
+        storage._conn.execute(
+            """
+            SELECT COUNT(DISTINCT c.file_url)
+            FROM catalog_items c
+            JOIN rag_kb_files kf ON kf.file_url = c.file_url
+            WHERE kf.kb_id = ?
+              AND c.status = 'ok'
+            """,
+            (kb_id,),
+        ).fetchone()[0]
+        or 0
+    )
+    has_chunk_bindings = bool(
+        storage._conn.execute(
+            "SELECT 1 FROM kb_chunk_bindings WHERE kb_id = ? LIMIT 1",
+            (kb_id,),
+        ).fetchone()
+    )
+    if has_chunk_bindings:
+        latest_chunk_at = storage._conn.execute(
+            """
+            SELECT MAX(s.updated_at)
+            FROM kb_chunk_bindings b
+            LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+            WHERE b.kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()[0]
+    else:
+        latest_chunk_at = storage._conn.execute(
+            """
+            SELECT MAX(s.updated_at)
+            FROM rag_kb_files kf
+            LEFT JOIN file_chunk_sets s ON s.file_url = kf.file_url
+            WHERE kf.kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()[0]
+    latest_added_at = storage._conn.execute(
+        """
+        SELECT MAX(added_at)
+        FROM rag_kb_files
+        WHERE kb_id = ?
+        """,
+        (kb_id,),
+    ).fetchone()[0]
+    metadata_row = storage._conn.execute(
+        """
+        SELECT MAX(c.updated_at), MAX(c.markdown_updated_at), MAX(f.last_seen), MAX(f.crawl_time)
+        FROM rag_kb_files kf
+        JOIN catalog_items c ON c.file_url = kf.file_url
+        LEFT JOIN files f ON f.url = kf.file_url
+        WHERE kf.kb_id = ?
+        """,
+        (kb_id,),
+    ).fetchone()
+    latest_source_at = _latest_iso(
+        storage,
+        kb_updated_at,
+        latest_added_at,
+        latest_chunk_at,
+        *(metadata_row or ()),
+    )
+    return {
+        "current_doc_count": doc_count,
+        "latest_source_at": latest_source_at,
+    }
+
+
+def _build_agentic_manifest_status(
+    *,
+    storage: Storage,
+    kb_id: str,
+    profile: str,
+) -> dict[str, Any]:
+    normalized_profile = _manifest_profile(profile)
+    profile_def = PROFILES[normalized_profile]
+    source_status = _kb_agentic_source_status(storage, kb_id=kb_id)
+    manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile)
+    if not manifest:
+        return {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "profile_version": profile_def.version,
+            "status": "missing",
+            "usable": False,
+            "fallback_mode": "standard",
+            "current_doc_count": source_status["current_doc_count"],
+            "stale_reason": "ready_data manifest has not been built",
+        }
+
+    payload = dict(manifest)
+    status = _norm(payload.get("status")).lower() or "missing"
+    stale_reason = ""
+    if status == "ready":
+        built_at = _norm(payload.get("built_at"))
+        latest_source_at = _norm(source_status.get("latest_source_at"))
+        if _iso_after(storage, latest_source_at, built_at):
+            status = "stale"
+            stale_reason = "KB source files changed after the ready_data manifest was built"
+        elif int(payload.get("doc_count") or 0) != int(source_status["current_doc_count"]):
+            status = "stale"
+            stale_reason = "KB document count differs from the ready_data manifest"
+    usable = status == "ready"
+    payload.update(
+        {
+            "status": status,
+            "usable": usable,
+            "fallback_mode": "agentic" if usable else "standard",
+            "current_doc_count": source_status["current_doc_count"],
+            "latest_source_at": source_status["latest_source_at"],
+        }
+    )
+    if stale_reason:
+        payload["stale_reason"] = stale_reason
+    elif status in {"missing", "failed", "stale"} and "stale_reason" not in payload:
+        payload["stale_reason"] = payload.get("error_message") or "ready_data is unavailable"
+    return payload
+
+
+def _decorate_kb_agentic_manifest(storage: Storage, payload: dict[str, Any]) -> dict[str, Any]:
+    kb_id = _norm(payload.get("kb_id"))
+    profile = _manifest_profile(payload.get("manifest_profile") or "general")
+    payload["manifest_profile"] = profile
+    payload["agentic_ready_manifest"] = _build_agentic_manifest_status(
+        storage=storage,
+        kb_id=kb_id,
+        profile=profile,
+    )
+    payload["agentic_ready_available"] = bool(payload["agentic_ready_manifest"].get("usable"))
+    payload["agentic_fallback_mode"] = payload["agentic_ready_manifest"].get("fallback_mode") or "standard"
+    return payload
 
 
 def _embedding_metadata_matches(current: Mapping[str, Any], *, provider: Any, model: Any, dimension: Any) -> bool:
@@ -648,7 +858,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
         search = _norm(query.get("search")).lower()
         cursor = storage._conn.execute(
             """
-            SELECT kb_id, name, description, kb_mode, chunk_profile_id, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
+            SELECT kb_id, name, description, kb_mode, chunk_profile_id, manifest_profile, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
@@ -661,11 +871,12 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
                 kb_id=row[0], name=row[1], description=row[2],
                 kb_mode=row[3] or "category",
                 chunk_profile_id=row[4] or "",
-                embedding_provider=row[5] or "openai",
-                embedding_model=row[6], embedding_dimension=row[7],
-                chunk_size=row[8], chunk_overlap=row[9],
-                index_type=row[10], created_at=row[11], updated_at=row[12],
-                file_count=row[13], chunk_count=row[14],
+                manifest_profile=row[5] or "general",
+                embedding_provider=row[6] or "openai",
+                embedding_model=row[7], embedding_dimension=row[8],
+                chunk_size=row[9], chunk_overlap=row[10],
+                index_type=row[11], created_at=row[12], updated_at=row[13],
+                file_count=row[14], chunk_count=row[15],
             )
             if kb_mode and kb.kb_mode != kb_mode:
                 continue
@@ -675,13 +886,12 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
                 or search in (kb.kb_id or "").lower()
             ):
                 continue
-            kbs.append(
-                _build_kb_embedding_status(
-                    storage=storage,
-                    kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
-                    current_embeddings=current_embeddings,
-                )
+            payload = _build_kb_embedding_status(
+                storage=storage,
+                kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
+                current_embeddings=current_embeddings,
             )
+            kbs.append(_decorate_kb_agentic_manifest(storage, payload))
         return {"knowledge_bases": kbs, "current_embeddings": current_embeddings}
     finally:
         storage.close()
@@ -699,6 +909,7 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
     kb_mode = _norm(payload.get("kb_mode") or "manual").lower()
     if kb_mode not in {"manual", "category", "all"}:
         raise RagAdminError("kb_mode must be one of: 'all', 'category', or 'manual'")
+    manifest_profile = _manifest_profile(payload.get("manifest_profile") or "general")
     categories = _list(payload.get("categories"), "categories")
     file_urls = _list(payload.get("file_urls"), "file_urls")
     if kb_mode == "category" and not categories:
@@ -726,6 +937,7 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
             description=_norm(payload.get("description")),
             kb_mode=kb_mode,
             chunk_profile_id=chunk_profile_id,
+            manifest_profile=manifest_profile,
             embedding_model=runtime_embedding["model"],
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -773,7 +985,11 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
             else:
                 manager.add_files_to_kb(kb_id, file_urls)
         kb = manager.get_kb(kb_id)
-        response: dict[str, Any] = {"knowledge_base": _decorate_kb_chunk_profile(storage, _serialize_kb(kb))}
+        response_payload = _decorate_kb_agentic_manifest(
+            storage,
+            _decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
+        )
+        response: dict[str, Any] = {"knowledge_base": response_payload}
         if chunk_profile:
             response["chunk_profile"] = chunk_profile
         if category_sync_result is not None:
@@ -796,9 +1012,140 @@ def get_knowledge_base(*, db_path: str, kb_id: str) -> dict[str, Any]:
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         payload = _build_kb_embedding_status(storage=storage, kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)))
+        payload = _decorate_kb_agentic_manifest(storage, payload)
         payload["stats"] = manager.get_kb_stats(kid)
         payload["categories"] = manager.get_kb_categories(kid)
         return {"knowledge_base": payload}
+    finally:
+        storage.close()
+
+
+def get_agentic_ready_manifest(*, db_path: str, kb_id: str, query: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    kid = _kb_id(kb_id)
+    _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    try:
+        kb = manager.get_kb(kid)
+        if not kb:
+            raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        profile = _manifest_profile((query or {}).get("profile") or getattr(kb, "manifest_profile", "general"))
+        manifest = _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile)
+        return {"kb_id": kid, "manifest": manifest}
+    finally:
+        storage.close()
+
+
+def build_agentic_ready_manifest(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    auth: Any | None = None,
+) -> dict[str, Any]:
+    _require_config_write_token(headers, auth)
+    kid = _kb_id(kb_id)
+    if not isinstance(payload, dict):
+        raise RagAdminError("Invalid JSON body")
+
+    _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    try:
+        kb = manager.get_kb(kid)
+        if not kb:
+            raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        profile = _manifest_profile(
+            payload.get("profile")
+            or payload.get("manifest_profile")
+            or getattr(kb, "manifest_profile", "general")
+        )
+        profile_def = PROFILES[profile]
+        if profile != "general":
+            message = (
+                f"Manifest profile '{profile}' is declared but not implemented in PR2; "
+                "falling back to standard RAG until its builder ships."
+            )
+            storage.upsert_agentic_ready_manifest(
+                kb_id=kid,
+                profile=profile,
+                profile_version=profile_def.version,
+                status="failed",
+                error_message=message,
+            )
+            return {
+                "kb_id": kid,
+                "manifest": _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile),
+                "validation": {"valid": False, "errors": [message], "warnings": []},
+            }
+
+        from ai_actuarial.agentic_rag import ready_data_builder
+
+        output_dir = _resolve_agentic_output_dir(
+            db_path=db_path,
+            kb_id=kid,
+            profile=profile,
+            profile_version=profile_def.version,
+            requested_output_dir=payload.get("output_dir"),
+        )
+        storage.upsert_agentic_ready_manifest(
+            kb_id=kid,
+            profile=profile,
+            profile_version=profile_def.version,
+            status="building",
+            output_dir=output_dir,
+        )
+        try:
+            builder_manifest = ready_data_builder.build_l0(
+                db_path=db_path,
+                output_dir=output_dir,
+                profile=profile,
+                kb_id=kid,
+            )
+            validation = ready_data_builder.validate(str(builder_manifest.get("output_dir") or output_dir or ""))
+            if not validation.get("valid"):
+                error_message = "; ".join(str(item) for item in validation.get("errors") or [])
+                storage.upsert_agentic_ready_manifest(
+                    kb_id=kid,
+                    profile=profile,
+                    profile_version=str(builder_manifest.get("profile_version") or profile_def.version),
+                    status="failed",
+                    output_dir=str(builder_manifest.get("output_dir") or output_dir or ""),
+                    artifact_files=list(builder_manifest.get("artifact_files") or []),
+                    doc_count=int(builder_manifest.get("doc_count") or 0),
+                    section_count=int(builder_manifest.get("section_count") or 0),
+                    built_at=builder_manifest.get("built_at"),
+                    source_db=str(builder_manifest.get("source_db") or db_path),
+                    schema_versions=dict(builder_manifest.get("schema_versions") or {}),
+                    error_message=error_message or "ready_data validation failed",
+                )
+            else:
+                storage.upsert_agentic_ready_manifest(
+                    kb_id=kid,
+                    profile=profile,
+                    profile_version=str(builder_manifest.get("profile_version") or profile_def.version),
+                    status="ready",
+                    output_dir=str(builder_manifest.get("output_dir") or output_dir or ""),
+                    artifact_files=list(builder_manifest.get("artifact_files") or []),
+                    doc_count=int(builder_manifest.get("doc_count") or 0),
+                    section_count=int(builder_manifest.get("section_count") or 0),
+                    built_at=builder_manifest.get("built_at"),
+                    source_db=str(builder_manifest.get("source_db") or db_path),
+                    schema_versions=dict(builder_manifest.get("schema_versions") or {}),
+                    error_message="",
+                )
+        except Exception as exc:  # noqa: BLE001
+            validation = {"valid": False, "errors": [str(exc)], "warnings": []}
+            storage.upsert_agentic_ready_manifest(
+                kb_id=kid,
+                profile=profile,
+                profile_version=profile_def.version,
+                status="failed",
+                output_dir=output_dir or "",
+                error_message=str(exc),
+            )
+        return {
+            "kb_id": kid,
+            "manifest": _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile),
+            "validation": validation,
+        }
     finally:
         storage.close()
 
@@ -811,15 +1158,20 @@ def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], 
         raise RagAdminError("Invalid JSON body")
     name = _norm(payload["name"]) if "name" in payload else None
     description = _norm(payload["description"]) if "description" in payload else None
-    if name is None and description is None:
-        raise RagAdminError("No valid update fields provided (name, description)")
+    manifest_profile = _manifest_profile(payload["manifest_profile"]) if "manifest_profile" in payload else None
+    if name is None and description is None and manifest_profile is None:
+        raise RagAdminError("No valid update fields provided (name, description, manifest_profile)")
 
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         if not manager.get_kb(kid):
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        manager.update_kb(kid, name=name, description=description)
-        return {"knowledge_base": _serialize_kb(manager.get_kb(kid))}
+        manager.update_kb(kid, name=name, description=description, manifest_profile=manifest_profile)
+        updated_payload = _decorate_kb_agentic_manifest(
+            storage,
+            _decorate_kb_chunk_profile(storage, _serialize_kb(manager.get_kb(kid))),
+        )
+        return {"knowledge_base": updated_payload}
     finally:
         storage.close()
 

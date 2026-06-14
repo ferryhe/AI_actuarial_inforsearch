@@ -146,6 +146,99 @@ def test_build_l0_basic(test_db_path, tmp_path):
     ]
 
 
+def test_build_l0_can_scope_to_knowledge_base(test_db_path, tmp_path):
+    """KB scoped builds should not leak catalog rows from other KBs."""
+    conn = sqlite3.connect(test_db_path)
+    conn.executescript(
+        """
+        CREATE TABLE rag_kb_files (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (kb_id, file_url)
+        );
+        CREATE TABLE kb_chunk_bindings (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            chunk_set_id TEXT NOT NULL,
+            bound_at TEXT NOT NULL,
+            binding_mode TEXT DEFAULT 'follow_latest'
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO files(url,title,source_site,published_time) VALUES(?,?,?,?)",
+        ("https://example.com/rule2", "Other Rule", "Other", "2024-02-01"),
+    )
+    conn.execute(
+        "INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count) VALUES(?,?,?,?,?,?)",
+        (
+            "https://example.com/rule2",
+            "ok",
+            "Other summary",
+            "other",
+            "other",
+            1,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
+        ("cs2", "https://example.com/rule2", 1),
+    )
+    conn.execute(
+        "INSERT INTO global_chunks(chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy) VALUES(?,?,?,?,?,?)",
+        ("c3", "cs2", 0, "Other content", 20, "Other"),
+    )
+    conn.execute(
+        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
+        ("cs1_other_profile", "https://example.com/rule1", 1),
+    )
+    conn.execute(
+        "INSERT INTO global_chunks(chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy) VALUES(?,?,?,?,?,?)",
+        ("c4", "cs1_other_profile", 0, "Other profile content", 30, "Wrong Profile"),
+    )
+    conn.execute(
+        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
+        ("kb_rule_1", "https://example.com/rule1", "2026-06-14T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
+        ("kb_rule_2", "https://example.com/rule2", "2026-06-14T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
+        ("kb_rule_1", "https://example.com/rule1", "cs1", "2026-06-14T00:00:01+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
+        ("kb_rule_2", "https://example.com/rule2", "cs2", "2026-06-14T00:00:01+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    manifest = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path),
+        profile="general",
+        kb_id="kb_rule_1",
+    )
+
+    assert manifest["kb_id"] == "kb_rule_1"
+    assert manifest["scope"] == "knowledge_base"
+    assert manifest["output_dir"] == str(tmp_path)
+    assert manifest["doc_count"] == 1
+    assert manifest["section_count"] == 2
+    catalog_entries = [
+        json.loads(line)
+        for line in (tmp_path / "doc_catalog.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [entry["file_url"] for entry in catalog_entries] == ["https://example.com/rule1"]
+    section_text = (tmp_path / "sections.jsonl").read_text(encoding="utf-8")
+    assert "Other profile content" not in section_text
+    assert "Wrong Profile" not in section_text
+
+
 def test_build_l0_empty_db(tmp_path):
     """Build with no catalog items should produce empty outputs."""
     db_path = str(tmp_path / "empty.db")
