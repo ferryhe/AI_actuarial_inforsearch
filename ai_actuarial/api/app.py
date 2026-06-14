@@ -14,6 +14,7 @@ from .route_inventory import (
     collect_fastapi_api_paths,
     collect_fastapi_route_signatures,
 )
+from .routers.agentic_rag import router as agentic_rag_router
 from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
 from .routers.files_write import router as files_write_router
@@ -232,6 +233,7 @@ def create_app() -> FastAPI:
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])
     app.include_router(files_write_router, prefix="/api", tags=["files-write"])
     app.include_router(rag_admin_router, prefix="/api", tags=["rag-admin"])
+    app.include_router(agentic_rag_router, prefix="/api", tags=["agentic-rag"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])
 
     app.state.fastapi_session_secret = os.getenv("FASTAPI_SESSION_SECRET", settings.FASTAPI_SESSION_SECRET)
