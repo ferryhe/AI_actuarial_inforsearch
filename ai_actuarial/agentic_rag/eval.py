@@ -83,7 +83,7 @@ class EvalReport:
     passed: int
     failed: int
     doc_hit_rate: float
-    """Fraction of cases where at least min_hits expected_doc_ids were found."""
+    """Fraction of cases whose expected_doc_ids requirement was met."""
 
     category_hit_rate: float
     """Fraction of expected categories matched by retrieved items."""
@@ -128,6 +128,9 @@ class SimpleKeywordRetriever:
 
     def __call__(self, query: str, top_k: int = 5) -> list[RetrievedItem]:
         import sqlite3
+
+        if top_k <= 0:
+            return []
 
         terms = query.lower().split()
         results: list[tuple[float, RetrievedItem]] = []
@@ -226,13 +229,13 @@ class RetrievalEvaluator:
         hits = len(hit_ids)
 
         expected_cats = _category_labels(case.expected_categories)
+        expected_cat_count = len(expected_cats)
         cat_hits = len(retrieved_cats & expected_cats) if expected_cats else 0
 
         passed = hits >= case.min_hits
         # When only categories are specified (no expected_doc_ids), require at least 1 category hit
-        if not case.expected_doc_ids and case.expected_categories:
-            if cat_hits == 0:
-                passed = False
+        if not case.expected_doc_ids and expected_cats:
+            passed = cat_hits > 0
         details_parts: list[str] = []
         if hits > 0:
             details_parts.append(f"doc hits: {sorted(hit_ids)}")
@@ -240,7 +243,7 @@ class RetrievalEvaluator:
             details_parts.append(f"expected: {case.expected_doc_ids}")
             details_parts.append(f"got top-{case.top_k}: {sorted(retrieved_ids)}")
         if case.expected_categories:
-            details_parts.append(f"cat hits: {cat_hits}/{len(case.expected_categories)}")
+            details_parts.append(f"cat hits: {cat_hits}/{expected_cat_count}")
         if not details_parts and items:
             details_parts.append(f"retrieved: {sorted(retrieved_ids)}")
 
@@ -266,11 +269,16 @@ class RetrievalEvaluator:
         passed = sum(1 for r in results if r.passed)
         total = len(results)
 
-        # Doc hit rate: fraction of cases that met min_hits
-        doc_hit_rate = passed / total if total > 0 else 0.0
+        # Doc hit rate: fraction of cases that met their doc expectation.
+        # Cases without expected_doc_ids are not penalized by this metric.
+        doc_met = [
+            True if not case.expected_doc_ids else result.hits >= case.min_hits
+            for case, result in zip(cases, results)
+        ]
+        doc_hit_rate = sum(1 for met in doc_met if met) / total if total > 0 else 0.0
 
-        # Category hit rate across all results
-        total_cat_expected = sum(len(c.expected_categories) for c in cases)
+        # Category hit rate across all expected category labels.
+        total_cat_expected = sum(len(_category_labels(c.expected_categories)) for c in cases)
         total_cat_hits = sum(r.category_hits for r in results)
         cat_hit_rate = total_cat_hits / total_cat_expected if total_cat_expected > 0 else 0.0
 

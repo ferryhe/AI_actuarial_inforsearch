@@ -151,6 +151,22 @@ def test_evaluate_no_expected_doc_ids():
     assert result.category_hits == 1
 
 
+def test_evaluate_category_only_defaults_to_category_hit():
+    retriever = FakeRetriever(
+        [RetrievedItem(doc_id="doc_a", title="A", category="AI")]
+    )
+    evaluator = RetrievalEvaluator(retriever)
+    case = EvalCase(
+        case_id="c6_default",
+        query="any",
+        expected_doc_ids=[],
+        expected_categories=["AI"],
+    )
+    result = evaluator.evaluate_case(case)
+    assert result.passed is True
+    assert result.category_hits == 1
+
+
 def test_evaluate_semicolon_separated_categories():
     retriever = FakeRetriever(
         [RetrievedItem(doc_id="doc_a", title="A", category="AI;regulation")]
@@ -168,6 +184,27 @@ def test_evaluate_semicolon_separated_categories():
     assert result.category_hits == 1
 
 
+def test_evaluate_semicolon_separated_expected_category_denominator():
+    retriever = FakeRetriever(
+        [RetrievedItem(doc_id="doc_a", title="A", category="AI;regulation")]
+    )
+    evaluator = RetrievalEvaluator(retriever)
+    case = EvalCase(
+        case_id="c7_expected",
+        query="ai regulation",
+        expected_doc_ids=[],
+        expected_categories=["AI;regulation"],
+        min_hits=0,
+    )
+    result = evaluator.evaluate_case(case)
+    assert result.passed is True
+    assert result.category_hits == 2
+    assert result.details == "cat hits: 2/2"
+
+    report = evaluator.evaluate([case])
+    assert report.category_hit_rate == 1.0
+
+
 def test_evaluate_reports_retrieved_ids_when_no_expectations():
     retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="A")])
     evaluator = RetrievalEvaluator(retriever)
@@ -182,6 +219,26 @@ def test_evaluate_reports_retrieved_ids_when_no_expectations():
     assert result.passed is True
     assert result.total_retrieved == 1
     assert result.details == "retrieved: ['doc_a']"
+
+
+def test_doc_hit_rate_ignores_category_only_failure():
+    evaluator = RetrievalEvaluator(
+        FakeRetriever([RetrievedItem(doc_id="doc_a", category="general")])
+    )
+    cases = [
+        EvalCase(
+            case_id="cat_only",
+            query="q",
+            expected_doc_ids=[],
+            expected_categories=["AI"],
+            min_hits=0,
+        )
+    ]
+    report = evaluator.evaluate(cases)
+    assert report.passed == 0
+    assert report.failed == 1
+    assert report.doc_hit_rate == 1.0
+    assert report.category_hit_rate == 0.0
 
 
 # ── EvalReport ────────────────────────────────────────────────────────────────
@@ -426,6 +483,34 @@ def test_simple_keyword_retriever_context_manager_closes_connection(tmp_path):
 
     with pytest.raises(sqlite3.ProgrammingError):
         retriever("nothing", top_k=5)
+
+
+def test_simple_keyword_retriever_top_k_zero_returns_empty(tmp_path):
+    import sqlite3
+
+    db_path = str(tmp_path / "top_k.db")
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
+        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
+        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
+    """
+    )
+    conn.execute(
+        "INSERT INTO files(url,title) VALUES(?,?)",
+        ("https://example.com/doc", "Actuarial Bulletin"),
+    )
+    conn.execute(
+        "INSERT INTO catalog_items(file_url,status,summary,category,keywords) VALUES(?,?,?,?,?)",
+        ("https://example.com/doc", "ok", "actuarial bulletin", "AI", '["actuarial"]'),
+    )
+    conn.commit()
+    conn.close()
+
+    with SimpleKeywordRetriever(db_path) as retriever:
+        assert retriever("actuarial", top_k=0) == []
+        assert retriever("actuarial", top_k=-1) == []
 
 
 # ── CLI entry point smoke ─────────────────────────────────────────────────────
