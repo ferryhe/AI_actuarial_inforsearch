@@ -112,3 +112,49 @@ def test_kb_detail_manual_mode_can_add_files_with_select_all_and_category_index_
     assert "file_urls: selectedBindFiles" in src
     assert "meta.kb_mode === \"manual\"" in src
     assert 'data-testid="banner-category-index-required"' in src
+
+
+def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
+    src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+
+    assert "interface AgenticReadyManifest" in src
+    assert "manifest_profile?: string" in src
+    assert "agentic_ready_manifest?: AgenticReadyManifest" in src
+    assert 'manifest_profile: "general"' in src
+    assert "manifest_profile: kbForm.manifest_profile" in src
+    assert 'data-testid="select-kb-manifest-profile"' in src
+    assert "status: \"missing\" | \"ready\" | \"building\" | \"failed\" | \"stale\"" in src
+    assert "usable: boolean" in src
+    assert "fallback_mode?: string" in src
+    assert "stale_reason?: string" in src
+    assert "handleBuildAgenticManifest" in src
+    assert "validation?: { valid?: boolean; errors?: string[] }" in src
+    assert "res.validation?.valid !== false" in src
+    assert "Agentic manifest build did not produce ready data" in src
+    assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`" in src
+    assert "buildingManifestKb === kbId" in src
+    assert 'data-testid={`badge-agentic-manifest-${kbId}`}' in src
+    assert 'data-testid={`message-agentic-manifest-${kbId}`}' in src
+    assert 'data-testid={`button-build-agentic-manifest-${kbId}`}' in src
+
+
+def test_kb_detail_surfaces_agentic_manifest_endpoint_status_and_build_action():
+    src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+
+    assert "interface AgenticReadyManifest" in src
+    assert "manifest_profile?: string" in src
+    assert "agentic_ready_manifest?: AgenticReadyManifest" in src
+    assert "loadAgenticManifest" in src
+    assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest`" in src
+    assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`" in src
+    assert "handleBuildAgenticManifest" in src
+    assert "validation?: { valid?: boolean; errors?: string[] }" in src
+    assert "res.validation?.valid !== false" in src
+    assert "Agentic manifest build did not produce ready data" in src
+    assert "manifest.profile || meta.manifest_profile" in src
+    assert "manifest.doc_count" in src
+    assert "manifest.section_count" in src
+    assert "manifest.output_dir" in src
+    assert 'data-testid="panel-agentic-manifest"' in src
+    assert 'data-testid="badge-agentic-manifest-detail"' in src
+    assert 'data-testid="button-build-agentic-manifest-detail"' in src

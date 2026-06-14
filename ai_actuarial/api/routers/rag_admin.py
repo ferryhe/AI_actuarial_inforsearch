@@ -14,6 +14,7 @@ from ..services.rag_admin import (
     add_knowledge_base_files,
     bind_chunk_sets,
     cleanup_chunk_sets,
+    build_agentic_ready_manifest,
     create_chunk_profile,
     create_index_task,
     create_knowledge_base,
@@ -25,6 +26,7 @@ from ..services.rag_admin import (
     get_knowledge_base,
     get_knowledge_base_categories,
     get_knowledge_base_stats,
+    get_agentic_ready_manifest,
     get_pending_files,
     get_unmapped_categories,
     list_chunk_profiles,
@@ -230,6 +232,37 @@ def api_get_knowledge_base_stats(
 ):
     try:
         return get_knowledge_base_stats(db_path=_db_path(request), kb_id=kb_id)
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
+@router.get("/rag/knowledge-bases/{kb_id}/agentic-ready-manifest")
+def api_get_agentic_ready_manifest(
+    kb_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return get_agentic_ready_manifest(db_path=_db_path(request), kb_id=kb_id, query=request.query_params)
+    except RagAdminError as exc:
+        return _error_response(exc)
+
+
+@router.post("/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build")
+def api_build_agentic_ready_manifest(
+    kb_id: str,
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_rag_task_run),
+):
+    try:
+        return build_agentic_ready_manifest(
+            db_path=_db_path(request),
+            kb_id=kb_id,
+            payload=payload,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except RagAdminError as exc:
         return _error_response(exc)
 

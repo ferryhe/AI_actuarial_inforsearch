@@ -99,12 +99,21 @@ def _parse_keywords(raw: str | None) -> list[str]:
     return [k.strip() for k in raw.split(",") if k.strip()]
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
 # ── Builder ───────────────────────────────────────────────────────────────────
 
 def build_l0(
     db_path: str | None = None,
     output_dir: str | None = None,
     profile: str = "general",
+    kb_id: str | None = None,
 ) -> dict:
     """Build L0 ready_data artifacts from catalog_items + global_chunks.
 
@@ -112,6 +121,7 @@ def build_l0(
         db_path: Path to SQLite DB. Defaults to env DB_PATH or data/index.db.
         output_dir: Output directory. Defaults to data/agentic_ready_data/{profile}/.
         profile: Manifest profile key (general, regulation, formula).
+        kb_id: Optional knowledge-base ID; when set, only files in that KB are exported.
 
     Returns:
         Manifest dict with built_at, doc_count, section_count, artifact_files.
@@ -133,38 +143,70 @@ def build_l0(
             f"Only 'general' (L0) is supported in this MVP."
         )
     if output_dir is None:
-        output_dir = os.path.join("data", "agentic_ready_data", profile, profile_def.version)
+        if kb_id:
+            safe_kb_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in kb_id)
+            output_dir = os.path.join("data", "agentic_ready_data", "kbs", safe_kb_id, profile, profile_def.version)
+        else:
+            output_dir = os.path.join("data", "agentic_ready_data", profile, profile_def.version)
     os.makedirs(output_dir, exist_ok=True)
 
     now_utc = datetime.now(timezone.utc).isoformat()
 
     # ── 1. Build doc_catalog.jsonl ────────────────────────────────────────
+    kb_join = ""
+    where_params: list[Any] = []
+    if kb_id:
+        kb_join = "JOIN rag_kb_files kf ON kf.file_url = c.file_url AND kf.kb_id = ?"
+        where_params.append(kb_id)
     catalog_rows = conn.execute(
-        """SELECT c.file_url, f.title, c.category, c.summary, c.keywords,
-                  c.rag_chunk_count,
-                  f.source_site, f.published_time
-           FROM catalog_items c
-           LEFT JOIN files f ON c.file_url = f.url
-           WHERE c.status = 'ok'
-           ORDER BY c.category, c.file_url"""
+        f"""SELECT c.file_url, f.title, c.category, c.summary, c.keywords,
+                   c.rag_chunk_count,
+                   f.source_site, f.published_time
+            FROM catalog_items c
+            {kb_join}
+            LEFT JOIN files f ON c.file_url = f.url
+            WHERE c.status = 'ok'
+            ORDER BY c.category, c.file_url""",
+        where_params,
     ).fetchall()
 
     # Collect per-doc chunks for heading extraction
     file_urls = [r["file_url"] for r in catalog_rows]
     placeholders = ",".join("?" for _ in file_urls)
-    chunk_rows = (
-        conn.execute(
-            f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
-                       fcs.file_url
-                FROM global_chunks g
-                JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
-                WHERE fcs.file_url IN ({placeholders})
-                ORDER BY fcs.file_url, g.chunk_index""",
-            file_urls,
-        ).fetchall()
-        if file_urls
-        else []
-    )
+    chunk_rows = []
+    if file_urls:
+        use_bound_chunk_sets = bool(
+            kb_id
+            and _table_exists(conn, "kb_chunk_bindings")
+            and conn.execute(
+                "SELECT 1 FROM kb_chunk_bindings WHERE kb_id = ? LIMIT 1",
+                (kb_id,),
+            ).fetchone()
+        )
+        if use_bound_chunk_sets:
+            chunk_rows = conn.execute(
+                f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
+                           fcs.file_url
+                    FROM global_chunks g
+                    JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
+                    JOIN kb_chunk_bindings b
+                      ON b.chunk_set_id = fcs.chunk_set_id
+                     AND b.file_url = fcs.file_url
+                     AND b.kb_id = ?
+                    WHERE fcs.file_url IN ({placeholders})
+                    ORDER BY fcs.file_url, g.chunk_index""",
+                [kb_id, *file_urls],
+            ).fetchall()
+        else:
+            chunk_rows = conn.execute(
+                f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
+                           fcs.file_url
+                    FROM global_chunks g
+                    JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
+                    WHERE fcs.file_url IN ({placeholders})
+                    ORDER BY fcs.file_url, g.chunk_index""",
+                file_urls,
+            ).fetchall()
 
     # Group chunks by file_url
     chunks_by_file: dict[str, list[dict]] = {}
@@ -221,7 +263,10 @@ def build_l0(
         "built_at": now_utc,
         "profile": profile,
         "profile_version": profile_def.version,
+        "kb_id": kb_id or "",
+        "scope": "knowledge_base" if kb_id else "global",
         "source_db": db_path,
+        "output_dir": output_dir,
         "doc_count": doc_count,
         "section_count": section_count,
         "artifact_files": profile_def_artifacts,
@@ -362,6 +407,7 @@ def main():
         choices=["general"],
         help="Manifest profile (only 'general' L0 supported in this MVP)",
     )
+    parser.add_argument("--kb-id", default=None, help="Optional knowledge-base ID to export")
     parser.add_argument("--validate", action="store_true", help="Validate after build")
     args = parser.parse_args()
 
@@ -369,13 +415,18 @@ def main():
         db_path=args.db,
         output_dir=args.output_dir,
         profile=args.profile,
+        kb_id=args.kb_id,
     )
     print(json.dumps(manifest, indent=2, ensure_ascii=False))
 
     if args.validate:
+        default_output_dir = os.path.join("data", "agentic_ready_data", args.profile, L0_GENERAL.version)
+        if args.kb_id:
+            safe_kb_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in args.kb_id)
+            default_output_dir = os.path.join("data", "agentic_ready_data", "kbs", safe_kb_id, args.profile, L0_GENERAL.version)
         result = validate(
             args.output_dir
-            or os.path.join("data", "agentic_ready_data", args.profile, L0_GENERAL.version)
+            or default_output_dir
         )
         status = "✅ valid" if result["valid"] else "❌ invalid"
         print(f"\nValidation: {status}")

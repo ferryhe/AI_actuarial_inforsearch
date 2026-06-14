@@ -55,6 +55,22 @@ interface KBMeta {
   chunk_count?: number;
   index_type?: string;
   created_at?: string;
+  manifest_profile?: string;
+  agentic_ready_manifest?: AgenticReadyManifest;
+}
+
+interface AgenticReadyManifest {
+  kb_id: string;
+  profile: string;
+  status: "missing" | "ready" | "building" | "failed" | "stale";
+  usable: boolean;
+  output_dir?: string;
+  built_at?: string;
+  doc_count?: number;
+  section_count?: number;
+  error_message?: string;
+  stale_reason?: string;
+  fallback_mode?: string;
 }
 
 interface KBStats {
@@ -113,6 +129,43 @@ function StatusDot({ status }: { status?: string }) {
   return <span className={cn("w-2 h-2 rounded-full inline-block shrink-0", color)} />;
 }
 
+function getManifestStatusClass(status?: AgenticReadyManifest["status"]) {
+  switch (status) {
+    case "ready":
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "building":
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "failed":
+      return "bg-red-500/10 text-red-700 dark:text-red-300";
+    case "stale":
+      return "bg-orange-500/10 text-orange-700 dark:text-orange-300";
+    case "missing":
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
+function getManifestFallbackMessage(manifest?: AgenticReadyManifest | null) {
+  const status = manifest?.status || "missing";
+  const fallback = manifest?.fallback_mode || "standard RAG";
+  if (status === "ready" && manifest?.usable) return "";
+  if (status === "building") return "Agentic manifest is building.";
+  if (status === "failed") {
+    return `Build failed${manifest?.error_message ? `: ${manifest.error_message}` : ""}. Falling back to ${fallback}.`;
+  }
+  if (status === "stale") {
+    return `Manifest stale${manifest?.stale_reason ? `: ${manifest.stale_reason}` : ""}. Falling back to ${fallback}.`;
+  }
+  return `Agentic manifest missing. Falling back to ${fallback}.`;
+}
+
+function getManifestActionLabel(manifest?: AgenticReadyManifest | null) {
+  const status = manifest?.status || "missing";
+  if (status === "ready" || status === "stale" || status === "failed") return "Rebuild manifest";
+  if (status === "building") return "Building";
+  return "Build manifest";
+}
+
 export default function KBDetail() {
   const { t } = useTranslation();
   const { permissions } = useAuth();
@@ -131,6 +184,8 @@ export default function KBDetail() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [indexing, setIndexing] = useState(false);
+  const [agenticManifest, setAgenticManifest] = useState<AgenticReadyManifest | null>(null);
+  const [manifestBuilding, setManifestBuilding] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -161,9 +216,11 @@ export default function KBDetail() {
       const m = res.knowledge_base;
       if (!m) {
         setMeta(null);
+        setAgenticManifest(null);
         return;
       }
       setMeta(m);
+      setAgenticManifest(m.agentic_ready_manifest || null);
       if (m.stats) {
         setStats(m.stats);
       }
@@ -171,6 +228,19 @@ export default function KBDetail() {
       setEditDesc(m.description || "");
     } catch {
       setMeta(null);
+      setAgenticManifest(null);
+    }
+  }, [kbId]);
+
+  const loadAgenticManifest = useCallback(async () => {
+    if (!kbId) return;
+    try {
+      const res = await apiGet<{ manifest?: AgenticReadyManifest }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest`
+      );
+      setAgenticManifest(res.manifest || null);
+    } catch {
+      setAgenticManifest(null);
     }
   }, [kbId]);
 
@@ -215,9 +285,9 @@ export default function KBDetail() {
 
   const loadAll = useCallback(async () => {
     setLoading(true);
-    await Promise.all([loadMeta(), loadStats(), loadFiles(), loadCategories()]);
+    await Promise.all([loadMeta(), loadStats(), loadFiles(), loadCategories(), loadAgenticManifest()]);
     setLoading(false);
-  }, [loadMeta, loadStats, loadFiles, loadCategories]);
+  }, [loadMeta, loadStats, loadFiles, loadCategories, loadAgenticManifest]);
 
   useEffect(() => {
     if (match) loadAll();
@@ -309,6 +379,45 @@ export default function KBDetail() {
       setActionError(detail || t("kb.index_error"));
     } finally {
       setIndexing(false);
+    }
+  };
+
+  const handleBuildAgenticManifest = async () => {
+    if (!kbId) return;
+    setManifestBuilding(true);
+    setActionNotice(null);
+    setActionError(null);
+    try {
+      const res = await apiPost<{ manifest?: AgenticReadyManifest; validation?: { valid?: boolean; errors?: string[] } }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`,
+        {}
+      );
+      const nextManifest = res.manifest || null;
+      setAgenticManifest(nextManifest);
+      if (nextManifest) {
+        setMeta((current) =>
+          current
+            ? {
+                ...current,
+                manifest_profile: nextManifest.profile || current.manifest_profile,
+                agentic_ready_manifest: nextManifest,
+              }
+            : current
+        );
+      }
+      const status = nextManifest?.status || "missing";
+      if (status === "ready" && res.validation?.valid !== false) {
+        setActionNotice("Agentic manifest build completed.");
+      } else {
+        const detail = res.validation?.errors?.join("; ") || nextManifest?.error_message || nextManifest?.stale_reason || status;
+        setActionError(`Agentic manifest build did not produce ready data: ${detail}`);
+      }
+    } catch (err) {
+      console.error("Failed to build agentic manifest:", err);
+      const detail = formatApiErrorDetail(err);
+      setActionError(detail || "Failed to build agentic manifest.");
+    } finally {
+      setManifestBuilding(false);
     }
   };
 
@@ -461,6 +570,14 @@ export default function KBDetail() {
   const needsEmbeddingRebuild = meta.needs_reindex || meta.embedding_compatible === false;
   const isManualMode = meta.kb_mode === "manual";
   const isCategoryMode = meta.kb_mode === "category";
+  const manifest = agenticManifest || meta.agentic_ready_manifest || null;
+  const manifestStatus = manifest?.status || "missing";
+  const manifestProfile = manifest ? manifest.profile || meta.manifest_profile || "default" : meta.manifest_profile || "default";
+  const manifestDocCount = manifest ? manifest.doc_count ?? 0 : 0;
+  const manifestSectionCount = manifest ? manifest.section_count ?? 0 : 0;
+  const manifestOutputDir = manifest ? manifest.output_dir || "-" : "-";
+  const manifestMessage = getManifestFallbackMessage(manifest);
+  const manifestBusy = manifestBuilding || manifestStatus === "building";
   const currentEmbeddingLabel = [
     meta.current_embeddings?.provider,
     meta.current_embeddings?.model,
@@ -560,6 +677,62 @@ export default function KBDetail() {
                 <Clock className="w-3 h-3" />
                 {new Date(meta.created_at).toLocaleDateString()}
               </span>
+            )}
+          </div>
+
+          <div
+            className="mt-4 rounded-lg border border-border bg-muted/20 p-4"
+            data-testid="panel-agentic-manifest"
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={cn(
+                      "inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full",
+                      getManifestStatusClass(manifestStatus)
+                    )}
+                    data-testid="badge-agentic-manifest-detail"
+                  >
+                    Agentic {manifestStatus}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    Profile: {manifestProfile}
+                  </span>
+                </div>
+                {manifestMessage && (
+                  <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+                    {manifestMessage}
+                  </p>
+                )}
+              </div>
+              {canRunKnowledgeTasks && (
+                <button
+                  type="button"
+                  onClick={handleBuildAgenticManifest}
+                  disabled={manifestBusy}
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted disabled:opacity-50 transition-colors"
+                  data-testid="button-build-agentic-manifest-detail"
+                >
+                  {manifestBuilding ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className={cn("w-4 h-4", manifestStatus === "building" && "animate-spin")} />
+                  )}
+                  {manifestBuilding ? "Building" : getManifestActionLabel(manifest)}
+                </button>
+              )}
+            </div>
+            <div className="mt-3 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+              <span className="font-mono truncate">Profile {manifestProfile}</span>
+              <span className="tabular-nums">{manifestDocCount} docs</span>
+              <span className="tabular-nums">{manifestSectionCount} sections</span>
+              <span className="font-mono break-all">Output {manifestOutputDir}</span>
+            </div>
+            {manifest?.built_at && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Built {new Date(manifest.built_at).toLocaleString()}
+              </p>
             )}
           </div>
         </div>
