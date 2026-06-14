@@ -1,10 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Run Agentic RAG retrieval eval cases and print a report.
 
 Usage:
-    python scripts/run_agentic_retrieval_eval.py
-    python scripts/run_agentic_retrieval_eval.py --db data/index.db
-    python scripts/run_agentic_retrieval_eval.py --cases eval/cases.jsonl --json
+    python3 scripts/run_agentic_retrieval_eval.py
+    python3 scripts/run_agentic_retrieval_eval.py --db data/index.db
+    python3 scripts/run_agentic_retrieval_eval.py --cases eval/cases.jsonl --json
 """
 
 import sys

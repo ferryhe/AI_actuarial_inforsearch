@@ -151,6 +151,39 @@ def test_evaluate_no_expected_doc_ids():
     assert result.category_hits == 1
 
 
+def test_evaluate_semicolon_separated_categories():
+    retriever = FakeRetriever(
+        [RetrievedItem(doc_id="doc_a", title="A", category="AI;regulation")]
+    )
+    evaluator = RetrievalEvaluator(retriever)
+    case = EvalCase(
+        case_id="c7",
+        query="ai regulation",
+        expected_doc_ids=[],
+        expected_categories=["AI"],
+        min_hits=0,
+    )
+    result = evaluator.evaluate_case(case)
+    assert result.passed is True
+    assert result.category_hits == 1
+
+
+def test_evaluate_reports_retrieved_ids_when_no_expectations():
+    retriever = FakeRetriever([RetrievedItem(doc_id="doc_a", title="A")])
+    evaluator = RetrievalEvaluator(retriever)
+    case = EvalCase(
+        case_id="c8",
+        query="documented unsupported query",
+        expected_doc_ids=[],
+        expected_categories=[],
+        min_hits=0,
+    )
+    result = evaluator.evaluate_case(case)
+    assert result.passed is True
+    assert result.total_retrieved == 1
+    assert result.details == "retrieved: ['doc_a']"
+
+
 # ── EvalReport ────────────────────────────────────────────────────────────────
 
 
@@ -260,9 +293,10 @@ def test_simple_keyword_retriever_with_test_db(tmp_path):
     )
     conn.commit()
 
-    retriever = SimpleKeywordRetriever(db_path)
-    results = retriever("actuarial bulletin", top_k=5)
     conn.close()
+
+    with SimpleKeywordRetriever(db_path) as retriever:
+        results = retriever("actuarial bulletin", top_k=5)
 
     assert len(results) >= 1
     doc_ids = {r.doc_id for r in results}
@@ -288,9 +322,10 @@ def test_simple_keyword_retriever_no_match(tmp_path):
     )
     conn.commit()
 
-    retriever = SimpleKeywordRetriever(db_path)
-    results = retriever("quantum physics", top_k=5)
     conn.close()
+
+    with SimpleKeywordRetriever(db_path) as retriever:
+        results = retriever("quantum physics", top_k=5)
 
     assert results == []
 
@@ -326,13 +361,71 @@ def test_simple_keyword_retriever_deduplicates(tmp_path):
     )
     conn.commit()
 
-    retriever = SimpleKeywordRetriever(db_path)
-    results = retriever("actuarial", top_k=5)
     conn.close()
+
+    with SimpleKeywordRetriever(db_path) as retriever:
+        results = retriever("actuarial", top_k=5)
 
     # Should not return the same doc_id twice
     assert len(results) == 1
     assert results[0].doc_id == "https://example.com/doc1"
+
+
+def test_simple_keyword_retriever_chunk_score_matches_ranking(tmp_path):
+    """Chunk result score includes the same boost used for ranking."""
+    import sqlite3
+
+    db_path = str(tmp_path / "ranking.db")
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
+        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
+        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
+    """
+    )
+    conn.execute(
+        "INSERT INTO files(url,title) VALUES(?,?)",
+        ("https://example.com/catalog", "Actuarial Catalog"),
+    )
+    conn.execute(
+        "INSERT INTO catalog_items(file_url,status,summary,category,keywords) VALUES(?,?,?,?,?)",
+        ("https://example.com/catalog", "ok", "actuarial", "AI", '["actuarial"]'),
+    )
+    conn.execute(
+        "INSERT INTO rag_chunks(chunk_id,kb_id,file_url,chunk_index,content,token_count) VALUES(?,?,?,?,?,?)",
+        ("c1", "kb1", "https://example.com/chunk", 0, "actuarial", 5),
+    )
+    conn.commit()
+    conn.close()
+
+    with SimpleKeywordRetriever(db_path) as retriever:
+        results = retriever("actuarial", top_k=5)
+
+    assert results[0].doc_id == "https://example.com/chunk"
+    assert results[0].score == 1.5
+
+
+def test_simple_keyword_retriever_context_manager_closes_connection(tmp_path):
+    import sqlite3
+
+    db_path = str(tmp_path / "close.db")
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
+        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
+        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
+    """
+    )
+    conn.commit()
+    conn.close()
+
+    with SimpleKeywordRetriever(db_path) as retriever:
+        assert retriever("nothing", top_k=5) == []
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        retriever("nothing", top_k=5)
 
 
 # ── CLI entry point smoke ─────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ first baseline measurement (PR0).
 
 Usage (programmatic):
     from ai_actuarial.agentic_rag.eval import (
-        EvalCase, RetrievalEvaluator, run_eval, compute_metrics
+        EvalCase, RetrievalEvaluator, default_retriever, load_cases
     )
 """
 
@@ -16,8 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Protocol
+from typing import Iterable, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,7 @@ class CaseResult:
     """Number of expected_doc_ids found in results."""
 
     category_hits: int = 0
-    """Number of retrieved items matching any expected category."""
+    """Number of expected categories matched by retrieved items."""
 
     total_retrieved: int = 0
     passed: bool = False
@@ -87,7 +86,7 @@ class EvalReport:
     """Fraction of cases where at least min_hits expected_doc_ids were found."""
 
     category_hit_rate: float
-    """Fraction of retrieved items matching expected categories."""
+    """Fraction of expected categories matched by retrieved items."""
 
     per_case: list[CaseResult] = field(default_factory=list)
 
@@ -116,6 +115,16 @@ class SimpleKeywordRetriever:
 
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
+
+    def close(self) -> None:
+        """Close the SQLite connection held by this retriever."""
+        self._conn.close()
+
+    def __enter__(self) -> "SimpleKeywordRetriever":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     def __call__(self, query: str, top_k: int = 5) -> list[RetrievedItem]:
         import sqlite3
@@ -167,15 +176,16 @@ class SimpleKeywordRetriever:
                 content = (row["content"] or "").lower()
                 score = sum(1 for t in terms if t in content)
                 if score > 0:
+                    rank_score = score + 0.5
                     title = (row["section_hierarchy"] or "") or (row["file_url"] or "")
                     results.append(
                         (
-                            score + 0.5,
+                            rank_score,
                             RetrievedItem(
                                 doc_id=row["file_url"],
                                 title=title,
                                 category="",
-                                score=score,
+                                score=rank_score,
                                 snippet=content[:200],
                             ),
                         )
@@ -210,12 +220,13 @@ class RetrievalEvaluator:
         """Evaluate a single case."""
         items = self._retriever(case.query, case.top_k)
         retrieved_ids = {item.doc_id for item in items}
-        retrieved_cats = {item.category for item in items if item.category}
+        retrieved_cats = _category_labels(item.category for item in items)
 
         hit_ids = retrieved_ids & set(case.expected_doc_ids)
         hits = len(hit_ids)
 
-        cat_hits = len(retrieved_cats & set(case.expected_categories)) if case.expected_categories else 0
+        expected_cats = _category_labels(case.expected_categories)
+        cat_hits = len(retrieved_cats & expected_cats) if expected_cats else 0
 
         passed = hits >= case.min_hits
         # When only categories are specified (no expected_doc_ids), require at least 1 category hit
@@ -230,6 +241,8 @@ class RetrievalEvaluator:
             details_parts.append(f"got top-{case.top_k}: {sorted(retrieved_ids)}")
         if case.expected_categories:
             details_parts.append(f"cat hits: {cat_hits}/{len(case.expected_categories)}")
+        if not details_parts and items:
+            details_parts.append(f"retrieved: {sorted(retrieved_ids)}")
 
         return CaseResult(
             case_id=case.case_id,
@@ -297,7 +310,18 @@ def load_cases(path: str) -> list[EvalCase]:
     return cases
 
 
-def default_retriever(db_path: str | None = None) -> Retriever:
+def _category_labels(categories: Iterable[str]) -> set[str]:
+    labels: set[str] = set()
+    for category in categories:
+        labels.update(
+            part.strip().casefold()
+            for part in category.split(";")
+            if part.strip()
+        )
+    return labels
+
+
+def default_retriever(db_path: str | None = None) -> SimpleKeywordRetriever:
     """Create the default SimpleKeywordRetriever.
 
     Args:
@@ -350,9 +374,9 @@ def main():
         sys.exit(1)
 
     cases = load_cases(cases_path)
-    retriever = default_retriever(args.db)
-    evaluator = RetrievalEvaluator(retriever)
-    report = evaluator.evaluate(cases)
+    with default_retriever(args.db) as retriever:
+        evaluator = RetrievalEvaluator(retriever)
+        report = evaluator.evaluate(cases)
 
     if args.json:
         print(
