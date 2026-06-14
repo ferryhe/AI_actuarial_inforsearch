@@ -152,25 +152,46 @@ function getManifestStatusClass(status?: AgenticReadyManifest["status"]) {
   }
 }
 
-function getManifestFallbackMessage(manifest?: AgenticReadyManifest) {
-  const status = manifest?.status || "missing";
-  const fallback = manifest?.fallback_mode || "standard RAG";
-  if (status === "ready" && manifest?.usable) return "";
-  if (status === "building") return "Agentic manifest is building.";
-  if (status === "failed") {
-    return `Build failed${manifest?.error_message ? `: ${manifest.error_message}` : ""}. Falling back to ${fallback}.`;
-  }
-  if (status === "stale") {
-    return `Manifest stale${manifest?.stale_reason ? `: ${manifest.stale_reason}` : ""}. Falling back to ${fallback}.`;
-  }
-  return `Agentic manifest missing. Falling back to ${fallback}.`;
+type Translate = (key: string) => string;
+
+function formatTranslated(t: Translate, key: string, replacements: Record<string, string>) {
+  return Object.entries(replacements).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key));
 }
 
-function getManifestActionLabel(manifest?: AgenticReadyManifest) {
+function getManifestDetail(t: Translate, detail?: string | null) {
+  return detail ? formatTranslated(t, "knowledge.manifest_detail", { detail }) : "";
+}
+
+function getManifestFallbackMode(t: Translate, manifest?: AgenticReadyManifest) {
+  const fallback = manifest?.fallback_mode || "standard";
+  return fallback === "standard" ? t("knowledge.manifest_standard_fallback") : fallback;
+}
+
+function getManifestFallbackMessage(manifest: AgenticReadyManifest | undefined, t: Translate) {
   const status = manifest?.status || "missing";
-  if (status === "ready" || status === "stale" || status === "failed") return "Rebuild manifest";
-  if (status === "building") return "Building";
-  return "Build manifest";
+  const fallback = getManifestFallbackMode(t, manifest);
+  if (status === "ready" && manifest?.usable) return "";
+  if (status === "building") return t("knowledge.manifest_building_message");
+  if (status === "failed") {
+    return formatTranslated(t, "knowledge.manifest_failed_fallback", {
+      detail: getManifestDetail(t, manifest?.error_message),
+      fallback,
+    });
+  }
+  if (status === "stale") {
+    return formatTranslated(t, "knowledge.manifest_stale_fallback", {
+      detail: getManifestDetail(t, manifest?.stale_reason),
+      fallback,
+    });
+  }
+  return formatTranslated(t, "knowledge.manifest_missing_fallback", { fallback });
+}
+
+function getManifestActionLabel(manifest: AgenticReadyManifest | undefined, t: Translate) {
+  const status = manifest?.status || "missing";
+  if (status === "ready" || status === "stale" || status === "failed") return t("knowledge.manifest_rebuild");
+  if (status === "building") return t("knowledge.manifest_building_action");
+  return t("knowledge.manifest_build");
 }
 
 function ModeBadge({ mode }: { mode?: string }) {
@@ -455,15 +476,15 @@ export default function Knowledge() {
       }
       const status = res.manifest?.status || "missing";
       if (status === "ready" && res.validation?.valid !== false) {
-        setKbActionNotice("Agentic manifest build completed.");
+        setKbActionNotice(t("knowledge.manifest_build_completed"));
       } else {
         const detail = res.validation?.errors?.join("; ") || res.manifest?.error_message || res.manifest?.stale_reason || status;
-        setKbActionError(`Agentic manifest build did not produce ready data: ${detail}`);
+        setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", detail));
       }
     } catch (err) {
       console.error("Failed to build agentic manifest:", err);
       const detail = formatApiErrorDetail(err);
-      setKbActionError(detail || "Failed to build agentic manifest.");
+      setKbActionError(detail || t("knowledge.manifest_build_failed"));
     } finally {
       setBuildingManifestKb(null);
     }
@@ -725,7 +746,7 @@ export default function Knowledge() {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  Agentic manifest profile
+                  {t("knowledge.manifest_profile")}
                 </label>
                 <select
                   value={kbForm.manifest_profile}
@@ -733,12 +754,12 @@ export default function Knowledge() {
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   data-testid="select-kb-manifest-profile"
                 >
-                  <option value="general">general</option>
-                  <option value="regulation">regulation</option>
-                  <option value="formula">formula</option>
+                  <option value="general">{t("knowledge.manifest_profile_general")}</option>
+                  <option value="regulation">{t("knowledge.manifest_profile_regulation")}</option>
+                  <option value="formula">{t("knowledge.manifest_profile_formula")}</option>
                 </select>
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  General can build now; regulation and formula use standard fallback until their builders are available.
+                  {t("knowledge.manifest_profile_hint")}
                 </p>
               </div>
               <div className="sm:col-span-2">
@@ -974,8 +995,8 @@ export default function Knowledge() {
             const status = kb.availability || kb.status;
             const manifest = kb.agentic_ready_manifest;
             const manifestStatus = manifest?.status || "missing";
-            const manifestProfile = manifest?.profile || kb.manifest_profile || "default";
-            const manifestMessage = getManifestFallbackMessage(manifest);
+            const manifestProfile = manifest?.profile || kb.manifest_profile || t("knowledge.manifest_default_profile");
+            const manifestMessage = getManifestFallbackMessage(manifest, t);
             const manifestBusy = buildingManifestKb === kbId || manifestStatus === "building";
             const cardEmbeddingLabel = kb.current_embeddings?.model || currentEmbedding?.model || kb.embedding_model || "";
             return (
@@ -1026,7 +1047,7 @@ export default function Knowledge() {
                             )}
                             data-testid={`badge-agentic-manifest-${kbId}`}
                           >
-                            Agentic {manifestStatus}
+                            {t("knowledge.manifest_label")} {manifestStatus}
                           </span>
                           <span className="text-[10px] text-muted-foreground font-mono truncate">
                             {manifestProfile}
@@ -1054,7 +1075,7 @@ export default function Knowledge() {
                           ) : (
                             <RefreshCw className={cn("w-3.5 h-3.5", manifestStatus === "building" && "animate-spin")} />
                           )}
-                          {buildingManifestKb === kbId ? "Building" : getManifestActionLabel(manifest)}
+                          {buildingManifestKb === kbId ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, t)}
                         </button>
                       )}
                     </div>

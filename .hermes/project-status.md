@@ -4,14 +4,17 @@
 - Branch: `feat/agentic-rag-manifest-registry-kb-ui`
 - Baseline: `origin/main` at `1f3f234` (`Merge pull request #135 from ferryhe/chore/agentic-rag-roadmap-reconciliation`).
 - Scope: PR2 — Manifest Registry + DB + KB UI.
-- PR: pending creation for PR2.
+- PR: [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — open; post-review feedback fixes validated locally and ready to push.
 - Previous PRs: [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
 
 - Local `main` was fast-forwarded to `origin/main` at `1f3f234` after merging #135.
 - Current branch `feat/agentic-rag-manifest-registry-kb-ui` is the PR2 implementation branch.
-- Current plan position: PR0, PR1, and the roadmap reconciliation PR are complete and merged; PR2 implementation is complete locally and awaiting PR creation.
+- Current plan position: PR0, PR1, and the roadmap reconciliation PR are complete and merged; PR2 is open as #136 and is in the remote feedback gate.
+- PR2 remote gate after the wait window: GitHub `python-smoke` passed; Copilot left 5 inline comments. Four frontend comments requested i18n for Agentic manifest UI text, and one backend comment identified a valid `output_dir` rejection path that could leave/overwrite manifest state as `building`.
+- Follow-up fixes address all 5 comments: frontend Agentic manifest labels, messages, buttons, and metadata now use existing `t(...)` translations; invalid `output_dir` requests are rejected before writing `building` registry state and are covered by a regression test that preserves an existing ready manifest.
+- `gh pr view` GraphQL calls still return 401 in this environment; PR/check/review state was read with `gh pr checks` and REST `gh api`.
 - PR2 deliberately keeps `kb_mode` as existing KB composition semantics (`manual`, `category`, `all`) and adds `manifest_profile` for Agentic ready_data profile selection. Standard/Agentic fallback is represented by manifest status/fallback metadata rather than overloading `kb_mode`.
 
 ### External Plan Reconciliation
@@ -52,6 +55,12 @@
   - Multi-agent spec review found KB chunk scoping and stale scoping issues; both were fixed and covered by tests.
   - Multi-agent code-quality review found output_dir escape risk, stale metadata gap, and failed-build UI notice issue; all were fixed and covered by tests/source contracts.
   - Mandatory `codex review --uncommitted` could not run because WindowsApps `codex.exe` returned `Access is denied`; independent multi-agent spec and code-quality reviews were used as the available pre-PR review gate.
+- PR2 post-review follow-up verification:
+  - `python -m py_compile ai_actuarial/storage.py ai_actuarial/rag/knowledge_base.py ai_actuarial/agentic_rag/ready_data_builder.py ai_actuarial/api/services/rag_admin.py ai_actuarial/api/routers/rag_admin.py` (pass)
+  - `python -m pytest tests/agentic_rag/test_ready_data_builder.py tests/test_fastapi_rag_admin_endpoints.py tests/test_knowledge_react_source.py -q` (38 passed)
+  - `npm.cmd run build` (pass; Vite emitted existing large chunk warning)
+  - `git diff --check` (pass; Git emitted LF/CRLF working-copy warnings only)
+  - Mandatory `codex review --uncommitted` still cannot run because WindowsApps `codex.exe` returned `Access is denied`; the blocker remains recorded for the PR gate.
 - Copilot PR review on #134 produced 12 unresolved comments; all were evaluated as in-scope and addressed.
 - Follow-up fixes: programmatic usage docstring now names real exports; SimpleKeywordRetriever supports `close()` and context manager cleanup; rag chunk `RetrievedItem.score` matches ranking score; category matching handles semicolon-separated labels; no-expectation cases report retrieved doc IDs instead of `(no results)`; category metric docstrings were clarified; script shebang uses `python3`; the SOA case note no longer claims source_site is searched.
 - Independent pre-merge agent review found doc/category metric semantics and `top_k <= 0` edge cases; fixes added so doc hit rate is independent from category-only failures, category-only cases pass on category hits without requiring `min_hits=0`, expected category denominators use split labels, and non-positive top-k returns no results.

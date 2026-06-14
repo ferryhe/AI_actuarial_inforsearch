@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src" / "pages"
 KNOWLEDGE_TSX = ROOT / "Knowledge.tsx"
 KB_DETAIL_TSX = ROOT / "KBDetail.tsx"
+I18N_TS = ROOT.parent / "hooks" / "use-i18n.ts"
 
 
 def test_knowledge_pages_surface_reembed_action_for_embedding_mismatch():
@@ -116,6 +117,7 @@ def test_kb_detail_manual_mode_can_add_files_with_select_all_and_category_index_
 
 def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert "interface AgenticReadyManifest" in src
     assert "manifest_profile?: string" in src
@@ -130,7 +132,17 @@ def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
     assert "handleBuildAgenticManifest" in src
     assert "validation?: { valid?: boolean; errors?: string[] }" in src
     assert "res.validation?.valid !== false" in src
-    assert "Agentic manifest build did not produce ready data" in src
+    assert 't("knowledge.manifest_profile")' in src
+    assert 't("knowledge.manifest_profile_hint")' in src
+    assert 't("knowledge.manifest_build_completed")' in src
+    assert 't("knowledge.manifest_build_not_ready").replace("{detail}", detail)' in src
+    assert 't("knowledge.manifest_build_failed")' in src
+    assert "getManifestFallbackMessage(manifest, t)" in src
+    assert "getManifestActionLabel(manifest, t)" in src
+    assert "Agentic manifest profile" not in src
+    assert "Agentic manifest build did not produce ready data" not in src
+    assert '"knowledge.manifest_profile"' in i18n_src
+    assert '"knowledge.manifest_build_not_ready"' in i18n_src
     assert "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`" in src
     assert "buildingManifestKb === kbId" in src
     assert 'data-testid={`badge-agentic-manifest-${kbId}`}' in src
@@ -140,6 +152,7 @@ def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
 
 def test_kb_detail_surfaces_agentic_manifest_endpoint_status_and_build_action():
     src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert "interface AgenticReadyManifest" in src
     assert "manifest_profile?: string" in src
@@ -150,7 +163,16 @@ def test_kb_detail_surfaces_agentic_manifest_endpoint_status_and_build_action():
     assert "handleBuildAgenticManifest" in src
     assert "validation?: { valid?: boolean; errors?: string[] }" in src
     assert "res.validation?.valid !== false" in src
-    assert "Agentic manifest build did not produce ready data" in src
+    assert 't("knowledge.manifest_build_completed")' in src
+    assert 't("knowledge.manifest_build_not_ready").replace("{detail}", detail)' in src
+    assert 't("knowledge.manifest_build_failed")' in src
+    assert 't("knowledge.manifest_output")' in src
+    assert 't("knowledge.manifest_built")' in src
+    assert "getManifestFallbackMessage(manifest, t)" in src
+    assert "getManifestActionLabel(manifest, t)" in src
+    assert "Agentic manifest build did not produce ready data" not in src
+    assert '"knowledge.manifest_output"' in i18n_src
+    assert '"knowledge.manifest_built"' in i18n_src
     assert "manifest.profile || meta.manifest_profile" in src
     assert "manifest.doc_count" in src
     assert "manifest.section_count" in src

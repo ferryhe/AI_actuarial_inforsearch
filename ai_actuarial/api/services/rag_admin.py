@@ -1076,12 +1076,6 @@ def build_agentic_ready_manifest(
                 "validation": {"valid": False, "errors": [message], "warnings": []},
             }
 
-        storage.upsert_agentic_ready_manifest(
-            kb_id=kid,
-            profile=profile,
-            profile_version=profile_def.version,
-            status="building",
-        )
         from ai_actuarial.agentic_rag import ready_data_builder
 
         output_dir = _resolve_agentic_output_dir(
@@ -1090,6 +1084,13 @@ def build_agentic_ready_manifest(
             profile=profile,
             profile_version=profile_def.version,
             requested_output_dir=payload.get("output_dir"),
+        )
+        storage.upsert_agentic_ready_manifest(
+            kb_id=kid,
+            profile=profile,
+            profile_version=profile_def.version,
+            status="building",
+            output_dir=output_dir,
         )
         try:
             builder_manifest = ready_data_builder.build_l0(

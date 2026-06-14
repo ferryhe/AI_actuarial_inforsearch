@@ -591,6 +591,14 @@ def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(
     )
     assert create_kb.status_code == 201, create_kb.text
 
+    ready_build = client.post(
+        "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
+        json={},
+    )
+    assert ready_build.status_code == 200, ready_build.text
+    ready_manifest = ready_build.json()["manifest"]
+    assert ready_manifest["status"] == "ready"
+
     traversal = client.post(
         "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
         json={"output_dir": "../escape"},
@@ -598,12 +606,24 @@ def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(
     assert traversal.status_code == 400
     assert "output_dir" in traversal.json()["error"]
 
+    after_traversal = client.get("/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest")
+    assert after_traversal.status_code == 200, after_traversal.text
+    after_traversal_manifest = after_traversal.json()["manifest"]
+    assert after_traversal_manifest["status"] == "ready"
+    assert after_traversal_manifest["output_dir"] == ready_manifest["output_dir"]
+
     absolute_outside = client.post(
         "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
         json={"output_dir": str(tmp_path.parent / "outside-agentic-ready-data")},
     )
     assert absolute_outside.status_code == 400
     assert "output_dir" in absolute_outside.json()["error"]
+
+    after_absolute = client.get("/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest")
+    assert after_absolute.status_code == 200, after_absolute.text
+    after_absolute_manifest = after_absolute.json()["manifest"]
+    assert after_absolute_manifest["status"] == "ready"
+    assert after_absolute_manifest["output_dir"] == ready_manifest["output_dir"]
 
 
 def test_fastapi_rag_admin_agentic_manifest_stale_uses_bound_chunks_and_catalog_metadata(
