@@ -103,19 +103,23 @@ def _doc_key(row: dict[str, Any]) -> str:
     return _norm(row.get("doc_id")) or _norm(row.get("file_url"))
 
 
-def _merge_summary_docs(catalog: list[dict[str, Any]], summaries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+def _merge_summary_docs(
+    catalog: list[dict[str, Any]], summaries: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], set[str], set[str]]:
     by_key = {_doc_key(row): row for row in catalog if _doc_key(row)}
     if not summaries:
-        return [dict(row) for row in catalog], "doc_catalog"
+        return [dict(row) for row in catalog], set(by_key), set()
 
     summary_by_key = {_doc_key(row): row for row in summaries if _doc_key(row)}
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
+    summary_keys: set[str] = set()
     for key, catalog_row in by_key.items():
         base = dict(catalog_row)
         summary = summary_by_key.get(key)
         if summary:
             base.update({k: v for k, v in summary.items() if v not in (None, "")})
+            summary_keys.add(key)
         merged.append(base)
         seen.add(key)
 
@@ -124,7 +128,8 @@ def _merge_summary_docs(catalog: list[dict[str, Any]], summaries: list[dict[str,
         if key and key not in seen:
             merged.append({k: v for k, v in summary.items() if v not in (None, "")})
             seen.add(key)
-    return merged, "doc_summaries"
+            summary_keys.add(key)
+    return merged, set(by_key), summary_keys
 
 
 def _sections_by_doc(sections: list[dict[str, Any]]) -> dict[str, str]:
@@ -177,7 +182,7 @@ def search_summaries(query: str, *, output_dir: str | Path, limit: int = 10) -> 
     if not ready_data:
         return []
 
-    docs, default_source = _merge_summary_docs(ready_data["catalog"], ready_data["summaries"])
+    docs, catalog_keys, summary_keys = _merge_summary_docs(ready_data["catalog"], ready_data["summaries"])
     section_text = _sections_by_doc(ready_data["sections"])
     scored: list[dict[str, Any]] = []
     for row in docs:
@@ -194,7 +199,12 @@ def search_summaries(query: str, *, output_dir: str | Path, limit: int = 10) -> 
             score += 3.0
         if score <= 0:
             continue
-        source = default_source if summary_score > 0 or default_source == "doc_catalog" else "sections"
+        if doc_id in summary_keys and (summary_score > 0 or doc_id not in catalog_keys):
+            source = "doc_summaries"
+        elif summary_score > 0 or title_score > 0 or category_score > 0 or heading_score > 0:
+            source = "doc_catalog"
+        else:
+            source = "sections"
         scored.append(_format_result(row, score=score, source=source))
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["file_url"]))

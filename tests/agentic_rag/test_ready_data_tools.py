@@ -155,6 +155,7 @@ def test_search_summaries_keeps_catalog_docs_when_doc_summaries_are_partial(tmp_
 
     assert results[0]["file_url"] == "https://example.test/reserve.pdf"
     assert results[0]["summary"] == "Describes reserve calculation and liability assumptions."
+    assert results[0]["source"] == "doc_catalog"
 
 
 def test_search_tools_do_not_read_manifest_artifacts_outside_ready_data_dir(tmp_path: Path) -> None:
