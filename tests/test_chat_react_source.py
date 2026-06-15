@@ -145,6 +145,36 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     assert '"chat.agentic_status": "Agentic {status}"' in i18n_src
 
 
+def test_chat_agentic_kb_dropdown_labels_ready_data_sections_not_standard_chunks():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+
+    assert "section_count?: number" in src
+    assert "getKbResultCountLabel" in src
+    assert "kb.agentic_ready_manifest?.section_count" in src
+    assert '"chat.sections_label"' in src
+    assert '"chat.chunks_label"' in src
+    assert "ragMode === \"agentic\"" in src
+    assert "const resultCountLabel = getKbResultCountLabel(kb, ragMode, t)" in src
+    assert "{resultCountLabel}" in src
+    assert "{kb.chunk_count} chunks" not in src
+    assert '"chat.sections_label": "{count} sections"' in i18n_src
+    assert '"chat.sections_label": "{count} 个分段"' in i18n_src
+    assert '"chat.chunks_label": "{count} chunks"' in i18n_src
+
+
+def test_chat_formats_agentic_scores_as_raw_scores_not_similarity_percentages():
+    src = CHAT_TSX.read_text(encoding="utf-8")
+
+    assert "score?: number" in src
+    assert "function formatCitationScore" in src
+    assert "formatCitationScore(citation)" in src
+    assert "citation.similarity_score" in src
+    assert "citation.score" in src
+    assert "Score: ${formatRawScore(score)}" in src
+    assert "const score = citation.similarity_score || citation.score" not in src
+
+
 def test_chat_maps_agentic_evidence_and_renders_tool_trace():
     src = CHAT_TSX.read_text(encoding="utf-8")
     i18n_src = I18N_TS.read_text(encoding="utf-8")

@@ -316,6 +316,35 @@ def test_search_sections_returns_stable_section_hits_from_l1_artifact(tmp_path: 
     assert results[0]["score"] > 0
 
 
+def test_search_sections_matches_cjk_query_terms_inside_structured_sections(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path)
+    _write_jsonl(
+        tmp_path / "sections_structured.jsonl",
+        [
+            {
+                "section_id": "doc-capital#minimum-capital",
+                "doc_id": "doc-capital",
+                "file_url": "https://example.test/capital.pdf",
+                "title": "偿付能力监管规则第2号：最低资本",
+                "heading_path": ["最低资本"],
+                "heading": "最低资本",
+                "text": "最低资本由保险风险、市场风险和信用风险对应的资本构成。",
+                "document_aliases": ["偿付能力监管规则第2号", "最低资本"],
+            }
+        ],
+    )
+    manifest = json.loads((tmp_path / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["artifact_files"].append("sections_structured.jsonl")
+    (tmp_path / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    results = search_sections("最低资本由哪些风险模块构成？", output_dir=str(tmp_path), limit=3)
+
+    assert results
+    assert results[0]["doc_id"] == "doc-capital"
+    assert results[0]["source"] == "sections_structured"
+    assert "最低资本" in results[0]["text_snippet"]
+
+
 def test_search_sections_bounds_text_snippet_length(tmp_path: Path) -> None:
     _write_ready_data(tmp_path)
     _write_jsonl(

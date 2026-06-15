@@ -255,6 +255,38 @@ def test_agentic_loop_returns_formula_tool_evidence_for_formula_profile(tmp_path
     ]
 
 
+def test_agentic_loop_returns_evidence_for_cjk_formula_queries(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path, profile="formula", include_l1=True, include_l2=True)
+    _write_jsonl(
+        tmp_path / "sections_structured.jsonl",
+        [
+            {
+                "section_id": "doc-capital#minimum-capital",
+                "doc_id": "doc-capital",
+                "file_url": "https://example.test/capital.pdf",
+                "title": "偿付能力监管规则第2号：最低资本",
+                "heading_path": ["最低资本"],
+                "heading": "最低资本",
+                "text": "最低资本由保险风险、市场风险和信用风险对应的资本构成。",
+                "document_aliases": ["偿付能力监管规则第2号", "最低资本"],
+            }
+        ],
+    )
+
+    response = run_agentic_rag_loop(
+        query="最低资本由哪些风险模块构成？",
+        output_dir=tmp_path,
+        profile="formula",
+        kb_id="kb-formula",
+        limit=3,
+    )
+
+    assert response["answer"].startswith("Found ")
+    assert any(item["tool"] == "search_sections" for item in response["evidence"])
+    assert any(item["source"] == "sections_structured" for item in response["evidence"])
+    assert response["metadata"]["evidence_count"] > 0
+
+
 def test_agentic_loop_returns_evidence_answer_and_trace_for_l1_regulation_tools(tmp_path: Path) -> None:
     _write_ready_data(tmp_path, profile="regulation", include_l1=True)
 

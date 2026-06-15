@@ -635,6 +635,11 @@ def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(tmp_pat
     assert data["metadata"]["tool_trace"]
     assert data["retrieved_blocks"]
     assert data["citations"]
+    assert "score" in data["retrieved_blocks"][0]
+    assert data["retrieved_blocks"][0]["score"] > 1
+    assert "similarity_score" not in data["retrieved_blocks"][0]
+    assert "score" in data["citations"][0]
+    assert "similarity_score" not in data["citations"][0]
 
     detail = client.get(f"/api/chat/conversations/{data['conversation_id']}")
     assert detail.status_code == 200, detail.text
