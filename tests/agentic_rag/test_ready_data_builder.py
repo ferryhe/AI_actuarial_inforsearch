@@ -546,6 +546,72 @@ def test_validate_rejects_orphan_l2_relation_targets(tmp_path):
     assert any("relation calculation_term targets not in L2 artifacts" in error for error in result["errors"])
 
 
+def test_validate_resolves_dict_mapped_l2_artifact_paths(tmp_path):
+    mapped_dir = tmp_path / "mapped"
+    mapped_dir.mkdir()
+
+    def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    doc = {"doc_id": "doc-a", "file_url": "doc-a", "title": "Formula Doc", "category": "formula"}
+    section = {"section_id": "doc-a#s1", "doc_id": "doc-a", "heading_path": ["Formula"], "text": "A = B"}
+    structured = {**section, "file_url": "doc-a", "title": "Formula Doc", "heading": "Formula"}
+    write_jsonl(mapped_dir / "catalog.jsonl", [doc])
+    write_jsonl(mapped_dir / "sections.jsonl", [section])
+    write_jsonl(mapped_dir / "structured.jsonl", [structured])
+    write_jsonl(
+        mapped_dir / "formulas.jsonl",
+        [{"formula_id": "doc-a#s1#formula-1", "doc_id": "doc-a", "section_id": "doc-a#s1"}],
+    )
+    write_jsonl(
+        mapped_dir / "tables.jsonl",
+        [{"table_id": "doc-a#s1#table-1", "doc_id": "doc-a", "section_id": "doc-a#s1"}],
+    )
+    write_jsonl(
+        mapped_dir / "terms.jsonl",
+        [{"term_id": "doc-a#s1#term-a", "doc_id": "doc-a", "section_id": "doc-a#s1"}],
+    )
+    with open(mapped_dir / "relations.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "relations": [
+                    {
+                        "relation_type": "document_has_formula",
+                        "doc_id": "doc-a",
+                        "section_id": "doc-a#s1",
+                        "target_type": "formula",
+                        "target_id": "doc-a#s1#missing-formula",
+                    }
+                ]
+            },
+            f,
+        )
+    with open(tmp_path / "ready_data_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "artifact_files": {
+                    "doc_catalog.jsonl": "mapped/catalog.jsonl",
+                    "sections.jsonl": "mapped/sections.jsonl",
+                    "sections_structured.jsonl": "mapped/structured.jsonl",
+                    "formula_cards.jsonl": "mapped/formulas.jsonl",
+                    "tables_structured.jsonl": "mapped/tables.jsonl",
+                    "calculation_terms.jsonl": "mapped/terms.jsonl",
+                    "relations_graph.json": "mapped/relations.json",
+                    "ready_data_manifest.json": "ready_data_manifest.json",
+                }
+            },
+            f,
+        )
+
+    result = builder.validate(str(tmp_path))
+
+    assert result["valid"] is False
+    assert not any("artifact missing" in error for error in result["errors"])
+    assert any("relation formula targets not in L2 artifacts" in error for error in result["errors"])
+
+
 def test_build_l0_can_scope_to_knowledge_base(test_db_path, tmp_path):
     """KB scoped builds should not leak catalog rows from other KBs."""
     conn = sqlite3.connect(test_db_path)

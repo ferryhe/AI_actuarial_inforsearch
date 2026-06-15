@@ -678,6 +678,8 @@ def build_l0(
                 file_url = str(section.get("file_url") or doc_id)
                 title = str(section.get("title") or file_url)
                 context = _context_snippet(text)
+                section_formula_texts: list[str] = []
+                section_table_texts: list[str] = []
 
                 for index, formula_text in enumerate(_formula_lines(text), 1):
                     terms = _extract_terms(f"{formula_text} {text}", formula_text=formula_text)
@@ -695,6 +697,7 @@ def build_l0(
                         "terms": terms,
                     }
                     formula_rows.append(formula_row)
+                    section_formula_texts.append(formula_text)
                     relations.append(
                         {
                             "relation_type": "document_has_formula",
@@ -724,6 +727,7 @@ def build_l0(
                         "text": table["text"],
                     }
                     table_rows.append(table_row)
+                    section_table_texts.append(table["text"])
                     relations.append(
                         {
                             "relation_type": "document_has_table",
@@ -737,9 +741,7 @@ def build_l0(
                         }
                     )
 
-                term_contexts = [text]
-                term_contexts.extend(row["formula_text"] for row in formula_rows if row["section_id"] == section_id)
-                term_contexts.extend(row["text"] for row in table_rows if row["section_id"] == section_id)
+                term_contexts = [text, *section_formula_texts, *section_table_texts]
                 for term in _extract_terms(" ".join(term_contexts)):
                     normalized_term = term.lower()
                     term_key = (doc_id, section_id, normalized_term)
@@ -872,6 +874,31 @@ def _manifest_artifact_path(output_dir: str, artifact: Any) -> tuple[str | None,
     return str(resolved), None
 
 
+def _manifest_artifact_specs(manifest: dict[str, Any]) -> list[tuple[list[str], Any]]:
+    artifact_files = manifest.get("artifact_files", [])
+    specs: list[tuple[list[str], Any]] = []
+    if isinstance(artifact_files, dict):
+        for key, value in artifact_files.items():
+            key_text = str(key or "").strip()
+            value_text = str(value or key_text).strip()
+            names = [
+                Path(candidate).name
+                for candidate in (key_text, value_text)
+                if str(candidate or "").strip()
+            ]
+            key_name = Path(key_text).name if key_text else ""
+            value_suffix = Path(value_text).suffix if value_text else ""
+            if key_name and not Path(key_name).suffix and value_suffix in {".json", ".jsonl"}:
+                names.append(f"{key_name}{value_suffix}")
+            specs.append((_unique_strings(names), value_text))
+        return specs
+    if isinstance(artifact_files, list):
+        for artifact in artifact_files:
+            artifact_text = str(artifact or "").strip()
+            specs.append(([Path(artifact_text).name] if artifact_text else [], artifact))
+    return specs
+
+
 def validate(output_dir: str) -> dict:
     """Validate built ready_data artifacts.
 
@@ -894,18 +921,19 @@ def validate(output_dir: str) -> dict:
         return {"valid": False, "errors": errors, "warnings": warnings}
 
     artifact_paths: dict[str, str] = {}
-    for artifact in manifest.get("artifact_files", []):
+    for artifact_names, artifact in _manifest_artifact_specs(manifest):
         artifact_text = str(artifact or "").strip()
         path, path_error = _manifest_artifact_path(output_dir, artifact)
-        artifact_name = os.path.basename(artifact_text)
         if path_error:
             errors.append(path_error)
             continue
-        if path and artifact_name:
-            artifact_paths[artifact_name] = path
+        if path:
+            for artifact_name in artifact_names:
+                if artifact_name:
+                    artifact_paths[artifact_name] = path
         if not os.path.isfile(path):
             errors.append(f"artifact missing: {artifact}")
-        elif artifact_text.endswith(".jsonl"):
+        elif artifact_text.endswith(".jsonl") or any(name.endswith(".jsonl") for name in artifact_names):
             # Validate JSONL: every line must parse
             bad_lines = 0
             with open(path, "r", encoding="utf-8") as af:
@@ -922,7 +950,7 @@ def validate(output_dir: str) -> dict:
             if bad_lines:
                 errors.append(f"{artifact}: {bad_lines} invalid JSON lines")
 
-        elif artifact_text.endswith(".json"):
+        elif artifact_text.endswith(".json") or any(name.endswith(".json") for name in artifact_names):
             try:
                 with open(path, "r", encoding="utf-8") as af:
                     json.load(af)
