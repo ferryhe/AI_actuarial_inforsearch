@@ -17,7 +17,13 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     )
 
 
-def _write_ready_data(output_dir: Path, *, profile: str = "regulation", include_l1: bool = True) -> None:
+def _write_ready_data(
+    output_dir: Path,
+    *,
+    profile: str = "regulation",
+    include_l1: bool = True,
+    include_l2: bool = False,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_jsonl(
         output_dir / "doc_catalog.jsonl",
@@ -120,6 +126,59 @@ def _write_ready_data(output_dir: Path, *, profile: str = "regulation", include_
             encoding="utf-8",
         )
         artifact_files.extend(["title_aliases.jsonl", "sections_structured.jsonl", "relations_graph.json"])
+    if include_l2:
+        _write_jsonl(
+            output_dir / "formula_cards.jsonl",
+            [
+                {
+                    "formula_id": "doc-reserve#formula-1",
+                    "doc_id": "doc-reserve",
+                    "file_url": "https://example.test/reserve.pdf",
+                    "title": "Reserve Method Note",
+                    "section_id": "doc-reserve#net-premium",
+                    "heading_path": ["Reserve", "Net premium"],
+                    "heading": "Net premium",
+                    "formula_text": "Net Premium = PV Benefits / PV Premiums.",
+                    "context": "Net Premium = PV Benefits / PV Premiums. Mortality rate q_x is used.",
+                    "terms": ["Net Premium", "PV Benefits", "PV Premiums", "mortality rate"],
+                }
+            ],
+        )
+        _write_jsonl(
+            output_dir / "tables_structured.jsonl",
+            [
+                {
+                    "table_id": "doc-reserve#table-1",
+                    "doc_id": "doc-reserve",
+                    "file_url": "https://example.test/reserve.pdf",
+                    "title": "Reserve Method Note",
+                    "section_id": "doc-reserve#net-premium",
+                    "heading_path": ["Reserve", "Net premium"],
+                    "heading": "Net premium",
+                    "caption": "Assumption table",
+                    "headers": ["Term", "Description"],
+                    "rows": [{"Term": "q_x", "Description": "mortality rate"}],
+                    "text": "Term Description q_x mortality rate",
+                }
+            ],
+        )
+        _write_jsonl(
+            output_dir / "calculation_terms.jsonl",
+            [
+                {
+                    "term_id": "doc-reserve#term-mortality-rate",
+                    "term": "mortality rate",
+                    "normalized_term": "mortality rate",
+                    "doc_id": "doc-reserve",
+                    "file_url": "https://example.test/reserve.pdf",
+                    "title": "Reserve Method Note",
+                    "section_id": "doc-reserve#net-premium",
+                    "heading_path": ["Reserve", "Net premium"],
+                    "context": "Mortality rate q_x is used.",
+                }
+            ],
+        )
+        artifact_files.extend(["formula_cards.jsonl", "tables_structured.jsonl", "calculation_terms.jsonl"])
     (output_dir / "ready_data_manifest.json").write_text(
         json.dumps({"profile": profile, "profile_version": "1", "artifact_files": artifact_files}, ensure_ascii=False),
         encoding="utf-8",
@@ -155,6 +214,43 @@ def test_planner_includes_regulation_tools_when_l1_artifacts_are_available(tmp_p
         "search_sections",
         "search_titles",
         "trace_relations",
+    ]
+
+
+def test_planner_includes_formula_tools_for_formula_profile() -> None:
+    steps = plan_tool_steps("How is net premium calculated from mortality rate?", profile="formula")
+
+    assert [step.tool_name for step in steps] == [
+        "search_formula_cards",
+        "search_calculation_terms",
+        "search_structured_tables",
+        "search_sections",
+        "search_summaries",
+        "search_titles",
+        "trace_relations",
+    ]
+
+
+def test_agentic_loop_returns_formula_tool_evidence_for_formula_profile(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path, profile="formula", include_l1=True, include_l2=True)
+
+    response = run_agentic_rag_loop(
+        query="How is net premium calculated from mortality rate?",
+        output_dir=tmp_path,
+        profile="formula",
+        kb_id="kb-formula",
+        limit=3,
+    )
+
+    assert response["kb_id"] == "kb-formula"
+    assert response["profile"] == "formula"
+    assert any(item["tool"] == "search_formula_cards" for item in response["evidence"])
+    assert any(item["tool"] == "search_calculation_terms" for item in response["evidence"])
+    assert any(item["tool"] == "search_structured_tables" for item in response["evidence"])
+    assert [step["tool_name"] for step in response["metadata"]["tool_trace"]][:3] == [
+        "search_formula_cards",
+        "search_calculation_terms",
+        "search_structured_tables",
     ]
 
 

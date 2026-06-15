@@ -111,6 +111,45 @@ RELATION_FIELDS = [
     "target_id",
 ]
 
+FORMULA_CARD_FIELDS = [
+    "formula_id",
+    "doc_id",
+    "file_url",
+    "title",
+    "section_id",
+    "heading_path",
+    "heading",
+    "formula_text",
+    "context",
+    "terms",
+]
+
+STRUCTURED_TABLE_FIELDS = [
+    "table_id",
+    "doc_id",
+    "file_url",
+    "title",
+    "section_id",
+    "heading_path",
+    "heading",
+    "caption",
+    "headers",
+    "rows",
+    "text",
+]
+
+CALCULATION_TERM_FIELDS = [
+    "term_id",
+    "term",
+    "normalized_term",
+    "doc_id",
+    "file_url",
+    "title",
+    "section_id",
+    "heading_path",
+    "context",
+]
+
 
 # ── Extraction helpers ────────────────────────────────────────────────────────
 
@@ -155,6 +194,19 @@ def _unique_strings(values: list[Any]) -> list[str]:
     return out
 
 
+def _slug(value: str, fallback: str = "item") -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip().lower()).strip("-")
+    return slug or fallback
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {str(row[1]) for row in rows}
+
+
 def _extract_identifier_parts(title: str, file_url: str) -> tuple[list[str], list[str], list[str]]:
     document_numbers: list[str] = []
     rule_numbers: list[str] = []
@@ -190,6 +242,136 @@ def _build_doc_aliases(entry: dict[str, Any]) -> tuple[list[str], list[str], lis
 
 def _section_heading(heading_path: list[str]) -> str:
     return heading_path[-1] if heading_path else ""
+
+
+def _token_count(text: str) -> int:
+    return len(re.findall(r"[\w\u4e00-\u9fff]+", text or "", flags=re.UNICODE))
+
+
+def _markdown_heading_path(markdown_content: str) -> list[str]:
+    headings: list[str] = []
+    for line in markdown_content.splitlines():
+        match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
+        if match:
+            headings.append(match.group(1).strip())
+        if len(headings) >= 2:
+            break
+    return headings or ["Markdown"]
+
+
+def _looks_like_formula(line: str) -> bool:
+    text = line.strip().strip("-* ")
+    if not text or text.startswith("|"):
+        return False
+    if len(text) > 320:
+        return False
+    if "=" not in text:
+        return False
+    left, right = text.split("=", 1)
+    if not left.strip() or not right.strip():
+        return False
+    return bool(re.search(r"[A-Za-z\u4e00-\u9fff]", text))
+
+
+def _formula_lines(text: str) -> list[str]:
+    formulas: list[str] = []
+    for line in text.splitlines():
+        candidate = line.strip().strip("-* ")
+        if _looks_like_formula(candidate):
+            formulas.append(candidate)
+    return _unique_strings(formulas)
+
+
+def _parse_table_row(line: str) -> list[str]:
+    text = line.strip()
+    if "|" not in text:
+        return []
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    cells = [cell.strip() for cell in text.split("|")]
+    return cells if len(cells) >= 2 else []
+
+
+def _is_table_separator(cells: list[str]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
+
+
+def _markdown_tables(text: str) -> list[dict[str, Any]]:
+    lines = text.splitlines()
+    tables: list[dict[str, Any]] = []
+    i = 0
+    while i < len(lines) - 1:
+        headers = _parse_table_row(lines[i])
+        next_cells = _parse_table_row(lines[i + 1])
+        if not headers or not next_cells:
+            i += 1
+            continue
+        has_separator = _is_table_separator(next_cells)
+        rows: list[dict[str, str]] = []
+        text_rows: list[str] = [" ".join(headers)]
+        j = i + 2 if has_separator else i + 1
+        while j < len(lines):
+            cells = _parse_table_row(lines[j])
+            if not cells or _is_table_separator(cells):
+                break
+            padded = cells + [""] * max(0, len(headers) - len(cells))
+            row = {headers[idx]: padded[idx] for idx in range(len(headers))}
+            rows.append(row)
+            text_rows.append(" ".join(padded[: len(headers)]))
+            j += 1
+        if rows:
+            tables.append({"headers": headers, "rows": rows, "text": " ".join(text_rows)})
+        i = max(j, i + 1)
+    return tables
+
+
+_CALCULATION_TERMS: list[tuple[str, str]] = [
+    ("Net Premium", r"\bnet\s+premium\b"),
+    ("Gross Premium", r"\bgross\s+premium\b"),
+    ("PV Benefits", r"\bpv\s+benefits\b"),
+    ("PV Premiums", r"\bpv\s+premiums\b"),
+    ("present value", r"\bpresent\s+value\b"),
+    ("mortality rate", r"\bmortality\s+rate\b"),
+    ("discount rate", r"\bdiscount\s+rate\b"),
+    ("discount factor", r"\bdiscount\s+factor\b"),
+    ("cash flow", r"\bcash\s+flow\b"),
+    ("reserve", r"\breserve\b"),
+    ("premium", r"\bpremium\b"),
+    ("benefit", r"\bbenefit\b"),
+    ("BEL", r"\bbel\b"),
+    ("SCR", r"\bscr\b"),
+    ("q_x", r"\bq_x\b"),
+    ("v", r"\bv\b"),
+]
+
+
+def _formula_left_term(formula_text: str) -> str:
+    left = formula_text.split("=", 1)[0].strip()
+    if 2 <= len(left) <= 80 and re.search(r"[A-Za-z\u4e00-\u9fff]", left):
+        return left
+    return ""
+
+
+def _extract_terms(text: str, *, formula_text: str = "") -> list[str]:
+    candidates: list[Any] = []
+    left_term = _formula_left_term(formula_text)
+    if left_term:
+        candidates.append(left_term)
+    for label, pattern in _CALCULATION_TERMS:
+        if re.search(pattern, text, flags=re.IGNORECASE | re.UNICODE):
+            candidates.append(label)
+    return _unique_strings(candidates)
+
+
+def _context_snippet(text: str, max_chars: int = 480) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= max_chars:
+        return compact
+    if max_chars <= 3:
+        return compact[:max_chars]
+    return compact[: max_chars - 3].rstrip() + "..."
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -229,11 +411,6 @@ def build_l0(
         )
     profile_def = PROFILES[profile]
 
-    if profile not in {"general", "regulation"}:
-        raise NotImplementedError(
-            f"Profile {profile!r} is not yet implemented. "
-            "Only 'general' (L0) and 'regulation' (L1) are supported."
-        )
     if output_dir is None:
         if kb_id:
             safe_kb_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in kb_id)
@@ -250,9 +427,13 @@ def build_l0(
     if kb_id:
         kb_join = "JOIN rag_kb_files kf ON kf.file_url = c.file_url AND kf.kb_id = ?"
         where_params.append(kb_id)
+    catalog_columns = _table_columns(conn, "catalog_items")
+    markdown_select = "c.markdown_content" if "markdown_content" in catalog_columns else "NULL"
+    rag_chunk_count_select = "c.rag_chunk_count" if "rag_chunk_count" in catalog_columns else "0"
     catalog_rows = conn.execute(
         f"""SELECT c.file_url, f.title, c.category, c.summary, c.keywords,
-                   c.rag_chunk_count,
+                   {rag_chunk_count_select} AS rag_chunk_count,
+                   {markdown_select} AS markdown_content,
                    f.source_site, f.published_time
             FROM catalog_items c
             {kb_join}
@@ -308,12 +489,14 @@ def build_l0(
     doc_catalog_path = os.path.join(output_dir, "doc_catalog.jsonl")
     doc_count = 0
     catalog_entries: list[dict[str, Any]] = []
+    markdown_by_file: dict[str, str] = {}
     with open(doc_catalog_path, "w", encoding="utf-8") as f:
         for row in catalog_rows:
             file_url = row["file_url"]
             chunks = chunks_by_file.get(file_url, [])
             headings = _extract_headings(chunks)
             keywords = _parse_keywords(row["keywords"])
+            markdown_by_file[file_url] = str(row["markdown_content"] or "")
 
             entry = {
                 "doc_id": file_url,
@@ -350,13 +533,35 @@ def build_l0(
                 "token_count": row["token_count"] or 0,
             }
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            if profile == "regulation":
+            if profile in {"regulation", "formula"}:
                 section_entries.append(entry)
             section_count += 1
+        if profile == "formula":
+            for catalog_entry in catalog_entries:
+                file_url = catalog_entry["file_url"]
+                if chunks_by_file.get(file_url):
+                    continue
+                markdown_content = markdown_by_file.get(file_url, "")
+                if not markdown_content.strip():
+                    continue
+                heading_path = _markdown_heading_path(markdown_content)
+                entry = {
+                    "section_id": f"{file_url}#markdown",
+                    "doc_id": file_url,
+                    "heading_path": heading_path,
+                    "text": markdown_content,
+                    "token_count": _token_count(markdown_content),
+                }
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                section_entries.append(entry)
+                section_count += 1
 
     alias_rows: list[dict[str, Any]] = []
     aliases_by_doc: dict[str, list[str]] = {}
-    if profile == "regulation":
+    formula_card_count = 0
+    table_count = 0
+    calculation_term_count = 0
+    if profile in {"regulation", "formula"}:
         for entry in catalog_entries:
             aliases, identifiers, document_numbers, rule_numbers = _build_doc_aliases(entry)
             aliases_by_doc[entry["doc_id"]] = aliases
@@ -395,6 +600,7 @@ def build_l0(
 
         catalog_by_doc = {entry["doc_id"]: entry for entry in catalog_entries}
         relations: list[dict[str, Any]] = []
+        structured_sections: list[dict[str, Any]] = []
         structured_sections_path = os.path.join(output_dir, "sections_structured.jsonl")
         with open(structured_sections_path, "w", encoding="utf-8") as f:
             for section in section_entries:
@@ -413,6 +619,7 @@ def build_l0(
                     "document_aliases": aliases_by_doc.get(section["doc_id"], []),
                 }
                 f.write(json.dumps(structured, ensure_ascii=False) + "\n")
+                structured_sections.append(structured)
                 relations.append(
                     {
                         "relation_type": "document_has_section",
@@ -440,6 +647,134 @@ def build_l0(
                     }
                 )
 
+        if profile == "formula":
+            formula_rows: list[dict[str, Any]] = []
+            table_rows: list[dict[str, Any]] = []
+            term_rows: list[dict[str, Any]] = []
+            seen_terms: set[tuple[str, str, str]] = set()
+
+            for section in structured_sections:
+                text = str(section.get("text") or "")
+                section_id = str(section.get("section_id") or "")
+                heading_path = section.get("heading_path") if isinstance(section.get("heading_path"), list) else []
+                heading = str(section.get("heading") or _section_heading(heading_path))
+                doc_id = str(section.get("doc_id") or "")
+                file_url = str(section.get("file_url") or doc_id)
+                title = str(section.get("title") or file_url)
+                context = _context_snippet(text)
+
+                for index, formula_text in enumerate(_formula_lines(text), 1):
+                    terms = _extract_terms(f"{formula_text} {text}", formula_text=formula_text)
+                    formula_id = f"{section_id}#formula-{index}"
+                    formula_row = {
+                        "formula_id": formula_id,
+                        "doc_id": doc_id,
+                        "file_url": file_url,
+                        "title": title,
+                        "section_id": section_id,
+                        "heading_path": heading_path,
+                        "heading": heading,
+                        "formula_text": formula_text,
+                        "context": context,
+                        "terms": terms,
+                    }
+                    formula_rows.append(formula_row)
+                    relations.append(
+                        {
+                            "relation_type": "document_has_formula",
+                            "doc_id": doc_id,
+                            "file_url": file_url,
+                            "title": title,
+                            "section_id": section_id,
+                            "section_heading": heading,
+                            "target_type": "formula",
+                            "target_id": formula_id,
+                        }
+                    )
+
+                for index, table in enumerate(_markdown_tables(text), 1):
+                    table_id = f"{section_id}#table-{index}"
+                    table_row = {
+                        "table_id": table_id,
+                        "doc_id": doc_id,
+                        "file_url": file_url,
+                        "title": title,
+                        "section_id": section_id,
+                        "heading_path": heading_path,
+                        "heading": heading,
+                        "caption": heading,
+                        "headers": table["headers"],
+                        "rows": table["rows"],
+                        "text": table["text"],
+                    }
+                    table_rows.append(table_row)
+                    relations.append(
+                        {
+                            "relation_type": "document_has_table",
+                            "doc_id": doc_id,
+                            "file_url": file_url,
+                            "title": title,
+                            "section_id": section_id,
+                            "section_heading": heading,
+                            "target_type": "table",
+                            "target_id": table_id,
+                        }
+                    )
+
+                term_contexts = [text]
+                term_contexts.extend(row["formula_text"] for row in formula_rows if row["section_id"] == section_id)
+                term_contexts.extend(row["text"] for row in table_rows if row["section_id"] == section_id)
+                for term in _extract_terms(" ".join(term_contexts)):
+                    normalized_term = term.lower()
+                    term_key = (doc_id, section_id, normalized_term)
+                    if term_key in seen_terms:
+                        continue
+                    seen_terms.add(term_key)
+                    term_id = f"{section_id}#term-{_slug(normalized_term, 'term')}"
+                    term_row = {
+                        "term_id": term_id,
+                        "term": term,
+                        "normalized_term": normalized_term,
+                        "doc_id": doc_id,
+                        "file_url": file_url,
+                        "title": title,
+                        "section_id": section_id,
+                        "heading_path": heading_path,
+                        "context": context,
+                    }
+                    term_rows.append(term_row)
+                    relations.append(
+                        {
+                            "relation_type": "document_has_calculation_term",
+                            "doc_id": doc_id,
+                            "file_url": file_url,
+                            "title": title,
+                            "section_id": section_id,
+                            "section_heading": heading,
+                            "target_type": "calculation_term",
+                            "target_id": term_id,
+                        }
+                    )
+
+            formula_cards_path = os.path.join(output_dir, "formula_cards.jsonl")
+            with open(formula_cards_path, "w", encoding="utf-8") as f:
+                for row in formula_rows:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+            tables_structured_path = os.path.join(output_dir, "tables_structured.jsonl")
+            with open(tables_structured_path, "w", encoding="utf-8") as f:
+                for row in table_rows:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+            calculation_terms_path = os.path.join(output_dir, "calculation_terms.jsonl")
+            with open(calculation_terms_path, "w", encoding="utf-8") as f:
+                for row in term_rows:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+            formula_card_count = len(formula_rows)
+            table_count = len(table_rows)
+            calculation_term_count = len(term_rows)
+
         relations_path = os.path.join(output_dir, "relations_graph.json")
         with open(relations_path, "w", encoding="utf-8") as f:
             json.dump({"relations": relations}, f, indent=2, ensure_ascii=False)
@@ -456,6 +791,9 @@ def build_l0(
         "output_dir": output_dir,
         "doc_count": doc_count,
         "section_count": section_count,
+        "formula_card_count": formula_card_count,
+        "table_count": table_count,
+        "calculation_term_count": calculation_term_count,
         "artifact_files": profile_def_artifacts,
         "schema_versions": {
             "doc_catalog_fields": DOC_CATALOG_FIELDS,
@@ -464,6 +802,9 @@ def build_l0(
             "doc_summary_fields": DOC_SUMMARY_FIELDS,
             "structured_section_fields": STRUCTURED_SECTION_FIELDS,
             "relation_fields": RELATION_FIELDS,
+            "formula_card_fields": FORMULA_CARD_FIELDS,
+            "structured_table_fields": STRUCTURED_TABLE_FIELDS,
+            "calculation_term_fields": CALCULATION_TERM_FIELDS,
         },
     }
     manifest_path = os.path.join(output_dir, "ready_data_manifest.json")
@@ -619,6 +960,32 @@ def validate(output_dir: str) -> dict:
             )
         structured_section_ids = {e.get("section_id", "") for e in structured_entries if e.get("section_id")}
 
+    known_section_ids = section_ids | structured_section_ids
+    for artifact_name, label in (
+        ("formula_cards.jsonl", "formula card"),
+        ("tables_structured.jsonl", "structured table"),
+        ("calculation_terms.jsonl", "calculation term"),
+    ):
+        artifact_path = artifact_paths.get(artifact_name) or os.path.join(output_dir, artifact_name)
+        if not catalog_doc_ids or not os.path.isfile(artifact_path):
+            continue
+        rows, row_errors = _safe_jsonl_load(artifact_path)
+        errors.extend(row_errors)
+        row_doc_ids = {e.get("doc_id", "") for e in rows if e.get("doc_id")}
+        orphan_docs = row_doc_ids - catalog_doc_ids
+        if orphan_docs:
+            errors.append(
+                f"{len(orphan_docs)} {label} doc_ids not in catalog "
+                f"(e.g. {list(orphan_docs)[:3]})"
+            )
+        row_section_ids = {e.get("section_id", "") for e in rows if e.get("section_id")}
+        orphan_sections = row_section_ids - known_section_ids
+        if orphan_sections:
+            errors.append(
+                f"{len(orphan_sections)} {label} section_ids not in sections "
+                f"(e.g. {list(orphan_sections)[:3]})"
+            )
+
     relations_path = artifact_paths.get("relations_graph.json") or os.path.join(output_dir, "relations_graph.json")
     if catalog_doc_ids and os.path.isfile(relations_path):
         try:
@@ -652,7 +1019,6 @@ def validate(output_dir: str) -> dict:
                     for row in relations
                     if isinstance(row, dict) and row.get("section_id")
                 )
-                known_section_ids = section_ids | structured_section_ids
                 orphan_relation_sections = relation_section_ids - known_section_ids
                 if orphan_relation_sections:
                     errors.append(
@@ -682,7 +1048,7 @@ def main():
     parser.add_argument(
         "--profile",
         default="general",
-        choices=["general", "regulation"],
+        choices=["general", "regulation", "formula"],
         help="Manifest profile",
     )
     parser.add_argument("--kb-id", default=None, help="Optional knowledge-base ID to export")

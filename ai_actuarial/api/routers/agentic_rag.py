@@ -7,7 +7,10 @@ from ..deps import AuthContext, require_permissions
 from ..services.agentic_rag import (
     AgenticRagError,
     chat_agentic_rag,
+    search_ready_calculation_terms,
+    search_ready_formula_cards,
     search_ready_sections,
+    search_ready_structured_tables,
     search_ready_summaries,
     search_ready_titles,
     trace_ready_relations,
@@ -60,6 +63,42 @@ def api_search_agentic_sections(
 ):
     try:
         return search_ready_sections(db_path=_db_path(request), payload=payload)
+    except AgenticRagError as exc:
+        return _error_response(exc)
+
+
+@router.post("/agentic-rag/search/formula-cards")
+def api_search_agentic_formula_cards(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return search_ready_formula_cards(db_path=_db_path(request), payload=payload)
+    except AgenticRagError as exc:
+        return _error_response(exc)
+
+
+@router.post("/agentic-rag/search/tables")
+def api_search_agentic_tables(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return search_ready_structured_tables(db_path=_db_path(request), payload=payload)
+    except AgenticRagError as exc:
+        return _error_response(exc)
+
+
+@router.post("/agentic-rag/search/calculation-terms")
+def api_search_agentic_calculation_terms(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return search_ready_calculation_terms(db_path=_db_path(request), payload=payload)
     except AgenticRagError as exc:
         return _error_response(exc)
 

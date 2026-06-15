@@ -201,6 +201,84 @@ def test_build_regulation_profile_emits_l1_alias_and_relation_artifacts(test_db_
     assert validation["valid"] is True
 
 
+def test_build_formula_profile_emits_l2_formula_table_and_term_artifacts(test_db_path, tmp_path):
+    """Build L2 formula artifacts from deterministic section text."""
+    conn = sqlite3.connect(test_db_path)
+    conn.execute(
+        """
+        UPDATE global_chunks
+        SET content = ?, section_hierarchy = ?
+        WHERE chunk_id = ?
+        """,
+        (
+            "\n".join(
+                [
+                    "Net Premium = PV Benefits / PV Premiums.",
+                    "| Term | Description |",
+                    "| q_x | mortality rate |",
+                    "| v | discount factor |",
+                    "The reserve calculation uses mortality rate and discount rate assumptions.",
+                ]
+            ),
+            "Actuarial formulas > Net premium",
+            "c2",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    manifest = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path),
+        profile="formula",
+    )
+
+    assert manifest["profile"] == "formula"
+    assert manifest["artifact_files"] == [
+        "doc_catalog.jsonl",
+        "title_aliases.jsonl",
+        "doc_summaries.jsonl",
+        "sections_structured.jsonl",
+        "formula_cards.jsonl",
+        "tables_structured.jsonl",
+        "calculation_terms.jsonl",
+        "relations_graph.json",
+        "ready_data_manifest.json",
+    ]
+    assert manifest["formula_card_count"] == 1
+    assert manifest["table_count"] == 1
+    assert manifest["calculation_term_count"] >= 3
+
+    formula_cards = [
+        json.loads(line)
+        for line in (tmp_path / "formula_cards.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert formula_cards[0]["doc_id"] == "https://example.com/rule1"
+    assert formula_cards[0]["heading"] == "Net premium"
+    assert formula_cards[0]["formula_text"] == "Net Premium = PV Benefits / PV Premiums."
+    assert "Net Premium" in formula_cards[0]["terms"]
+
+    tables = [
+        json.loads(line)
+        for line in (tmp_path / "tables_structured.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert tables[0]["headers"] == ["Term", "Description"]
+    assert tables[0]["rows"][0] == {"Term": "q_x", "Description": "mortality rate"}
+
+    terms = [
+        json.loads(line)
+        for line in (tmp_path / "calculation_terms.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    term_names = {row["term"] for row in terms}
+    assert {"Net Premium", "mortality rate", "discount rate"}.issubset(term_names)
+
+    validation = builder.validate(str(tmp_path))
+    assert validation["valid"] is True
+
+
 def test_validate_rejects_manifest_artifact_paths_that_escape_output_dir(tmp_path):
     outside = tmp_path / "outside.jsonl"
     outside.write_text("{}\n", encoding="utf-8")

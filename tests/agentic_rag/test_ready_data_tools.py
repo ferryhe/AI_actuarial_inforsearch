@@ -4,8 +4,11 @@ import json
 from pathlib import Path
 
 from ai_actuarial.agentic_rag.ready_data_tools import (
+    search_calculation_terms,
+    search_formula_cards,
     search_sections,
     search_summaries,
+    search_structured_tables,
     search_titles,
     trace_relations,
 )
@@ -105,6 +108,78 @@ def _write_ready_data(
         ),
         encoding="utf-8",
     )
+
+
+def _write_formula_artifacts(output_dir: Path) -> None:
+    _write_ready_data(output_dir)
+    _write_jsonl(
+        output_dir / "formula_cards.jsonl",
+        [
+            {
+                "formula_id": "doc-reserve#formula-1",
+                "doc_id": "doc-reserve",
+                "file_url": "https://example.test/reserve.pdf",
+                "title": "Reserve Method Note",
+                "section_id": "doc-reserve#net-premium",
+                "heading_path": ["Reserve calculation", "Net premium"],
+                "heading": "Net premium",
+                "formula_text": "Net Premium = PV Benefits / PV Premiums.",
+                "context": "Net Premium = PV Benefits / PV Premiums. Mortality rate q_x is used.",
+                "terms": ["Net Premium", "PV Benefits", "PV Premiums", "mortality rate"],
+            }
+        ],
+    )
+    _write_jsonl(
+        output_dir / "tables_structured.jsonl",
+        [
+            {
+                "table_id": "doc-reserve#table-1",
+                "doc_id": "doc-reserve",
+                "file_url": "https://example.test/reserve.pdf",
+                "title": "Reserve Method Note",
+                "section_id": "doc-reserve#net-premium",
+                "heading_path": ["Reserve calculation", "Net premium"],
+                "heading": "Net premium",
+                "caption": "Assumption table",
+                "headers": ["Term", "Description"],
+                "rows": [{"Term": "q_x", "Description": "mortality rate"}],
+                "text": "Term Description q_x mortality rate",
+            }
+        ],
+    )
+    _write_jsonl(
+        output_dir / "calculation_terms.jsonl",
+        [
+            {
+                "term_id": "doc-reserve#term-net-premium",
+                "term": "Net Premium",
+                "normalized_term": "net premium",
+                "doc_id": "doc-reserve",
+                "file_url": "https://example.test/reserve.pdf",
+                "title": "Reserve Method Note",
+                "section_id": "doc-reserve#net-premium",
+                "heading_path": ["Reserve calculation", "Net premium"],
+                "context": "Net Premium = PV Benefits / PV Premiums.",
+            },
+            {
+                "term_id": "doc-reserve#term-mortality-rate",
+                "term": "mortality rate",
+                "normalized_term": "mortality rate",
+                "doc_id": "doc-reserve",
+                "file_url": "https://example.test/reserve.pdf",
+                "title": "Reserve Method Note",
+                "section_id": "doc-reserve#net-premium",
+                "heading_path": ["Reserve calculation", "Net premium"],
+                "context": "Mortality rate q_x is used.",
+            },
+        ],
+    )
+    manifest = json.loads((output_dir / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["profile"] = "formula"
+    manifest["artifact_files"].extend(
+        ["formula_cards.jsonl", "tables_structured.jsonl", "calculation_terms.jsonl"]
+    )
+    (output_dir / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def test_search_summaries_ranks_summary_hits_and_limits(tmp_path: Path) -> None:
@@ -324,6 +399,78 @@ def test_l1_tools_tolerate_missing_optional_artifacts(tmp_path: Path) -> None:
 
     assert search_sections("capital", output_dir=str(tmp_path), limit=3)[0]["source"] == "sections"
     assert trace_relations("capital", output_dir=str(tmp_path), limit=3) == []
+
+
+def test_formula_tools_return_stable_hits_from_l2_artifacts(tmp_path: Path) -> None:
+    _write_formula_artifacts(tmp_path)
+
+    formulas = search_formula_cards("net premium mortality", output_dir=str(tmp_path), limit=3)
+    assert formulas == [
+        {
+            "doc_id": "doc-reserve",
+            "file_url": "https://example.test/reserve.pdf",
+            "title": "Reserve Method Note",
+            "formula_id": "doc-reserve#formula-1",
+            "section_id": "doc-reserve#net-premium",
+            "heading_path": ["Reserve calculation", "Net premium"],
+            "heading": "Net premium",
+            "formula_text": "Net Premium = PV Benefits / PV Premiums.",
+            "context_snippet": "Net Premium = PV Benefits / PV Premiums. Mortality rate q_x is used.",
+            "terms": ["Net Premium", "PV Benefits", "PV Premiums", "mortality rate"],
+            "score": formulas[0]["score"],
+            "source": "formula_cards",
+        }
+    ]
+    assert formulas[0]["score"] > 0
+
+    tables = search_structured_tables("q_x mortality", output_dir=str(tmp_path), limit=3)
+    assert tables[0]["table_id"] == "doc-reserve#table-1"
+    assert tables[0]["headers"] == ["Term", "Description"]
+    assert tables[0]["rows"] == [{"Term": "q_x", "Description": "mortality rate"}]
+    assert tables[0]["source"] == "tables_structured"
+
+    terms = search_calculation_terms("mortality rate", output_dir=str(tmp_path), limit=3)
+    assert terms[0]["term"] == "mortality rate"
+    assert terms[0]["normalized_term"] == "mortality rate"
+    assert terms[0]["source"] == "calculation_terms"
+
+
+def test_formula_tools_tolerate_missing_optional_artifacts(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path, include_summaries=False)
+
+    assert search_formula_cards("premium", output_dir=str(tmp_path), limit=3) == []
+    assert search_structured_tables("mortality", output_dir=str(tmp_path), limit=3) == []
+    assert search_calculation_terms("discount", output_dir=str(tmp_path), limit=3) == []
+
+
+def test_formula_tools_do_not_read_manifest_artifacts_outside_ready_data_dir(tmp_path: Path) -> None:
+    outside = tmp_path / "outside-formula.jsonl"
+    _write_jsonl(
+        outside,
+        [
+            {
+                "formula_id": "outside#formula",
+                "doc_id": "outside",
+                "file_url": "https://example.test/outside.pdf",
+                "title": "Outside Formula",
+                "formula_text": "Secret = Outside",
+                "context": "secret premium",
+                "terms": ["secret"],
+            }
+        ],
+    )
+    _write_ready_data(
+        tmp_path,
+        artifact_files={
+            "doc_catalog.jsonl": "doc_catalog.jsonl",
+            "sections.jsonl": "sections.jsonl",
+            "formula_cards.jsonl": "../outside-formula.jsonl",
+        },
+    )
+
+    results = search_formula_cards("secret premium", output_dir=str(tmp_path), limit=5)
+
+    assert all(item["file_url"] != "https://example.test/outside.pdf" for item in results)
 
 
 def test_search_summaries_falls_back_to_catalog_summary_when_doc_summaries_missing(tmp_path: Path) -> None:

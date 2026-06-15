@@ -8,10 +8,19 @@ from typing import Any, Literal
 from .tools import QuestionCategory, classify_question
 
 
-ToolName = Literal["search_summaries", "search_titles", "search_sections", "trace_relations"]
+ToolName = Literal[
+    "search_summaries",
+    "search_titles",
+    "search_sections",
+    "trace_relations",
+    "search_formula_cards",
+    "search_structured_tables",
+    "search_calculation_terms",
+]
 
 _KNOWN_CATEGORIES: set[str] = {"catalog", "locate", "summary", "document_qa"}
 _L1_ARTIFACTS = {"title_aliases.jsonl", "sections_structured.jsonl", "relations_graph.json"}
+_L2_ARTIFACTS = {"formula_cards.jsonl", "tables_structured.jsonl", "calculation_terms.jsonl"}
 
 
 @dataclass(frozen=True)
@@ -65,6 +74,15 @@ def _has_l1_artifacts(output_dir: str | Path | None, manifest: dict[str, Any]) -
     return any((root / artifact).is_file() for artifact in _L1_ARTIFACTS)
 
 
+def _has_l2_artifacts(output_dir: str | Path | None, manifest: dict[str, Any]) -> bool:
+    if _artifact_names(manifest) & _L2_ARTIFACTS:
+        return True
+    if not output_dir:
+        return False
+    root = Path(output_dir)
+    return any((root / artifact).is_file() for artifact in _L2_ARTIFACTS)
+
+
 def _resolve_category(query: str, category: str | None) -> QuestionCategory:
     requested = _norm(category).lower()
     if requested in _KNOWN_CATEGORIES:
@@ -97,6 +115,20 @@ def _add_regulation_tools(tool_names: list[ToolName], category: QuestionCategory
     return deduped
 
 
+def _add_formula_tools(tool_names: list[ToolName]) -> list[ToolName]:
+    ordered: list[ToolName] = [
+        "search_formula_cards",
+        "search_calculation_terms",
+        "search_structured_tables",
+        *tool_names,
+    ]
+    deduped: list[ToolName] = []
+    for tool_name in ordered:
+        if tool_name not in deduped:
+            deduped.append(tool_name)
+    return deduped
+
+
 def plan_tool_steps(
     query: str,
     *,
@@ -110,10 +142,13 @@ def plan_tool_steps(
     resolved_category = _resolve_category(query_text, category)
     manifest = _read_manifest(output_dir)
     resolved_profile = (_norm(profile) or _norm(manifest.get("profile")) or "general").lower()
-    regulation_ready = resolved_profile == "regulation" or _has_l1_artifacts(output_dir, manifest)
+    formula_ready = resolved_profile == "formula" or _has_l2_artifacts(output_dir, manifest)
+    regulation_ready = resolved_profile in {"regulation", "formula"} or _has_l1_artifacts(output_dir, manifest) or formula_ready
     tool_names = _base_tool_names(resolved_category)
     if regulation_ready:
         tool_names = _add_regulation_tools(tool_names, resolved_category)
+    if formula_ready:
+        tool_names = _add_formula_tools(tool_names)
     step_limit = _bounded_limit(limit)
     return [ToolStep(tool_name=tool_name, category=resolved_category, limit=step_limit) for tool_name in tool_names]
 
