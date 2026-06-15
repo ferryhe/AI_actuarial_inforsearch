@@ -7,12 +7,15 @@ import json
 import pytest
 
 from ai_actuarial.agentic_rag.eval import (
+    AgenticEvalCase,
+    AgenticEvaluator,
     CaseResult,
     EvalCase,
     EvalReport,
     RetrievedItem,
     RetrievalEvaluator,
     SimpleKeywordRetriever,
+    load_agentic_cases,
     load_cases,
 )
 
@@ -307,6 +310,524 @@ def test_load_cases_skips_comments(tmp_path):
     )
     cases = load_cases(str(cases_path))
     assert len(cases) == 1
+
+
+# ── Agentic answer/evidence evaluator ────────────────────────────────────────
+
+
+def _write_jsonl(path, rows):
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_agentic_ready_data(output_dir):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(
+        output_dir / "doc_catalog.jsonl",
+        [
+            {
+                "doc_id": "doc-reg",
+                "file_url": "https://example.test/reg.pdf",
+                "title": "Solvency Capital Regulation",
+                "category": "regulation",
+                "summary": "Article 19 defines required solvency capital factors.",
+                "headings": ["Article 19"],
+            },
+            {
+                "doc_id": "doc-formula",
+                "file_url": "https://example.test/formula.pdf",
+                "title": "Reserve Formula Note",
+                "category": "formula",
+                "summary": "Net premium formula documentation.",
+                "headings": ["Net premium"],
+            },
+        ],
+    )
+    _write_jsonl(
+        output_dir / "doc_summaries.jsonl",
+        [
+            {
+                "doc_id": "doc-reg",
+                "file_url": "https://example.test/reg.pdf",
+                "title": "Solvency Capital Regulation",
+                "category": "regulation",
+                "summary": "Article 19 defines required solvency capital factors.",
+            },
+            {
+                "doc_id": "doc-formula",
+                "file_url": "https://example.test/formula.pdf",
+                "title": "Reserve Formula Note",
+                "category": "formula",
+                "summary": "Net premium formula documentation.",
+            },
+        ],
+    )
+    _write_jsonl(
+        output_dir / "sections.jsonl",
+        [
+            {
+                "section_id": "doc-reg#article-19",
+                "doc_id": "doc-reg",
+                "heading_path": ["Article 19"],
+                "text": "Article 19 defines required solvency capital factors.",
+            }
+        ],
+    )
+    _write_jsonl(
+        output_dir / "sections_structured.jsonl",
+        [
+            {
+                "section_id": "doc-reg#article-19",
+                "doc_id": "doc-reg",
+                "file_url": "https://example.test/reg.pdf",
+                "title": "Solvency Capital Regulation",
+                "heading_path": ["Article 19"],
+                "heading": "Article 19",
+                "text": "Article 19 defines required solvency capital factors.",
+                "aliases": ["Article 19"],
+            }
+        ],
+    )
+    _write_jsonl(
+        output_dir / "formula_cards.jsonl",
+        [
+            {
+                "formula_id": "doc-formula#net-premium",
+                "doc_id": "doc-formula",
+                "file_url": "https://example.test/formula.pdf",
+                "title": "Reserve Formula Note",
+                "section_id": "doc-formula#net-premium",
+                "heading_path": ["Net premium"],
+                "heading": "Net premium",
+                "formula_text": "Net Premium = PV Benefits / PV Premiums.",
+                "context": "Net Premium = PV Benefits / PV Premiums.",
+                "terms": ["Net Premium", "PV Benefits", "PV Premiums"],
+            }
+        ],
+    )
+    _write_jsonl(output_dir / "tables_structured.jsonl", [])
+    _write_jsonl(output_dir / "calculation_terms.jsonl", [])
+    (output_dir / "relations_graph.json").write_text(
+        json.dumps(
+            {
+                "relations": [
+                    {
+                        "relation_type": "document_has_section",
+                        "doc_id": "doc-reg",
+                        "file_url": "https://example.test/reg.pdf",
+                        "title": "Solvency Capital Regulation",
+                        "section_id": "doc-reg#article-19",
+                        "section_heading": "Article 19",
+                        "target_type": "section",
+                        "target_id": "doc-reg#article-19",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "ready_data_manifest.json").write_text(
+        json.dumps(
+            {
+                "profile": "formula",
+                "profile_version": "1",
+                "artifact_files": [
+                    "doc_catalog.jsonl",
+                    "doc_summaries.jsonl",
+                    "sections.jsonl",
+                    "sections_structured.jsonl",
+                    "formula_cards.jsonl",
+                    "tables_structured.jsonl",
+                    "calculation_terms.jsonl",
+                    "relations_graph.json",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_retrieval_eval_db(db_path):
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE files(url TEXT PRIMARY KEY, title TEXT, source_site TEXT, published_time TEXT);
+        CREATE TABLE catalog_items(file_url TEXT PRIMARY KEY, status TEXT, summary TEXT, category TEXT, keywords TEXT, rag_chunk_count INTEGER);
+        CREATE TABLE rag_chunks(chunk_id TEXT PRIMARY KEY, kb_id TEXT, file_url TEXT, chunk_index INTEGER, content TEXT, token_count INTEGER, section_hierarchy TEXT, embedding_hash TEXT, created_at TEXT);
+    """
+    )
+    conn.execute(
+        "INSERT INTO files(url,title,source_site) VALUES(?,?,?)",
+        ("https://example.test/retrieval.pdf", "Retrieval Eval Bulletin", "SOA"),
+    )
+    conn.execute(
+        "INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count) VALUES(?,?,?,?,?,?)",
+        (
+            "https://example.test/retrieval.pdf",
+            "ok",
+            "Retrieval eval fixture for actuarial AI.",
+            "AI",
+            '["retrieval","eval","actuarial"]',
+            1,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_agentic_evaluator_scores_evidence_citations_refusal_and_unsupported_guard(tmp_path):
+    _write_agentic_ready_data(tmp_path)
+    evaluator = AgenticEvaluator(output_dir=tmp_path, profile="formula", kb_id="kb-eval", limit=5)
+    cases = [
+        AgenticEvalCase(
+            case_id="formula_evidence",
+            query="How is net premium calculated?",
+            expected_evidence_doc_ids=["doc-formula"],
+            expected_evidence_sources=["formula_cards"],
+            expected_citation_sources=["formula_cards"],
+            forbidden_answer_terms=["guaranteed arbitrage"],
+        ),
+        AgenticEvalCase(
+            case_id="regulation_evidence",
+            query="How does Article 19 define solvency capital?",
+            expected_evidence_doc_ids=["doc-reg"],
+            expected_evidence_sources=["sections_structured"],
+            expected_citation_sources=["sections_structured"],
+        ),
+        AgenticEvalCase(
+            case_id="no_evidence_refusal",
+            query="zzzxqv 2099 quantum rider",
+            expect_no_evidence=True,
+            min_evidence_hits=0,
+        ),
+    ]
+
+    report = evaluator.evaluate(cases)
+
+    assert report.total_cases == 3
+    assert report.failed == 0
+    assert report.evidence_hit_rate == 1.0
+    assert report.citation_coverage_rate == 1.0
+    assert report.no_evidence_refusal_rate == 1.0
+    assert report.unsupported_answer_rate == 0.0
+    assert report.per_case[0].passed is True
+    assert report.per_case[0].evidence_hits == 1
+    assert report.per_case[0].citation_coverage == 1.0
+    assert report.per_case[0].citable_evidence >= 1
+    assert report.per_case[2].refused_no_evidence is True
+
+
+def test_agentic_evaluator_binds_doc_hits_to_expected_sources(tmp_path):
+    _write_agentic_ready_data(tmp_path)
+    evaluator = AgenticEvaluator(output_dir=tmp_path, profile="formula", limit=5)
+
+    result = evaluator.evaluate_case(
+        AgenticEvalCase(
+            case_id="mixed_false_positive_guard",
+            query="How is net premium calculated under Article 19?",
+            expected_evidence_doc_ids=["doc-formula"],
+            expected_evidence_sources=["sections_structured"],
+            expected_citation_sources=["sections_structured"],
+        )
+    )
+
+    assert result.passed is False
+    assert result.evidence_hits == 0
+    assert result.evidence_source_hits == 0
+    assert result.citation_coverage == 0.0
+
+
+def test_agentic_evaluator_flags_answer_without_evidence_anchor(monkeypatch, tmp_path):
+    def fake_loop(**kwargs):
+        return {
+            "answer": "Found a claim that does not cite the grounded document.",
+            "evidence": [
+                {
+                    "doc_id": "doc-grounded",
+                    "title": "Grounded Reserve Note",
+                    "source": "doc_summaries",
+                    "sources": ["doc_summaries"],
+                }
+            ],
+        }
+
+    monkeypatch.setattr("ai_actuarial.agentic_rag.eval.run_agentic_rag_loop", fake_loop)
+    evaluator = AgenticEvaluator(output_dir=tmp_path)
+
+    result = evaluator.evaluate_case(
+        AgenticEvalCase(
+            case_id="ungrounded_answer",
+            query="Explain reserves",
+            expected_evidence_doc_ids=["doc-grounded"],
+            expected_evidence_sources=["doc_summaries"],
+        )
+    )
+
+    assert result.unsupported_answer is True
+    assert result.passed is False
+
+
+def test_agentic_evaluator_requires_citation_per_expected_doc_source_tuple(monkeypatch, tmp_path):
+    def fake_loop(**kwargs):
+        return {
+            "answer": "Found 2 evidence item(s). Top evidence: Doc A; Doc B.",
+            "evidence": [
+                {
+                    "doc_id": "doc-a",
+                    "title": "Doc A",
+                    "source": "doc_summaries",
+                    "sources": ["doc_summaries"],
+                },
+                {
+                    "doc_id": "doc-b",
+                    "title": "Doc B",
+                    "source": "doc_summaries",
+                    "sources": ["doc_summaries"],
+                },
+            ],
+            "citations": [
+                {
+                    "doc_id": "doc-a",
+                    "title": "Doc A",
+                    "source": "doc_summaries",
+                    "sources": ["doc_summaries"],
+                }
+            ],
+        }
+
+    monkeypatch.setattr("ai_actuarial.agentic_rag.eval.run_agentic_rag_loop", fake_loop)
+    evaluator = AgenticEvaluator(output_dir=tmp_path)
+
+    result = evaluator.evaluate_case(
+        AgenticEvalCase(
+            case_id="partial_citation",
+            query="Compare Doc A and Doc B",
+            expected_evidence_doc_ids=["doc-a", "doc-b"],
+            expected_evidence_sources=["doc_summaries"],
+            expected_citation_sources=["doc_summaries"],
+            min_evidence_hits=2,
+        )
+    )
+
+    assert result.evidence_hits == 2
+    assert result.citation_coverage == 0.5
+    assert result.citable_evidence == 1
+    assert result.passed is False
+
+
+def test_load_agentic_cases_from_jsonl(tmp_path):
+    cases_path = tmp_path / "agentic_cases.jsonl"
+    cases_path.write_text(
+        json.dumps(
+            {
+                "case_id": "c1",
+                "query": "How is net premium calculated?",
+                "expected_evidence_doc_ids": ["doc-formula"],
+                "expected_evidence_sources": ["formula_cards"],
+                "expected_citation_sources": ["formula_cards"],
+                "forbidden_answer_terms": ["unsupported"],
+                "profile": "formula",
+                "top_k": 3,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    cases = load_agentic_cases(str(cases_path))
+
+    assert cases == [
+        AgenticEvalCase(
+            case_id="c1",
+            query="How is net premium calculated?",
+            expected_evidence_doc_ids=["doc-formula"],
+            expected_evidence_sources=["formula_cards"],
+            expected_citation_sources=["formula_cards"],
+            forbidden_answer_terms=["unsupported"],
+            profile="formula",
+            top_k=3,
+        )
+    ]
+
+
+def test_load_agentic_cases_rejects_non_boolean_no_evidence_flag(tmp_path):
+    cases_path = tmp_path / "agentic_cases.jsonl"
+    cases_path.write_text(
+        json.dumps(
+            {
+                "case_id": "bad",
+                "query": "bad case",
+                "expect_no_evidence": "false",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="expect_no_evidence must be a boolean"):
+        load_agentic_cases(str(cases_path))
+
+
+def test_agentic_cli_json_is_idempotent_and_ci_friendly(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    _write_agentic_ready_data(tmp_path)
+    cases_path = tmp_path / "agentic_cases.jsonl"
+    cases_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "case_id": "formula_evidence",
+                        "query": "How is net premium calculated?",
+                        "expected_evidence_doc_ids": ["doc-formula"],
+                        "expected_evidence_sources": ["formula_cards"],
+                        "expected_citation_sources": ["formula_cards"],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "case_id": "no_evidence_refusal",
+                        "query": "zzzxqv 2099 quantum rider",
+                        "expect_no_evidence": True,
+                        "min_evidence_hits": 0,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    command = [
+        sys.executable,
+        "-m",
+        "ai_actuarial.agentic_rag.eval",
+        "--mode",
+        "agentic",
+        "--cases",
+        str(cases_path),
+        "--output-dir",
+        str(tmp_path),
+        "--profile",
+        "formula",
+        "--json",
+    ]
+
+    first = subprocess.run(command, capture_output=True, text=True, cwd=repo_root)
+    second = subprocess.run(command, capture_output=True, text=True, cwd=repo_root)
+
+    assert first.returncode == 0
+    assert second.returncode == 0
+    assert json.loads(first.stdout) == json.loads(second.stdout)
+    payload = json.loads(first.stdout)
+    assert payload["mode"] == "agentic"
+    assert payload["failed"] == 0
+    assert payload["evidence_hit_rate"] == 1.0
+    assert payload["citation_coverage_rate"] == 1.0
+    assert payload["per_case"][0]["citable_evidence"] >= 1
+
+
+def test_agentic_cli_json_returns_nonzero_on_failed_case(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    _write_agentic_ready_data(tmp_path)
+    cases_path = tmp_path / "agentic_cases.jsonl"
+    cases_path.write_text(
+        json.dumps(
+            {
+                "case_id": "wrong_source",
+                "query": "How is net premium calculated under Article 19?",
+                "expected_evidence_doc_ids": ["doc-formula"],
+                "expected_evidence_sources": ["sections_structured"],
+                "expected_citation_sources": ["sections_structured"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ai_actuarial.agentic_rag.eval",
+            "--mode",
+            "agentic",
+            "--cases",
+            str(cases_path),
+            "--output-dir",
+            str(tmp_path),
+            "--profile",
+            "formula",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["failed"] == 1
+    assert payload["per_case"][0]["passed"] is False
+
+
+def test_retrieval_cli_json_with_temp_db(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    db_path = tmp_path / "retrieval.db"
+    _write_retrieval_eval_db(db_path)
+    cases_path = tmp_path / "cases.jsonl"
+    cases_path.write_text(
+        json.dumps(
+            {
+                "case_id": "retrieval_fixture",
+                "query": "retrieval eval actuarial",
+                "expected_doc_ids": ["https://example.test/retrieval.pdf"],
+                "expected_categories": ["AI"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ai_actuarial.agentic_rag.eval",
+            "--mode",
+            "retrieval",
+            "--db",
+            str(db_path),
+            "--cases",
+            str(cases_path),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["passed"] == 1
+    assert payload["doc_hit_rate"] == 1.0
 
 
 # ── SimpleKeywordRetriever ────────────────────────────────────────────────────

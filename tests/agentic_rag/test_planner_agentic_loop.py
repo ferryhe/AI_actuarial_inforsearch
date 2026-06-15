@@ -247,6 +247,7 @@ def test_agentic_loop_returns_formula_tool_evidence_for_formula_profile(tmp_path
     assert any(item["tool"] == "search_formula_cards" for item in response["evidence"])
     assert any(item["tool"] == "search_calculation_terms" for item in response["evidence"])
     assert any(item["tool"] == "search_structured_tables" for item in response["evidence"])
+    assert any(citation["source"] == "formula_cards" for citation in response["citations"])
     assert [step["tool_name"] for step in response["metadata"]["tool_trace"]][:3] == [
         "search_formula_cards",
         "search_calculation_terms",
@@ -271,6 +272,8 @@ def test_agentic_loop_returns_evidence_answer_and_trace_for_l1_regulation_tools(
     assert response["output_dir"] == str(tmp_path)
     assert response["answer"].startswith("Found ")
     assert response["evidence"]
+    assert response["citations"]
+    assert all("source" in citation for citation in response["citations"])
     assert response["results"] == response["evidence"]
     assert "tool_trace" not in response
     assert any(item["tool"] == "search_sections" for item in response["evidence"])
@@ -298,6 +301,7 @@ def test_agentic_loop_no_evidence_uses_clear_fallback_and_trace(tmp_path: Path) 
     )
 
     assert response["evidence"] == []
+    assert response["citations"] == []
     assert response["results"] == []
     assert response["answer"] == "No evidence found in ready_data for this query."
     assert response["metadata"]["evidence_count"] == 0

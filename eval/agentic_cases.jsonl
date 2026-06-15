@@ -1,0 +1,5 @@
+# Deterministic Agentic RAG answer/evidence eval cases for CI smoke.
+# Runs against eval/fixtures/agentic_ready_data with no external LLM/API calls.
+{"case_id": "formula_net_premium_evidence", "query": "How is net premium calculated?", "expected_evidence_doc_ids": ["doc-formula"], "expected_evidence_sources": ["formula_cards"], "expected_citation_sources": ["formula_cards"], "forbidden_answer_terms": ["guaranteed arbitrage"], "top_k": 5, "profile": "formula", "notes": "Formula evidence should come from L2 formula_cards."}
+{"case_id": "regulation_article_19_evidence", "query": "How does Article 19 define solvency capital?", "expected_evidence_doc_ids": ["doc-reg"], "expected_evidence_sources": ["sections_structured"], "expected_citation_sources": ["sections_structured"], "top_k": 5, "profile": "formula", "notes": "Regulation evidence should be backed by structured section evidence even in formula profile."}
+{"case_id": "no_evidence_refusal", "query": "zzzxqv 2099 quantum rider", "expect_no_evidence": true, "min_evidence_hits": 0, "top_k": 5, "profile": "formula", "notes": "Unsupported query should return the deterministic no-evidence refusal."}

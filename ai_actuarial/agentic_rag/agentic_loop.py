@@ -122,6 +122,52 @@ def _build_answer(query: str, evidence: list[dict[str, Any]]) -> str:
     return f'Found {len(evidence)} evidence item(s) in ready_data for "{query}". Top evidence: {suffix}.'
 
 
+def _citation_record(item: dict[str, Any]) -> dict[str, Any] | None:
+    sources = item.get("sources")
+    if not isinstance(sources, list):
+        sources = [item.get("source")] if _norm(item.get("source")) else []
+    sources = [_norm(source) for source in sources if _norm(source)]
+    if not sources:
+        return None
+    citation: dict[str, Any] = {
+        "doc_id": _norm(item.get("doc_id")),
+        "file_url": _norm(item.get("file_url")),
+        "title": _norm(item.get("title")),
+        "source": sources[0],
+        "sources": sources,
+    }
+    for key in ("section_id", "formula_id", "table_id", "term_id", "target_id"):
+        value = _norm(item.get(key))
+        if value:
+            citation[key] = value
+    if not any(citation.get(key) for key in ("doc_id", "file_url", "title", "section_id", "formula_id", "table_id", "term_id", "target_id")):
+        return None
+    return citation
+
+
+def _build_citations(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    citations: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for item in evidence:
+        citation = _citation_record(item)
+        if citation is None:
+            continue
+        key = (
+            _norm(citation.get("doc_id") or citation.get("file_url") or citation.get("title")),
+            _norm(citation.get("source")),
+            _norm(citation.get("section_id")),
+            _norm(citation.get("formula_id")),
+            _norm(citation.get("table_id")),
+            _norm(citation.get("term_id")),
+            _norm(citation.get("target_id")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        citations.append(citation)
+    return citations
+
+
 def run_agentic_rag_loop(
     *,
     query: str,
@@ -172,6 +218,7 @@ def run_agentic_rag_loop(
         "query": query_text,
         "answer": _build_answer(query_text, evidence),
         "evidence": evidence,
+        "citations": _build_citations(evidence),
         "results": evidence,
         "metadata": metadata,
         "kb_id": _norm(kb_id) or None,
