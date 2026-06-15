@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -279,6 +281,69 @@ def test_build_formula_profile_emits_l2_formula_table_and_term_artifacts(test_db
     assert validation["valid"] is True
 
 
+def test_build_formula_profile_preserves_duplicate_and_blank_table_headers(test_db_path, tmp_path):
+    conn = sqlite3.connect(test_db_path)
+    conn.execute(
+        """
+        UPDATE global_chunks
+        SET content = ?, section_hierarchy = ?
+        WHERE chunk_id = ?
+        """,
+        (
+            "\n".join(
+                [
+                    "Reserve Factor = Premium / Benefit.",
+                    "| Value | Value | |",
+                    "| 2024 | 2025 | notes |",
+                ]
+            ),
+            "Actuarial formulas > Duplicate table headers",
+            "c2",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    builder.build_l0(db_path=test_db_path, output_dir=str(tmp_path), profile="formula")
+
+    tables = [
+        json.loads(line)
+        for line in (tmp_path / "tables_structured.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert tables[0]["headers"] == ["Value", "Value_2", "column_3"]
+    assert tables[0]["rows"][0] == {"Value": "2024", "Value_2": "2025", "column_3": "notes"}
+
+
+def test_ready_data_builder_cli_accepts_formula_profile(test_db_path, tmp_path):
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ai_actuarial.agentic_rag.ready_data_builder",
+            "--db",
+            test_db_path,
+            "--output-dir",
+            str(tmp_path),
+            "--profile",
+            "formula",
+            "--validate",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads((tmp_path / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["profile"] == "formula"
+    assert (tmp_path / "formula_cards.jsonl").is_file()
+
+
 def test_validate_rejects_manifest_artifact_paths_that_escape_output_dir(tmp_path):
     outside = tmp_path / "outside.jsonl"
     outside.write_text("{}\n", encoding="utf-8")
@@ -356,6 +421,129 @@ def test_validate_rejects_orphan_l1_structured_sections_and_relations(tmp_path):
     assert any("structured section doc_ids not in catalog" in error for error in result["errors"])
     assert any("relation doc_ids not in catalog" in error for error in result["errors"])
     assert any("relation section targets not in sections" in error for error in result["errors"])
+
+
+def test_validate_rejects_orphan_l2_relation_targets(tmp_path):
+    def write_jsonl(name: str, rows: list[dict[str, object]]) -> None:
+        with open(tmp_path / name, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    doc = {
+        "doc_id": "doc-a",
+        "file_url": "doc-a",
+        "title": "Formula Doc",
+        "category": "formula",
+        "source_site": "",
+        "publish_date": "",
+        "summary": "",
+        "keywords": [],
+        "headings": [],
+        "rag_chunk_count": 1,
+    }
+    section = {
+        "section_id": "doc-a#s1",
+        "doc_id": "doc-a",
+        "heading_path": ["Formula"],
+        "text": "Net Premium = PV Benefits / PV Premiums.",
+        "token_count": 6,
+    }
+    structured = {
+        **section,
+        "file_url": "doc-a",
+        "title": "Formula Doc",
+        "heading": "Formula",
+        "document_aliases": ["Formula Doc"],
+    }
+    write_jsonl("doc_catalog.jsonl", [doc])
+    write_jsonl("sections.jsonl", [section])
+    write_jsonl("sections_structured.jsonl", [structured])
+    write_jsonl(
+        "formula_cards.jsonl",
+        [
+            {
+                "formula_id": "doc-a#s1#formula-1",
+                "doc_id": "doc-a",
+                "section_id": "doc-a#s1",
+                "formula_text": "Net Premium = PV Benefits / PV Premiums.",
+            }
+        ],
+    )
+    write_jsonl(
+        "tables_structured.jsonl",
+        [
+            {
+                "table_id": "doc-a#s1#table-1",
+                "doc_id": "doc-a",
+                "section_id": "doc-a#s1",
+                "headers": ["Term"],
+                "rows": [{"Term": "q_x"}],
+            }
+        ],
+    )
+    write_jsonl(
+        "calculation_terms.jsonl",
+        [
+            {
+                "term_id": "doc-a#s1#term-net-premium",
+                "doc_id": "doc-a",
+                "section_id": "doc-a#s1",
+                "term": "Net Premium",
+            }
+        ],
+    )
+    with open(tmp_path / "relations_graph.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "relations": [
+                    {
+                        "relation_type": "document_has_formula",
+                        "doc_id": "doc-a",
+                        "section_id": "doc-a#s1",
+                        "target_type": "formula",
+                        "target_id": "doc-a#s1#missing-formula",
+                    },
+                    {
+                        "relation_type": "document_has_table",
+                        "doc_id": "doc-a",
+                        "section_id": "doc-a#s1",
+                        "target_type": "table",
+                        "target_id": "doc-a#s1#missing-table",
+                    },
+                    {
+                        "relation_type": "document_has_calculation_term",
+                        "doc_id": "doc-a",
+                        "section_id": "doc-a#s1",
+                        "target_type": "calculation_term",
+                        "target_id": "doc-a#s1#missing-term",
+                    },
+                ]
+            },
+            f,
+        )
+    with open(tmp_path / "ready_data_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "artifact_files": [
+                    "doc_catalog.jsonl",
+                    "sections.jsonl",
+                    "sections_structured.jsonl",
+                    "formula_cards.jsonl",
+                    "tables_structured.jsonl",
+                    "calculation_terms.jsonl",
+                    "relations_graph.json",
+                    "ready_data_manifest.json",
+                ]
+            },
+            f,
+        )
+
+    result = builder.validate(str(tmp_path))
+
+    assert result["valid"] is False
+    assert any("relation formula targets not in L2 artifacts" in error for error in result["errors"])
+    assert any("relation table targets not in L2 artifacts" in error for error in result["errors"])
+    assert any("relation calculation_term targets not in L2 artifacts" in error for error in result["errors"])
 
 
 def test_build_l0_can_scope_to_knowledge_base(test_db_path, tmp_path):

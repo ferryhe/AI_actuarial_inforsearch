@@ -298,6 +298,18 @@ def _is_table_separator(cells: list[str]) -> bool:
     return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
 
 
+def _stable_table_headers(headers: list[str], width: int) -> list[str]:
+    stable_headers: list[str] = []
+    seen: dict[str, int] = {}
+    for idx in range(width):
+        raw = headers[idx] if idx < len(headers) else ""
+        base = " ".join(raw.split()) or f"column_{idx + 1}"
+        key = base.lower()
+        seen[key] = seen.get(key, 0) + 1
+        stable_headers.append(base if seen[key] == 1 else f"{base}_{seen[key]}")
+    return stable_headers
+
+
 def _markdown_tables(text: str) -> list[dict[str, Any]]:
     lines = text.splitlines()
     tables: list[dict[str, Any]] = []
@@ -309,20 +321,24 @@ def _markdown_tables(text: str) -> list[dict[str, Any]]:
             i += 1
             continue
         has_separator = _is_table_separator(next_cells)
-        rows: list[dict[str, str]] = []
-        text_rows: list[str] = [" ".join(headers)]
+        raw_rows: list[list[str]] = []
         j = i + 2 if has_separator else i + 1
         while j < len(lines):
             cells = _parse_table_row(lines[j])
             if not cells or _is_table_separator(cells):
                 break
-            padded = cells + [""] * max(0, len(headers) - len(cells))
-            row = {headers[idx]: padded[idx] for idx in range(len(headers))}
-            rows.append(row)
-            text_rows.append(" ".join(padded[: len(headers)]))
+            raw_rows.append(cells)
             j += 1
-        if rows:
-            tables.append({"headers": headers, "rows": rows, "text": " ".join(text_rows)})
+        if raw_rows:
+            width = max(len(headers), *(len(row) for row in raw_rows))
+            stable_headers = _stable_table_headers(headers, width)
+            rows: list[dict[str, str]] = []
+            text_rows: list[str] = [" ".join(stable_headers)]
+            for raw_row in raw_rows:
+                padded = raw_row + [""] * max(0, width - len(raw_row))
+                rows.append({stable_headers[idx]: padded[idx] for idx in range(width)})
+                text_rows.append(" ".join(padded[:width]))
+            tables.append({"headers": stable_headers, "rows": rows, "text": " ".join(text_rows)})
         i = max(j, i + 1)
     return tables
 
@@ -961,16 +977,22 @@ def validate(output_dir: str) -> dict:
         structured_section_ids = {e.get("section_id", "") for e in structured_entries if e.get("section_id")}
 
     known_section_ids = section_ids | structured_section_ids
-    for artifact_name, label in (
-        ("formula_cards.jsonl", "formula card"),
-        ("tables_structured.jsonl", "structured table"),
-        ("calculation_terms.jsonl", "calculation term"),
+    l2_target_ids: dict[str, set[str]] = {
+        "formula": set(),
+        "table": set(),
+        "calculation_term": set(),
+    }
+    for artifact_name, label, target_type, id_field in (
+        ("formula_cards.jsonl", "formula card", "formula", "formula_id"),
+        ("tables_structured.jsonl", "structured table", "table", "table_id"),
+        ("calculation_terms.jsonl", "calculation term", "calculation_term", "term_id"),
     ):
         artifact_path = artifact_paths.get(artifact_name) or os.path.join(output_dir, artifact_name)
         if not catalog_doc_ids or not os.path.isfile(artifact_path):
             continue
         rows, row_errors = _safe_jsonl_load(artifact_path)
         errors.extend(row_errors)
+        l2_target_ids[target_type].update(e.get(id_field, "") for e in rows if e.get(id_field))
         row_doc_ids = {e.get("doc_id", "") for e in rows if e.get("doc_id")}
         orphan_docs = row_doc_ids - catalog_doc_ids
         if orphan_docs:
@@ -1025,6 +1047,20 @@ def validate(output_dir: str) -> dict:
                         f"{len(orphan_relation_sections)} relation section targets not in sections "
                         f"(e.g. {list(orphan_relation_sections)[:3]})"
                     )
+                for target_type, known_target_ids in l2_target_ids.items():
+                    relation_target_ids = {
+                        row.get("target_id", "")
+                        for row in relations
+                        if isinstance(row, dict)
+                        and row.get("target_type") == target_type
+                        and row.get("target_id")
+                    }
+                    orphan_relation_targets = relation_target_ids - known_target_ids
+                    if orphan_relation_targets:
+                        errors.append(
+                            f"{len(orphan_relation_targets)} relation {target_type} targets not in L2 artifacts "
+                            f"(e.g. {list(orphan_relation_targets)[:3]})"
+                        )
 
     return {
         "valid": len(errors) == 0,
