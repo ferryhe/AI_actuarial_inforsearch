@@ -1,9 +1,9 @@
-"""Eval scaffolding for Agentic RAG retrieval quality.
+"""Eval scaffolding for retrieval and deterministic Agentic RAG quality.
 
-Defines eval case format, a configurable retrieval evaluator,
-and metric computation. Does NOT depend on ready_data or vector
-indexing — works against catalog_items and chunk data for the
-first baseline measurement (PR0).
+Defines eval case formats, configurable evaluators, and metric computation.
+Retrieval mode keeps the PR0 baseline behavior and does not depend on
+ready_data or vector indexing; Agentic mode evaluates ready_data-backed
+answer/evidence behavior through the deterministic local agentic loop.
 
 Usage (programmatic):
     from ai_actuarial.agentic_rag.eval import (
@@ -365,7 +365,7 @@ class AgenticEvaluator:
             output_dir=self._output_dir,
             profile=case.profile or self._profile,
             kb_id=self._kb_id,
-            limit=case.top_k if case.top_k is not None else self._limit,
+            limit=case.top_k,
         )
         evidence = [item for item in response.get("evidence") or [] if isinstance(item, dict)]
         citations = [item for item in response.get("citations") or [] if isinstance(item, dict)]
