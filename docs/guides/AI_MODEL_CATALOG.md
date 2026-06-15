@@ -27,6 +27,20 @@ Live discovery classifies returned model ids into app capabilities:
 
 Image, video, audio, realtime, moderation, transcription, TTS, and rerank models are filtered out of the general chat/catalog dropdowns.
 
+## Agentic RAG
+
+Agentic RAG does not currently introduce a separate model dropdown.
+
+- Ready_data building and read tools are deterministic local operations.
+- Agentic Chat currently returns `model="agentic-ready-data"` in assistant metadata.
+- Agentic eval smoke runs against committed ready_data fixtures and does not call a provider.
+
+The model catalog still matters for the data that Agentic RAG builds on:
+
+- embeddings models are used for standard KB indexing and vector RAG;
+- chat/catalog/OCR model selections are used by the standard AI flows;
+- standard Chat remains LLM-backed, while Agentic Chat is ready_data-backed.
+
 ## Refreshing
 
 Automatic refresh:

@@ -45,6 +45,8 @@ Role/default rate limiting is applied to these endpoints only:
 - `/api/chat/conversations`
 - `/api/collections/run`
 
+Agentic Chat is sent through `/api/chat/query` with `rag_mode="agentic"`, so it uses the same chat rate-limit and quota path as standard Chat. Direct ready_data read endpoints such as `/api/agentic-rag/search/summaries`, `/api/agentic-rag/search/sections`, and `/api/agentic-rag/trace/relations` require normal permissions but are not part of the role/default rate-limited endpoint list above today.
+
 Auth credential-submission limiting is separate:
 
 - `POST /api/auth/login`

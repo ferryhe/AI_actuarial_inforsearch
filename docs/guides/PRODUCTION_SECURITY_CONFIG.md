@@ -22,6 +22,16 @@ Set these only on the deployment server:
 
 Do not commit the server's real `.env` file.
 
+## Agentic RAG production notes
+
+Agentic RAG does not require new production secrets. It does create and read ready_data artifacts derived from catalog and chunk text, so treat those files as application data:
+
+- Persist the database-adjacent `agentic_ready_data/` directory together with the configured SQLite database or other app data volume.
+- Do not expose `data/`, `agentic_ready_data/`, converted Markdown, or downloaded source files as static public directories.
+- Keep filesystem permissions aligned with the API process user; ready_data builds need write access under the database-adjacent data directory.
+- Build ready_data manifests through the authenticated Knowledge UI or `/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`; do not run ad hoc builders against untrusted output paths.
+- Agentic read APIs require product permissions and should stay behind the same FastAPI authentication/CORS boundary as the rest of `/api/*`.
+
 ## Why this shape
 
 - The committed `Caddyfile` uses placeholder local hostnames and Caddy

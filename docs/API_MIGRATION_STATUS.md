@@ -15,6 +15,7 @@ The legacy server-rendered runtime has been retired from the active tree. React 
 - **Legacy `/api/*` fallback:** retired
 - **Unmatched `/api/*`:** FastAPI returns `410`
 - **Migration inventory:** available only when `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`
+- **RAG modes:** standard vector RAG and Agentic RAG both use native FastAPI endpoints.
 
 ## Product Contract Status
 
@@ -27,6 +28,8 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - Tasks
 - Logs
 - Knowledge / KB Detail
+- Agentic ready_data manifest status/build actions
+- Agentic RAG Chat mode, evidence rendering, and tool trace display
 - Settings
 - Login / Register / Profile / Users
 
@@ -82,6 +85,8 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - `/api/chunk-sets/cleanup`
 - `/api/rag/knowledge-bases`
 - `/api/rag/knowledge-bases/{kb_id}`
+- `/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest`
+- `/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`
 - `/api/rag/knowledge-bases/{kb_id}/stats`
 - `/api/rag/knowledge-bases/{kb_id}/files`
 - `/api/rag/knowledge-bases/{kb_id}/files/{file_url:path}`
@@ -97,6 +102,19 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - `/api/chat/knowledge-bases`
 - `/api/chat/available-documents`
 - `/api/chat/query`
+
+### Agentic RAG
+
+- `/api/agentic-rag/search/summaries`
+- `/api/agentic-rag/search/titles`
+- `/api/agentic-rag/search/sections`
+- `/api/agentic-rag/search/formula-cards`
+- `/api/agentic-rag/search/tables`
+- `/api/agentic-rag/search/calculation-terms`
+- `/api/agentic-rag/trace/relations`
+- `/api/agentic-rag/chat`
+
+Agentic Chat is also exposed through the main chat contract by sending `rag_mode="agentic"` to `/api/chat/query`. That path preserves chat quotas, conversation persistence, and UI evidence rendering. Agentic Chat currently requires exactly one ready KB and rejects direct selected-document context.
 
 ### Auth / User / Admin
 
@@ -120,6 +138,7 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - `tests/test_react_fastapi_authority.py` scans the routed React shell and fails if any referenced endpoint is not native FastAPI.
 - `tests/test_fastapi_no_flask_runtime.py` proves `create_app()` starts without a legacy web package.
 - `tests/test_fastapi_react_cleanup.py` keeps the cleaned FastAPI + React project boundary from regressing.
+- `tests/agentic_rag/test_eval.py` and the CI Agentic eval smoke keep the deterministic ready_data eval path active.
 
 ## Migration Policy
 
@@ -140,4 +159,6 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 ```bash
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 npm run build
+python -m pytest tests/agentic_rag/test_eval.py -q
+python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
 ```

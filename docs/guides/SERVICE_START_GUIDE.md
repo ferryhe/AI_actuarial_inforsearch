@@ -47,6 +47,36 @@ npm run dev
 
 Open `http://127.0.0.1:5173/`. Vite proxies `/api/*` to FastAPI.
 
+If `http://127.0.0.1:5173/` returns `404`, a different Node process is probably listening on that port. Restart the UI from this repository and use the URL printed by Vite:
+
+```powershell
+npm run dev
+```
+
+If Vite selects a different port, keep the browser on that printed URL. The API should still be `http://127.0.0.1:8000` unless you also changed `vite.config.ts`.
+
+## Agentic RAG Local Checks
+
+After the API has a populated database with knowledge-base chunk data, build a KB-scoped ready_data manifest:
+
+```powershell
+python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile general --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile regulation --validate
+python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+```
+
+Run the deterministic Agentic eval smoke, which does not require provider keys:
+
+```powershell
+python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
+```
+
+In the UI:
+
+1. Open Knowledge and choose a KB `manifest_profile`.
+2. Build the Agentic manifest.
+3. Open Chat, switch from Standard to Agentic RAG, and select exactly one KB whose Agentic manifest is ready.
+
 ## Docker Compose
 
 Start the stack:
@@ -114,3 +144,5 @@ RELOAD_CADDY=true CADDY_CONTAINER=ai-caddy APP_SERVICE_NAME=api bash scripts/dep
 - Port in use: change FastAPI with `--port` and keep `vite.config.ts` proxy aligned.
 - Missing provider key: add or repair the encrypted provider credential in Settings, then run `python scripts/diagnose_secrets_runtime.py --json`.
 - Auth issues: check `features.require_auth`, `FASTAPI_SESSION_SECRET`, and `BOOTSTRAP_ADMIN_TOKEN`.
+- Agentic RAG says no ready KB: build the KB's Agentic manifest from Knowledge or with `ready_data_builder --kb-id <kb-id> --profile <profile> --validate`.
+- Agentic Chat rejects the request: select exactly one ready KB and remove direct selected-document context; Agentic mode intentionally does not combine with `document_sources`.
