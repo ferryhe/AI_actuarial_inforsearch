@@ -1,14 +1,19 @@
 # Project Status
 
 - Date: 2026-06-15
-- Branch: `feat/agentic-rag-l1-regulation-tools`
-- Baseline: `origin/main` at `ac35a8a` (`Merge pull request #137 from ferryhe/feat/agentic-rag-summary-title-tools`).
-- Scope: PR4 — L1 regulation manifest, aliases, alias-first title search, section search, and relation tracing.
-- PR: [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — open; `python-smoke` passed; Copilot review follow-up addressed locally and pending push/recheck.
-- Previous PRs: [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
+- Branch: `feat/agentic-rag-loop-core`
+- Baseline: `origin/main` at `8ec5613` (`Merge pull request #138 from ferryhe/feat/agentic-rag-l1-regulation-tools`).
+- Scope: PR5a — deterministic backend Agentic RAG loop core, planner, metadata trace, and `/api/agentic-rag/chat`.
+- PR: pending local review/commit/push/create.
+- Previous PRs: [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
 
+- PR5a branch `feat/agentic-rag-loop-core` was created from merged PR4 baseline `8ec5613`.
+- Added deterministic planner `ai_actuarial/agentic_rag/planner.py` that maps `classify_question` categories to ordered ready-data tool steps and includes regulation-aware `search_sections` / `trace_relations` when profile is `regulation` or L1 artifacts are present.
+- Added `ai_actuarial/agentic_rag/agentic_loop.py` runner that executes ready-data tools with bounded per-step limits, returns `query`, deterministic grounded `answer`, `evidence`/`results`, `metadata.tool_trace`, `kb_id`, `profile`, and `output_dir`, and uses a clear no-evidence fallback instead of hallucinating.
+- Added `/api/agentic-rag/chat` through the existing Agentic RAG service/router resolution path, including explicit `output_dir`, `kb_id`/`profile`/`manifest_profile`, empty-query 400, and existing missing/not-ready registry errors.
+- PR5a local verification passed: `python -m pytest tests\agentic_rag\test_planner_agentic_loop.py tests\test_fastapi_agentic_rag_endpoints.py -q` (22 passed); `python -m pytest tests\agentic_rag\ tests\test_fastapi_agentic_rag_endpoints.py -q` (66 passed); `python -m py_compile ai_actuarial\agentic_rag\planner.py ai_actuarial\agentic_rag\agentic_loop.py ai_actuarial\agentic_rag\tools.py ai_actuarial\agentic_rag\ready_data_tools.py ai_actuarial\api\services\agentic_rag.py ai_actuarial\api\routers\agentic_rag.py` (pass); `git diff --check` (pass; LF/CRLF working-copy warnings only).
 - PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from latest `main` after #137 merged, implements L1 regulation artifacts, read tools, read endpoints, and rag-admin regulation manifest build integration, and is published as [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138).
 - `ready_data_builder.build_l0(..., profile="regulation")` now emits the L1 profile artifacts declared in `manifest_profiles.py`: `doc_catalog.jsonl`, `title_aliases.jsonl`, `doc_summaries.jsonl`, `sections_structured.jsonl`, `relations_graph.json`, and `ready_data_manifest.json`. The existing L0 `general` manifest artifact list is unchanged.
 - `search_titles` now checks `title_aliases.jsonl` first for exact/near alias, identifier, document-number, or rule-number matches, returning `source="title_aliases"` and `matched_alias` for alias hits before fallback scoring.

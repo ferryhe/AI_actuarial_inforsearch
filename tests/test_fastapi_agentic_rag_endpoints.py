@@ -439,3 +439,131 @@ def test_fastapi_agentic_rag_search_rejects_registry_output_dir_outside_ready_ro
 
     assert response.status_code == 400
     assert "agentic_ready_data" in response.json()["error"]
+
+
+def test_fastapi_agentic_rag_chat_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "explicit"
+    _write_ready_data(ready_dir)
+
+    response = client.post(
+        "/api/agentic-rag/chat",
+        json={"query": "How does Article 19 define required capital?", "limit": 2, "output_dir": str(ready_dir)},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["query"] == "How does Article 19 define required capital?"
+    assert body["answer"].startswith("Found ")
+    assert body["output_dir"] == str(ready_dir)
+    assert body["kb_id"] is None
+    assert body["profile"] == "general"
+    assert body["evidence"]
+    assert body["results"] == body["evidence"]
+    assert body["metadata"]["evidence_count"] == len(body["evidence"])
+    assert [step["tool_name"] for step in body["metadata"]["tool_trace"]] == [
+        "search_sections",
+        "search_summaries",
+        "search_titles",
+        "trace_relations",
+    ]
+
+
+def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-regulation" / "regulation" / "1"
+    _write_ready_data(ready_dir)
+    manifest = json.loads((ready_dir / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["profile"] = "regulation"
+    (ready_dir / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    storage = Storage(str(db_path))
+    try:
+        manager = KnowledgeBaseManager(storage)
+        manager.create_kb(kb_id="kb-regulation", name="Regulation KB", kb_mode="manual", manifest_profile="regulation")
+        storage.upsert_agentic_ready_manifest(
+            kb_id="kb-regulation",
+            profile="regulation",
+            profile_version="1",
+            status="ready",
+            output_dir=str(ready_dir),
+            artifact_files=[
+                "doc_catalog.jsonl",
+                "doc_summaries.jsonl",
+                "sections.jsonl",
+                "sections_structured.jsonl",
+                "relations_graph.json",
+            ],
+            doc_count=2,
+            section_count=1,
+            built_at="2026-06-14T00:00:00+00:00",
+            source_db=str(db_path),
+        )
+    finally:
+        storage.close()
+
+    response = client.post(
+        "/api/agentic-rag/chat",
+        json={"query": "How does Article 19 define required capital?", "limit": 2, "kb_id": "kb-regulation"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["kb_id"] == "kb-regulation"
+    assert body["profile"] == "regulation"
+    assert body["output_dir"] == str(ready_dir)
+    assert body["evidence"]
+    assert any(item["tool"] == "search_sections" for item in body["evidence"])
+    assert body["metadata"]["category"] == "document_qa"
+
+
+def test_fastapi_agentic_rag_chat_rejects_empty_query(tmp_path: Path, monkeypatch) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "explicit"
+    _write_ready_data(ready_dir)
+
+    response = client.post("/api/agentic-rag/chat", json={"query": "   ", "output_dir": str(ready_dir)})
+
+    assert response.status_code == 400
+    assert "query" in response.json()["error"]
+
+
+def test_fastapi_agentic_rag_chat_reuses_missing_ready_data_registry_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+
+    response = client.post("/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-missing"})
+
+    assert response.status_code == 404
+    assert "ready_data" in response.json()["error"]
+
+
+def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-building" / "general" / "1"
+    _write_ready_data(ready_dir)
+    storage = Storage(str(db_path))
+    try:
+        manager = KnowledgeBaseManager(storage)
+        manager.create_kb(kb_id="kb-building", name="Building KB", kb_mode="manual", manifest_profile="general")
+        storage.upsert_agentic_ready_manifest(
+            kb_id="kb-building",
+            profile="general",
+            profile_version="1",
+            status="building",
+            output_dir=str(ready_dir),
+        )
+    finally:
+        storage.close()
+
+    response = client.post("/api/agentic-rag/chat", json={"query": "capital", "kb_id": "kb-building"})
+
+    assert response.status_code == 409
+    assert "not ready" in response.json()["error"]
