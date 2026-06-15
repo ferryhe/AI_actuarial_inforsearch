@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ai_actuarial.agentic_rag.agentic_loop import run_agentic_rag_loop
 from ai_actuarial.agentic_rag.ready_data_tools import (
     search_sections,
     search_summaries,
@@ -54,6 +56,11 @@ def _validate_agentic_ready_output_dir(*, db_path: str, output_dir: str) -> str:
     return str(candidate)
 
 
+def _is_missing_profile_schema_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "no such table: rag_knowledge_bases" in message or "no such column: manifest_profile" in message
+
+
 def _resolve_ready_output_dir(
     *,
     db_path: str,
@@ -73,10 +80,15 @@ def _resolve_ready_output_dir(
     storage = Storage(db_path)
     try:
         if not requested_profile:
-            row = storage._conn.execute(
-                "SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?",
-                (kb_id,),
-            ).fetchone()
+            try:
+                row = storage._conn.execute(
+                    "SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?",
+                    (kb_id,),
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                if not _is_missing_profile_schema_error(exc):
+                    raise
+                row = None
             if row and _norm(row[0]):
                 profile = _norm(row[0]).lower()
         manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=profile)
@@ -147,4 +159,19 @@ def trace_ready_relations(*, db_path: str, payload: Mapping[str, Any]) -> dict[s
         payload=payload,
         search_fn=trace_relations,
         search_type="relations",
+    )
+
+
+def chat_agentic_rag(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    query = _norm(_payload_value(payload, "query", ""))
+    if not query:
+        raise AgenticRagError("query is required", status_code=400)
+    limit = parse_int_clamped(_payload_value(payload, "limit", 10), default=10, min_value=1, max_value=100)
+    output_dir, kb_id, profile = _resolve_ready_output_dir(db_path=db_path, payload=payload)
+    return run_agentic_rag_loop(
+        query=query,
+        output_dir=output_dir,
+        profile=profile,
+        kb_id=kb_id or None,
+        limit=limit,
     )
