@@ -31,7 +31,7 @@ Ready data is written as JSON/JSONL artifacts. The supported profiles are define
 | `regulation` | General profile plus `title_aliases.jsonl`, `doc_summaries.jsonl`, `sections_structured.jsonl`, `relations_graph.json` | Regulation, standard, and compliance documents |
 | `formula` | Regulation profile plus `formula_cards.jsonl`, `tables_structured.jsonl`, `calculation_terms.jsonl` | Formula-heavy actuarial documents, tables, and calculation terms |
 
-Knowledge-base-scoped builds are stored under the database-adjacent ready-data directory:
+Product API and Knowledge UI builds store KB-scoped ready data under the database-adjacent ready-data directory:
 
 ```text
 <db-parent>/agentic_ready_data/kbs/<kb_id>/<profile>/1/
@@ -42,6 +42,8 @@ When using the default local SQLite path, this is normally:
 ```text
 data/agentic_ready_data/kbs/<kb_id>/<profile>/1/
 ```
+
+The CLI builder defaults to `data/agentic_ready_data/...` when `--output-dir` is omitted. If you run the CLI with a database outside the default `data/` tree and want DB-adjacent storage, pass `--output-dir` explicitly.
 
 ## Build Ready Data
 

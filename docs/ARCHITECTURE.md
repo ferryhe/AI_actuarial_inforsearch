@@ -98,7 +98,7 @@ site config
 - `ai_actuarial/api/routers/agentic_rag.py`: direct ready_data search/chat APIs.
 - `ai_actuarial/api/services/rag_admin.py`: manifest registry/status/build integration for KBs.
 
-Ready_data artifacts live beside the configured SQLite database under `agentic_ready_data/`, for example `data/agentic_ready_data/kbs/<kb_id>/<profile>/1/` when using the default local DB path.
+Product API/UI ready_data builds are constrained to the configured SQLite database-adjacent `agentic_ready_data/` directory, for example `data/agentic_ready_data/kbs/<kb_id>/<profile>/1/` when using the default local DB path. CLI runs default to `data/agentic_ready_data/...` unless `--output-dir` is provided.
 
 ## RAG Runtime Modes
 
