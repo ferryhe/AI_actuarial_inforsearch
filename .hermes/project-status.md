@@ -4,12 +4,12 @@
 - Branch: `feat/agentic-rag-l1-regulation-tools`
 - Baseline: `origin/main` at `ac35a8a` (`Merge pull request #137 from ferryhe/feat/agentic-rag-summary-title-tools`).
 - Scope: PR4 — L1 regulation manifest, aliases, alias-first title search, section search, and relation tracing.
-- PR: pending creation for PR4.
+- PR: [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — open; remote checks/review gate pending.
 - Previous PRs: [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
 
-- PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from latest `main` after #137 merged, and now implements L1 regulation artifacts, read tools, read endpoints, and rag-admin regulation manifest build integration.
+- PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from latest `main` after #137 merged, implements L1 regulation artifacts, read tools, read endpoints, and rag-admin regulation manifest build integration, and is published as [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138).
 - `ready_data_builder.build_l0(..., profile="regulation")` now emits the L1 profile artifacts declared in `manifest_profiles.py`: `doc_catalog.jsonl`, `title_aliases.jsonl`, `doc_summaries.jsonl`, `sections_structured.jsonl`, `relations_graph.json`, and `ready_data_manifest.json`. The existing L0 `general` manifest artifact list is unchanged.
 - `search_titles` now checks `title_aliases.jsonl` first for exact/near alias, identifier, document-number, or rule-number matches, returning `source="title_aliases"` and `matched_alias` for alias hits before fallback scoring.
 - Added `search_sections(query, output_dir, limit=...)` with stable document/section identity, heading, text snippet, score, and source fields. It prefers `sections_structured.jsonl` and falls back to L0 `sections.jsonl`.
@@ -18,7 +18,7 @@
 - Updated the rag-admin manifest build path so KBs with `manifest_profile="regulation"` can build ready L1 manifests through `/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`; `formula` remains a declared but not-yet-implemented profile and records a failed manifest.
 - Review follow-up tightened PR4 behavior: `kb_id`-only Agentic search now resolves the KB's stored `manifest_profile`, generated L1 aliases include explicit `document_numbers` and `rule_numbers`, numeric alias matching uses bounded rule/document-number checks to avoid `Rule 7` matching `Rule 70`, and builder validation rejects manifest artifact path escapes plus orphan L1 structured-section/relation references.
 - Local `main` was fast-forwarded to `origin/main` at `ac35a8a` after merging #137, then PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from that baseline.
-- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, and PR3 are merged; PR4 is in local implementation/review before PR creation.
+- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, and PR3 are merged; PR4 is open as #138 and awaiting the remote checks/review gate.
 - Added ready-data search functions that read `ready_data_manifest.json`, `doc_catalog.jsonl`, optional `doc_summaries.jsonl`, and `sections.jsonl`; missing `doc_summaries.jsonl` falls back to catalog summaries, while missing/invalid ready-data files return empty tool results or API errors.
 - PR3 remote review follow-up: Copilot correctly identified that partial `doc_summaries.jsonl` rows could mislabel catalog-only fallback hits as `source="doc_summaries"`. The search merge now tracks catalog and summary provenance per document and the partial-summary regression test asserts `source="doc_catalog"`.
 - Review follow-up tightened ready-data file access: manifest artifact paths are contained under the ready_data output directory; explicit and registry-resolved `output_dir` values must stay under the DB-adjacent `agentic_ready_data` directory; `output_dir` cannot be mixed with `kb_id` registry lookup.
@@ -142,7 +142,7 @@
 
 ### Next PRs
 - PR3: document location and summary tools (`search_summaries` first, basic `search_titles`) + basic question classifier — merged as #137.
-- PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — local implementation/review in progress before PR creation.
+- PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — open as #138; remote checks/review gate pending.
 - PR5a: backend Agentic loop core (`planner.py`, `agentic_loop.py`, `/api/agentic-rag/chat`, metadata trace)
 - PR5b: Chat integration and frontend trace display with `rag_mode=agentic`
 - PR6: L2 formula/actuarial manifest (`formula_cards`, structured tables, calculation terms, formula tools)
