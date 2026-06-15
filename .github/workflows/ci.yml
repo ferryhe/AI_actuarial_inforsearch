@@ -62,3 +62,18 @@ jobs:
           tests/test_fastapi_no_flask_runtime.py
           tests/test_react_fastapi_authority.py
           -q
+
+      - name: Run Agentic RAG eval tests
+        run: >-
+          python -m pytest
+          tests/agentic_rag/test_eval.py
+          -q
+
+      - name: Run Agentic RAG eval smoke
+        run: >-
+          python -m ai_actuarial.agentic_rag.eval
+          --mode agentic
+          --cases eval/agentic_cases.jsonl
+          --output-dir eval/fixtures/agentic_ready_data
+          --profile formula
+          --json
