@@ -154,7 +154,6 @@ def run_agentic_rag_loop(
         "evidence": evidence,
         "results": evidence,
         "metadata": metadata,
-        "tool_trace": tool_trace,
         "kb_id": _norm(kb_id) or None,
         "profile": _norm(profile).lower() or "general",
         "output_dir": output_dir_text,

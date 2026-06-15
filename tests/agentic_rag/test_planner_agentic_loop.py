@@ -176,6 +176,7 @@ def test_agentic_loop_returns_evidence_answer_and_trace_for_l1_regulation_tools(
     assert response["answer"].startswith("Found ")
     assert response["evidence"]
     assert response["results"] == response["evidence"]
+    assert "tool_trace" not in response
     assert any(item["tool"] == "search_sections" for item in response["evidence"])
     assert any(item["tool"] == "trace_relations" for item in response["evidence"])
     tool_trace = response["metadata"]["tool_trace"]
