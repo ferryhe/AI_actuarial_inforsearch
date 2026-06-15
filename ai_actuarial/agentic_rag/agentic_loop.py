@@ -39,16 +39,37 @@ def _trace_entry(step: ToolStep, *, status: str, result_count: int = 0, error: s
 
 
 def _evidence_key(item: dict[str, Any]) -> tuple[str, ...]:
-    return (
-        _norm(item.get("tool")),
-        _norm(item.get("source")),
-        _norm(item.get("doc_id")),
-        _norm(item.get("section_id")),
-        _norm(item.get("relation_type")),
-        _norm(item.get("target_id")),
-        _norm(item.get("file_url")),
-        _norm(item.get("title")),
-    )
+    doc_key = _norm(item.get("doc_id")) or _norm(item.get("file_url")) or _norm(item.get("title"))
+    relation_type = _norm(item.get("relation_type"))
+    target_id = _norm(item.get("target_id"))
+    section_id = _norm(item.get("section_id"))
+    if relation_type or target_id:
+        return ("relation", doc_key, relation_type, target_id or section_id)
+    if section_id:
+        return ("section", doc_key, section_id)
+    return ("document", doc_key)
+
+
+def _append_unique(values: list[str], value: Any) -> None:
+    text = _norm(value)
+    if text and text not in values:
+        values.append(text)
+
+
+def _merge_provenance(existing: dict[str, Any], duplicate: dict[str, Any]) -> None:
+    tools = existing.setdefault("tools", [])
+    if not isinstance(tools, list):
+        tools = [tools]
+        existing["tools"] = tools
+    _append_unique(tools, existing.get("tool"))
+    _append_unique(tools, duplicate.get("tool"))
+
+    sources = existing.setdefault("sources", [])
+    if not isinstance(sources, list):
+        sources = [sources]
+        existing["sources"] = sources
+    _append_unique(sources, existing.get("source"))
+    _append_unique(sources, duplicate.get("source"))
 
 
 def _evidence_label(item: dict[str, Any]) -> str:
@@ -95,7 +116,7 @@ def run_agentic_rag_loop(
     output_dir_text = str(Path(output_dir))
     steps = plan_tool_steps(query_text, profile=profile, output_dir=output_dir, limit=step_limit)
     evidence: list[dict[str, Any]] = []
-    seen: set[tuple[str, ...]] = set()
+    evidence_by_key: dict[tuple[str, ...], dict[str, Any]] = {}
     tool_trace: list[dict[str, Any]] = []
 
     for step in steps:
@@ -103,19 +124,20 @@ def run_agentic_rag_loop(
         if tool_fn is None:
             tool_trace.append(_trace_entry(step, status="error", error="tool is not registered"))
             continue
-        try:
-            results = tool_fn(query_text, output_dir=output_dir, limit=step.limit)
-        except Exception as exc:  # noqa: BLE001
-            tool_trace.append(_trace_entry(step, status="error", error=str(exc)))
-            continue
+        results = tool_fn(query_text, output_dir=output_dir, limit=step.limit)
         tool_trace.append(_trace_entry(step, status="ok", result_count=len(results)))
         for result in results:
             item = dict(result)
             item["tool"] = step.tool_name
+            item["tools"] = [step.tool_name]
+            source = _norm(item.get("source"))
+            item["sources"] = [source] if source else []
             key = _evidence_key(item)
-            if key in seen:
+            existing = evidence_by_key.get(key)
+            if existing is not None:
+                _merge_provenance(existing, item)
                 continue
-            seen.add(key)
+            evidence_by_key[key] = item
             evidence.append(item)
 
     category = steps[0].category if steps else "document_qa"

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+import ai_actuarial.agentic_rag.agentic_loop as agentic_loop
+import ai_actuarial.api.services.agentic_rag as agentic_rag_service
 from ai_actuarial.api.app import create_app
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
@@ -567,3 +571,51 @@ def test_fastapi_agentic_rag_chat_reuses_not_ready_registry_error(
 
     assert response.status_code == 409
     assert "not ready" in response.json()["error"]
+
+
+def test_fastapi_agentic_rag_chat_does_not_hide_tool_runtime_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "explicit"
+    _write_ready_data(ready_dir)
+
+    def _raise_runtime_error(*_args, **_kwargs) -> list[dict[str, object]]:
+        raise RuntimeError("tool runtime failure")
+
+    monkeypatch.setitem(agentic_loop._TOOL_FUNCTIONS, "search_sections", _raise_runtime_error)
+    no_raise_client = TestClient(client.app, raise_server_exceptions=False)
+
+    response = no_raise_client.post(
+        "/api/agentic-rag/chat",
+        json={"query": "How does Article 19 define required capital?", "output_dir": str(ready_dir)},
+    )
+
+    assert response.status_code == 500
+    assert "No evidence found" not in response.text
+    assert "tool runtime failure" not in response.text
+
+
+def test_agentic_rag_registry_profile_lookup_does_not_hide_sqlite_errors(tmp_path: Path, monkeypatch) -> None:
+    class _BrokenConn:
+        def execute(self, *_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    class _BrokenStorage:
+        def __init__(self, _db_path: str) -> None:
+            self._conn = _BrokenConn()
+
+        def get_agentic_ready_manifest(self, **_kwargs):
+            raise AssertionError("manifest lookup should not run after profile lookup failure")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(agentic_rag_service, "Storage", _BrokenStorage)
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        agentic_rag_service._resolve_ready_output_dir(
+            db_path=str(tmp_path / "index.db"),
+            payload={"kb_id": "kb-regulation"},
+        )

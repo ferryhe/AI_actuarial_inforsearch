@@ -56,6 +56,11 @@ def _validate_agentic_ready_output_dir(*, db_path: str, output_dir: str) -> str:
     return str(candidate)
 
 
+def _is_missing_profile_schema_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "no such table: rag_knowledge_bases" in message or "no such column: manifest_profile" in message
+
+
 def _resolve_ready_output_dir(
     *,
     db_path: str,
@@ -80,7 +85,9 @@ def _resolve_ready_output_dir(
                     "SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?",
                     (kb_id,),
                 ).fetchone()
-            except sqlite3.Error:
+            except sqlite3.OperationalError as exc:
+                if not _is_missing_profile_schema_error(exc):
+                    raise
                 row = None
             if row and _norm(row[0]):
                 profile = _norm(row[0]).lower()

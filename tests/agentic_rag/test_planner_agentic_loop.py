@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+import ai_actuarial.agentic_rag.agentic_loop as agentic_loop
 from ai_actuarial.agentic_rag.agentic_loop import run_agentic_rag_loop
 from ai_actuarial.agentic_rag.planner import plan_tool_steps
 
@@ -204,3 +207,37 @@ def test_agentic_loop_no_evidence_uses_clear_fallback_and_trace(tmp_path: Path) 
     assert response["metadata"]["tool_trace"]
     assert all(step["status"] == "ok" for step in response["metadata"]["tool_trace"])
     assert all(step["result_count"] == 0 for step in response["metadata"]["tool_trace"])
+
+
+def test_agentic_loop_propagates_unexpected_tool_errors(tmp_path: Path, monkeypatch) -> None:
+    _write_ready_data(tmp_path, profile="general", include_l1=False)
+
+    def _raise_runtime_error(*_args, **_kwargs) -> list[dict[str, object]]:
+        raise RuntimeError("tool runtime failure")
+
+    monkeypatch.setitem(agentic_loop._TOOL_FUNCTIONS, "search_summaries", _raise_runtime_error)
+
+    with pytest.raises(RuntimeError, match="tool runtime failure"):
+        run_agentic_rag_loop(
+            query="Summarize capital",
+            output_dir=tmp_path,
+            profile="general",
+            limit=2,
+        )
+
+
+def test_agentic_loop_dedupes_same_document_across_summary_and_title_tools(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path, profile="general", include_l1=False)
+
+    response = run_agentic_rag_loop(
+        query="Summarize Capital Adequacy Guideline capital",
+        output_dir=tmp_path,
+        profile="general",
+        limit=5,
+    )
+
+    capital_items = [item for item in response["evidence"] if item["doc_id"] == "doc-capital"]
+    assert len(capital_items) == 1
+    assert capital_items[0]["tool"] == "search_summaries"
+    assert capital_items[0]["tools"] == ["search_summaries", "search_titles"]
+    assert response["metadata"]["evidence_count"] == len(response["evidence"])
