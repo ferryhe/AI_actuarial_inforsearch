@@ -1,10 +1,10 @@
 # Project Status
 
 - Date: 2026-06-15
-- Branch: `feat/agentic-rag-eval-ci`
-- Baseline: `origin/main` at `53fb4e4` (`Merge pull request #141 from ferryhe/feat/agentic-rag-l2-formula-tools`).
-- Scope: PR7 — eval loop and CI integration for retrieval/answer eval, citation coverage, hallucination checks, and no-evidence refusal tests.
-- PR: [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) — open; remote checks/review gate in progress.
+- Branch: `main`
+- Baseline: `origin/main` at `a13099d` (`Merge pull request #142 from ferryhe/feat/agentic-rag-eval-ci`).
+- Scope: Agentic RAG implementation plan final status after PR7.
+- PR: [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) — merged at `a13099d`.
 - Previous PRs: [#141](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/141) — merged; [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140) — merged; [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) — merged; [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
@@ -17,8 +17,8 @@
 - PR7 independent reviewers found valid Important gaps in citation/source binding and CI retrieval coverage. Controller follow-up added structured citations, tuple-bound citation coverage, a two-docs/one-citation false-positive regression, retrieval CLI temp-DB coverage, agentic CLI failure-exit coverage, and strict JSONL type checks. Post-fix reviewer confirmed no remaining Critical or Important findings.
 - PR7 local verification after review follow-up: `python -m pytest tests\agentic_rag\ tests\test_fastapi_agentic_rag_endpoints.py -q` (90 passed, 4 warnings); `python -m pytest tests\agentic_rag\test_eval.py tests\agentic_rag\test_planner_agentic_loop.py -q` (40 passed); `python -m ai_actuarial.agentic_rag.eval --help` (pass); `python scripts\run_agentic_retrieval_eval.py --help` (pass); `python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval\agentic_cases.jsonl --output-dir eval\fixtures\agentic_ready_data --profile formula --json` (3/3 passed); `python -m py_compile ai_actuarial\agentic_rag\eval.py ai_actuarial\agentic_rag\agentic_loop.py ai_actuarial\agentic_rag\planner.py ai_actuarial\agentic_rag\ready_data_tools.py scripts\run_agentic_retrieval_eval.py tests\agentic_rag\test_eval.py tests\agentic_rag\test_planner_agentic_loop.py` (pass); `git diff --check` (pass; LF/CRLF working-copy warnings only).
 - Mandatory `codex review --uncommitted` remains blocked by WindowsApps `codex.exe` returning `Access is denied`; PR7 used the worker self-check plus independent spec/code-quality/post-fix reviewers as the available pre-PR review gate.
-- PR7 opened as [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) with head `03747c1`; status update head `19898a2` passed GitHub CI run `27571946691`.
-- PR7 #142 remote gate first pass: Copilot left 2 valid cleanup comments. Follow-up updates the eval module docstring so only retrieval mode claims no ready_data dependency, and simplifies the non-optional `AgenticEvalCase.top_k` limit handoff. Follow-up verification: `python -m pytest tests\agentic_rag\test_eval.py tests\agentic_rag\test_planner_agentic_loop.py -q` (40 passed); `python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval\agentic_cases.jsonl --output-dir eval\fixtures\agentic_ready_data --profile formula --json` (3/3 passed); `python -m py_compile ai_actuarial\agentic_rag\eval.py` (pass); `git diff --check` (pass; LF/CRLF working-copy warnings only).
+- PR7 opened as [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) with head `03747c1`; status update head `19898a2` passed GitHub CI run `27571946691`; follow-up head `a230a09` passed GitHub CI run `27572300570` and was merged at `a13099d`.
+- PR7 #142 remote gate: Copilot left 2 valid cleanup comments. Follow-up updates the eval module docstring so only retrieval mode claims no ready_data dependency, and simplifies the non-optional `AgenticEvalCase.top_k` limit handoff. Both inline threads were replied to and resolved. Follow-up verification: `python -m pytest tests\agentic_rag\test_eval.py tests\agentic_rag\test_planner_agentic_loop.py -q` (40 passed); `python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval\agentic_cases.jsonl --output-dir eval\fixtures\agentic_ready_data --profile formula --json` (3/3 passed); `python -m py_compile ai_actuarial\agentic_rag\eval.py` (pass); `git diff --check` (pass; LF/CRLF working-copy warnings only).
 - PR6 branch `feat/agentic-rag-l2-formula-tools` was created from merged PR5b baseline `58cccb3` and merged as [#141](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/141) at merge commit `53fb4e4`.
 - PR6 implementation target: formula profile ready_data should become buildable rather than a failed placeholder, with deterministic `formula_cards`, structured table, and calculation-term artifacts plus read tools/API endpoints that match existing Agentic RAG output-dir and KB registry resolution patterns.
 - PR6 worker implementation commit `a7e6933` adds formula ready-data build support, formula/table/calculation-term read tools, formula search endpoints, planner/agentic-loop formula tool registration, rag-admin formula build success behavior, and focused tests.
@@ -52,7 +52,7 @@
 - Review follow-up tightened PR4 behavior: `kb_id`-only Agentic search now resolves the KB's stored `manifest_profile`, generated L1 aliases include explicit `document_numbers` and `rule_numbers`, numeric alias matching uses bounded rule/document-number checks to avoid `Rule 7` matching `Rule 70`, and builder validation rejects manifest artifact path escapes plus orphan L1 structured-section/relation references.
 - PR4 #138 remote gate: GitHub `python-smoke` passed; Copilot left 3 valid inline comments. Follow-up fixes avoid general-profile section-entry memory duplication, keep `text_snippet` within its max length contract, and replace relation expansion duplicate checks with a set-backed relation key lookup.
 - Local `main` was fast-forwarded to `origin/main` at `ac35a8a` after merging #137, then PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from that baseline.
-- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, PR3, PR4, PR5a, PR5b, and PR6 are merged; PR7 is active on `feat/agentic-rag-eval-ci`.
+- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, PR3, PR4, PR5a, PR5b, PR6, and PR7 are merged. The planned Agentic RAG migration sequence is complete.
 - Added ready-data search functions that read `ready_data_manifest.json`, `doc_catalog.jsonl`, optional `doc_summaries.jsonl`, and `sections.jsonl`; missing `doc_summaries.jsonl` falls back to catalog summaries, while missing/invalid ready-data files return empty tool results or API errors.
 - PR3 remote review follow-up: Copilot correctly identified that partial `doc_summaries.jsonl` rows could mislabel catalog-only fallback hits as `source="doc_summaries"`. The search merge now tracks catalog and summary provenance per document and the partial-summary regression test asserts `source="doc_catalog"`.
 - Review follow-up tightened ready-data file access: manifest artifact paths are contained under the ready_data output directory; explicit and registry-resolved `output_dir` values must stay under the DB-adjacent `agentic_ready_data` directory; `output_dir` cannot be mixed with `kb_id` registry lookup.
@@ -71,8 +71,8 @@
 - Plan PR0 expectation: eval scaffolding, 20 retrieval cases, top-k/doc/category hit reporting, no ready_data dependency. Current #134 satisfies this and is merged.
 - Plan PR1 expectation: L0 ready_data builder MVP with basic validate, headings-only extraction, `doc_catalog.jsonl`, `doc_summaries.jsonl`, `sections.jsonl`, and `ready_data_manifest.json`; plan text also names `store.py` and `extractors.py`.
 - Current #133 PR1 reality: merged L0 MVP delivered `ready_data_builder.py`, `manifest_profiles.py`, `doc_catalog.jsonl`, `sections.jsonl`, `ready_data_manifest.json`, validation, and tests. It does not currently have separate `store.py` / `extractors.py` modules or `doc_summaries.jsonl`; decide whether to fold those into PR2/PR3 or explicitly keep PR1 as the narrower MVP.
-- Plan PR2 is still next: `agentic_ready_manifests` table, KB `manifest_profile` field, Knowledge UI manifest status/build button, KB mode selection rules, fallback behavior for KBs without ready_data, and stale/failed manifest messaging.
-- Plan PR3 follows PR2: `ready_data_tools.py`, `tools.py`, `search_summaries`, basic `search_titles`, `/api/agentic-rag/search/summaries`, `/api/agentic-rag/search/titles`, and basic question classifier (`catalog`, `locate`, `summary`, `document_qa`).
+- Plan PR2 was delivered in [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136): `agentic_ready_manifests` table, KB `manifest_profile` field, Knowledge UI manifest status/build button, KB mode selection rules, fallback behavior for KBs without ready_data, and stale/failed manifest messaging.
+- Plan PR3 was delivered in [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137): `ready_data_tools.py`, `tools.py`, `search_summaries`, basic `search_titles`, `/api/agentic-rag/search/summaries`, `/api/agentic-rag/search/titles`, and basic question classifier (`catalog`, `locate`, `summary`, `document_qa`).
 - Plan acceptance table omitted a PR2 row. Local PR2 acceptance baseline should be: registry schema/migration works, KB manifest profile/status persists, Knowledge UI shows manifest status, build button triggers/records manifest build outcome, Standard/Agentic/Professional/Hybrid KB selection and no-ready_data fallback rules are implemented, and stale/failed manifest states have tests or smoke coverage.
 - Plan decision: PR3 remains L0 summary/title search only. Do not promise rule-number/document-number/attachment alias-first locate top-3 >= 90% until PR4.
 
@@ -181,10 +181,10 @@
 - SimpleKeywordRetriever intentionally limited — measures baseline before agentic tools
 - Retriever protocol allows swapping in vector/ready_data/agentic retrievers later
 
-### Next PRs
+### Completed PRs
 - PR3: document location and summary tools (`search_summaries` first, basic `search_titles`) + basic question classifier — merged as #137.
 - PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — merged as #138.
 - PR5a: backend Agentic loop core (`planner.py`, `agentic_loop.py`, `/api/agentic-rag/chat`, metadata trace) — merged as #139.
 - PR5b: Chat integration and frontend trace display with `rag_mode=agentic` — merged as [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140).
 - PR6: L2 formula/actuarial manifest (`formula_cards`, structured tables, calculation terms, formula tools) — merged as [#141](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/141).
-- PR7: eval loop and CI integration for retrieval/answer eval, citation coverage, hallucination checks, no-evidence refusal tests — active on `feat/agentic-rag-eval-ci`.
+- PR7: eval loop and CI integration for retrieval/answer eval, citation coverage, hallucination checks, no-evidence refusal tests — merged as [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142).
