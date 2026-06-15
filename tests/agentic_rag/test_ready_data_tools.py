@@ -241,6 +241,32 @@ def test_search_sections_returns_stable_section_hits_from_l1_artifact(tmp_path: 
     assert results[0]["score"] > 0
 
 
+def test_search_sections_bounds_text_snippet_length(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path)
+    _write_jsonl(
+        tmp_path / "sections_structured.jsonl",
+        [
+            {
+                "section_id": "doc-capital#long",
+                "doc_id": "doc-capital",
+                "file_url": "https://example.test/capital.pdf",
+                "title": "Capital Adequacy Guideline",
+                "heading_path": ["Capital"],
+                "heading": "Capital",
+                "text": "solvency " + ("capital " * 80),
+            }
+        ],
+    )
+    manifest = json.loads((tmp_path / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["artifact_files"].append("sections_structured.jsonl")
+    (tmp_path / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    results = search_sections("solvency capital", output_dir=str(tmp_path), limit=1)
+
+    assert len(results[0]["text_snippet"]) <= 240
+    assert results[0]["text_snippet"].endswith("...")
+
+
 def test_trace_relations_returns_alias_doc_section_edges(tmp_path: Path) -> None:
     _write_ready_data(tmp_path)
     (tmp_path / "relations_graph.json").write_text(
@@ -255,6 +281,16 @@ def test_trace_relations_returns_alias_doc_section_edges(tmp_path: Path) -> None
                         "alias": "RBC Rule 3",
                         "target_type": "document",
                         "target_id": "doc-capital",
+                    },
+                    {
+                        "relation_type": "document_has_section",
+                        "doc_id": "doc-capital",
+                        "file_url": "https://example.test/capital.pdf",
+                        "title": "Capital Adequacy Guideline",
+                        "section_id": "doc-capital#article-19",
+                        "section_heading": "Article 19",
+                        "target_type": "section",
+                        "target_id": "doc-capital#article-19",
                     },
                     {
                         "relation_type": "document_has_section",

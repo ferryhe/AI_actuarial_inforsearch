@@ -350,7 +350,8 @@ def build_l0(
                 "token_count": row["token_count"] or 0,
             }
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            section_entries.append(entry)
+            if profile == "regulation":
+                section_entries.append(entry)
             section_count += 1
 
     alias_rows: list[dict[str, Any]] = []

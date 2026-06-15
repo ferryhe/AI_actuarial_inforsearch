@@ -190,7 +190,11 @@ def _text_snippet(value: Any, max_chars: int = 240) -> str:
     text = " ".join(_norm(value).split())
     if len(text) <= max_chars:
         return text
-    return text[: max_chars - 1].rstrip() + "..."
+    if max_chars <= 0:
+        return ""
+    if max_chars <= 3:
+        return text[:max_chars]
+    return text[: max_chars - 3].rstrip() + "..."
 
 
 def _normalized_phrase(value: Any) -> str:
@@ -418,6 +422,7 @@ def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 1
 
     scored: list[dict[str, Any]] = []
     matched_doc_ids: set[str] = set()
+    seen_relation_keys: set[tuple[str, str]] = set()
     for row in relations:
         if not isinstance(row, dict):
             continue
@@ -444,6 +449,7 @@ def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 1
             result["score"] = round(float(score), 4)
             result["source"] = "relations_graph"
             scored.append(result)
+            seen_relation_keys.add((_norm(row.get("relation_type")), _norm(row.get("target_id"))))
 
     if matched_doc_ids:
         for row in relations:
@@ -452,12 +458,14 @@ def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 1
             doc_id = _norm(row.get("doc_id"))
             if not doc_id or doc_id not in matched_doc_ids:
                 continue
-            if any(existing.get("relation_type") == row.get("relation_type") and existing.get("target_id") == row.get("target_id") for existing in scored):
+            relation_key = (_norm(row.get("relation_type")), _norm(row.get("target_id")))
+            if relation_key in seen_relation_keys:
                 continue
             result = dict(row)
             result["score"] = 0.5
             result["source"] = "relations_graph"
             scored.append(result)
+            seen_relation_keys.add(relation_key)
 
     scored.sort(
         key=lambda item: (

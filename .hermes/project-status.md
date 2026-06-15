@@ -4,7 +4,7 @@
 - Branch: `feat/agentic-rag-l1-regulation-tools`
 - Baseline: `origin/main` at `ac35a8a` (`Merge pull request #137 from ferryhe/feat/agentic-rag-summary-title-tools`).
 - Scope: PR4 — L1 regulation manifest, aliases, alias-first title search, section search, and relation tracing.
-- PR: [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — open; remote checks/review gate pending.
+- PR: [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — open; `python-smoke` passed; Copilot review follow-up addressed locally and pending push/recheck.
 - Previous PRs: [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
@@ -17,8 +17,9 @@
 - Added `/api/agentic-rag/search/sections` and `/api/agentic-rag/trace/relations`, both using the existing Agentic RAG output-dir/KB registry resolution and `catalog.read` authorization dependency.
 - Updated the rag-admin manifest build path so KBs with `manifest_profile="regulation"` can build ready L1 manifests through `/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`; `formula` remains a declared but not-yet-implemented profile and records a failed manifest.
 - Review follow-up tightened PR4 behavior: `kb_id`-only Agentic search now resolves the KB's stored `manifest_profile`, generated L1 aliases include explicit `document_numbers` and `rule_numbers`, numeric alias matching uses bounded rule/document-number checks to avoid `Rule 7` matching `Rule 70`, and builder validation rejects manifest artifact path escapes plus orphan L1 structured-section/relation references.
+- PR4 #138 remote gate: GitHub `python-smoke` passed; Copilot left 3 valid inline comments. Follow-up fixes avoid general-profile section-entry memory duplication, keep `text_snippet` within its max length contract, and replace relation expansion duplicate checks with a set-backed relation key lookup.
 - Local `main` was fast-forwarded to `origin/main` at `ac35a8a` after merging #137, then PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from that baseline.
-- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, and PR3 are merged; PR4 is open as #138 and awaiting the remote checks/review gate.
+- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, and PR3 are merged; PR4 is open as #138 with review follow-up pending remote recheck after push.
 - Added ready-data search functions that read `ready_data_manifest.json`, `doc_catalog.jsonl`, optional `doc_summaries.jsonl`, and `sections.jsonl`; missing `doc_summaries.jsonl` falls back to catalog summaries, while missing/invalid ready-data files return empty tool results or API errors.
 - PR3 remote review follow-up: Copilot correctly identified that partial `doc_summaries.jsonl` rows could mislabel catalog-only fallback hits as `source="doc_summaries"`. The search merge now tracks catalog and summary provenance per document and the partial-summary regression test asserts `source="doc_catalog"`.
 - Review follow-up tightened ready-data file access: manifest artifact paths are contained under the ready_data output directory; explicit and registry-resolved `output_dir` values must stay under the DB-adjacent `agentic_ready_data` directory; `output_dir` cannot be mixed with `kb_id` registry lookup.
@@ -84,6 +85,13 @@
   - `git diff --check` (pass; Git emitted LF/CRLF working-copy warnings only)
   - Mandatory `codex review --uncommitted` still cannot run because WindowsApps `codex.exe` returned `Access is denied`; independent worker, spec reviewer, and code-quality reviewer were used as the available pre-PR review gate.
   - `git status --short --branch` showed only the PR4 modified files listed in this status update.
+- PR4 #138 post-review follow-up verification:
+  - GitHub remote gate before follow-up: `python-smoke` passed; Copilot left 3 valid inline comments about general-profile memory duplication, text snippet max-length contract, and relation expansion duplicate-check complexity.
+  - `python -m pytest tests\agentic_rag\test_ready_data_tools.py tests\agentic_rag\test_ready_data_builder.py -q` (22 passed)
+  - `python -m py_compile ai_actuarial\agentic_rag\ready_data_builder.py ai_actuarial\agentic_rag\ready_data_tools.py ai_actuarial\agentic_rag\tools.py ai_actuarial\api\services\agentic_rag.py ai_actuarial\api\routers\agentic_rag.py ai_actuarial\api\services\rag_admin.py` (pass)
+  - `python -m pytest tests\agentic_rag\ tests\test_fastapi_agentic_rag_endpoints.py tests\test_fastapi_rag_admin_endpoints.py -q` (79 passed)
+  - `git diff --check` (pass; Git emitted LF/CRLF working-copy warnings only)
+  - Mandatory `codex review --uncommitted` still cannot run because WindowsApps `codex.exe` returned `Access is denied`; the blocker remains recorded for the PR gate.
 - PR3 controller verification:
   - Worker implementation used TDD; initial red state was missing `ready_data_tools` module.
   - Spec-compliance reviewer found no PR3 scope gaps.
@@ -142,7 +150,7 @@
 
 ### Next PRs
 - PR3: document location and summary tools (`search_summaries` first, basic `search_titles`) + basic question classifier — merged as #137.
-- PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — open as #138; remote checks/review gate pending.
+- PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — open as #138; Copilot follow-up pending remote recheck after push.
 - PR5a: backend Agentic loop core (`planner.py`, `agentic_loop.py`, `/api/agentic-rag/chat`, metadata trace)
 - PR5b: Chat integration and frontend trace display with `rag_mode=agentic`
 - PR6: L2 formula/actuarial manifest (`formula_cards`, structured tables, calculation terms, formula tools)
