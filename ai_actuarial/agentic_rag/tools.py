@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-from .ready_data_tools import search_sections, search_summaries, search_titles, trace_relations
+from .ready_data_tools import (
+    search_calculation_terms,
+    search_formula_cards,
+    search_sections,
+    search_structured_tables,
+    search_summaries,
+    search_titles,
+    trace_relations,
+)
 
 
 QuestionCategory = Literal["catalog", "locate", "summary", "document_qa"]
@@ -30,7 +38,10 @@ def classify_question(question: str) -> QuestionCategory:
 __all__ = [
     "QuestionCategory",
     "classify_question",
+    "search_calculation_terms",
+    "search_formula_cards",
     "search_sections",
+    "search_structured_tables",
     "search_summaries",
     "search_titles",
     "trace_relations",

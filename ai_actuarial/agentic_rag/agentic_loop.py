@@ -4,7 +4,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .planner import ToolStep, plan_tool_steps
-from .ready_data_tools import search_sections, search_summaries, search_titles, trace_relations
+from .ready_data_tools import (
+    search_calculation_terms,
+    search_formula_cards,
+    search_sections,
+    search_structured_tables,
+    search_summaries,
+    search_titles,
+    trace_relations,
+)
 
 
 NO_EVIDENCE_ANSWER = "No evidence found in ready_data for this query."
@@ -14,6 +22,9 @@ _TOOL_FUNCTIONS: dict[str, Callable[..., list[dict[str, Any]]]] = {
     "search_titles": search_titles,
     "search_sections": search_sections,
     "trace_relations": trace_relations,
+    "search_formula_cards": search_formula_cards,
+    "search_structured_tables": search_structured_tables,
+    "search_calculation_terms": search_calculation_terms,
 }
 
 
@@ -40,6 +51,15 @@ def _trace_entry(step: ToolStep, *, status: str, result_count: int = 0, error: s
 
 def _evidence_key(item: dict[str, Any]) -> tuple[str, ...]:
     doc_key = _norm(item.get("doc_id")) or _norm(item.get("file_url")) or _norm(item.get("title"))
+    formula_id = _norm(item.get("formula_id"))
+    table_id = _norm(item.get("table_id"))
+    term_id = _norm(item.get("term_id"))
+    if formula_id:
+        return ("formula", doc_key, formula_id)
+    if table_id:
+        return ("table", doc_key, table_id)
+    if term_id:
+        return ("calculation_term", doc_key, term_id)
     relation_type = _norm(item.get("relation_type"))
     target_id = _norm(item.get("target_id"))
     section_id = _norm(item.get("section_id"))

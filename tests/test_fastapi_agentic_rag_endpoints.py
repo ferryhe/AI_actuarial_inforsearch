@@ -154,6 +154,67 @@ def _write_ready_data(output_dir: Path) -> None:
     )
 
 
+def _write_formula_artifacts(output_dir: Path) -> None:
+    _write_ready_data(output_dir)
+    _write_jsonl(
+        output_dir / "formula_cards.jsonl",
+        [
+            {
+                "formula_id": "doc-b#formula-1",
+                "doc_id": "doc-b",
+                "file_url": "https://example.test/b.pdf",
+                "title": "Reserve Method Note",
+                "section_id": "doc-b#net-premium",
+                "heading_path": ["Reserve", "Net premium"],
+                "heading": "Net premium",
+                "formula_text": "Net Premium = PV Benefits / PV Premiums.",
+                "context": "Net Premium = PV Benefits / PV Premiums. Mortality rate q_x is used.",
+                "terms": ["Net Premium", "PV Benefits", "PV Premiums", "mortality rate"],
+            }
+        ],
+    )
+    _write_jsonl(
+        output_dir / "tables_structured.jsonl",
+        [
+            {
+                "table_id": "doc-b#table-1",
+                "doc_id": "doc-b",
+                "file_url": "https://example.test/b.pdf",
+                "title": "Reserve Method Note",
+                "section_id": "doc-b#net-premium",
+                "heading_path": ["Reserve", "Net premium"],
+                "heading": "Net premium",
+                "caption": "Assumption table",
+                "headers": ["Term", "Description"],
+                "rows": [{"Term": "q_x", "Description": "mortality rate"}],
+                "text": "Term Description q_x mortality rate",
+            }
+        ],
+    )
+    _write_jsonl(
+        output_dir / "calculation_terms.jsonl",
+        [
+            {
+                "term_id": "doc-b#term-mortality-rate",
+                "term": "mortality rate",
+                "normalized_term": "mortality rate",
+                "doc_id": "doc-b",
+                "file_url": "https://example.test/b.pdf",
+                "title": "Reserve Method Note",
+                "section_id": "doc-b#net-premium",
+                "heading_path": ["Reserve", "Net premium"],
+                "context": "Mortality rate q_x is used.",
+            }
+        ],
+    )
+    manifest = json.loads((output_dir / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["profile"] = "formula"
+    manifest["artifact_files"].extend(
+        ["formula_cards.jsonl", "tables_structured.jsonl", "calculation_terms.jsonl"]
+    )
+    (output_dir / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def _build_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, Path]:
     db_path = _write_config_files(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(tmp_path / "sites.yaml"))
@@ -310,6 +371,46 @@ def test_fastapi_agentic_rag_trace_relations_uses_explicit_output_dir(tmp_path: 
     assert body["count"] == 1
     assert body["results"][0]["relation_type"] == "document_has_section"
     assert body["results"][0]["source"] == "relations_graph"
+
+
+def test_fastapi_agentic_rag_formula_search_endpoints_use_explicit_output_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "formula-explicit"
+    _write_formula_artifacts(ready_dir)
+
+    formula_response = client.post(
+        "/api/agentic-rag/search/formula-cards",
+        json={"query": "net premium mortality", "limit": 2, "output_dir": str(ready_dir)},
+    )
+    assert formula_response.status_code == 200, formula_response.text
+    formula_body = formula_response.json()
+    assert formula_body["search_type"] == "formula_cards"
+    assert formula_body["profile"] == "formula"
+    assert formula_body["results"][0]["formula_id"] == "doc-b#formula-1"
+    assert formula_body["results"][0]["source"] == "formula_cards"
+
+    table_response = client.post(
+        "/api/agentic-rag/search/tables",
+        json={"query": "q_x mortality", "limit": 2, "output_dir": str(ready_dir)},
+    )
+    assert table_response.status_code == 200, table_response.text
+    table_body = table_response.json()
+    assert table_body["search_type"] == "tables"
+    assert table_body["results"][0]["table_id"] == "doc-b#table-1"
+    assert table_body["results"][0]["source"] == "tables_structured"
+
+    term_response = client.post(
+        "/api/agentic-rag/search/calculation-terms",
+        json={"query": "mortality rate", "limit": 2, "output_dir": str(ready_dir)},
+    )
+    assert term_response.status_code == 200, term_response.text
+    term_body = term_response.json()
+    assert term_body["search_type"] == "calculation_terms"
+    assert term_body["results"][0]["term"] == "mortality rate"
+    assert term_body["results"][0]["source"] == "calculation_terms"
 
 
 def test_fastapi_agentic_rag_search_returns_empty_results_for_no_match(tmp_path: Path, monkeypatch) -> None:

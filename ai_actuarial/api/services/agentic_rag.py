@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ai_actuarial.agentic_rag.agentic_loop import run_agentic_rag_loop
 from ai_actuarial.agentic_rag.ready_data_tools import (
+    search_calculation_terms,
+    search_formula_cards,
     search_sections,
+    search_structured_tables,
     search_summaries,
     search_titles,
     trace_relations,
@@ -56,6 +60,17 @@ def _validate_agentic_ready_output_dir(*, db_path: str, output_dir: str) -> str:
     return str(candidate)
 
 
+def _manifest_profile_from_output_dir(output_dir: str) -> str:
+    try:
+        with (Path(output_dir) / "ready_data_manifest.json").open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return _norm(data.get("profile")).lower()
+
+
 def _is_missing_profile_schema_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return "no such table: rag_knowledge_bases" in message or "no such column: manifest_profile" in message
@@ -73,7 +88,10 @@ def _resolve_ready_output_dir(
     if explicit_output_dir:
         if kb_id:
             raise AgenticRagError("output_dir cannot be combined with kb_id/profile registry lookup", status_code=400)
-        return _validate_agentic_ready_output_dir(db_path=db_path, output_dir=explicit_output_dir), "", profile
+        resolved_output_dir = _validate_agentic_ready_output_dir(db_path=db_path, output_dir=explicit_output_dir)
+        if not requested_profile:
+            profile = _manifest_profile_from_output_dir(resolved_output_dir) or profile
+        return resolved_output_dir, "", profile
     if not kb_id:
         raise AgenticRagError("output_dir or kb_id is required", status_code=400)
 
@@ -150,6 +168,33 @@ def search_ready_sections(*, db_path: str, payload: Mapping[str, Any]) -> dict[s
         payload=payload,
         search_fn=search_sections,
         search_type="sections",
+    )
+
+
+def search_ready_formula_cards(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _search_response(
+        db_path=db_path,
+        payload=payload,
+        search_fn=search_formula_cards,
+        search_type="formula_cards",
+    )
+
+
+def search_ready_structured_tables(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _search_response(
+        db_path=db_path,
+        payload=payload,
+        search_fn=search_structured_tables,
+        search_type="tables",
+    )
+
+
+def search_ready_calculation_terms(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _search_response(
+        db_path=db_path,
+        payload=payload,
+        search_fn=search_calculation_terms,
+        search_type="calculation_terms",
     )
 
 

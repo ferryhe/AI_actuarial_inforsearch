@@ -578,11 +578,29 @@ def test_fastapi_rag_admin_agentic_ready_manifest_builds_regulation_profile(
     assert (output_dir / "relations_graph.json").is_file()
 
 
-def test_fastapi_rag_admin_agentic_ready_manifest_records_formula_profile_failure(
+def test_fastapi_rag_admin_agentic_ready_manifest_builds_formula_profile(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage.update_file_markdown(
+            str(seed["alpha_url"]),
+            "\n".join(
+                [
+                    "# Net premium",
+                    "Net Premium = PV Benefits / PV Premiums.",
+                    "| Term | Description |",
+                    "| q_x | mortality rate |",
+                    "| v | discount factor |",
+                    "The reserve calculation uses mortality rate and discount rate assumptions.",
+                ]
+            ),
+            "manual",
+        )
+    finally:
+        storage.close()
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",
@@ -603,10 +621,19 @@ def test_fastapi_rag_admin_agentic_ready_manifest_records_formula_profile_failur
     assert build.status_code == 200, build.text
     manifest = build.json()["manifest"]
     assert manifest["profile"] == "formula"
-    assert manifest["status"] == "failed"
-    assert manifest["usable"] is False
-    assert manifest["fallback_mode"] == "standard"
-    assert "not yet implemented" in manifest["error_message"]
+    assert manifest["status"] == "ready"
+    assert manifest["usable"] is True
+    assert manifest["fallback_mode"] == "agentic"
+    output_dir = Path(manifest["output_dir"])
+    assert (output_dir / "formula_cards.jsonl").is_file()
+    assert (output_dir / "tables_structured.jsonl").is_file()
+    assert (output_dir / "calculation_terms.jsonl").is_file()
+    formula_cards = [
+        json.loads(line)
+        for line in (output_dir / "formula_cards.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert formula_cards[0]["formula_text"] == "Net Premium = PV Benefits / PV Premiums."
 
 
 def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(

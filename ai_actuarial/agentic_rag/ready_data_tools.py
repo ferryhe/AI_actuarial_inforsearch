@@ -92,6 +92,9 @@ def _load_ready_data(output_dir: str | Path) -> dict[str, Any] | None:
     sections = _read_jsonl(_artifact_path(root, manifest, "sections.jsonl"))
     aliases = _read_jsonl(_artifact_path(root, manifest, "title_aliases.jsonl"))
     sections_structured = _read_jsonl(_artifact_path(root, manifest, "sections_structured.jsonl"))
+    formula_cards = _read_jsonl(_artifact_path(root, manifest, "formula_cards.jsonl"))
+    tables_structured = _read_jsonl(_artifact_path(root, manifest, "tables_structured.jsonl"))
+    calculation_terms = _read_jsonl(_artifact_path(root, manifest, "calculation_terms.jsonl"))
     relations_graph = _read_json(_artifact_path(root, manifest, "relations_graph.json")) or {}
     return {
         "manifest": manifest,
@@ -101,6 +104,9 @@ def _load_ready_data(output_dir: str | Path) -> dict[str, Any] | None:
         "sections": sections,
         "aliases": aliases,
         "sections_structured": sections_structured,
+        "formula_cards": formula_cards,
+        "tables_structured": tables_structured,
+        "calculation_terms": calculation_terms,
         "relations_graph": relations_graph,
     }
 
@@ -403,6 +409,185 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
         )
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["section_id"]))
+    return scored[: _limit(limit)]
+
+
+def search_formula_cards(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+    """Search L2 formula cards and return stable formula result dictionaries."""
+    query_text = _norm(query)
+    query_tokens = _tokens(query_text)
+    if not query_tokens:
+        return []
+    ready_data = _load_ready_data(output_dir)
+    if not ready_data:
+        return []
+
+    scored: list[dict[str, Any]] = []
+    for row in ready_data["formula_cards"]:
+        formula_text = _norm(row.get("formula_text"))
+        context = _norm(row.get("context"))
+        terms = _list_text(row.get("terms"))
+        heading_path = _list_text(row.get("heading_path"))
+        heading = _norm(row.get("heading")) or _first_text(heading_path)
+        title = _norm(row.get("title"))
+        score = (
+            _field_score(query_tokens, formula_text, 6.0)
+            + _field_score(query_tokens, " ".join(terms), 5.0)
+            + _field_score(query_tokens, heading, 3.0)
+            + _field_score(query_tokens, context, 1.5)
+            + _field_score(query_tokens, title, 1.0)
+        )
+        if query_text.lower() and query_text.lower() in f"{formula_text} {context}".lower():
+            score += 4.0
+        if score <= 0:
+            continue
+        file_url = _norm(row.get("file_url")) or _norm(row.get("doc_id"))
+        scored.append(
+            {
+                "doc_id": _norm(row.get("doc_id")) or file_url,
+                "file_url": file_url,
+                "title": title or file_url,
+                "formula_id": _norm(row.get("formula_id")),
+                "section_id": _norm(row.get("section_id")),
+                "heading_path": heading_path,
+                "heading": heading,
+                "formula_text": formula_text,
+                "context_snippet": _text_snippet(context),
+                "terms": terms,
+                "score": round(float(score), 4),
+                "source": "formula_cards",
+            }
+        )
+
+    scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["formula_id"]))
+    return scored[: _limit(limit)]
+
+
+def _table_rows_text(rows: Any) -> str:
+    if not isinstance(rows, list):
+        return ""
+    parts: list[str] = []
+    for row in rows:
+        if isinstance(row, dict):
+            parts.extend(_norm(value) for value in row.values() if _norm(value))
+        elif isinstance(row, list):
+            parts.extend(_norm(value) for value in row if _norm(value))
+        else:
+            text = _norm(row)
+            if text:
+                parts.append(text)
+    return " ".join(parts)
+
+
+def search_structured_tables(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+    """Search L2 structured table artifacts."""
+    query_text = _norm(query)
+    query_tokens = _tokens(query_text)
+    if not query_tokens:
+        return []
+    ready_data = _load_ready_data(output_dir)
+    if not ready_data:
+        return []
+
+    scored: list[dict[str, Any]] = []
+    for row in ready_data["tables_structured"]:
+        headers = _list_text(row.get("headers"))
+        rows = row.get("rows") if isinstance(row.get("rows"), list) else []
+        heading_path = _list_text(row.get("heading_path"))
+        heading = _norm(row.get("heading")) or _first_text(heading_path)
+        caption = _norm(row.get("caption"))
+        table_text = " ".join(
+            part
+            for part in [
+                caption,
+                heading,
+                " ".join(headers),
+                _table_rows_text(rows),
+                _norm(row.get("text")),
+            ]
+            if part
+        )
+        score = (
+            _field_score(query_tokens, " ".join(headers), 4.0)
+            + _field_score(query_tokens, _table_rows_text(rows), 4.0)
+            + _field_score(query_tokens, caption, 2.0)
+            + _field_score(query_tokens, heading, 2.0)
+            + _field_score(query_tokens, _norm(row.get("text")), 1.0)
+        )
+        if query_text.lower() and query_text.lower() in table_text.lower():
+            score += 4.0
+        if score <= 0:
+            continue
+        file_url = _norm(row.get("file_url")) or _norm(row.get("doc_id"))
+        scored.append(
+            {
+                "doc_id": _norm(row.get("doc_id")) or file_url,
+                "file_url": file_url,
+                "title": _norm(row.get("title")) or file_url,
+                "table_id": _norm(row.get("table_id")),
+                "section_id": _norm(row.get("section_id")),
+                "heading_path": heading_path,
+                "heading": heading,
+                "caption": caption,
+                "headers": headers,
+                "rows": rows,
+                "text_snippet": _text_snippet(table_text),
+                "score": round(float(score), 4),
+                "source": "tables_structured",
+            }
+        )
+
+    scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["table_id"]))
+    return scored[: _limit(limit)]
+
+
+def search_calculation_terms(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+    """Search L2 calculation term artifacts."""
+    query_text = _norm(query)
+    query_tokens = _tokens(query_text)
+    if not query_tokens:
+        return []
+    ready_data = _load_ready_data(output_dir)
+    if not ready_data:
+        return []
+
+    scored: list[dict[str, Any]] = []
+    for row in ready_data["calculation_terms"]:
+        term = _norm(row.get("term"))
+        normalized_term = _norm(row.get("normalized_term")) or term.lower()
+        context = _norm(row.get("context"))
+        heading_path = _list_text(row.get("heading_path"))
+        term_text = f"{term} {normalized_term}"
+        score = (
+            _field_score(query_tokens, term_text, 8.0)
+            + _field_score(query_tokens, context, 2.0)
+            + _field_score(query_tokens, " ".join(heading_path), 1.0)
+            + _field_score(query_tokens, _norm(row.get("title")), 0.5)
+        )
+        if query_text.lower() and query_text.lower() in term_text.lower():
+            score += 6.0
+        elif query_text.lower() and query_text.lower() in context.lower():
+            score += 2.0
+        if score <= 0:
+            continue
+        file_url = _norm(row.get("file_url")) or _norm(row.get("doc_id"))
+        scored.append(
+            {
+                "doc_id": _norm(row.get("doc_id")) or file_url,
+                "file_url": file_url,
+                "title": _norm(row.get("title")) or file_url,
+                "term_id": _norm(row.get("term_id")),
+                "term": term,
+                "normalized_term": normalized_term,
+                "section_id": _norm(row.get("section_id")),
+                "heading_path": heading_path,
+                "context_snippet": _text_snippet(context),
+                "score": round(float(score), 4),
+                "source": "calculation_terms",
+            }
+        )
+
+    scored.sort(key=lambda item: (-float(item["score"]), item["term"].lower(), item["term_id"]))
     return scored[: _limit(limit)]
 
 
