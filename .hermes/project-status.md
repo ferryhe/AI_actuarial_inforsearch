@@ -17,6 +17,7 @@
 - Mandatory local pre-PR `codex review --uncommitted` was attempted and remains blocked by WindowsApps `codex.exe` returning `Access is denied`; proceeding with recorded blocker plus local tests/build/browser QA.
 - Local services for QA were verified on `127.0.0.1:8000` for FastAPI and `127.0.0.1:5174` for Vite.
 - PR #145 was opened from `fix/agentic-rag-cjk-query-display`; initial implementation commit is `d6959e3`.
+- PR #145 remote gate: head `5c112d8` passed GitHub `python-smoke`; Copilot left one valid `.hermes/project-status.md` comment about ephemeral local PIDs, fixed in `5c112d8` and replied via GitHub API; no issue comments remain and merge state is clean.
 - PR7 branch `feat/agentic-rag-eval-ci` was created from merged PR6 baseline `53fb4e4`.
 - PR7 implementation target: add deterministic eval loop/CI wiring for Agentic RAG retrieval and answer behavior, including citation coverage, hallucination checks, and no-evidence refusal tests.
 - PR7 implementation adds deterministic Agentic RAG answer/evidence eval mode to `ai_actuarial/agentic_rag/eval.py`, preserving the original retrieval eval mode while adding `--mode agentic`, ready-data fixture support, JSON output, no-evidence refusal checks, unsupported-answer guards, strict agentic JSONL case validation, and nonzero exit on failed cases.
