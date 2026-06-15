@@ -15,14 +15,15 @@ The old server-rendered HTML runtime and Replit workflow files have been retired
 
 ## Current Status
 
-The 2026 security/RBAC rollout is complete on `main`:
+The 2026 FastAPI/React migration, security/RBAC rollout, and Agentic RAG implementation plan are complete on `main`:
 
 - Browser file import uses upload batches from the user's machine; active `type=file` collection runs require an upload batch, not an arbitrary server `directory_path`.
 - Public URL fetching is protected by SSRF checks, redirect revalidation, and unsafe-address rejection.
 - Permissions distinguish `sites.write`, `schedule.write`, `tasks.run`, and admin-only server filesystem helper authority.
 - Chat/RAG document comparison accepts at most 3 selected document sources, bounds document context size, reports truncation notices, and labels retrieved/document context as untrusted in prompts.
 - Login and registration submissions are IP-scoped rate limited before session mutation, with user-friendly 429 and 5xx error messages in the UI.
-- There are no open security rollout PRs at the time this README was updated; PRs #118-#122 are merged.
+- Agentic RAG now has ready_data builders, manifest registry/UI status, deterministic read tools, a Chat mode, structured citations/tool traces, formula/regulation profile support, and CI-backed eval smoke coverage.
+- The planned Agentic RAG PR sequence is merged through PR #142; the status file was reconciled in PR #143.
 
 ## Features
 
@@ -34,7 +35,10 @@ The 2026 security/RBAC rollout is complete on `main`:
 - Catalog files incrementally with summaries, keywords, and categories.
 - Convert documents to Markdown with local or API-backed engines.
 - Manage RAG knowledge bases, chunk profiles, and indexing jobs.
-- Chat with documents through retrieval-augmented generation and compare up to 3 selected document sources per request.
+- Chat with documents through standard vector RAG and compare up to 3 selected document sources per request.
+- Build Agentic RAG ready_data manifests for knowledge bases with `general`, `regulation`, or `formula` profiles.
+- Use Agentic RAG Chat for a single ready knowledge base, with deterministic ready_data evidence, structured citations, and an inspectable tool trace.
+- Search ready_data directly through summary, title, section, relation, formula, table, and calculation-term tools.
 - Configure AI/search provider credentials from Settings.
 - Operate through the React UI for dashboard, database, tasks, settings, knowledge, chat, logs, users, and file detail workflows.
 
@@ -64,6 +68,37 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173`. Vite proxies `/api/*` to `http://127.0.0.1:8000`.
+
+If `http://127.0.0.1:5173/` returns `404`, another Node/Vite process may be listening on that port. Start the project UI with `npm run dev` from this repository and use the URL printed by Vite.
+
+## Agentic RAG
+
+Agentic RAG is a structured evidence layer on top of the existing catalog, chunks, knowledge-base registry, and chat product. It does not replace standard vector RAG; the two modes coexist:
+
+- **Standard RAG** uses vector indexes and LLM generation, supports multi-KB selection, and supports direct selected-document context.
+- **Agentic RAG** uses a single knowledge base with a ready `ready_data` manifest, runs deterministic local tools over structured artifacts, returns grounded evidence/citations, and records `metadata.tool_trace`.
+
+Knowledge bases now carry a `manifest_profile`:
+
+| Profile | Main artifacts | Use case |
+| --- | --- | --- |
+| `general` | `doc_catalog.jsonl`, `sections.jsonl`, `ready_data_manifest.json` | General research/internal documents |
+| `regulation` | General artifacts plus aliases, summaries, structured sections, and relations | Regulations, standards, compliance documents |
+| `formula` | Regulation artifacts plus formula cards, structured tables, and calculation terms | Actuarial formula and calculation-heavy documents |
+
+Build a ready_data manifest from the CLI:
+
+```bash
+python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+```
+
+Run deterministic eval smoke:
+
+```bash
+python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
+```
+
+See [Agentic RAG Guide](docs/guides/AGENTIC_RAG.md) for profiles, APIs, UI behavior, storage paths, and eval commands.
 
 ## Configuration
 
@@ -179,6 +214,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 npm run build
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py -q
+python -m pytest tests/agentic_rag/test_eval.py tests/agentic_rag/test_planner_agentic_loop.py -q
+python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
 ```
 
 ## More Details
@@ -188,6 +225,7 @@ python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_sour
 - [API Migration Status](docs/API_MIGRATION_STATUS.md)
 - [AI Provider Credentials](docs/guides/AI_PROVIDER_CREDENTIALS.md)
 - [AI Model Catalog](docs/guides/AI_MODEL_CATALOG.md)
+- [Agentic RAG Guide](docs/guides/AGENTIC_RAG.md)
 - [Rate Limiting](docs/rate-limit-config.md)
 - [Production Security Config](docs/guides/PRODUCTION_SECURITY_CONFIG.md)
 - [Service Start Guide](docs/guides/SERVICE_START_GUIDE.md)

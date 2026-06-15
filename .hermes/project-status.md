@@ -1,14 +1,16 @@
 # Project Status
 
 - Date: 2026-06-15
-- Branch: `main`
-- Baseline: `origin/main` at `a13099d` (`Merge pull request #142 from ferryhe/feat/agentic-rag-eval-ci`).
-- Scope: Agentic RAG implementation plan final status after PR7.
-- PR: [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) — merged at `a13099d`.
-- Previous PRs: [#141](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/141) — merged; [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140) — merged; [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) — merged; [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
+- Branch: `docs/agentic-rag-current-docs`
+- Baseline: `origin/main` at `84f279c` (`Merge pull request #143 from ferryhe/docs/final-agentic-rag-status`).
+- Scope: Documentation refresh for the completed Agentic RAG implementation, including bilingual README and More Details docs.
+- PR: pending.
+- Previous PRs: [#143](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/143) — merged; [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) — merged; [#141](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/141) — merged; [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140) — merged; [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) — merged; [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
 
+- Documentation refresh in progress: updating `README.md`, `README.zh-CN.md`, `docs/README.md`, `docs/ARCHITECTURE.md`, `docs/API_MIGRATION_STATUS.md`, `docs/guides/AI_PROVIDER_CREDENTIALS.md`, `docs/guides/AI_MODEL_CATALOG.md`, `docs/rate-limit-config.md`, `docs/guides/PRODUCTION_SECURITY_CONFIG.md`, `docs/guides/SERVICE_START_GUIDE.md`, and adding `docs/guides/AGENTIC_RAG.md` so public docs match the completed Agentic RAG product state.
+- Documentation refresh local verification: `git diff --check` (pass; LF/CRLF working-copy warnings only); `python -m ai_actuarial.agentic_rag.ready_data_builder --help` (pass); `python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval\agentic_cases.jsonl --output-dir eval\fixtures\agentic_ready_data --profile formula --json` (3/3 passed); `python -m pytest tests\agentic_rag\test_eval.py -q` (31 passed); target documentation path/link existence checks (pass). Mandatory `codex review --uncommitted` remains blocked by WindowsApps `codex.exe` returning `Access is denied`.
 - PR7 branch `feat/agentic-rag-eval-ci` was created from merged PR6 baseline `53fb4e4`.
 - PR7 implementation target: add deterministic eval loop/CI wiring for Agentic RAG retrieval and answer behavior, including citation coverage, hallucination checks, and no-evidence refusal tests.
 - PR7 implementation adds deterministic Agentic RAG answer/evidence eval mode to `ai_actuarial/agentic_rag/eval.py`, preserving the original retrieval eval mode while adding `--mode agentic`, ready-data fixture support, JSON output, no-evidence refusal checks, unsupported-answer guards, strict agentic JSONL case validation, and nonzero exit on failed cases.

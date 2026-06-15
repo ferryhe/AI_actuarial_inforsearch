@@ -10,6 +10,24 @@ Do not store provider API keys in `sites.yaml`. Keep `.env` for bootstrap/system
 
 Search engine status, CLI search, and live model discovery prefer encrypted DB credentials. Environment provider keys remain supported as bootstrap/fallback values, but they should not be the long-term source of runtime secrets.
 
+## Agentic RAG Credential Behavior
+
+Agentic RAG does not add a new provider credential type.
+
+- Building ready_data manifests reads the configured SQLite database and existing catalog/chunk records.
+- Agentic read tools and `/api/agentic-rag/*` endpoints operate on local ready_data artifacts.
+- The current Agentic Chat path uses deterministic ready_data evidence and returns `model="agentic-ready-data"` in metadata; it does not call an external LLM.
+- The Agentic eval smoke in CI uses committed fixtures and does not require provider keys.
+
+Provider credentials are still required for the surrounding product capabilities that create and use the source data:
+
+- embeddings and standard vector RAG indexing;
+- standard Chat LLM answer generation;
+- cataloging/summarization flows when configured to call an AI provider;
+- OCR/document extraction providers when enabled.
+
+In practice, configure credentials exactly as before from Settings, then build Agentic ready_data from the KBs that already have catalog/chunk data.
+
 ## Credential IDs
 
 Supported credential id forms:
