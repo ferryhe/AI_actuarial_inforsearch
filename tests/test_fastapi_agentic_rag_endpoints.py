@@ -97,12 +97,52 @@ def _write_ready_data(output_dir: Path) -> None:
             }
         ],
     )
+    _write_jsonl(
+        output_dir / "sections_structured.jsonl",
+        [
+            {
+                "section_id": "doc-a#article-19",
+                "doc_id": "doc-a",
+                "file_url": "https://example.test/a.pdf",
+                "title": "Capital Adequacy Guideline",
+                "heading_path": ["Capital", "Article 19"],
+                "heading": "Article 19",
+                "text": "Article 19 defines required capital and solvency ratio rules.",
+            }
+        ],
+    )
+    (output_dir / "relations_graph.json").write_text(
+        json.dumps(
+            {
+                "relations": [
+                    {
+                        "relation_type": "document_has_section",
+                        "doc_id": "doc-a",
+                        "file_url": "https://example.test/a.pdf",
+                        "title": "Capital Adequacy Guideline",
+                        "section_id": "doc-a#article-19",
+                        "section_heading": "Article 19",
+                        "target_type": "section",
+                        "target_id": "doc-a#article-19",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (output_dir / "ready_data_manifest.json").write_text(
         json.dumps(
             {
                 "profile": "general",
                 "profile_version": "1",
-                "artifact_files": ["doc_catalog.jsonl", "doc_summaries.jsonl", "sections.jsonl"],
+                "artifact_files": [
+                    "doc_catalog.jsonl",
+                    "doc_summaries.jsonl",
+                    "sections.jsonl",
+                    "sections_structured.jsonl",
+                    "relations_graph.json",
+                ],
             },
             ensure_ascii=False,
         ),
@@ -173,6 +213,99 @@ def test_fastapi_agentic_rag_title_search_resolves_registry_ready_manifest(tmp_p
     assert body["profile"] == "general"
     assert body["output_dir"] == str(ready_dir)
     assert body["results"][0]["title"] == "Reserve Method Note"
+
+
+def test_fastapi_agentic_rag_section_search_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "explicit"
+    _write_ready_data(ready_dir)
+
+    response = client.post(
+        "/api/agentic-rag/search/sections",
+        json={"query": "Article 19 solvency", "limit": 2, "output_dir": str(ready_dir)},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["search_type"] == "sections"
+    assert body["count"] == 1
+    assert body["results"][0]["section_id"] == "doc-a#article-19"
+    assert body["results"][0]["source"] == "sections_structured"
+
+
+def test_fastapi_agentic_rag_section_search_uses_kb_manifest_profile_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "kbs" / "kb-regulation" / "regulation" / "1"
+    _write_ready_data(ready_dir)
+    manifest = json.loads((ready_dir / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["profile"] = "regulation"
+    (ready_dir / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    storage = Storage(str(db_path))
+    try:
+        manager = KnowledgeBaseManager(storage)
+        manager.create_kb(kb_id="kb-regulation", name="Regulation KB", kb_mode="manual", manifest_profile="regulation")
+        storage.upsert_agentic_ready_manifest(
+            kb_id="kb-regulation",
+            profile="regulation",
+            profile_version="1",
+            status="ready",
+            output_dir=str(ready_dir),
+            artifact_files=[
+                "doc_catalog.jsonl",
+                "doc_summaries.jsonl",
+                "sections.jsonl",
+                "sections_structured.jsonl",
+                "relations_graph.json",
+            ],
+            doc_count=2,
+            section_count=1,
+            built_at="2026-06-14T00:00:00+00:00",
+            source_db=str(db_path),
+        )
+    finally:
+        storage.close()
+
+    response = client.post(
+        "/api/agentic-rag/search/sections",
+        json={"query": "Article 19 solvency", "limit": 2, "kb_id": "kb-regulation"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["profile"] == "regulation"
+    assert body["output_dir"] == str(ready_dir)
+    assert body["results"][0]["section_id"] == "doc-a#article-19"
+
+    relation_response = client.post(
+        "/api/agentic-rag/trace/relations",
+        json={"query": "Article 19", "limit": 2, "kb_id": "kb-regulation"},
+    )
+
+    assert relation_response.status_code == 200, relation_response.text
+    relation_body = relation_response.json()
+    assert relation_body["profile"] == "regulation"
+    assert relation_body["results"][0]["relation_type"] == "document_has_section"
+
+
+def test_fastapi_agentic_rag_trace_relations_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
+    client, _db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "explicit"
+    _write_ready_data(ready_dir)
+
+    response = client.post(
+        "/api/agentic-rag/trace/relations",
+        json={"query": "Article 19", "limit": 2, "output_dir": str(ready_dir)},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["search_type"] == "relations"
+    assert body["count"] == 1
+    assert body["results"][0]["relation_type"] == "document_has_section"
+    assert body["results"][0]["source"] == "relations_graph"
 
 
 def test_fastapi_agentic_rag_search_returns_empty_results_for_no_match(tmp_path: Path, monkeypatch) -> None:

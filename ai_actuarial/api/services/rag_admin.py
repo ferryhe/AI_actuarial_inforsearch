@@ -1058,23 +1058,6 @@ def build_agentic_ready_manifest(
             or getattr(kb, "manifest_profile", "general")
         )
         profile_def = PROFILES[profile]
-        if profile != "general":
-            message = (
-                f"Manifest profile '{profile}' is declared but not implemented in PR2; "
-                "falling back to standard RAG until its builder ships."
-            )
-            storage.upsert_agentic_ready_manifest(
-                kb_id=kid,
-                profile=profile,
-                profile_version=profile_def.version,
-                status="failed",
-                error_message=message,
-            )
-            return {
-                "kb_id": kid,
-                "manifest": _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile),
-                "validation": {"valid": False, "errors": [message], "warnings": []},
-            }
 
         from ai_actuarial.agentic_rag import ready_data_builder
 

@@ -1,16 +1,24 @@
 # Project Status
 
-- Date: 2026-06-14
-- Branch: `feat/agentic-rag-summary-title-tools`
-- Baseline: `origin/main` at `15edb62` (`Merge pull request #136 from ferryhe/feat/agentic-rag-manifest-registry-kb-ui`).
-- Scope: PR3 — L0 ready_data summary/title search tools and basic question classifier.
-- PR: [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — open; post-review source-label follow-up fixes prepared.
-- Previous PRs: [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
+- Date: 2026-06-15
+- Branch: `feat/agentic-rag-l1-regulation-tools`
+- Baseline: `origin/main` at `ac35a8a` (`Merge pull request #137 from ferryhe/feat/agentic-rag-summary-title-tools`).
+- Scope: PR4 — L1 regulation manifest, aliases, alias-first title search, section search, and relation tracing.
+- PR: pending creation for PR4.
+- Previous PRs: [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
 
-- Local `main` was fast-forwarded to `origin/main` at `15edb62` after merging #136, then PR3 branch `feat/agentic-rag-summary-title-tools` was created from that baseline.
-- Current plan position: PR0, PR1, the roadmap reconciliation PR, and PR2 are merged; PR3 is open as #137 with L0 summary/title search tooling and FastAPI endpoints.
+- PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from latest `main` after #137 merged, and now implements L1 regulation artifacts, read tools, read endpoints, and rag-admin regulation manifest build integration.
+- `ready_data_builder.build_l0(..., profile="regulation")` now emits the L1 profile artifacts declared in `manifest_profiles.py`: `doc_catalog.jsonl`, `title_aliases.jsonl`, `doc_summaries.jsonl`, `sections_structured.jsonl`, `relations_graph.json`, and `ready_data_manifest.json`. The existing L0 `general` manifest artifact list is unchanged.
+- `search_titles` now checks `title_aliases.jsonl` first for exact/near alias, identifier, document-number, or rule-number matches, returning `source="title_aliases"` and `matched_alias` for alias hits before fallback scoring.
+- Added `search_sections(query, output_dir, limit=...)` with stable document/section identity, heading, text snippet, score, and source fields. It prefers `sections_structured.jsonl` and falls back to L0 `sections.jsonl`.
+- Added `trace_relations(query_or_doc, output_dir, limit=...)` over `relations_graph.json`; missing or invalid optional L1 artifacts return empty relation results or safe section fallback in the existing ready-data-tool style.
+- Added `/api/agentic-rag/search/sections` and `/api/agentic-rag/trace/relations`, both using the existing Agentic RAG output-dir/KB registry resolution and `catalog.read` authorization dependency.
+- Updated the rag-admin manifest build path so KBs with `manifest_profile="regulation"` can build ready L1 manifests through `/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`; `formula` remains a declared but not-yet-implemented profile and records a failed manifest.
+- Review follow-up tightened PR4 behavior: `kb_id`-only Agentic search now resolves the KB's stored `manifest_profile`, generated L1 aliases include explicit `document_numbers` and `rule_numbers`, numeric alias matching uses bounded rule/document-number checks to avoid `Rule 7` matching `Rule 70`, and builder validation rejects manifest artifact path escapes plus orphan L1 structured-section/relation references.
+- Local `main` was fast-forwarded to `origin/main` at `ac35a8a` after merging #137, then PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from that baseline.
+- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, and PR3 are merged; PR4 is in local implementation/review before PR creation.
 - Added ready-data search functions that read `ready_data_manifest.json`, `doc_catalog.jsonl`, optional `doc_summaries.jsonl`, and `sections.jsonl`; missing `doc_summaries.jsonl` falls back to catalog summaries, while missing/invalid ready-data files return empty tool results or API errors.
 - PR3 remote review follow-up: Copilot correctly identified that partial `doc_summaries.jsonl` rows could mislabel catalog-only fallback hits as `source="doc_summaries"`. The search merge now tracks catalog and summary provenance per document and the partial-summary regression test asserts `source="doc_catalog"`.
 - Review follow-up tightened ready-data file access: manifest artifact paths are contained under the ready_data output directory; explicit and registry-resolved `output_dir` values must stay under the DB-adjacent `agentic_ready_data` directory; `output_dir` cannot be mixed with `kb_id` registry lookup.
@@ -60,6 +68,22 @@
 - Tests added in `tests/agentic_rag/test_ready_data_tools.py` and `tests/test_fastapi_agentic_rag_endpoints.py`, including artifact path containment, partial `doc_summaries.jsonl`, explicit output_dir containment, mixed `output_dir`/`kb_id` rejection, and not-ready registry status handling.
 
 ### Verification
+- PR4 local verification:
+  - TDD red state: focused pytest initially failed during collection because `search_sections` was not exported from `ready_data_tools`.
+  - `python -m pytest tests\agentic_rag\test_ready_data_builder.py tests\agentic_rag\test_ready_data_tools.py tests\test_fastapi_agentic_rag_endpoints.py -q` (29 passed)
+  - `python -m py_compile ai_actuarial\agentic_rag\ready_data_builder.py ai_actuarial\agentic_rag\ready_data_tools.py ai_actuarial\agentic_rag\tools.py ai_actuarial\api\services\agentic_rag.py ai_actuarial\api\routers\agentic_rag.py` (pass)
+  - `python -m pytest tests\agentic_rag\ tests\test_fastapi_agentic_rag_endpoints.py -q` (51 passed)
+  - Controller follow-up added rag-admin build integration for `manifest_profile="regulation"` and preserved failed-manifest behavior for `formula`.
+  - `python -m py_compile ai_actuarial\agentic_rag\ready_data_builder.py ai_actuarial\agentic_rag\ready_data_tools.py ai_actuarial\agentic_rag\tools.py ai_actuarial\api\services\agentic_rag.py ai_actuarial\api\routers\agentic_rag.py ai_actuarial\api\services\rag_admin.py` (pass)
+  - `python -m pytest tests\agentic_rag\test_ready_data_builder.py tests\agentic_rag\test_ready_data_tools.py tests\test_fastapi_agentic_rag_endpoints.py tests\test_fastapi_rag_admin_endpoints.py -q` (52 passed)
+  - Independent spec/code-quality reviewers found registry profile resolution, typed alias-number fields, numeric alias false positives, validation path containment, and L1 referential validation gaps; all were fixed with regression tests.
+  - `python -m pytest tests\agentic_rag\test_ready_data_builder.py tests\agentic_rag\test_ready_data_tools.py tests\test_fastapi_agentic_rag_endpoints.py -q` (33 passed)
+  - `python -m pytest tests\test_fastapi_rag_admin_endpoints.py -q` (23 passed)
+  - `python -m pytest tests\agentic_rag\ tests\test_fastapi_agentic_rag_endpoints.py tests\test_fastapi_rag_admin_endpoints.py -q` (78 passed)
+  - `python -m ai_actuarial.agentic_rag.ready_data_builder --help` (pass; shows `--profile {general,regulation}`)
+  - `git diff --check` (pass; Git emitted LF/CRLF working-copy warnings only)
+  - Mandatory `codex review --uncommitted` still cannot run because WindowsApps `codex.exe` returned `Access is denied`; independent worker, spec reviewer, and code-quality reviewer were used as the available pre-PR review gate.
+  - `git status --short --branch` showed only the PR4 modified files listed in this status update.
 - PR3 controller verification:
   - Worker implementation used TDD; initial red state was missing `ready_data_tools` module.
   - Spec-compliance reviewer found no PR3 scope gaps.
@@ -117,8 +141,8 @@
 - Retriever protocol allows swapping in vector/ready_data/agentic retrievers later
 
 ### Next PRs
-- PR3: document location and summary tools (`search_summaries` first, basic `search_titles`) + basic question classifier — open as #137; post-review source-label follow-up pending push/remote checks/merge
-- PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations`
+- PR3: document location and summary tools (`search_summaries` first, basic `search_titles`) + basic question classifier — merged as #137.
+- PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — local implementation/review in progress before PR creation.
 - PR5a: backend Agentic loop core (`planner.py`, `agentic_loop.py`, `/api/agentic-rag/chat`, metadata trace)
 - PR5b: Chat integration and frontend trace display with `rag_mode=agentic`
 - PR6: L2 formula/actuarial manifest (`formula_cards`, structured tables, calculation terms, formula tools)

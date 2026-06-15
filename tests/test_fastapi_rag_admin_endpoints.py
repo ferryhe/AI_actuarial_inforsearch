@@ -544,7 +544,7 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     assert stale_manifest["stale_reason"]
 
 
-def test_fastapi_rag_admin_agentic_ready_manifest_records_unsupported_profile_failure(
+def test_fastapi_rag_admin_agentic_ready_manifest_builds_regulation_profile(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -569,10 +569,44 @@ def test_fastapi_rag_admin_agentic_ready_manifest_records_unsupported_profile_fa
     assert build.status_code == 200, build.text
     manifest = build.json()["manifest"]
     assert manifest["profile"] == "regulation"
+    assert manifest["status"] == "ready"
+    assert manifest["usable"] is True
+    assert manifest["fallback_mode"] == "agentic"
+    output_dir = Path(manifest["output_dir"])
+    assert (output_dir / "title_aliases.jsonl").is_file()
+    assert (output_dir / "sections_structured.jsonl").is_file()
+    assert (output_dir / "relations_graph.json").is_file()
+
+
+def test_fastapi_rag_admin_agentic_ready_manifest_records_formula_profile_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-formula-manifest",
+            "name": "Formula Manifest KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+            "manifest_profile": "formula",
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    build = client.post(
+        "/api/rag/knowledge-bases/kb-formula-manifest/agentic-ready-manifest/build",
+        json={},
+    )
+    assert build.status_code == 200, build.text
+    manifest = build.json()["manifest"]
+    assert manifest["profile"] == "formula"
     assert manifest["status"] == "failed"
     assert manifest["usable"] is False
     assert manifest["fallback_mode"] == "standard"
-    assert "not implemented" in manifest["error_message"]
+    assert "not yet implemented" in manifest["error_message"]
 
 
 def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(

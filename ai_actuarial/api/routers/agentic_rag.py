@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..deps import AuthContext, require_permissions
-from ..services.agentic_rag import AgenticRagError, search_ready_summaries, search_ready_titles
+from ..services.agentic_rag import (
+    AgenticRagError,
+    search_ready_sections,
+    search_ready_summaries,
+    search_ready_titles,
+    trace_ready_relations,
+)
 
 
 router = APIRouter()
@@ -41,5 +47,29 @@ def api_search_agentic_titles(
 ):
     try:
         return search_ready_titles(db_path=_db_path(request), payload=payload)
+    except AgenticRagError as exc:
+        return _error_response(exc)
+
+
+@router.post("/agentic-rag/search/sections")
+def api_search_agentic_sections(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return search_ready_sections(db_path=_db_path(request), payload=payload)
+    except AgenticRagError as exc:
+        return _error_response(exc)
+
+
+@router.post("/agentic-rag/trace/relations")
+def api_trace_agentic_relations(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+):
+    try:
+        return trace_ready_relations(db_path=_db_path(request), payload=payload)
     except AgenticRagError as exc:
         return _error_response(exc)

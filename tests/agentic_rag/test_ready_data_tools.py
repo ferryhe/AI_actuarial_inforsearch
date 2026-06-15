@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ai_actuarial.agentic_rag.ready_data_tools import search_summaries, search_titles
+from ai_actuarial.agentic_rag.ready_data_tools import (
+    search_sections,
+    search_summaries,
+    search_titles,
+    trace_relations,
+)
 from ai_actuarial.agentic_rag.tools import classify_question
 
 
@@ -125,6 +130,164 @@ def test_search_titles_scores_title_matches(tmp_path: Path) -> None:
     assert results[0]["title"] == "Reserve Method Note"
     assert results[0]["summary"]
     assert results[0]["source"] == "doc_catalog"
+
+
+def test_search_titles_prefers_exact_alias_before_fallback_scoring(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path)
+    _write_jsonl(
+        tmp_path / "title_aliases.jsonl",
+        [
+            {
+                "doc_id": "doc-reserve",
+                "file_url": "https://example.test/reserve.pdf",
+                "title": "Reserve Method Note",
+                "aliases": ["RBC Rule 7", "Rule 7"],
+                "identifiers": ["7"],
+            }
+        ],
+    )
+    manifest = json.loads((tmp_path / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["profile"] = "regulation"
+    manifest["artifact_files"].append("title_aliases.jsonl")
+    (tmp_path / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    results = search_titles("RBC Rule 7", output_dir=str(tmp_path), limit=5)
+
+    assert results[0]["doc_id"] == "doc-reserve"
+    assert results[0]["source"] == "title_aliases"
+    assert results[0]["matched_alias"] == "RBC Rule 7"
+
+
+def test_search_titles_does_not_match_short_numeric_alias_inside_longer_rule_number(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path)
+    _write_jsonl(
+        tmp_path / "title_aliases.jsonl",
+        [
+            {
+                "doc_id": "doc-reserve",
+                "file_url": "https://example.test/reserve.pdf",
+                "title": "Reserve Method Note",
+                "aliases": ["RBC Rule 7", "Rule 7"],
+                "identifiers": ["7"],
+                "rule_numbers": ["7"],
+            },
+            {
+                "doc_id": "doc-capital",
+                "file_url": "https://example.test/capital.pdf",
+                "title": "RBC Rule 70 Capital Adequacy Guideline",
+                "aliases": ["RBC Rule 70", "Rule 70"],
+                "identifiers": ["70"],
+                "rule_numbers": ["70"],
+            },
+        ],
+    )
+    manifest = json.loads((tmp_path / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["profile"] = "regulation"
+    manifest["artifact_files"].append("title_aliases.jsonl")
+    (tmp_path / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    results = search_titles("RBC Rule 70", output_dir=str(tmp_path), limit=5)
+
+    assert results[0]["doc_id"] == "doc-capital"
+    assert results[0]["matched_alias"] == "RBC Rule 70"
+    assert all(not (item["doc_id"] == "doc-reserve" and item["source"] == "title_aliases") for item in results)
+
+
+def test_search_sections_returns_stable_section_hits_from_l1_artifact(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path)
+    _write_jsonl(
+        tmp_path / "sections_structured.jsonl",
+        [
+            {
+                "section_id": "doc-capital#article-19",
+                "doc_id": "doc-capital",
+                "file_url": "https://example.test/capital.pdf",
+                "title": "Capital Adequacy Guideline",
+                "heading_path": ["Chapter 2", "Article 19"],
+                "heading": "Article 19",
+                "text": "Article 19 defines solvency capital requirement factors.",
+                "aliases": ["Article 19"],
+            },
+            {
+                "section_id": "doc-reserve#article-5",
+                "doc_id": "doc-reserve",
+                "file_url": "https://example.test/reserve.pdf",
+                "title": "Reserve Method Note",
+                "heading_path": ["Article 5"],
+                "heading": "Article 5",
+                "text": "Discount assumptions support reserve calculations.",
+            },
+        ],
+    )
+    manifest = json.loads((tmp_path / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["artifact_files"].append("sections_structured.jsonl")
+    (tmp_path / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    results = search_sections("Article 19 solvency", output_dir=str(tmp_path), limit=1)
+
+    assert results == [
+        {
+            "doc_id": "doc-capital",
+            "file_url": "https://example.test/capital.pdf",
+            "title": "Capital Adequacy Guideline",
+            "section_id": "doc-capital#article-19",
+            "heading_path": ["Chapter 2", "Article 19"],
+            "heading": "Article 19",
+            "text_snippet": "Article 19 defines solvency capital requirement factors.",
+            "score": results[0]["score"],
+            "source": "sections_structured",
+        }
+    ]
+    assert results[0]["score"] > 0
+
+
+def test_trace_relations_returns_alias_doc_section_edges(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path)
+    (tmp_path / "relations_graph.json").write_text(
+        json.dumps(
+            {
+                "relations": [
+                    {
+                        "relation_type": "alias_of",
+                        "doc_id": "doc-capital",
+                        "file_url": "https://example.test/capital.pdf",
+                        "title": "Capital Adequacy Guideline",
+                        "alias": "RBC Rule 3",
+                        "target_type": "document",
+                        "target_id": "doc-capital",
+                    },
+                    {
+                        "relation_type": "document_has_section",
+                        "doc_id": "doc-capital",
+                        "file_url": "https://example.test/capital.pdf",
+                        "title": "Capital Adequacy Guideline",
+                        "section_id": "doc-capital#article-19",
+                        "section_heading": "Article 19",
+                        "target_type": "section",
+                        "target_id": "doc-capital#article-19",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    manifest = json.loads((tmp_path / "ready_data_manifest.json").read_text(encoding="utf-8"))
+    manifest["artifact_files"].append("relations_graph.json")
+    (tmp_path / "ready_data_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    results = trace_relations("RBC Rule 3", output_dir=str(tmp_path), limit=5)
+
+    assert [item["relation_type"] for item in results] == ["alias_of", "document_has_section"]
+    assert all(item["doc_id"] == "doc-capital" for item in results)
+    assert results[0]["source"] == "relations_graph"
+
+
+def test_l1_tools_tolerate_missing_optional_artifacts(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path, include_summaries=False)
+
+    assert search_sections("capital", output_dir=str(tmp_path), limit=3)[0]["source"] == "sections"
+    assert trace_relations("capital", output_dir=str(tmp_path), limit=3) == []
 
 
 def test_search_summaries_falls_back_to_catalog_summary_when_doc_summaries_missing(tmp_path: Path) -> None:

@@ -90,12 +90,18 @@ def _load_ready_data(output_dir: str | Path) -> dict[str, Any] | None:
     summary_rows = _read_jsonl(summaries_path)
     source = "doc_summaries" if summary_rows else "doc_catalog"
     sections = _read_jsonl(_artifact_path(root, manifest, "sections.jsonl"))
+    aliases = _read_jsonl(_artifact_path(root, manifest, "title_aliases.jsonl"))
+    sections_structured = _read_jsonl(_artifact_path(root, manifest, "sections_structured.jsonl"))
+    relations_graph = _read_json(_artifact_path(root, manifest, "relations_graph.json")) or {}
     return {
         "manifest": manifest,
         "catalog": catalog,
         "summaries": summary_rows,
         "summary_source": source,
         "sections": sections,
+        "aliases": aliases,
+        "sections_structured": sections_structured,
+        "relations_graph": relations_graph,
     }
 
 
@@ -164,6 +170,84 @@ def _format_result(row: dict[str, Any], *, score: float, source: str) -> dict[st
     }
 
 
+def _catalog_by_doc(catalog: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {_doc_key(row): row for row in catalog if _doc_key(row)}
+
+
+def _list_text(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [_norm(item) for item in value if _norm(item)]
+    text = _norm(value)
+    return [text] if text else []
+
+
+def _first_text(value: Any) -> str:
+    parts = _list_text(value)
+    return parts[-1] if parts else ""
+
+
+def _text_snippet(value: Any, max_chars: int = 240) -> str:
+    text = " ".join(_norm(value).split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "..."
+
+
+def _normalized_phrase(value: Any) -> str:
+    return " ".join(_norm(value).lower().split())
+
+
+def _bounded_phrase_contains(text: str, phrase: str) -> bool:
+    if not text or not phrase:
+        return False
+    pattern = r"(?<![\w])" + r"\s+".join(re.escape(part) for part in phrase.split()) + r"(?![\w])"
+    return bool(re.search(pattern, text, flags=re.IGNORECASE | re.UNICODE))
+
+
+def _number_alias_in_query(query_text: str, number: str) -> bool:
+    if not number:
+        return False
+    escaped = re.escape(number)
+    patterns = (
+        rf"(?<![A-Za-z0-9])(?:第\s*)?{escaped}\s*(?:号)?(?![A-Za-z0-9])",
+        rf"(?<![A-Za-z0-9])(?:rule|article)\s*[-#: ]\s*{escaped}(?![A-Za-z0-9])",
+    )
+    return any(re.search(pattern, query_text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _alias_match_score(query_text: str, alias_row: dict[str, Any]) -> tuple[float, str]:
+    query_lower = _normalized_phrase(query_text)
+    candidates: list[tuple[str, str]] = []
+    candidates.extend(("alias", item) for item in _list_text(alias_row.get("aliases")))
+    candidates.extend(("identifier", item) for item in _list_text(alias_row.get("identifiers")))
+    candidates.extend(("document_number", item) for item in _list_text(alias_row.get("document_numbers")))
+    candidates.extend(("rule_number", item) for item in _list_text(alias_row.get("rule_numbers")))
+    candidates.append(("title", _norm(alias_row.get("title"))))
+    best_score = 0.0
+    best_match = ""
+    for kind, candidate in candidates:
+        candidate_lower = _normalized_phrase(candidate)
+        if not candidate_lower:
+            continue
+        if query_lower == candidate_lower:
+            return 100.0, candidate
+        if kind in {"document_number", "rule_number"} or re.fullmatch(r"[0-9]+", candidate_lower):
+            if _number_alias_in_query(query_text, candidate_lower):
+                score = 92.0
+            else:
+                continue
+        elif _bounded_phrase_contains(query_lower, candidate_lower):
+            score = 88.0 + min(len(candidate_lower), len(query_lower)) / max(len(candidate_lower), len(query_lower))
+        elif len(_tokens(query_lower)) >= 2 and _bounded_phrase_contains(candidate_lower, query_lower):
+            score = 80.0 + min(len(candidate_lower), len(query_lower)) / max(len(candidate_lower), len(query_lower))
+        else:
+            continue
+        if score > best_score:
+            best_score = score
+            best_match = candidate
+    return best_score, best_match
+
+
 def _limit(value: int | None) -> int:
     try:
         parsed = int(value if value is not None else 10)
@@ -212,7 +296,7 @@ def search_summaries(query: str, *, output_dir: str | Path, limit: int = 10) -> 
 
 
 def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
-    """Search L0 ready-data document titles with lightweight keyword scoring."""
+    """Search ready-data document titles, preferring L1 aliases before scoring."""
     query_text = _norm(query)
     query_tokens = _tokens(query_text)
     if not query_tokens:
@@ -221,8 +305,30 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
     if not ready_data:
         return []
 
+    by_doc = _catalog_by_doc(ready_data["catalog"])
+    alias_hits: list[dict[str, Any]] = []
+    seen_alias_docs: set[str] = set()
+    for alias_row in ready_data["aliases"]:
+        score, matched_alias = _alias_match_score(query_text, alias_row)
+        if score <= 0:
+            continue
+        doc_id = _doc_key(alias_row)
+        row = dict(by_doc.get(doc_id, {}))
+        row.update({k: v for k, v in alias_row.items() if v not in (None, "")})
+        result = _format_result(row, score=score, source="title_aliases")
+        result["matched_alias"] = matched_alias
+        alias_hits.append(result)
+        seen_alias_docs.add(result["doc_id"])
+    if alias_hits:
+        alias_hits.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["file_url"]))
+        if len(alias_hits) >= _limit(limit):
+            return alias_hits[: _limit(limit)]
+
     scored: list[dict[str, Any]] = []
     for row in ready_data["catalog"]:
+        doc_id = _doc_key(row)
+        if doc_id in seen_alias_docs:
+            continue
         headings = row.get("headings") or []
         heading_text = " ".join(_norm(item) for item in headings) if isinstance(headings, list) else _norm(headings)
         title = _norm(row.get("title"))
@@ -240,4 +346,124 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
         scored.append(_format_result(row, score=score, source="doc_catalog"))
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["file_url"]))
+    return (alias_hits + scored)[: _limit(limit)]
+
+
+def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+    """Search L1 structured sections, falling back to L0 sections when needed."""
+    query_text = _norm(query)
+    query_tokens = _tokens(query_text)
+    if not query_tokens:
+        return []
+    ready_data = _load_ready_data(output_dir)
+    if not ready_data:
+        return []
+
+    catalog = _catalog_by_doc(ready_data["catalog"])
+    source = "sections_structured" if ready_data["sections_structured"] else "sections"
+    section_rows = ready_data["sections_structured"] or ready_data["sections"]
+    scored: list[dict[str, Any]] = []
+    for section in section_rows:
+        doc_id = _norm(section.get("doc_id"))
+        if not doc_id:
+            continue
+        doc = catalog.get(doc_id, {})
+        heading_path = _list_text(section.get("heading_path"))
+        heading = _norm(section.get("heading")) or _first_text(heading_path)
+        text = _norm(section.get("text"))
+        alias_text = " ".join(_list_text(section.get("aliases")) + _list_text(section.get("document_aliases")))
+        score = (
+            _field_score(query_tokens, heading, 4.0)
+            + _field_score(query_tokens, " ".join(heading_path), 3.0)
+            + _field_score(query_tokens, text, 1.0)
+            + _field_score(query_tokens, _norm(doc.get("title")) or _norm(section.get("title")), 1.0)
+            + _field_score(query_tokens, alias_text, 4.0)
+        )
+        if query_text.lower() and query_text.lower() in f"{heading} {text}".lower():
+            score += 3.0
+        if score <= 0:
+            continue
+        file_url = _norm(section.get("file_url")) or _norm(doc.get("file_url")) or doc_id
+        scored.append(
+            {
+                "doc_id": doc_id,
+                "file_url": file_url,
+                "title": _norm(section.get("title")) or _norm(doc.get("title")) or file_url,
+                "section_id": _norm(section.get("section_id")),
+                "heading_path": heading_path,
+                "heading": heading,
+                "text_snippet": _text_snippet(text),
+                "score": round(float(score), 4),
+                "source": source,
+            }
+        )
+
+    scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["section_id"]))
+    return scored[: _limit(limit)]
+
+
+def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 10) -> list[dict[str, Any]]:
+    """Trace L1 relation rows for an alias, document, or section query."""
+    query_text = _norm(query_or_doc)
+    query_tokens = _tokens(query_text)
+    if not query_tokens:
+        return []
+    ready_data = _load_ready_data(output_dir)
+    if not ready_data:
+        return []
+    graph = ready_data.get("relations_graph") or {}
+    relations = graph.get("relations") if isinstance(graph, dict) else None
+    if not isinstance(relations, list):
+        return []
+
+    scored: list[dict[str, Any]] = []
+    matched_doc_ids: set[str] = set()
+    for row in relations:
+        if not isinstance(row, dict):
+            continue
+        haystack = " ".join(
+            _norm(row.get(key))
+            for key in (
+                "doc_id",
+                "file_url",
+                "title",
+                "alias",
+                "section_id",
+                "section_heading",
+                "target_id",
+                "target_type",
+                "relation_type",
+            )
+        )
+        score = _field_score(query_tokens, haystack, 2.0)
+        if query_text.lower() and query_text.lower() in haystack.lower():
+            score += 5.0
+        if score > 0:
+            matched_doc_ids.add(_norm(row.get("doc_id")))
+            result = dict(row)
+            result["score"] = round(float(score), 4)
+            result["source"] = "relations_graph"
+            scored.append(result)
+
+    if matched_doc_ids:
+        for row in relations:
+            if not isinstance(row, dict):
+                continue
+            doc_id = _norm(row.get("doc_id"))
+            if not doc_id or doc_id not in matched_doc_ids:
+                continue
+            if any(existing.get("relation_type") == row.get("relation_type") and existing.get("target_id") == row.get("target_id") for existing in scored):
+                continue
+            result = dict(row)
+            result["score"] = 0.5
+            result["source"] = "relations_graph"
+            scored.append(result)
+
+    scored.sort(
+        key=lambda item: (
+            -float(item.get("score") or 0),
+            _norm(item.get("relation_type")),
+            _norm(item.get("target_id")),
+        )
+    )
     return scored[: _limit(limit)]

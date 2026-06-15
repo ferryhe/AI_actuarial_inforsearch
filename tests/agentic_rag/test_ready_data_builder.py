@@ -146,6 +146,140 @@ def test_build_l0_basic(test_db_path, tmp_path):
     ]
 
 
+def test_build_regulation_profile_emits_l1_alias_and_relation_artifacts(test_db_path, tmp_path):
+    """Build L1 regulation artifacts without changing the L0 catalog contract."""
+    manifest = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path),
+        profile="regulation",
+    )
+
+    assert manifest["profile"] == "regulation"
+    assert manifest["doc_count"] == 1
+    assert manifest["section_count"] == 2
+    assert manifest["artifact_files"] == [
+        "doc_catalog.jsonl",
+        "title_aliases.jsonl",
+        "doc_summaries.jsonl",
+        "sections_structured.jsonl",
+        "relations_graph.json",
+        "ready_data_manifest.json",
+    ]
+
+    catalog = [
+        json.loads(line)
+        for line in (tmp_path / "doc_catalog.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert catalog[0]["title"] == "偿付能力监管规则第3号"
+    assert "headings" in catalog[0]
+
+    aliases = [
+        json.loads(line)
+        for line in (tmp_path / "title_aliases.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert aliases[0]["doc_id"] == "https://example.com/rule1"
+    assert "偿付能力监管规则第3号" in aliases[0]["aliases"]
+    assert "3" in aliases[0]["identifiers"]
+    assert aliases[0]["document_numbers"] == ["3"]
+    assert aliases[0]["rule_numbers"] == []
+
+    sections = [
+        json.loads(line)
+        for line in (tmp_path / "sections_structured.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert sections[0]["heading"] == "第一条"
+    assert sections[0]["document_aliases"] == aliases[0]["aliases"]
+
+    graph = json.loads((tmp_path / "relations_graph.json").read_text(encoding="utf-8"))
+    relation_types = {row["relation_type"] for row in graph["relations"]}
+    assert {"alias_of", "document_has_section"}.issubset(relation_types)
+
+    validation = builder.validate(str(tmp_path))
+    assert validation["valid"] is True
+
+
+def test_validate_rejects_manifest_artifact_paths_that_escape_output_dir(tmp_path):
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("{}\n", encoding="utf-8")
+    with open(tmp_path / "ready_data_manifest.json", "w", encoding="utf-8") as f:
+        json.dump({"artifact_files": ["../outside.jsonl"]}, f)
+
+    result = builder.validate(str(tmp_path))
+
+    assert result["valid"] is False
+    assert any("escapes output_dir" in error for error in result["errors"])
+
+
+def test_validate_rejects_orphan_l1_structured_sections_and_relations(tmp_path):
+    doc = {
+        "doc_id": "doc-a",
+        "file_url": "doc-a",
+        "title": "Rule A",
+        "category": "regulation",
+        "source_site": "",
+        "publish_date": "",
+        "summary": "",
+        "keywords": [],
+        "headings": [],
+        "rag_chunk_count": 1,
+    }
+    section = {
+        "section_id": "doc-a#s1",
+        "doc_id": "doc-a",
+        "heading_path": ["Article 1"],
+        "text": "hello",
+        "token_count": 1,
+    }
+    structured = {
+        "section_id": "doc-missing#s1",
+        "doc_id": "doc-missing",
+        "heading_path": ["Article 1"],
+        "text": "orphan",
+        "token_count": 1,
+    }
+    graph = {
+        "relations": [
+            {
+                "relation_type": "document_has_section",
+                "doc_id": "doc-missing",
+                "target_type": "section",
+                "target_id": "doc-missing#s2",
+            }
+        ]
+    }
+    with open(tmp_path / "doc_catalog.jsonl", "w", encoding="utf-8") as f:
+        f.write(json.dumps(doc, ensure_ascii=False) + "\n")
+    with open(tmp_path / "sections.jsonl", "w", encoding="utf-8") as f:
+        f.write(json.dumps(section, ensure_ascii=False) + "\n")
+    with open(tmp_path / "sections_structured.jsonl", "w", encoding="utf-8") as f:
+        f.write(json.dumps(structured, ensure_ascii=False) + "\n")
+    with open(tmp_path / "relations_graph.json", "w", encoding="utf-8") as f:
+        json.dump(graph, f)
+    with open(tmp_path / "ready_data_manifest.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "artifact_files": [
+                    "doc_catalog.jsonl",
+                    "sections.jsonl",
+                    "sections_structured.jsonl",
+                    "relations_graph.json",
+                    "ready_data_manifest.json",
+                ]
+            },
+            f,
+        )
+
+    result = builder.validate(str(tmp_path))
+
+    assert result["valid"] is False
+    assert any("structured section doc_ids not in catalog" in error for error in result["errors"])
+    assert any("relation doc_ids not in catalog" in error for error in result["errors"])
+    assert any("relation section targets not in sections" in error for error in result["errors"])
+
+
 def test_build_l0_can_scope_to_knowledge_base(test_db_path, tmp_path):
     """KB scoped builds should not leak catalog rows from other KBs."""
     conn = sqlite3.connect(test_db_path)
