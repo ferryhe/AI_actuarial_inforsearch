@@ -4,7 +4,7 @@
 - Branch: `fix/agentic-rag-cjk-query-display`
 - Baseline: `origin/main` at `597e55c`.
 - Scope: Real local QA follow-up for Agentic RAG Chinese query matching, Chat Agentic KB section-count display, and Agentic raw score rendering.
-- PR: pending.
+- PR: [#145](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/145).
 - Previous PRs: [#143](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/143) — merged; [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) — merged; [#141](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/141) — merged; [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140) — merged; [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) — merged; [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
@@ -16,6 +16,7 @@
 - Verification so far: focused red tests reproduced both score-contract failures before implementation; focused green tests passed; broader suite `python -m pytest --no-cov tests\agentic_rag\test_ready_data_tools.py tests\agentic_rag\test_planner_agentic_loop.py tests\test_fastapi_agentic_rag_endpoints.py tests\test_fastapi_chat_endpoints.py tests\test_chat_react_source.py -q` passed (81 passed, 4 warnings); `python -m py_compile ai_actuarial\agentic_rag\ready_data_tools.py ai_actuarial\agentic_rag\agentic_loop.py ai_actuarial\agentic_rag\planner.py ai_actuarial\api\services\chat.py` passed; `npm.cmd run build` passed with the existing Vite large-chunk warning.
 - Mandatory local pre-PR `codex review --uncommitted` was attempted and remains blocked by WindowsApps `codex.exe` returning `Access is denied`; proceeding with recorded blocker plus local tests/build/browser QA.
 - Local services for QA: FastAPI is running on `127.0.0.1:8000` as PID `2712`; Vite is running on `127.0.0.1:5174` as PID `5768`.
+- PR #145 was opened from `fix/agentic-rag-cjk-query-display`; initial implementation commit is `d6959e3`.
 - PR7 branch `feat/agentic-rag-eval-ci` was created from merged PR6 baseline `53fb4e4`.
 - PR7 implementation target: add deterministic eval loop/CI wiring for Agentic RAG retrieval and answer behavior, including citation coverage, hallucination checks, and no-evidence refusal tests.
 - PR7 implementation adds deterministic Agentic RAG answer/evidence eval mode to `ai_actuarial/agentic_rag/eval.py`, preserving the original retrieval eval mode while adding `--mode agentic`, ready-data fixture support, JSON output, no-evidence refusal checks, unsupported-answer guards, strict agentic JSONL case validation, and nonzero exit on failed cases.
