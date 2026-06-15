@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from ai_actuarial.agentic_rag.ready_data_tools import search_summaries, search_titles
+from ai_actuarial.agentic_rag.ready_data_tools import (
+    search_sections,
+    search_summaries,
+    search_titles,
+    trace_relations,
+)
 from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage
 
@@ -56,7 +61,8 @@ def _resolve_ready_output_dir(
 ) -> tuple[str, str, str]:
     explicit_output_dir = _norm(payload.get("output_dir"))
     kb_id = _norm(payload.get("kb_id"))
-    profile = _norm(payload.get("profile") or payload.get("manifest_profile") or "general").lower() or "general"
+    requested_profile = _norm(payload.get("profile") or payload.get("manifest_profile")).lower()
+    profile = requested_profile or "general"
     if explicit_output_dir:
         if kb_id:
             raise AgenticRagError("output_dir cannot be combined with kb_id/profile registry lookup", status_code=400)
@@ -66,6 +72,13 @@ def _resolve_ready_output_dir(
 
     storage = Storage(db_path)
     try:
+        if not requested_profile:
+            row = storage._conn.execute(
+                "SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()
+            if row and _norm(row[0]):
+                profile = _norm(row[0]).lower()
         manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=profile)
     finally:
         storage.close()
@@ -116,4 +129,22 @@ def search_ready_titles(*, db_path: str, payload: Mapping[str, Any]) -> dict[str
         payload=payload,
         search_fn=search_titles,
         search_type="titles",
+    )
+
+
+def search_ready_sections(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _search_response(
+        db_path=db_path,
+        payload=payload,
+        search_fn=search_sections,
+        search_type="sections",
+    )
+
+
+def trace_ready_relations(*, db_path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return _search_response(
+        db_path=db_path,
+        payload=payload,
+        search_fn=trace_relations,
+        search_type="relations",
     )
