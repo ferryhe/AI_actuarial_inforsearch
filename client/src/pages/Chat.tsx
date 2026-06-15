@@ -57,6 +57,7 @@ interface RetrievedBlock {
   kb_id?: string;
   kb_name?: string;
   chunk_id?: string;
+  score?: number;
   similarity_score?: number;
   content?: string;
   quote?: string;
@@ -101,6 +102,8 @@ interface KnowledgeBase {
     profile?: string;
     output_dir?: string;
     status?: string;
+    doc_count?: number;
+    section_count?: number;
   } | null;
 }
 
@@ -195,6 +198,32 @@ function normalizeFileRouteHref(value: string | undefined, kind: "detail" | "pre
     : buildFilePreviewPath(fileUrl, "/chat");
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatRawScore(score: number): string {
+  return score >= 10 ? score.toFixed(1) : score.toFixed(2);
+}
+
+function formatCitationScore(citation: Citation): string {
+  const similarityScore = toFiniteNumber(citation.similarity_score);
+  if (similarityScore != null) {
+    return `${(similarityScore * 100).toFixed(0)}%`;
+  }
+  const score = toFiniteNumber(citation.score);
+  return score != null ? `Score: ${formatRawScore(score)}` : "";
+}
+
+function formatRetrievedBlockScore(block: RetrievedBlock): string {
+  const similarityScore = toFiniteNumber(block.similarity_score);
+  if (similarityScore != null) return similarityScore.toFixed(3);
+  const score = toFiniteNumber(block.score);
+  return score != null ? formatRawScore(score) : "-";
+}
+
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-3 max-w-3xl">
@@ -218,7 +247,7 @@ function TypingIndicator() {
 function CitationCard({ citation, index }: { citation: Citation; index: number }) {
   const { t } = useTranslation();
   const title = citation.title || citation.filename || citation.source || "Source";
-  const score = citation.similarity_score || citation.score;
+  const scoreLabel = formatCitationScore(citation);
   const snippet = citation.content || citation.quote;
   const detailHref = normalizeFileRouteHref(citation.file_detail_url, "detail", citation.file_url || citation.source);
   const previewHref = normalizeFileRouteHref(citation.file_preview_url, "preview", citation.file_url || citation.source);
@@ -234,9 +263,9 @@ function CitationCard({ citation, index }: { citation: Citation; index: number }
         {citation.kb_name && (
           <p className="text-muted-foreground mt-0.5">{citation.kb_name}</p>
         )}
-        {score != null && (
+        {scoreLabel && (
           <p className="text-muted-foreground mt-0.5">
-            {(score * 100).toFixed(0)}%
+            {scoreLabel}
           </p>
         )}
         {snippet && (
@@ -294,6 +323,25 @@ function isAgenticKbReady(kb: KnowledgeBase | undefined): boolean {
   return String(kb?.agentic_ready_manifest?.status || "").trim().toLowerCase() === "ready";
 }
 
+type Translate = (key: string) => string;
+
+function formatCountLabel(t: Translate, key: string, count: number): string {
+  return t(key).replace("{count}", String(count));
+}
+
+function getKbResultCountLabel(kb: KnowledgeBase, ragMode: RagMode, t: Translate): string {
+  if (ragMode === "agentic" && isAgenticKbReady(kb)) {
+    const sectionCount = kb.agentic_ready_manifest?.section_count;
+    if (sectionCount != null) {
+      return formatCountLabel(t, "chat.sections_label", sectionCount);
+    }
+  }
+  if (kb.chunk_count != null) {
+    return formatCountLabel(t, "chat.chunks_label", kb.chunk_count);
+  }
+  return "";
+}
+
 function normalizeAgenticToolTrace(value: unknown): AgenticToolTraceEntry[] {
   if (Array.isArray(value)) {
     return value.filter((item): item is AgenticToolTraceEntry => Boolean(item && typeof item === "object"));
@@ -322,8 +370,7 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
       </summary>
       <div className="mt-3 space-y-3">
         {blocks.map((block, index) => {
-          const score = Number(block.similarity_score);
-          const scoreText = Number.isFinite(score) ? score.toFixed(3) : "-";
+          const scoreText = formatRetrievedBlockScore(block);
           const filename = block.filename || "unknown";
           const kbName = block.kb_name || block.kb_id || "Unknown KB";
           const detailHref = normalizeFileRouteHref(block.file_detail_url, "detail", block.file_url || block.source_url);
@@ -1433,6 +1480,7 @@ export default function Chat() {
                         const isAgenticReady = isAgenticKbReady(kb);
                         const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
                         const agenticStatus = String(kb.agentic_ready_manifest?.status || "missing").trim() || "missing";
+                        const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
                         const availabilityLabel = ragMode === "agentic"
                           ? (isAgenticReady
                             ? t("chat.agentic_status_ready")
@@ -1488,8 +1536,8 @@ export default function Chat() {
                               )}
                             </div>
                           </div>
-                          {kb.chunk_count != null && (
-                            <span className="text-[10px] text-muted-foreground shrink-0">{kb.chunk_count} chunks</span>
+                          {resultCountLabel && (
+                            <span className="text-[10px] text-muted-foreground shrink-0">{resultCountLabel}</span>
                           )}
                         </button>
                         );

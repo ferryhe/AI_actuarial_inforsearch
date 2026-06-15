@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
-_WORD_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+_TOKEN_PART_RE = re.compile(r"[a-z0-9_]+|[\u4e00-\u9fff]+", re.IGNORECASE | re.UNICODE)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]", re.UNICODE)
 
 
 def _norm(value: Any) -> str:
@@ -16,10 +17,24 @@ def _norm(value: Any) -> str:
 def _tokens(query: str) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
-    for token in _WORD_RE.findall(query.lower()):
+
+    def add(token: str) -> None:
         if token and token not in seen:
             seen.add(token)
             out.append(token)
+
+    for token in _TOKEN_PART_RE.findall(query.lower()):
+        if not token:
+            continue
+        add(token)
+        if not _CJK_RE.search(token):
+            continue
+        if len(token) == 1:
+            continue
+        # Chinese queries are often natural phrases without spaces. Add stable
+        # bigrams so terms like "最低资本" and "保险风险" can match longer text.
+        for index in range(len(token) - 1):
+            add(token[index : index + 2])
     return out
 
 

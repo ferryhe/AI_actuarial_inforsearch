@@ -702,14 +702,14 @@ def _agentic_relation_text(item: Mapping[str, Any]) -> str:
     )
 
 
-def _normalize_agentic_score(value: Any) -> float | None:
+def _coerce_agentic_score(value: Any) -> float | None:
     try:
         score = float(value)
     except (TypeError, ValueError):
         return None
     if score < 0:
         return None
-    return score if score <= 1 else min(score / 100, 1.0)
+    return score
 
 
 def _serialize_agentic_evidence(
@@ -733,14 +733,14 @@ def _serialize_agentic_evidence(
             _agentic_first_text(item, ("summary", "text_snippet", "text", "content", "quote", "heading", "section_heading"))
             or _agentic_relation_text(item)
         )
-        score = _normalize_agentic_score(item.get("score"))
+        score = _coerce_agentic_score(item.get("score"))
         chunk_id = _agentic_first_text(item, ("section_id", "chunk_id", "doc_id", "target_id"))
         block = {
             "filename": title,
             "kb_id": kb_id,
             "kb_name": kb_name or kb_id,
             "chunk_id": chunk_id,
-            "similarity_score": score,
+            "score": score,
             "content": snippet,
             "source_url": links["source_url"],
             "file_url": links["source_url"],
