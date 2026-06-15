@@ -480,6 +480,73 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
     assert missing.status_code == 404, missing.text
 
 
+def test_fastapi_chat_knowledge_bases_defaults_manifest_profile_for_legacy_schema(monkeypatch) -> None:
+    import sqlite3
+    import ai_actuarial.api.services.chat as chat_service
+
+    storages = []
+
+    class FakeConnection:
+        def execute(self, sql: str):
+            if "manifest_profile" in sql:
+                raise sqlite3.OperationalError("no such column: manifest_profile")
+            return SimpleNamespace(
+                fetchall=lambda: [
+                    (
+                        "legacy-kb",
+                        "Legacy KB",
+                        "legacy description",
+                        "openai",
+                        "text-embedding-3-small",
+                        1536,
+                        1,
+                        2,
+                    )
+                ]
+            )
+
+    class FakeStorage:
+        def __init__(self, _db_path: str):
+            self._conn = FakeConnection()
+            self.manifest_requests = []
+            storages.append(self)
+
+        def get_kb_composition_status(self, _kb_id: str):
+            return {"has_index": False, "latest_index": {}, "needs_reindex": False}
+
+        def get_agentic_ready_manifest(self, *, kb_id: str, profile: str = "general"):
+            self.manifest_requests.append((kb_id, profile))
+            return None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(chat_service, "Storage", FakeStorage)
+    monkeypatch.setattr(
+        chat_service,
+        "resolve_ai_function_runtime",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            provider="openai",
+            model="text-embedding-3-small",
+            credential_source="env",
+            credential_id=None,
+            stable_credential_id="openai:llm:env",
+            credential_label=None,
+            configured=True,
+            credential_error=None,
+        ),
+    )
+    monkeypatch.setattr(chat_service, "infer_embedding_dimension", lambda _model: 1536)
+
+    response = chat_service.list_knowledge_bases(db_path="legacy.db")
+
+    kb = response["data"]["knowledge_bases"][0]
+    assert kb["kb_id"] == "legacy-kb"
+    assert kb["manifest_profile"] == "general"
+    assert kb["agentic_ready_manifest"] is None
+    assert storages[0].manifest_requests == [("legacy-kb", "general")]
+
+
 
 def test_fastapi_chat_knowledge_bases_reads_current_embeddings_from_ai_config(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
@@ -615,6 +682,35 @@ def test_fastapi_chat_query_agentic_mode_rejects_direct_document_context_before_
             "rag_mode": "agentic",
             "document_content": "# Direct document",
             "document_filename": "direct.md",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "document context" in response.json()["error"]
+    listed = client.get("/api/chat/conversations")
+    assert listed.status_code == 200
+    assert listed.json()["data"]["conversations"] == []
+
+
+def test_fastapi_chat_query_agentic_mode_rejects_document_sources_before_persisting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "explain",
+            "kb_ids": ["chat-kb-a"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+            "document_sources": [
+                {
+                    "filename": "direct.md",
+                    "content": "# Direct source",
+                }
+            ],
         },
     )
 

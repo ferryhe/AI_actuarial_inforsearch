@@ -4,6 +4,7 @@ import importlib
 import json
 import logging
 import os
+import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -428,14 +429,28 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
             "credential_error": embeddings_runtime.credential_error,
         }
         knowledge_bases: list[dict[str, Any]] = []
-        rows = storage._conn.execute(
-            """
-            SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
-                   file_count, chunk_count, manifest_profile
-            FROM rag_knowledge_bases
-            ORDER BY created_at DESC
-            """
-        ).fetchall()
+        has_manifest_profile = True
+        try:
+            rows = storage._conn.execute(
+                """
+                SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
+                       file_count, chunk_count, manifest_profile
+                FROM rag_knowledge_bases
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such column: manifest_profile" not in str(exc).lower():
+                raise
+            has_manifest_profile = False
+            rows = storage._conn.execute(
+                """
+                SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
+                       file_count, chunk_count
+                FROM rag_knowledge_bases
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
         for row in rows:
             kb_id = row[0]
             composition = storage.get_kb_composition_status(kb_id)
@@ -444,7 +459,7 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
             kb_provider = row[3] or "openai"
             kb_model = row[4]
             kb_dimension = row[5]
-            manifest_profile = str(row[8] or "general").strip().lower() or "general"
+            manifest_profile = str((row[8] if has_manifest_profile else "general") or "general").strip().lower() or "general"
             agentic_manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=manifest_profile)
             effective_index_provider = latest_index.get("embedding_provider") or kb_provider
             effective_index_model = latest_index.get("embedding_model") or kb_model
@@ -663,7 +678,7 @@ def _selected_agentic_kb_id(kb_ids: Any) -> str:
     else:
         selected = []
     if len(selected) != 1:
-        raise ChatApiError("Agentic RAG requires exactly one ready knowledge base", status_code=400)
+        raise ChatApiError("Agentic RAG requires exactly one knowledge base", status_code=400)
     return selected[0]
 
 
@@ -852,7 +867,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     document_sources = raw_document_sources if isinstance(raw_document_sources, list) else []
     if len(document_sources) > MAX_DOCUMENT_SOURCES:
         raise ChatApiError("Too many files selected; choose up to 3.", status_code=400)
-    if rag_mode == "agentic" and document_content:
+    if rag_mode == "agentic" and (document_content or document_sources):
         raise ChatApiError("Agentic RAG cannot be combined with direct document context", status_code=400)
     agentic_kb_id = _selected_agentic_kb_id(kb_ids) if rag_mode == "agentic" else None
 
@@ -888,11 +903,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         conversation_manager.add_message(conversation_id, "user", message)
         conversation_history = conversation_manager.get_context(conversation_id)
 
-        if rag_mode == "agentic" and not document_content:
+        if rag_mode == "agentic":
             from .agentic_rag import AgenticRagError, chat_agentic_rag
 
-            if agentic_kb_id is None:
-                raise ChatApiError("Agentic RAG requires exactly one ready knowledge base", status_code=400)
             manifest_profile = _normalize_text(payload.get("manifest_profile") or payload.get("profile"))
             agentic_payload: dict[str, Any] = {
                 "query": message,

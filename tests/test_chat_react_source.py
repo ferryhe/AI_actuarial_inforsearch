@@ -133,10 +133,16 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
     assert 'data-testid={`rag-mode-option-${nextMode}`}' in src
     assert '<Sparkles className="h-3 w-3" />' in src
     assert '<Search className="h-3 w-3" />' in src
+    assert 't("chat.agentic_status_ready")' in src
+    assert 't("chat.agentic_status").replace("{status}", agenticStatus)' in src
+    assert '"Agentic ready"' not in src
+    assert "`Agentic ${" not in src
     assert '"chat.rag_mode.standard": "Standard"' in i18n_src
     assert '"chat.rag_mode.agentic": "Agentic RAG"' in i18n_src
     assert '"chat.agentic_requires_kb": "Select a knowledge base before using Agentic RAG."' in i18n_src
     assert '"chat.agentic_requires_ready_kb": "Select one knowledge base with a ready Agentic manifest."' in i18n_src
+    assert '"chat.agentic_status_ready": "Agentic ready"' in i18n_src
+    assert '"chat.agentic_status": "Agentic {status}"' in i18n_src
 
 
 def test_chat_maps_agentic_evidence_and_renders_tool_trace():

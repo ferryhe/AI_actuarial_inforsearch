@@ -1432,8 +1432,11 @@ export default function Chat() {
                         const isUsable = kb.usable !== false;
                         const isAgenticReady = isAgenticKbReady(kb);
                         const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
+                        const agenticStatus = String(kb.agentic_ready_manifest?.status || "missing").trim() || "missing";
                         const availabilityLabel = ragMode === "agentic"
-                          ? (isAgenticReady ? "Agentic ready" : `Agentic ${kb.agentic_ready_manifest?.status || "missing"}`)
+                          ? (isAgenticReady
+                            ? t("chat.agentic_status_ready")
+                            : t("chat.agentic_status").replace("{status}", agenticStatus))
                           : kb.availability === "needs_reindex"
                           ? "需重建"
                           : kb.availability === "building"
