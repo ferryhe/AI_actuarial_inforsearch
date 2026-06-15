@@ -4,7 +4,7 @@
 - Branch: `feat/agentic-rag-chat-ui-trace`
 - Baseline: `origin/main` at `37d0a59` (`Merge pull request #139 from ferryhe/feat/agentic-rag-loop-core`).
 - Scope: PR5b — Chat UI integration for `rag_mode=agentic`, persisted `/api/chat/query` Agentic branch, evidence mapping, and frontend tool-trace display.
-- PR: not created yet; local implementation is verified and ready to publish.
+- PR: [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140) — created; remote checks/review gate pending.
 - Previous PRs: [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) — merged; [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
@@ -34,7 +34,7 @@
 - Review follow-up tightened PR4 behavior: `kb_id`-only Agentic search now resolves the KB's stored `manifest_profile`, generated L1 aliases include explicit `document_numbers` and `rule_numbers`, numeric alias matching uses bounded rule/document-number checks to avoid `Rule 7` matching `Rule 70`, and builder validation rejects manifest artifact path escapes plus orphan L1 structured-section/relation references.
 - PR4 #138 remote gate: GitHub `python-smoke` passed; Copilot left 3 valid inline comments. Follow-up fixes avoid general-profile section-entry memory duplication, keep `text_snippet` within its max length contract, and replace relation expansion duplicate checks with a set-backed relation key lookup.
 - Local `main` was fast-forwarded to `origin/main` at `ac35a8a` after merging #137, then PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from that baseline.
-- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, PR3, PR4, and PR5a are merged; PR5b is active on `feat/agentic-rag-chat-ui-trace`.
+- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, PR3, PR4, and PR5a are merged; PR5b is open as [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140) on `feat/agentic-rag-chat-ui-trace`.
 - Added ready-data search functions that read `ready_data_manifest.json`, `doc_catalog.jsonl`, optional `doc_summaries.jsonl`, and `sections.jsonl`; missing `doc_summaries.jsonl` falls back to catalog summaries, while missing/invalid ready-data files return empty tool results or API errors.
 - PR3 remote review follow-up: Copilot correctly identified that partial `doc_summaries.jsonl` rows could mislabel catalog-only fallback hits as `source="doc_summaries"`. The search merge now tracks catalog and summary provenance per document and the partial-summary regression test asserts `source="doc_catalog"`.
 - Review follow-up tightened ready-data file access: manifest artifact paths are contained under the ready_data output directory; explicit and registry-resolved `output_dir` values must stay under the DB-adjacent `agentic_ready_data` directory; `output_dir` cannot be mixed with `kb_id` registry lookup.
@@ -167,6 +167,6 @@
 - PR3: document location and summary tools (`search_summaries` first, basic `search_titles`) + basic question classifier — merged as #137.
 - PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — merged as #138.
 - PR5a: backend Agentic loop core (`planner.py`, `agentic_loop.py`, `/api/agentic-rag/chat`, metadata trace) — merged as #139.
-- PR5b: Chat integration and frontend trace display with `rag_mode=agentic` — active on `feat/agentic-rag-chat-ui-trace`.
+- PR5b: Chat integration and frontend trace display with `rag_mode=agentic` — open as [#140](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/140).
 - PR6: L2 formula/actuarial manifest (`formula_cards`, structured tables, calculation terms, formula tools)
 - PR7: eval loop and CI integration for retrieval/answer eval, citation coverage, hallucination checks, no-evidence refusal tests
