@@ -263,12 +263,112 @@ def _seed_knowledge_bases(client: TestClient, admin_token: str) -> None:
                 "name": name,
                 "description": f"{name} description",
                 "kb_mode": "manual",
+                "manifest_profile": "regulation" if kb_id == "chat-kb-a" else "general",
                 "chunk_size": 300,
                 "chunk_overlap": 50,
             },
             headers={"X-Auth-Token": admin_token},
         )
         assert response.status_code == 201, response.text
+    storage = Storage(str(client.app.state.db_path))
+    try:
+        storage.upsert_agentic_ready_manifest(
+            kb_id="chat-kb-a",
+            profile="regulation",
+            profile_version="1",
+            status="ready",
+            output_dir=str(Path(client.app.state.db_path).parent / "agentic_ready_data" / "kbs" / "chat-kb-a" / "regulation" / "1"),
+            artifact_files=["doc_catalog.jsonl", "ready_data_manifest.json"],
+            doc_count=1,
+            section_count=2,
+            built_at="2026-06-15T00:00:00+00:00",
+            source_db=str(client.app.state.db_path),
+        )
+    finally:
+        storage.close()
+
+
+def _write_chat_agentic_ready_data(output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "doc_catalog.jsonl").write_text(
+        json.dumps(
+            {
+                "doc_id": "doc-chat-a",
+                "file_url": "https://alpha.example/doc-a.pdf",
+                "title": "Chat Agentic Capital Guideline",
+                "category": "regulation",
+                "summary": "Capital adequacy overview.",
+                "headings": ["Capital"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "doc_summaries.jsonl").write_text(
+        json.dumps(
+            {
+                "doc_id": "doc-chat-a",
+                "file_url": "https://alpha.example/doc-a.pdf",
+                "title": "Chat Agentic Capital Guideline",
+                "category": "regulation",
+                "summary": "Required capital and solvency ratio summary.",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "sections.jsonl").write_text(
+        json.dumps(
+            {
+                "section_id": "doc-chat-a#capital",
+                "doc_id": "doc-chat-a",
+                "heading_path": ["Capital"],
+                "text": "Required capital appears in the solvency section.",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "sections_structured.jsonl").write_text(
+        json.dumps(
+            {
+                "section_id": "doc-chat-a#article-19",
+                "doc_id": "doc-chat-a",
+                "file_url": "https://alpha.example/doc-a.pdf",
+                "title": "Chat Agentic Capital Guideline",
+                "heading_path": ["Capital", "Article 19"],
+                "heading": "Article 19",
+                "text": "Article 19 defines required capital and solvency ratio rules.",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "relations_graph.json").write_text(
+        json.dumps({"relations": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (output_dir / "ready_data_manifest.json").write_text(
+        json.dumps(
+            {
+                "profile": "regulation",
+                "profile_version": "1",
+                "artifact_files": [
+                    "doc_catalog.jsonl",
+                    "doc_summaries.jsonl",
+                    "sections.jsonl",
+                    "sections_structured.jsonl",
+                    "relations_graph.json",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 
@@ -357,6 +457,10 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
     assert "index_status" in first_kb
     assert first_kb["availability"] == "building"
     assert first_kb["usable"] is False
+    assert first_kb["manifest_profile"] == "regulation"
+    assert first_kb["agentic_ready_manifest"]["profile"] == "regulation"
+    assert first_kb["agentic_ready_manifest"]["status"] == "ready"
+    assert first_kb["agentic_ready_manifest"]["doc_count"] == 1
 
     documents = client.get("/api/chat/available-documents?keywords=solvency")
     assert documents.status_code == 200, documents.text
@@ -437,6 +541,88 @@ def test_fastapi_chat_knowledge_bases_marks_embedding_mismatch_for_reindex(tmp_p
     assert kb["index_embedding_model"] == "text-embedding-3-large"
     assert kb["availability"] == "needs_reindex"
     assert kb["usable"] is False
+
+
+def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    ready_dir = Path(client.app.state.db_path).parent / "agentic_ready_data" / "kbs" / "chat-kb-a" / "regulation" / "1"
+    _write_chat_agentic_ready_data(ready_dir)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "How does Article 19 define required capital?",
+            "kb_ids": ["chat-kb-a"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+            "manifest_profile": "regulation",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["response"].startswith("Found ")
+    assert data["metadata"]["rag_mode"] == "agentic"
+    assert data["metadata"]["profile"] == "regulation"
+    assert data["metadata"]["kb_id"] == "chat-kb-a"
+    assert data["metadata"]["tool_trace"]
+    assert data["retrieved_blocks"]
+    assert data["citations"]
+
+    detail = client.get(f"/api/chat/conversations/{data['conversation_id']}")
+    assert detail.status_code == 200, detail.text
+    messages = detail.json()["data"]["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[1]["metadata"]["rag_mode"] == "agentic"
+    assert messages[1]["metadata"]["tool_trace"]
+
+
+def test_fastapi_chat_query_agentic_mode_rejects_multiple_kbs_before_persisting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "capital",
+            "kb_ids": ["chat-kb-a", "chat-kb-b"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "exactly one" in response.json()["error"]
+    listed = client.get("/api/chat/conversations")
+    assert listed.status_code == 200
+    assert listed.json()["data"]["conversations"] == []
+
+
+def test_fastapi_chat_query_agentic_mode_rejects_direct_document_context_before_persisting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "explain",
+            "kb_ids": ["chat-kb-a"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+            "document_content": "# Direct document",
+            "document_filename": "direct.md",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "document context" in response.json()["error"]
+    listed = client.get("/api/chat/conversations")
+    assert listed.status_code == 200
+    assert listed.json()["data"]["conversations"] == []
 
 
 

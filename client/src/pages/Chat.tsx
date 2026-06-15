@@ -66,13 +66,25 @@ interface RetrievedBlock {
   file_preview_url?: string;
 }
 
+interface AgenticToolTraceEntry {
+  tool_name?: string;
+  tool?: string;
+  status?: string;
+  result_count?: number;
+  count?: number;
+  error?: string | null;
+}
+
 interface Message {
   id?: string;
   message_id?: string;
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
-  metadata?: Record<string, unknown> & { retrieved_blocks?: RetrievedBlock[] | string };
+  metadata?: Record<string, unknown> & {
+    retrieved_blocks?: RetrievedBlock[] | string;
+    tool_trace?: AgenticToolTraceEntry[] | string;
+  };
 }
 
 interface KnowledgeBase {
@@ -83,6 +95,13 @@ interface KnowledgeBase {
   chunk_count?: number;
   usable?: boolean;
   availability?: "ready" | "needs_reindex" | "building" | (string & {});
+  manifest_profile?: string;
+  profile?: string;
+  agentic_ready_manifest?: {
+    profile?: string;
+    output_dir?: string;
+    status?: string;
+  } | null;
 }
 
 interface AvailableDocument {
@@ -122,8 +141,10 @@ interface ChatRouteState {
 }
 
 const MODES = ["expert", "summary", "tutorial", "comparison"] as const;
+const RAG_MODES = ["standard", "agentic"] as const;
 const MAX_DOCUMENT_CONTEXT_SOURCES = 3;
 type ChatMode = (typeof MODES)[number];
+type RagMode = "standard" | "agentic";
 
 function splitCategoryNames(value: string): string[] {
   return value
@@ -269,6 +290,25 @@ function normalizeRetrievedBlocks(value: unknown): RetrievedBlock[] {
   return [];
 }
 
+function isAgenticKbReady(kb: KnowledgeBase | undefined): boolean {
+  return String(kb?.agentic_ready_manifest?.status || "").trim().toLowerCase() === "ready";
+}
+
+function normalizeAgenticToolTrace(value: unknown): AgenticToolTraceEntry[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is AgenticToolTraceEntry => Boolean(item && typeof item === "object"));
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return normalizeAgenticToolTrace(parsed);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
   const { t } = useTranslation();
   if (blocks.length === 0) {
@@ -335,9 +375,61 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
   );
 }
 
+function AgenticTrace({ trace }: { trace: AgenticToolTraceEntry[] }) {
+  const { t } = useTranslation();
+  if (trace.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className="w-full mt-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2" data-testid="agentic-trace">
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+        {t("chat.agentic_trace")} ({trace.length})
+      </summary>
+      <div className="mt-2 space-y-1.5">
+        {trace.map((entry, traceIndex) => {
+          const toolName = entry.tool_name || entry.tool || "tool";
+          const status = entry.status || "unknown";
+          const resultCount = Number(entry.result_count ?? entry.count ?? 0);
+          const resultText = Number.isFinite(resultCount) ? String(resultCount) : "0";
+          const error = typeof entry.error === "string" ? entry.error : "";
+
+          return (
+            <div
+              key={`${toolName}-${traceIndex}`}
+              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+              data-testid={`agentic-trace-step-${traceIndex}`}
+            >
+              <span className="font-medium text-foreground">{toolName}</span>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase",
+                  status === "ok"
+                    ? "bg-emerald-500/10 text-emerald-600"
+                    : "bg-amber-500/10 text-amber-700"
+                )}
+              >
+                {status}
+              </span>
+              {error ? (
+                <span className="break-words text-destructive">
+                  {t("chat.agentic_trace_error").replace("{error}", error)}
+                </span>
+              ) : (
+                <span>{t("chat.agentic_trace_results").replace("{count}", resultText)}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 function MessageBubble({ message, index }: { message: Message; index: number }) {
   const isUser = message.role === "user";
   const retrievedBlocks = normalizeRetrievedBlocks(message.metadata?.retrieved_blocks);
+  const toolTrace = normalizeAgenticToolTrace(message.metadata?.tool_trace);
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -375,6 +467,7 @@ function MessageBubble({ message, index }: { message: Message; index: number }) 
           </div>
         )}
         {!isUser && <RetrievedBlocks blocks={retrievedBlocks} />}
+        {!isUser && <AgenticTrace trace={toolTrace} />}
       </div>
     </motion.div>
   );
@@ -396,6 +489,7 @@ export default function Chat() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [mode, setMode] = useState<ChatMode>("expert");
+  const [ragMode, setRagMode] = useState<RagMode>("standard");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingConvs, setLoadingConvs] = useState(true);
@@ -461,7 +555,12 @@ export default function Chat() {
       const res = await apiGet<{ success?: boolean; data?: { knowledge_bases?: KnowledgeBase[] }; knowledge_bases?: KnowledgeBase[] }>("/api/chat/knowledge-bases");
       const nextKnowledgeBases = res.data?.knowledge_bases || res.knowledge_bases || [];
       setKnowledgeBases(nextKnowledgeBases);
-      setSelectedKbs((prev) => prev.filter((kbId) => nextKnowledgeBases.some((kb) => kb.kb_id === kbId && kb.usable !== false)));
+      setSelectedKbs((prev) => {
+        const kept = prev.filter((kbId) => nextKnowledgeBases.some((kb) => (
+          kb.kb_id === kbId && (ragMode === "agentic" ? isAgenticKbReady(kb) : kb.usable !== false)
+        )));
+        return ragMode === "agentic" ? kept.slice(0, 1) : kept;
+      });
     } catch {
       setKnowledgeBases([]);
       setSelectedKbs([]);
@@ -657,6 +756,22 @@ export default function Chat() {
     const text = (options?.text ?? input).trim();
     if (!text || sending) return;
 
+    const documentInputs = options?.documents?.length
+      ? options.documents
+      : options?.document
+        ? [options.document]
+        : [];
+    const shouldUseAgentic = ragMode === "agentic" && documentInputs.length === 0;
+    if (ragMode === "agentic" && selectedKbs.length === 0 && shouldUseAgentic) {
+      setErrorMsg(t("chat.agentic_requires_kb"));
+      return;
+    }
+    const selectedAgenticKb = shouldUseAgentic ? knowledgeBases.find((kb) => kb.kb_id === selectedKbs[0]) : undefined;
+    if (shouldUseAgentic && (selectedKbs.length !== 1 || !selectedAgenticKb || !isAgenticKbReady(selectedAgenticKb))) {
+      setErrorMsg(t("chat.agentic_requires_ready_kb"));
+      return;
+    }
+
     // Check guest quota
     if (isGuest) {
       const userMessageCount = messages.filter((m) => m.role === "user").length;
@@ -683,11 +798,61 @@ export default function Chat() {
     }
 
     try {
-      const documentInputs = options?.documents?.length
-        ? options.documents
-        : options?.document
-          ? [options.document]
-          : [];
+      if (shouldUseAgentic) {
+        const activeMode = options?.modeOverride || mode;
+        const agenticKb = selectedAgenticKb as KnowledgeBase;
+        const agenticProfile = agenticKb.agentic_ready_manifest?.profile || agenticKb.manifest_profile || agenticKb.profile;
+        const res = await apiPost<{
+          success?: boolean;
+          data?: {
+            conversation_id?: string;
+            response?: string;
+            citations?: Citation[];
+            retrieved_blocks?: RetrievedBlock[] | string;
+            metadata?: Record<string, unknown>;
+          };
+          response?: string;
+          citations?: Citation[];
+        }>("/api/chat/query", {
+          conversation_id: activeConvId,
+          message: text,
+          rag_mode: "agentic",
+          kb_ids: [agenticKb.kb_id],
+          mode: activeMode,
+          ...(agenticProfile
+            ? {
+                manifest_profile: agenticProfile,
+                profile: agenticProfile,
+              }
+            : {}),
+          limit: 10,
+        });
+        const responseText =
+          res.data?.response || res.response || t("chat.agentic_no_evidence");
+        const citations = res.data?.citations || res.citations || [];
+        const retrievedBlocks = normalizeRetrievedBlocks(
+          res.data?.retrieved_blocks ?? res.data?.metadata?.retrieved_blocks
+        );
+        const metadata = res.data?.metadata || {};
+        const toolTrace = normalizeAgenticToolTrace(metadata.tool_trace);
+        if (res.data?.conversation_id && !activeConvId) {
+          setActiveConvId(res.data.conversation_id);
+          if (canUseConversations) loadConversations();
+        }
+        const assistantMsg: Message = {
+          role: "assistant",
+          content: responseText,
+          citations,
+          metadata: {
+            ...metadata,
+            tool_trace: toolTrace,
+            retrieved_blocks: retrievedBlocks,
+          },
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+        return;
+      }
+
       const documentContexts = documentInputs.length > 0
         ? await Promise.all(documentInputs.map((doc) => loadDocumentMarkdown(doc)))
         : [];
@@ -772,6 +937,14 @@ export default function Chat() {
 
   function toggleKb(id: string) {
     const target = knowledgeBases.find((kb) => kb.kb_id === id);
+    if (ragMode === "agentic") {
+      if (!isAgenticKbReady(target)) {
+        setErrorMsg(t("chat.agentic_requires_ready_kb"));
+        return;
+      }
+      setSelectedKbs((prev) => (prev.includes(id) ? [] : [id]));
+      return;
+    }
     if (target?.usable === false) {
       return;
     }
@@ -1194,6 +1367,37 @@ export default function Chat() {
               )}
             </div>
 
+            <div className="flex rounded-lg bg-muted p-0.5" data-testid="rag-mode-selector">
+              {RAG_MODES.map((nextMode) => (
+                <button
+                  key={nextMode}
+                  type="button"
+                  onClick={() => {
+                    setRagMode(nextMode);
+                    if (nextMode === "agentic") {
+                      setSelectedKbs((prev) => prev.filter((kbId) => isAgenticKbReady(knowledgeBases.find((kb) => kb.kb_id === kbId))).slice(0, 1));
+                    }
+                    setShowKbDropdown(false);
+                    setShowModeDropdown(false);
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
+                    ragMode === nextMode
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  data-testid={`rag-mode-option-${nextMode}`}
+                >
+                  {nextMode === "agentic" ? (
+                    <Sparkles className="h-3 w-3" />
+                  ) : (
+                    <Search className="h-3 w-3" />
+                  )}
+                  {t(`chat.rag_mode.${nextMode}`)}
+                </button>
+              ))}
+            </div>
+
             <div className="relative">
               <button
                 onClick={() => {
@@ -1226,7 +1430,11 @@ export default function Chat() {
                       knowledgeBases.map((kb) => {
                         const isSelected = selectedKbs.includes(kb.kb_id);
                         const isUsable = kb.usable !== false;
-                        const availabilityLabel = kb.availability === "needs_reindex"
+                        const isAgenticReady = isAgenticKbReady(kb);
+                        const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
+                        const availabilityLabel = ragMode === "agentic"
+                          ? (isAgenticReady ? "Agentic ready" : `Agentic ${kb.agentic_ready_manifest?.status || "missing"}`)
+                          : kb.availability === "needs_reindex"
                           ? "需重建"
                           : kb.availability === "building"
                             ? "构建中"
@@ -1237,10 +1445,10 @@ export default function Chat() {
                         <button
                           key={kb.kb_id}
                           onClick={() => toggleKb(kb.kb_id)}
-                          disabled={!isUsable}
+                          disabled={!isSelectable}
                           className={cn(
                             "w-full text-left px-3 py-2 text-xs transition-colors flex items-center gap-2",
-                            isUsable ? "hover:bg-muted" : "opacity-60 cursor-not-allowed bg-muted/20",
+                            isSelectable ? "hover:bg-muted" : "opacity-60 cursor-not-allowed bg-muted/20",
                             isSelected && "text-primary font-medium"
                           )}
                           data-testid={`kb-option-${kb.kb_id}`}
@@ -1268,9 +1476,9 @@ export default function Chat() {
                               {availabilityLabel && (
                                 <span className={cn(
                                   "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                                  kb.availability === "ready" && "bg-emerald-500/10 text-emerald-600",
-                                  kb.availability === "needs_reindex" && "bg-amber-500/10 text-amber-700",
-                                  kb.availability === "building" && "bg-slate-500/10 text-slate-600"
+                                  ((ragMode === "agentic" && isAgenticReady) || kb.availability === "ready") && "bg-emerald-500/10 text-emerald-600",
+                                  ((ragMode === "agentic" && !isAgenticReady) || kb.availability === "needs_reindex") && "bg-amber-500/10 text-amber-700",
+                                  kb.availability === "building" && ragMode !== "agentic" && "bg-slate-500/10 text-slate-600"
                                 )}>
                                   {availabilityLabel}
                                 </span>

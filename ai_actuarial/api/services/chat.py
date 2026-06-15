@@ -431,7 +431,7 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
         rows = storage._conn.execute(
             """
             SELECT kb_id, name, description, embedding_provider, embedding_model, embedding_dimension,
-                   file_count, chunk_count
+                   file_count, chunk_count, manifest_profile
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
             """
@@ -444,6 +444,8 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
             kb_provider = row[3] or "openai"
             kb_model = row[4]
             kb_dimension = row[5]
+            manifest_profile = str(row[8] or "general").strip().lower() or "general"
+            agentic_manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=manifest_profile)
             effective_index_provider = latest_index.get("embedding_provider") or kb_provider
             effective_index_model = latest_index.get("embedding_model") or kb_model
             effective_index_dimension = latest_index.get("embedding_dimension")
@@ -473,6 +475,8 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
                     "description": row[2],
                     "file_count": row[6],
                     "chunk_count": row[7],
+                    "manifest_profile": manifest_profile,
+                    "agentic_ready_manifest": agentic_manifest,
                     "embedding_provider": kb_provider,
                     "embedding_model": kb_model,
                     "embedding_dimension": kb_dimension,
@@ -651,6 +655,93 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
     return citations, retrieved_blocks
 
 
+def _selected_agentic_kb_id(kb_ids: Any) -> str:
+    if isinstance(kb_ids, list):
+        selected = [_normalize_text(item) for item in kb_ids if _normalize_text(item)]
+    elif isinstance(kb_ids, str) and kb_ids.strip().lower() not in {"", "auto", "all"}:
+        selected = [_normalize_text(kb_ids)]
+    else:
+        selected = []
+    if len(selected) != 1:
+        raise ChatApiError("Agentic RAG requires exactly one ready knowledge base", status_code=400)
+    return selected[0]
+
+
+def _agentic_first_text(item: Mapping[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = _normalize_text(item.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _agentic_relation_text(item: Mapping[str, Any]) -> str:
+    return " ".join(
+        part
+        for part in (
+            _normalize_text(item.get("relation_type")),
+            _normalize_text(item.get("target_type")),
+            _normalize_text(item.get("target_id")),
+        )
+        if part
+    )
+
+
+def _normalize_agentic_score(value: Any) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    if score < 0:
+        return None
+    return score if score <= 1 else min(score / 100, 1.0)
+
+
+def _serialize_agentic_evidence(
+    evidence: Any,
+    *,
+    kb_id: str,
+    kb_name: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rows = [item for item in evidence if isinstance(item, Mapping)] if isinstance(evidence, list) else []
+    citations: list[dict[str, Any]] = []
+    retrieved_blocks: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for index, item in enumerate(rows):
+        file_url = _agentic_first_text(item, ("file_url", "source_url", "doc_id"))
+        links = _build_file_links(file_url)
+        title = _agentic_first_text(
+            item,
+            ("title", "filename", "heading", "section_heading", "doc_id", "source"),
+        ) or "Agentic evidence"
+        snippet = (
+            _agentic_first_text(item, ("summary", "text_snippet", "text", "content", "quote", "heading", "section_heading"))
+            or _agentic_relation_text(item)
+        )
+        score = _normalize_agentic_score(item.get("score"))
+        chunk_id = _agentic_first_text(item, ("section_id", "chunk_id", "doc_id", "target_id"))
+        block = {
+            "filename": title,
+            "kb_id": kb_id,
+            "kb_name": kb_name or kb_id,
+            "chunk_id": chunk_id,
+            "similarity_score": score,
+            "content": snippet,
+            "source_url": links["source_url"],
+            "file_url": links["source_url"],
+            "file_detail_url": links["file_detail_url"],
+            "file_preview_url": links["file_preview_url"],
+            "quote": snippet[:280].strip(),
+        }
+        retrieved_blocks.append(block)
+        dedupe_key = links["source_url"] or chunk_id or f"agentic-{index}"
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        citations.append(dict(block))
+    return citations, retrieved_blocks
+
+
 def _bounded_source_text(value: Any, *, fallback: str = "", max_chars: int = MAX_DOCUMENT_FIELD_CHARS) -> str:
     text = _normalize_text(value) or fallback
     return text[:max_chars]
@@ -748,6 +839,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     mode = _normalize_text(payload.get("mode") or "expert").lower()
     if mode not in VALID_CHAT_MODES:
         raise ChatApiError(f"Invalid mode '{mode}'", status_code=400)
+    rag_mode = _normalize_text(payload.get("rag_mode") or "standard").lower()
+    if rag_mode not in {"standard", "agentic"}:
+        raise ChatApiError(f"Invalid rag_mode '{rag_mode}'", status_code=400)
 
     kb_ids = payload.get("kb_ids")
     conversation_id = _normalize_text(payload.get("conversation_id")) or None
@@ -758,6 +852,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     document_sources = raw_document_sources if isinstance(raw_document_sources, list) else []
     if len(document_sources) > MAX_DOCUMENT_SOURCES:
         raise ChatApiError("Too many files selected; choose up to 3.", status_code=400)
+    if rag_mode == "agentic" and document_content:
+        raise ChatApiError("Agentic RAG cannot be combined with direct document context", status_code=400)
+    agentic_kb_id = _selected_agentic_kb_id(kb_ids) if rag_mode == "agentic" else None
 
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
@@ -775,7 +872,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 raise ChatApiError("Access denied", status_code=403)
         else:
             primary_kb = None
-            if isinstance(kb_ids, list) and kb_ids:
+            if agentic_kb_id:
+                primary_kb = agentic_kb_id
+            elif isinstance(kb_ids, list) and kb_ids:
                 primary_kb = _normalize_text(kb_ids[0]) or None
             elif isinstance(kb_ids, str) and kb_ids not in {"auto", "all"}:
                 primary_kb = _normalize_text(kb_ids) or None
@@ -783,11 +882,106 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 user_id=user_id,
                 kb_id=primary_kb,
                 mode=mode,
-                metadata={"kb_ids": kb_ids, "mode": mode},
+                metadata={"kb_ids": kb_ids, "mode": mode, "rag_mode": rag_mode},
             )
 
         conversation_manager.add_message(conversation_id, "user", message)
         conversation_history = conversation_manager.get_context(conversation_id)
+
+        if rag_mode == "agentic" and not document_content:
+            from .agentic_rag import AgenticRagError, chat_agentic_rag
+
+            if agentic_kb_id is None:
+                raise ChatApiError("Agentic RAG requires exactly one ready knowledge base", status_code=400)
+            manifest_profile = _normalize_text(payload.get("manifest_profile") or payload.get("profile"))
+            agentic_payload: dict[str, Any] = {
+                "query": message,
+                "kb_id": agentic_kb_id,
+                "limit": payload.get("limit", 10),
+            }
+            if manifest_profile:
+                agentic_payload["manifest_profile"] = manifest_profile
+                agentic_payload["profile"] = manifest_profile
+            try:
+                agentic_response = chat_agentic_rag(db_path=db_path, payload=agentic_payload)
+            except AgenticRagError as exc:
+                raise ChatApiError(exc.message, status_code=exc.status_code) from exc
+
+            evidence = agentic_response.get("evidence") or agentic_response.get("results") or []
+            kb_name = ""
+            kb_row = storage._conn.execute(
+                "SELECT name FROM rag_knowledge_bases WHERE kb_id = ?",
+                (agentic_kb_id,),
+            ).fetchone()
+            if kb_row:
+                kb_name = _normalize_text(kb_row[0])
+            citations, retrieved_blocks = _serialize_agentic_evidence(
+                evidence,
+                kb_id=agentic_kb_id,
+                kb_name=kb_name,
+            )
+            response_text = _normalize_text(agentic_response.get("answer")) or _friendly_no_results_message()
+            agentic_metadata = agentic_response.get("metadata") if isinstance(agentic_response.get("metadata"), dict) else {}
+            assistant_metadata = {
+                "model": "agentic-ready-data",
+                "mode": mode,
+                "rag_mode": "agentic",
+                "retrieval_time_ms": 0,
+                "generation_time_ms": 0,
+                "num_chunks": len(retrieved_blocks),
+                "no_results": len(retrieved_blocks) == 0,
+                "used_threshold": None,
+                "retrieved_blocks": retrieved_blocks,
+                "context_truncated": False,
+                "context_notice": {
+                    "context_truncated": False,
+                    "original_chars": 0,
+                    "used_chars": 0,
+                    "max_chars": 0,
+                    "truncated_sources": [],
+                },
+                "tool_trace": agentic_metadata.get("tool_trace") or [],
+                "category": agentic_metadata.get("category"),
+                "evidence_count": agentic_metadata.get("evidence_count", len(retrieved_blocks)),
+                "kb_id": agentic_response.get("kb_id") or agentic_kb_id,
+                "profile": agentic_response.get("profile"),
+                "output_dir": agentic_response.get("output_dir"),
+            }
+            message_id = conversation_manager.add_message(
+                conversation_id,
+                "assistant",
+                response_text,
+                citations=citations,
+                metadata=assistant_metadata,
+            )
+            return {
+                "success": True,
+                "data": {
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "response": response_text,
+                    "citations": citations,
+                    "retrieved_blocks": retrieved_blocks,
+                    "metadata": {
+                        "retrieval_time_ms": 0,
+                        "generation_time_ms": 0,
+                        "model": "agentic-ready-data",
+                        "mode": mode,
+                        "rag_mode": "agentic",
+                        "num_chunks": len(retrieved_blocks),
+                        "no_results": len(retrieved_blocks) == 0,
+                        "used_threshold": None,
+                        "context_truncated": False,
+                        "context_notice": assistant_metadata["context_notice"],
+                        "tool_trace": assistant_metadata["tool_trace"],
+                        "category": assistant_metadata["category"],
+                        "evidence_count": assistant_metadata["evidence_count"],
+                        "kb_id": assistant_metadata["kb_id"],
+                        "profile": assistant_metadata["profile"],
+                        "output_dir": assistant_metadata["output_dir"],
+                    },
+                },
+            }, session_update
 
         chunks: list[dict[str, Any]] = []
         context_notice: dict[str, Any] = {

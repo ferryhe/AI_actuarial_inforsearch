@@ -1,15 +1,22 @@
 # Project Status
 
 - Date: 2026-06-15
-- Branch: `feat/agentic-rag-loop-core`
-- Baseline: `origin/main` at `8ec5613` (`Merge pull request #138 from ferryhe/feat/agentic-rag-l1-regulation-tools`).
-- Scope: PR5a — deterministic backend Agentic RAG loop core, planner, metadata trace, and `/api/agentic-rag/chat`.
-- PR: [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) — open; `python-smoke` passed on head `d3e8863`; Copilot's 2 inline comments were addressed by follow-up commits.
-- Previous PRs: [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
+- Branch: `feat/agentic-rag-chat-ui-trace`
+- Baseline: `origin/main` at `37d0a59` (`Merge pull request #139 from ferryhe/feat/agentic-rag-loop-core`).
+- Scope: PR5b — Chat UI integration for `rag_mode=agentic`, persisted `/api/chat/query` Agentic branch, evidence mapping, and frontend tool-trace display.
+- PR: not created yet; local implementation is verified and ready to publish.
+- Previous PRs: [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) — merged; [#138](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/138) — merged; [#137](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/137) — merged; [#136](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/136) — merged; [#135](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/135) — merged; [#134](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/134) — merged; [#133](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/133) (PR1 ready_data builder) — merged.
 
 ### Current State
 
-- PR5a branch `feat/agentic-rag-loop-core` was created from merged PR4 baseline `8ec5613`.
+- PR5b branch `feat/agentic-rag-chat-ui-trace` was created from merged PR5a baseline `37d0a59`.
+- PR5b in-progress changes add a compact Standard/Agentic RAG selector to Chat, route Agentic non-document questions through `/api/chat/query` with `rag_mode="agentic"` so quota/conversation/history persistence remain intact, map Agentic evidence into existing citation/retrieved-block rendering, and render `metadata.tool_trace` in an assistant-message trace details panel.
+- Chat KB listing now returns each KB's `manifest_profile` and current `agentic_ready_manifest`, allowing the Chat UI to select Agentic-ready KBs by ready-data manifest status instead of standard vector index readiness.
+- Agentic Chat is intentionally single-KB for PR5b: the UI enforces one ready Agentic KB in Agentic mode, and the backend rejects multi-KB Agentic chat before creating a conversation.
+- Direct document explain/compare requests remain on the standard chat path; the backend rejects `rag_mode="agentic"` combined with direct document context before creating a conversation.
+- Review follow-up addressed spec/code-quality findings around silent multi-KB truncation, missing Chat KB manifest metadata, Agentic-ready gating, and conversation/quota bypass.
+- PR5b local verification after review follow-up: `python -m pytest tests\test_fastapi_chat_endpoints.py tests\test_fastapi_agentic_rag_endpoints.py tests\test_chat_react_source.py -q` (49 passed); `python -m py_compile ai_actuarial\api\services\chat.py` (pass); `npm.cmd run build` (pass; existing large chunk warning); `git diff --check` (pass; LF/CRLF working-copy warnings only). Browser smoke was attempted against a local Vite server but the in-app browser blocked `127.0.0.1`/`localhost` with `net::ERR_BLOCKED_BY_CLIENT`; CLI Vite startup and production build both succeeded. Mandatory `codex review --uncommitted` remains blocked by WindowsApps `codex.exe` returning `Access is denied`; independent spec/code-quality/post-fix reviewers were used as the available review gate.
+- PR5a branch `feat/agentic-rag-loop-core` was created from merged PR4 baseline `8ec5613` and merged as [#139](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/139) at merge commit `37d0a59`.
 - Added deterministic planner `ai_actuarial/agentic_rag/planner.py` that maps `classify_question` categories to ordered ready-data tool steps and includes regulation-aware `search_sections` / `trace_relations` when profile is `regulation` or L1 artifacts are present.
 - Added `ai_actuarial/agentic_rag/agentic_loop.py` runner that executes ready-data tools with bounded per-step limits, returns `query`, deterministic grounded `answer`, `evidence`/`results`, `metadata.tool_trace`, `kb_id`, `profile`, and `output_dir`, and uses a clear no-evidence fallback instead of hallucinating.
 - Added `/api/agentic-rag/chat` through the existing Agentic RAG service/router resolution path, including explicit `output_dir`, `kb_id`/`profile`/`manifest_profile`, empty-query 400, and existing missing/not-ready registry errors.
@@ -27,7 +34,7 @@
 - Review follow-up tightened PR4 behavior: `kb_id`-only Agentic search now resolves the KB's stored `manifest_profile`, generated L1 aliases include explicit `document_numbers` and `rule_numbers`, numeric alias matching uses bounded rule/document-number checks to avoid `Rule 7` matching `Rule 70`, and builder validation rejects manifest artifact path escapes plus orphan L1 structured-section/relation references.
 - PR4 #138 remote gate: GitHub `python-smoke` passed; Copilot left 3 valid inline comments. Follow-up fixes avoid general-profile section-entry memory duplication, keep `text_snippet` within its max length contract, and replace relation expansion duplicate checks with a set-backed relation key lookup.
 - Local `main` was fast-forwarded to `origin/main` at `ac35a8a` after merging #137, then PR4 branch `feat/agentic-rag-l1-regulation-tools` was created from that baseline.
-- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, PR3, and PR4 are merged; PR5a is open as #139 with local/remote verification passing and Copilot follow-up applied.
+- Current plan position: PR0, PR1, the roadmap reconciliation PR, PR2, PR3, PR4, and PR5a are merged; PR5b is active on `feat/agentic-rag-chat-ui-trace`.
 - Added ready-data search functions that read `ready_data_manifest.json`, `doc_catalog.jsonl`, optional `doc_summaries.jsonl`, and `sections.jsonl`; missing `doc_summaries.jsonl` falls back to catalog summaries, while missing/invalid ready-data files return empty tool results or API errors.
 - PR3 remote review follow-up: Copilot correctly identified that partial `doc_summaries.jsonl` rows could mislabel catalog-only fallback hits as `source="doc_summaries"`. The search merge now tracks catalog and summary provenance per document and the partial-summary regression test asserts `source="doc_catalog"`.
 - Review follow-up tightened ready-data file access: manifest artifact paths are contained under the ready_data output directory; explicit and registry-resolved `output_dir` values must stay under the DB-adjacent `agentic_ready_data` directory; `output_dir` cannot be mixed with `kb_id` registry lookup.
@@ -159,7 +166,7 @@
 ### Next PRs
 - PR3: document location and summary tools (`search_summaries` first, basic `search_titles`) + basic question classifier — merged as #137.
 - PR4: L1 regulation manifest, aliases, alias-first `search_titles`, `search_sections`, `trace_relations` — merged as #138.
-- PR5a: backend Agentic loop core (`planner.py`, `agentic_loop.py`, `/api/agentic-rag/chat`, metadata trace) — open as #139; local review follow-up pending remote recheck after push.
-- PR5b: Chat integration and frontend trace display with `rag_mode=agentic`
+- PR5a: backend Agentic loop core (`planner.py`, `agentic_loop.py`, `/api/agentic-rag/chat`, metadata trace) — merged as #139.
+- PR5b: Chat integration and frontend trace display with `rag_mode=agentic` — active on `feat/agentic-rag-chat-ui-trace`.
 - PR6: L2 formula/actuarial manifest (`formula_cards`, structured tables, calculation terms, formula tools)
 - PR7: eval loop and CI integration for retrieval/answer eval, citation coverage, hallucination checks, no-evidence refusal tests
