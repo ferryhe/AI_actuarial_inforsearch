@@ -29,6 +29,7 @@ This directory keeps current operational documentation first.
 - FastAPI is the only product API authority for `/api/*`; React is the only maintained product UI.
 - Security/RBAC hardening is merged, including upload-batch file import, SSRF checks, scoped permissions, auth rate limits, and bounded Chat document context.
 - Agentic RAG is merged through PR #142 and documented in [Agentic RAG Guide](guides/AGENTIC_RAG.md). It adds KB ready_data manifests, `general` / `regulation` / `formula` profiles, deterministic read tools, Agentic Chat, structured citations, tool traces, and CI-backed eval smoke coverage.
+- PR #145 added the post-plan QA fixes for CJK ready_data query matching, Agentic Chat KB section-count labels, and raw Agentic score display.
 
 ## Engineering Notes
 

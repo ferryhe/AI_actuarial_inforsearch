@@ -4,6 +4,8 @@ This guide covers the current FastAPI + React service shape.
 
 ## Local Development
 
+Use Node.js `^20.19.0` or `>=22.12.0`; the Vite 7 frontend toolchain no longer supports Node 18.
+
 ### 1. Install Python Dependencies
 
 ```powershell
