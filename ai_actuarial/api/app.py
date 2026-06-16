@@ -24,6 +24,7 @@ from .routers.migration import router as migration_router
 from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
 from .routers.read import router as read_router
+from .routers.weekly_updates import router as weekly_updates_router
 from .routers.metrics import router as metrics_router
 from ai_actuarial.config import settings
 from ai_actuarial.shared_auth import hash_token
@@ -228,6 +229,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router, prefix="/api", tags=["metrics"])
     app.include_router(migration_router, prefix="/api", tags=["migration"])
     app.include_router(read_router, prefix="/api", tags=["read"])
+    app.include_router(weekly_updates_router, prefix="/api", tags=["weekly-updates"])
     app.include_router(auth_router, prefix="/api", tags=["auth"])
     app.include_router(ops_read_router, prefix="/api", tags=["ops-read"])
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])

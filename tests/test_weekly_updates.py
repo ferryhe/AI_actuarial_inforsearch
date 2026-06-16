@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import yaml
+from fastapi.testclient import TestClient
+
+from ai_actuarial.api.app import create_app
+from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
+from ai_actuarial.storage import Storage
+from ai_actuarial.task_runtime import NativeTaskRuntime
+
+
+PERIOD_START = "2026-03-09T00:00:00+00:00"
+PERIOD_END = "2026-03-16T00:00:00+00:00"
+
+
+def _write_config(tmp_path: Path) -> tuple[Path, Path]:
+    db_path = tmp_path / "index.db"
+    config_path = tmp_path / "sites.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "paths": {
+                    "db": str(db_path),
+                    "download_dir": str(tmp_path / "files"),
+                    "updates_dir": str(tmp_path / "updates"),
+                },
+                "defaults": {"file_exts": [".pdf"]},
+                "sites": [],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return db_path, config_path
+
+
+def _seed_weekly_files(db_path: Path) -> None:
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url="https://old-first-seen.example/old.pdf",
+            sha256="hash-old",
+            title="Old First Seen",
+            source_site="old-first-seen.example",
+            source_page_url="https://old-first-seen.example",
+            original_filename="old.pdf",
+            local_path="/tmp/old.pdf",
+            bytes=100,
+            content_type="application/pdf",
+        )
+        storage.insert_file(
+            url="https://current-first-seen.example/current.pdf",
+            sha256="hash-current",
+            title="Current First Seen",
+            source_site="current-first-seen.example",
+            source_page_url="https://current-first-seen.example",
+            original_filename="current.pdf",
+            local_path="/tmp/current.pdf",
+            bytes=200,
+            content_type="application/pdf",
+        )
+        storage.upsert_catalog_item(
+            item={
+                "url": "https://current-first-seen.example/current.pdf",
+                "sha256": "hash-current",
+                "keywords": ["weekly"],
+                "summary": "Current file summary",
+                "category": "Pricing",
+            },
+            pipeline_version="v1",
+            status="ok",
+        )
+        storage._conn.execute(
+            "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
+            (
+                "2026-03-01T12:00:00+00:00",
+                "2026-03-10T12:00:00+00:00",
+                "https://old-first-seen.example/old.pdf",
+            ),
+        )
+        storage._conn.execute(
+            "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
+            (
+                "2026-03-10T08:00:00+00:00",
+                "2026-03-10T08:00:00+00:00",
+                "https://current-first-seen.example/current.pdf",
+            ),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+
+def test_weekly_summary_uses_first_seen_not_last_seen(tmp_path: Path) -> None:
+    db_path, _config_path = _write_config(tmp_path)
+    _seed_weekly_files(db_path)
+
+    summary = generate_weekly_update_summary(
+        db_path=str(db_path),
+        period_start=PERIOD_START,
+        period_end=PERIOD_END,
+    )
+
+    assert summary["file_count"] == 1
+    assert [item["url"] for item in summary["files"]] == ["https://current-first-seen.example/current.pdf"]
+    assert summary["files"][0]["summary"] == "Current file summary"
+    assert summary["metadata"]["content_change_detection"] is False
+    assert "files.first_seen" in summary["metadata"]["logic"]
+
+
+def test_weekly_updates_api_lists_summaries_and_empty_latest(tmp_path: Path, monkeypatch) -> None:
+    db_path, config_path = _write_config(tmp_path)
+    _seed_weekly_files(db_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("REQUIRE_AUTH", raising=False)
+
+    client = TestClient(create_app())
+
+    empty_latest = client.get("/api/weekly-updates/latest")
+    assert empty_latest.status_code == 200
+    assert empty_latest.json() == {"summary": None}
+
+    generate_weekly_update_summary(
+        db_path=str(db_path),
+        period_start=PERIOD_START,
+        period_end=PERIOD_END,
+    )
+
+    latest = client.get("/api/weekly-updates/latest")
+    assert latest.status_code == 200
+    assert latest.json()["summary"]["file_count"] == 1
+
+    listing = client.get("/api/weekly-updates?limit=10")
+    assert listing.status_code == 200
+    body = listing.json()
+    assert body["total"] == 1
+    assert body["summaries"][0]["period_start"] == PERIOD_START
+
+
+def test_weekly_updates_api_requires_files_read_permission(tmp_path: Path, monkeypatch) -> None:
+    db_path, config_path = _write_config(tmp_path)
+    storage = Storage(str(db_path))
+    try:
+        storage.upsert_auth_token_by_hash(
+            subject="reader",
+            group_name="reader",
+            token_hash=hashlib.sha256(b"reader-token").hexdigest(),
+            is_active=True,
+        )
+    finally:
+        storage.close()
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("REQUIRE_AUTH", "true")
+
+    client = TestClient(create_app())
+    response = client.get("/api/weekly-updates/latest", headers={"Authorization": "Bearer reader-token"})
+    assert response.status_code == 200
+
+
+def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) -> None:
+    db_path, config_path = _write_config(tmp_path)
+    _seed_weekly_files(db_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    runtime = NativeTaskRuntime()
+    result = runtime._run_collection(
+        "task-weekly-summary",
+        "weekly_summary",
+        {"period_start": PERIOD_START, "period_end": PERIOD_END},
+    )
+
+    assert result.success is True
+    assert result.items_found == 1
+    assert result.metadata["file_count"] == 1
+
+    storage = Storage(str(db_path))
+    try:
+        latest = storage.get_latest_weekly_update_summary()
+    finally:
+        storage.close()
+    assert latest is not None
+    assert latest["files"][0]["url"] == "https://current-first-seen.example/current.pdf"
