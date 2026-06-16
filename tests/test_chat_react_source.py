@@ -49,6 +49,9 @@ def test_chat_sidebar_is_kb_first_and_documents_deemphasized():
     assert 'data-testid="kb-first-sidebar"' in src
     assert 'data-testid={`kb-sidebar-option-${kb.kb_id}`}' in src
     assert 'data-testid="button-toggle-documents-panel"' in src
+    assert "disabled={!canUseConversations}" in src
+    assert "if (!canUseConversations) return;" in src
+    assert 'setSidebarTab((current) => current === "documents" ? "conversations" : "documents")' in src
     assert 'data-testid="tab-documents"' not in src
     assert 'data-testid="tab-conversations"' not in src
 
@@ -194,6 +197,16 @@ def test_chat_agentic_kb_dropdown_labels_ready_data_sections_not_standard_chunks
     assert '"chat.chunks_label"' in src
     assert "ragMode === \"agentic\"" in src
     assert "const resultCountLabel = getKbResultCountLabel(kb, ragMode, t)" in src
+    assert "const availabilityLabel = getKbAvailabilityLabel(kb, ragMode, t)" in src
+    assert 't("chat.kb_status.needs_reindex")' in src
+    assert 't("chat.kb_status.building")' in src
+    assert 't("chat.kb_status.ready")' in src
+    assert '"需重建"' not in CHAT_TSX.read_text(encoding="utf-8")
+    assert '"构建中"' not in CHAT_TSX.read_text(encoding="utf-8")
+    assert '"可用"' not in CHAT_TSX.read_text(encoding="utf-8")
+    assert '"chat.kb_status.needs_reindex": "Needs reindex"' in i18n_src
+    assert '"chat.kb_status.building": "Building"' in i18n_src
+    assert '"chat.kb_status.ready": "Ready"' in i18n_src
     assert "{resultCountLabel}" in src
     assert "{kb.chunk_count} chunks" not in src
     assert '"chat.sections_label": "{count} sections"' in i18n_src
