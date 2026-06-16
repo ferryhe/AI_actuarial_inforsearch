@@ -9,8 +9,8 @@ def test_dashboard_uses_customer_facing_entries_not_backend_ops_statuses():
     src = DASHBOARD_TSX.read_text(encoding="utf-8")
 
     assert 'apiGet<CategoriesResponse>("/api/categories?mode=used")' in src
-    assert 'apiGet<{ files: FileItem[] }>("/api/files?limit=24&order_by=last_seen&order_dir=desc")' in src
-    assert "isThisCalendarWeek(file.last_seen)" in src
+    assert 'apiGet<{ files: FileItem[] }>("/api/files?limit=24&order_by=first_seen&order_dir=desc")' in src
+    assert "isThisCalendarWeek(file.first_seen)" in src
     assert "buildFileDetailPath(file.url" in src
     assert "databaseCategoryPath(category.name)" in src
     assert 'href: "/chat"' in src

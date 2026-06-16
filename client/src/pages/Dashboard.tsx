@@ -29,6 +29,7 @@ interface FileItem {
   original_filename: string;
   source_site: string;
   content_type: string;
+  first_seen: string;
   last_seen: string;
   category?: string | null;
 }
@@ -198,13 +199,13 @@ export default function Dashboard() {
   useEffect(() => {
     Promise.all([
       apiGet<Stats>("/api/stats"),
-      apiGet<{ files: FileItem[] }>("/api/files?limit=24&order_by=last_seen&order_dir=desc"),
+      apiGet<{ files: FileItem[] }>("/api/files?limit=24&order_by=first_seen&order_dir=desc"),
       apiGet<CategoriesResponse>("/api/categories?mode=used"),
     ])
       .then(([statsData, filesData, categoriesData]) => {
         setStats(statsData);
-        setFiles((filesData.files || []).filter((file) => isThisCalendarWeek(file.last_seen)).slice(0, WEEKLY_FILE_LIMIT));
-        setCategories(normalizeCategories(categoriesData.categories).slice(0, 8));
+        setFiles((filesData.files || []).filter((file) => isThisCalendarWeek(file.first_seen)).slice(0, WEEKLY_FILE_LIMIT));
+        setCategories(normalizeCategories(categoriesData.categories));
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -222,6 +223,8 @@ export default function Dashboard() {
     { icon: FolderOpen, title: t("dashboard.browse_categories"), desc: t("dashboard.browse_categories_desc"), href: "/database", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
     { icon: MessageSquare, title: t("dashboard.ask_agent"), desc: t("dashboard.ask_agent_desc"), href: "/chat", color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   ];
+
+  const visibleCategories = categories.slice(0, 8);
 
   return (
     <div className="space-y-8">
@@ -267,14 +270,14 @@ export default function Dashboard() {
                 <div key={i} className="h-11 rounded-lg bg-muted animate-pulse" />
               ))}
             </div>
-          ) : categories.length === 0 ? (
+          ) : visibleCategories.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">
               <Tags className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
               <p className="text-sm font-medium text-muted-foreground">{t("dashboard.no_categories")}</p>
             </div>
           ) : (
             <div className="rounded-xl border border-border bg-card overflow-hidden">
-              {categories.map((category, i) => (
+              {visibleCategories.map((category, i) => (
                 <Link key={category.name} href={databaseCategoryPath(category.name)}>
                   <motion.div
                     custom={i}
@@ -358,7 +361,7 @@ export default function Dashboard() {
                     )}
                   </span>
                   <span className="text-xs text-muted-foreground hidden sm:block">
-                    {formatDate(file.last_seen)}
+                    {formatDate(file.first_seen)}
                   </span>
                 </motion.div>
               ))}

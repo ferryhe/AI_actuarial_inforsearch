@@ -148,16 +148,16 @@ def _seed_storage(db_path: Path) -> dict[str, object]:
         )
 
         storage._conn.execute(
-            "UPDATE files SET last_seen = ? WHERE url = ?",
-            ("2026-03-08T10:00:00+00:00", "https://alpha.example/doc-a.pdf"),
+            "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
+            ("2026-03-01T10:00:00+00:00", "2026-03-08T10:00:00+00:00", "https://alpha.example/doc-a.pdf"),
         )
         storage._conn.execute(
-            "UPDATE files SET last_seen = ? WHERE url = ?",
-            ("2026-03-09T10:00:00+00:00", "https://beta.example/doc-b.docx"),
+            "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
+            ("2026-03-10T10:00:00+00:00", "2026-03-09T10:00:00+00:00", "https://beta.example/doc-b.docx"),
         )
         storage._conn.execute(
-            "UPDATE files SET last_seen = ? WHERE url = ?",
-            ("2026-03-07T10:00:00+00:00", "https://gamma.example/doc-c.pdf"),
+            "UPDATE files SET first_seen = ?, last_seen = ? WHERE url = ?",
+            ("2026-03-07T10:00:00+00:00", "2026-03-07T10:00:00+00:00", "https://gamma.example/doc-c.pdf"),
         )
         storage._conn.commit()
     finally:
@@ -229,6 +229,10 @@ def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monk
     assert body["limit"] == 10
     assert body["offset"] == 0
     assert [item["title"] for item in body["files"]] == ["Alpha Document", "Beta Document"]
+
+    by_first_seen = client.get("/api/files?limit=10&order_by=first_seen&order_dir=desc")
+    assert by_first_seen.status_code == 200
+    assert [item["title"] for item in by_first_seen.json()["files"]] == ["Beta Document", "Alpha Document"]
 
     filtered = client.get("/api/files?category=AI")
     assert filtered.status_code == 200
