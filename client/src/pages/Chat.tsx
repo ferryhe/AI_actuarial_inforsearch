@@ -25,129 +25,30 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
-import { apiGet, apiPost, apiDelete } from "@/lib/api";
-import { useApiQuery } from "@/hooks/use-api-query";
 import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";
-
-interface Conversation {
-  id: string;
-  conversation_id?: string;
-  title: string;
-  created_at?: string;
-  updated_at?: string;
-  mode?: string;
-}
-
-interface Citation {
-  source?: string;
-  filename?: string;
-  title?: string;
-  content?: string;
-  quote?: string;
-  score?: number;
-  similarity_score?: number;
-  kb_name?: string;
-  file_url?: string;
-  file_detail_url?: string;
-  file_preview_url?: string;
-}
-
-interface RetrievedBlock {
-  filename?: string;
-  kb_id?: string;
-  kb_name?: string;
-  chunk_id?: string;
-  score?: number;
-  similarity_score?: number;
-  content?: string;
-  quote?: string;
-  source_url?: string;
-  file_url?: string;
-  file_detail_url?: string;
-  file_preview_url?: string;
-}
-
-interface AgenticToolTraceEntry {
-  tool_name?: string;
-  tool?: string;
-  status?: string;
-  result_count?: number;
-  count?: number;
-  error?: string | null;
-}
-
-interface Message {
-  id?: string;
-  message_id?: string;
-  role: "user" | "assistant";
-  content: string;
-  citations?: Citation[];
-  metadata?: Record<string, unknown> & {
-    retrieved_blocks?: RetrievedBlock[] | string;
-    tool_trace?: AgenticToolTraceEntry[] | string;
-  };
-}
-
-interface KnowledgeBase {
-  kb_id: string;
-  name: string;
-  description?: string;
-  file_count?: number;
-  chunk_count?: number;
-  usable?: boolean;
-  availability?: "ready" | "needs_reindex" | "building" | (string & {});
-  manifest_profile?: string;
-  profile?: string;
-  agentic_ready_manifest?: {
-    profile?: string;
-    output_dir?: string;
-    status?: string;
-    doc_count?: number;
-    section_count?: number;
-  } | null;
-}
-
-interface AvailableDocument {
-  file_url: string;
-  document_content?: string;
-  filename: string;
-  title: string;
-  category: string;
-  keywords: string[];
-}
-
-interface CategoryOption {
-  name: string;
-  count?: number | null;
-}
-
-interface MarkdownResponse {
-  success?: boolean;
-  markdown?: { markdown_content?: string | null } | null;
-}
-
-interface DocumentContext {
-  content: string;
-  filename: string;
-  fileUrl: string;
-}
-
-interface SendMessageOptions {
-  text?: string;
-  document?: AvailableDocument;
-  documents?: AvailableDocument[];
-  modeOverride?: ChatMode;
-}
-
-interface ChatRouteState {
-  explainDocument?: AvailableDocument;
-}
-
-const MODES = ["expert", "summary", "tutorial", "comparison"] as const;
-const RAG_MODES = ["standard", "agentic"] as const;
-const MAX_DOCUMENT_CONTEXT_SOURCES = 3;
-type ChatMode = (typeof MODES)[number];
-type RagMode = "standard" | "agentic";
+import {
+  fetchAvailableDocuments,
+  fetchDocumentCategories,
+  fetchDocumentMarkdown,
+  fetchKnowledgeBases,
+  queryChat,
+} from "./chat/api";
+import { useChatSession } from "./chat/useChatSession";
+import type {
+  AgenticToolTraceEntry,
+  AvailableDocument,
+  CategoryOption,
+  ChatMode,
+  ChatRouteState,
+  Citation,
+  DocumentContext,
+  KnowledgeBase,
+  Message,
+  RagMode,
+  RetrievedBlock,
+  SendMessageOptions,
+} from "./chat/types";
+import { MAX_DOCUMENT_CONTEXT_SOURCES, MODES, RAG_MODES } from "./chat/types";
 
 function splitCategoryNames(value: string): string[] {
   return value
@@ -530,16 +431,31 @@ export default function Chat() {
   const canUseConversations = permissions.includes("chat.conversations");
   const isGuest = !isLoggedIn || user?.role === "guest";
   const GUEST_CHAT_QUOTA = 5;
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConvId, setActiveConvId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
-  const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [mode, setMode] = useState<ChatMode>("expert");
   const [ragMode, setRagMode] = useState<RagMode>("standard");
+  const getMode = useCallback(() => mode, [mode]);
+  const {
+    conversations,
+    activeConvId,
+    setActiveConvId,
+    messages,
+    setMessages,
+    loadingConvs,
+    setLoadingConvs,
+    resetSession,
+    loadConversations,
+    loadConversation: loadSessionConversation,
+    createConversation: createSessionConversation,
+    removeConversation,
+  } = useChatSession({
+    canUseConversations,
+    newConversationTitle: t("chat.new_conversation"),
+    getMode,
+  });
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [selectedKbs, setSelectedKbs] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [loadingConvs, setLoadingConvs] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("conversations");
   const [showKbDropdown, setShowKbDropdown] = useState(false);
@@ -570,37 +486,15 @@ export default function Chat() {
       setSidebarTab("conversations");
       loadConversations();
     } else {
-      setLoadingConvs(false);
-      setConversations([]);
-      setActiveConvId(null);
-      if (sidebarTab === "conversations") {
-        setSidebarTab("documents");
-      }
+      resetSession();
+      setSidebarTab("documents");
     }
     loadKnowledgeBases();
-  }, [authLoading, canUseConversations]);
-
-  async function loadConversations() {
-    if (!canUseConversations) return;
-    setLoadingConvs(true);
-    try {
-      const res = await apiGet<{ success?: boolean; data?: { conversations?: Conversation[] }; conversations?: Conversation[] }>("/api/chat/conversations");
-      const convs = res.data?.conversations || res.conversations || [];
-      setConversations(convs.map(c => ({
-        ...c,
-        id: c.id || c.conversation_id || "",
-      })));
-    } catch {
-      setConversations([]);
-    } finally {
-      setLoadingConvs(false);
-    }
-  }
+  }, [authLoading, canUseConversations, loadConversations, resetSession]);
 
   async function loadKnowledgeBases() {
     try {
-      const res = await apiGet<{ success?: boolean; data?: { knowledge_bases?: KnowledgeBase[] }; knowledge_bases?: KnowledgeBase[] }>("/api/chat/knowledge-bases");
-      const nextKnowledgeBases = res.data?.knowledge_bases || res.knowledge_bases || [];
+      const nextKnowledgeBases = await fetchKnowledgeBases();
       setKnowledgeBases(nextKnowledgeBases);
       setSelectedKbs((prev) => {
         const kept = prev.filter((kbId) => nextKnowledgeBases.some((kb) => (
@@ -617,24 +511,18 @@ export default function Chat() {
 
   async function loadDocumentCategories() {
     try {
-      const res = await apiGet<{ categories?: Array<string | CategoryOption> }>("/api/categories?mode=used");
-      setDocCategoryOptions(normalizeCategoryNames(res.categories).sort((a, b) => a.localeCompare(b)));
+      const categories = await fetchDocumentCategories();
+      setDocCategoryOptions(normalizeCategoryNames(categories).sort((a, b) => a.localeCompare(b)));
     } catch {}
   }
 
   async function loadDocuments(filters?: { categories?: string[]; search?: string }) {
     setLoadingDocs(true);
     try {
-      let url = "/api/chat/available-documents";
-      const params = new URLSearchParams();
-      const categories = filters?.categories ?? selectedDocCategories;
-      const search = filters?.search ?? docSearch;
-      categories.forEach((category) => params.append("category", category));
-      if (search) params.set("keywords", search);
-      if (params.toString()) url += `?${params}`;
-
-      const res = await apiGet<{ success?: boolean; data?: { documents?: AvailableDocument[] }; documents?: AvailableDocument[] }>(url);
-      const nextDocuments = res.data?.documents || res.documents || [];
+      const nextDocuments = await fetchAvailableDocuments({
+        categories: filters?.categories ?? selectedDocCategories,
+        search: filters?.search ?? docSearch,
+      });
       setDocuments(nextDocuments);
       setDocCategoryOptions((prev) => (
         prev.length > 0
@@ -673,54 +561,20 @@ export default function Chat() {
   }
 
   async function loadConversation(id: string) {
-    if (!canUseConversations) return;
-    setActiveConvId(id);
     setErrorMsg(null);
-    try {
-      const res = await apiGet<{ success?: boolean; data?: { messages?: Message[]; conversation?: Conversation }; messages?: Message[] }>(
-        `/api/chat/conversations/${id}`
-      );
-      setMessages(res.data?.messages || res.messages || []);
-    } catch {
-      setMessages([]);
-    }
+    await loadSessionConversation(id);
   }
 
   async function createConversation() {
-    if (!canUseConversations) return;
     setErrorMsg(null);
-    try {
-      const res = await apiPost<{ success?: boolean; data?: { conversation_id?: string; conversation?: Conversation }; conversation?: Conversation }>("/api/chat/conversations", {
-        mode,
-      });
-      const newId = res.data?.conversation_id || res.data?.conversation?.id || res.conversation?.id;
-      if (newId) {
-        const newConv: Conversation = {
-          id: newId,
-          title: t("chat.new_conversation"),
-          created_at: new Date().toISOString(),
-        };
-        setConversations((prev) => [newConv, ...prev]);
-        setActiveConvId(newId);
-        setMessages([]);
-        setSidebarTab("conversations");
-      }
-    } catch {
-      setActiveConvId(null);
-      setMessages([]);
+    const created = await createSessionConversation();
+    if (created) {
+      setSidebarTab("conversations");
     }
   }
 
   async function deleteConversation(id: string) {
-    if (!canUseConversations) return;
-    try {
-      await apiDelete(`/api/chat/conversations/${id}`);
-      setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeConvId === id) {
-        setActiveConvId(null);
-        setMessages([]);
-      }
-    } catch {}
+    await removeConversation(id);
   }
 
   async function askAboutDocument(doc: AvailableDocument) {
@@ -773,7 +627,7 @@ export default function Chat() {
       throw new Error(t("chat.document_content_unavailable"));
     }
 
-    const res = await apiGet<MarkdownResponse>(`/api/files/${encodeURIComponent(doc.file_url)}/markdown`);
+    const res = await fetchDocumentMarkdown(doc.file_url);
     const markdown = res.markdown;
     const content = (markdown?.markdown_content || "").trim();
     if (!content) {
@@ -849,18 +703,7 @@ export default function Chat() {
         const activeMode = options?.modeOverride || mode;
         const agenticKb = selectedAgenticKb as KnowledgeBase;
         const agenticProfile = agenticKb.agentic_ready_manifest?.profile || agenticKb.manifest_profile || agenticKb.profile;
-        const res = await apiPost<{
-          success?: boolean;
-          data?: {
-            conversation_id?: string;
-            response?: string;
-            citations?: Citation[];
-            retrieved_blocks?: RetrievedBlock[] | string;
-            metadata?: Record<string, unknown>;
-          };
-          response?: string;
-          citations?: Citation[];
-        }>("/api/chat/query", {
+        const res = await queryChat({
           conversation_id: activeConvId,
           message: text,
           rag_mode: "agentic",
@@ -904,17 +747,7 @@ export default function Chat() {
         ? await Promise.all(documentInputs.map((doc) => loadDocumentMarkdown(doc)))
         : [];
       const activeMode = options?.modeOverride || mode;
-      const res = await apiPost<{
-        success?: boolean;
-        data?: {
-          conversation_id?: string;
-          response?: string;
-          citations?: Citation[];
-          metadata?: Record<string, unknown>;
-        };
-        response?: string;
-        citations?: Citation[];
-      }>("/api/chat/query", {
+      const res = await queryChat({
         conversation_id: activeConvId,
         message: text,
         kb_ids: selectedKbs.length > 0 ? selectedKbs : undefined,
@@ -1033,35 +866,101 @@ export default function Chat() {
                 </button>
               </div>
 
-              <div className="flex rounded-lg bg-muted p-0.5">
-                {canUseConversations && (
-                  <button
-                    onClick={() => setSidebarTab("conversations")}
-                    className={cn(
-                      "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
-                      sidebarTab === "conversations"
-                        ? "bg-card text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                    data-testid="tab-conversations"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    {t("chat.tab_history")}
-                  </button>
-                )}
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5">
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  {t("chat.tab_history")}
+                </span>
                 <button
-                  onClick={() => setSidebarTab("documents")}
+                  type="button"
+                  onClick={() => setSidebarTab(sidebarTab === "documents" ? "conversations" : "documents")}
                   className={cn(
-                    "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
+                    "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                     sidebarTab === "documents"
                       ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-muted-foreground hover:bg-card hover:text-foreground"
                   )}
-                  data-testid="tab-documents"
+                  data-testid="button-toggle-documents-panel"
                 >
-                  <Database className="w-3.5 h-3.5" />
+                  <Database className="w-3 h-3" />
                   {t("chat.tab_documents")}
                 </button>
+              </div>
+            </div>
+
+            <div className="border-b border-border bg-background/40 p-3" data-testid="kb-first-sidebar">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="inline-flex items-center gap-1.5 text-sm font-medium">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  {t("chat.select_kb")}
+                </div>
+                {selectedKbs.length > 0 && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                    {selectedKbs.length} {t("chat.kbs_selected")}
+                  </span>
+                )}
+              </div>
+              <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+                {knowledgeBases.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+                    {t("chat.no_kbs")}
+                  </div>
+                ) : (
+                  knowledgeBases.map((kb) => {
+                    const isSelected = selectedKbs.includes(kb.kb_id);
+                    const isUsable = kb.usable !== false;
+                    const isAgenticReady = isAgenticKbReady(kb);
+                    const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
+                    const agenticStatus = String(kb.agentic_ready_manifest?.status || "missing").trim() || "missing";
+                    const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
+                    const availabilityLabel = ragMode === "agentic"
+                      ? (isAgenticReady
+                        ? t("chat.agentic_status_ready")
+                        : t("chat.agentic_status").replace("{status}", agenticStatus))
+                      : kb.availability === "needs_reindex"
+                        ? "需重建"
+                        : kb.availability === "building"
+                          ? "构建中"
+                          : kb.availability === "ready"
+                            ? "可用"
+                            : kb.availability || "";
+                    return (
+                      <button
+                        key={kb.kb_id}
+                        type="button"
+                        onClick={() => toggleKb(kb.kb_id)}
+                        disabled={!isSelectable}
+                        className={cn(
+                          "w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors",
+                          isSelected
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-card hover:border-primary/30 hover:bg-muted/60",
+                          !isSelectable && "cursor-not-allowed opacity-60"
+                        )}
+                        data-testid={`kb-sidebar-option-${kb.kb_id}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                            isSelected ? "border-primary bg-primary text-primary-foreground" : "border-border"
+                          )}>
+                            {isSelected && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate font-medium">{kb.name}</span>
+                          {resultCountLabel && (
+                            <span className="shrink-0 text-[10px] text-muted-foreground">{resultCountLabel}</span>
+                          )}
+                        </div>
+                        {(kb.description || availabilityLabel) && (
+                          <div className="mt-1 flex items-center gap-2 pl-6">
+                            {kb.description && <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{kb.description}</span>}
+                            {availabilityLabel && <span className="shrink-0 text-[10px] text-muted-foreground">{availabilityLabel}</span>}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
               </div>
             </div>
 
