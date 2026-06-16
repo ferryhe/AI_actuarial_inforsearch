@@ -4,7 +4,7 @@
 - Branch: `codex/docs-status-readme-review-fixes`
 - Baseline: `origin/main` at `ee7b6d8`.
 - Scope: README/docs/project metadata cleanup after the merged Agentic RAG QA follow-up.
-- PR: pending.
+- PR: [#146](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/146).
 - Previous PRs: [#145](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/145) — merged; [#143](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/143) — merged; [#142](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/142) — merged.
 
 ## Current State
