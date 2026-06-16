@@ -47,6 +47,13 @@ from ai_actuarial.rag.defaults import get_embedding_model_defaults
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
 from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
+from ai_actuarial.web_listening_rule import (
+    WebListeningRuleError,
+    generate_draft_rule,
+    materialize_rule,
+    rule_to_yaml,
+    validate_rule,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +309,7 @@ def _should_auto_backup() -> bool:
 
 def _backup_config(label: str = "") -> str:
     backups_dir = _ensure_backup_dir()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     suffix = f"_{label}" if label else ""
     backup_name = f"sites_{ts}{suffix}.yaml"
     backup_path = backups_dir / backup_name
@@ -551,6 +558,99 @@ def _site_url_is_safe(url: str, *, errors: list[str] | None = None, site_name: s
             label = f" for site '{site_name}'" if site_name else ""
             errors.append(f"Unsafe site URL{label}: {exc}")
         return False
+
+
+def draft_web_listening_rule(data: dict[str, Any]) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    try:
+        rule = generate_draft_rule(
+            website_url=str(payload.get("website_url") or ""),
+            goal=str(payload.get("goal") or ""),
+            name=str(payload.get("name") or "").strip() or None,
+        )
+    except WebListeningRuleError as exc:
+        raise OpsWriteError(str(exc)) from exc
+    return {
+        "success": True,
+        "rule": rule.model_dump(mode="json"),
+        "yaml": rule_to_yaml(rule),
+        "warnings": ["Draft generation does not fetch the website; review and edit before materializing."],
+    }
+
+
+def validate_web_listening_rule(data: dict[str, Any]) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    raw_rule = payload.get("rule_yaml") or payload.get("yaml") or payload.get("rule")
+    if raw_rule is None:
+        raise OpsWriteError("rule or rule_yaml is required")
+    rule, errors, warnings = validate_rule(raw_rule, check_url_safety=True)
+    result: dict[str, Any] = {
+        "success": not errors,
+        "valid": not errors,
+        "errors": errors,
+        "warnings": warnings,
+    }
+    if rule is not None:
+        materialized = materialize_rule(rule)
+        result.update(
+            {
+                "rule": rule.model_dump(mode="json"),
+                "yaml": rule_to_yaml(rule),
+                "materialized_config": materialized.model_dump(mode="json"),
+            }
+        )
+    return result
+
+
+def materialize_web_listening_rule(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    raw_rule = payload.get("rule_yaml") or payload.get("yaml") or payload.get("rule")
+    if raw_rule is None:
+        raise OpsWriteError("rule or rule_yaml is required")
+    rule, errors, warnings = validate_rule(raw_rule, check_url_safety=True)
+    if errors or rule is None:
+        raise OpsWriteError("; ".join(errors) or "Invalid web listening rule")
+
+    materialized = materialize_rule(rule)
+    config_data = _load_config_data()
+    sites = list(config_data.get("sites") or [])
+    tasks = list(config_data.get("scheduled_tasks") or [])
+
+    site_name = str(materialized.site.get("name") or "")
+    task_name = str(materialized.scheduled_task.get("name") or "")
+    updated_site = False
+    for index, site in enumerate(sites):
+        if str(site.get("name") or "") == site_name:
+            sites[index] = dict(materialized.site)
+            updated_site = True
+            break
+    if not updated_site:
+        sites.append(dict(materialized.site))
+
+    updated_task = False
+    for index, task in enumerate(tasks):
+        if str(task.get("name") or "") == task_name:
+            tasks[index] = dict(materialized.scheduled_task)
+            updated_task = True
+            break
+    if not updated_task:
+        tasks.append(dict(materialized.scheduled_task))
+
+    backup_name = _backup_config("before_web_listening_rule")
+    config_data["sites"] = sites
+    config_data["scheduled_tasks"] = tasks
+    _write_config_data(config_data)
+    _notify_site_config_updated(bridge, config_data)
+    return {
+        "success": True,
+        "rule": rule.model_dump(mode="json"),
+        "yaml": rule_to_yaml(rule),
+        "warnings": warnings,
+        "materialized_config": materialized.model_dump(mode="json"),
+        "backup": backup_name,
+        "updated": {"site": updated_site, "scheduled_task": updated_task},
+        "requires_scheduler_reinit": False,
+    }
 
 
 def export_sites_yaml() -> tuple[str, str]:

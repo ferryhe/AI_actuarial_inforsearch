@@ -116,6 +116,10 @@ def get_config_sites() -> dict[str, object]:
                 "exclude_prefixes": site.get("exclude_prefixes", []),
                 "schedule_interval": site.get("schedule_interval"),
                 "content_selector": site.get("content_selector", ""),
+                "allow_url_patterns": site.get("allow_url_patterns", []),
+                "queries": site.get("queries", []),
+                "file_exts": site.get("file_exts", site_defaults.get("file_exts", [])),
+                "collect_page_content": bool(site.get("collect_page_content", False)),
             }
         )
     global_schedule = site_defaults.get("schedule_interval")
