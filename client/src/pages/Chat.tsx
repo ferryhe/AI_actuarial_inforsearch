@@ -873,7 +873,7 @@ export default function Chat() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setSidebarTab(sidebarTab === "documents" ? "conversations" : "documents")}
+                  onClick={() => setSidebarTab(sidebarTab === "documents" && canUseConversations ? "conversations" : "documents")}
                   className={cn(
                     "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                     sidebarTab === "documents"
@@ -918,11 +918,11 @@ export default function Chat() {
                         ? t("chat.agentic_status_ready")
                         : t("chat.agentic_status").replace("{status}", agenticStatus))
                       : kb.availability === "needs_reindex"
-                        ? "需重建"
+                        ? t("chat.kb_status.needs_reindex")
                         : kb.availability === "building"
-                          ? "构建中"
+                          ? t("chat.kb_status.building")
                           : kb.availability === "ready"
-                            ? "可用"
+                            ? t("chat.kb_status.ready")
                             : kb.availability || "";
                     return (
                       <button

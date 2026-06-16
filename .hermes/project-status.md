@@ -4,7 +4,7 @@
 - Branch: `task/p1-2-chat-kb-first`
 - Baseline: current branch created from `origin/main` per delegated task context.
 - Scope: P1-2 Chat KB-first UI plus Chat API/types/session extraction.
-- PR: not opened in this delegated coder step.
+- PR: [#152](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/152) — open; Copilot follow-up comments are being addressed in this branch.
 - Previous PRs: [#151](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/151) — merged; no new post-#151 comments per task context.
 
 ## Current State
