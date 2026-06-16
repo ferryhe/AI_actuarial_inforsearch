@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
+import { categoryDisplayName } from "@/lib/category-labels";
 
 interface FileItem {
   url: string;
@@ -62,6 +63,8 @@ interface FilesResponse {
 
 interface CategoryOption {
   name: string;
+  label?: string;
+  labels?: { en?: string; zh?: string };
   count?: number | null;
 }
 
@@ -279,6 +282,8 @@ function normalizeCategories(items: Array<string | CategoryOption> | undefined):
       if (item && typeof item.name === "string" && item.name.trim()) {
         return {
           name: item.name.trim(),
+          label: typeof item.label === "string" ? item.label : undefined,
+          labels: item.labels,
           count: typeof item.count === "number" ? item.count : null,
         };
       }
@@ -288,7 +293,7 @@ function normalizeCategories(items: Array<string | CategoryOption> | undefined):
 }
 
 export default function DatabasePage() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { permissions, isLoading: authLoading } = useAuth();
   const canDeleteFiles = permissions.includes("files.delete");
   const canDownloadFiles = permissions.includes("files.download");
@@ -765,7 +770,7 @@ export default function DatabasePage() {
               <option value="__uncategorized__">{t("db.uncategorized")}</option>
               {categories.map((c) => (
                 <option key={c.name} value={c.name}>
-                  {c.count != null ? `${c.name} (${c.count})` : c.name}
+                  {c.count != null ? `${categoryDisplayName(c, lang)} (${c.count})` : categoryDisplayName(c, lang)}
                 </option>
               ))}
             </select>
@@ -938,7 +943,7 @@ export default function DatabasePage() {
                 </span>
 
                 <span className="text-xs text-muted-foreground truncate hidden lg:flex items-center" data-testid={`text-category-${i}`}>
-                  {file.category || "-"}
+                  {categoryDisplayName(file.category, lang)}
                 </span>
 
                 <span className="hidden lg:flex items-center" data-testid={`text-md-${i}`}>

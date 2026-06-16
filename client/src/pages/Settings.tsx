@@ -29,8 +29,9 @@ import {
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { ApiError, apiGet, apiPost, apiDelete } from "@/lib/api";
+import { MarkdownConversionTab } from "./settings/MarkdownConversionTab";
 
-type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts";
+type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts" | "markdown";
 
 interface KnownProvider {
   display_name: string;
@@ -2234,6 +2235,7 @@ export default function SettingsPage() {
       <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-border" data-testid="settings-tabs">
         <TabButton active={activeTab === "ai"} onClick={() => setActiveTab("ai")} icon={Bot} label={t("settings.tab_ai")} testId="tab-ai" />
         <TabButton active={activeTab === "prompts"} onClick={() => setActiveTab("prompts")} icon={MessageSquare} label={t("settings.tab_prompts")} testId="tab-prompts" />
+        <TabButton active={activeTab === "markdown"} onClick={() => setActiveTab("markdown")} icon={FileText} label={t("settings.tab_markdown_conversion")} testId="tab-markdown-conversion" />
         <TabButton active={activeTab === "search"} onClick={() => setActiveTab("search")} icon={Search} label={t("settings.tab_search")} testId="tab-search" />
         <TabButton active={activeTab === "categories"} onClick={() => setActiveTab("categories")} icon={Tag} label={t("settings.tab_categories")} testId="tab-categories" />
         <TabButton active={activeTab === "tokens"} onClick={() => setActiveTab("tokens")} icon={Key} label={t("settings.tab_tokens")} testId="tab-tokens" />
@@ -2243,6 +2245,7 @@ export default function SettingsPage() {
       <div>
         {activeTab === "ai" && <AiConfigTab lang={lang} />}
         {activeTab === "prompts" && <PromptsTab />}
+        {activeTab === "markdown" && <MarkdownConversionTab />}
         {activeTab === "search" && <SearchCrawlerTab />}
         {activeTab === "categories" && <CategoriesTab />}
         {activeTab === "tokens" && <ApiTokensTab />}

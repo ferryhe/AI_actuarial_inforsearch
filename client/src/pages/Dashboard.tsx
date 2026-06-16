@@ -11,12 +11,12 @@ import {
   Inbox,
   Tags,
   CalendarPlus,
-  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
 import { buildFileDetailPath } from "@/lib/navigation";
+import { categoryDisplayName } from "@/lib/category-labels";
 
 interface Stats {
   total_files: number;
@@ -36,6 +36,8 @@ interface FileItem {
 
 interface CategoryOption {
   name: string;
+  label?: string;
+  labels?: { en?: string; zh?: string };
   count?: number | null;
 }
 
@@ -158,6 +160,8 @@ function normalizeCategories(items: CategoriesResponse["categories"]): CategoryO
       if (item && typeof item.name === "string" && item.name.trim()) {
         return {
           name: item.name.trim(),
+          label: typeof item.label === "string" ? item.label : undefined,
+          labels: item.labels,
           count: typeof item.count === "number" ? item.count : null,
         };
       }
@@ -189,7 +193,7 @@ function databaseCategoryPath(category: string): string {
 }
 
 export default function Dashboard() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const [, navigate] = useLocation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -231,7 +235,6 @@ export default function Dashboard() {
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_materials"), desc: t("dashboard.browse_materials_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-    { icon: FolderOpen, title: t("dashboard.browse_categories"), desc: t("dashboard.browse_categories_desc"), href: "/database", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
     { icon: MessageSquare, title: t("dashboard.ask_agent"), desc: t("dashboard.ask_agent_desc"), href: "/chat", color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   ];
 
@@ -260,7 +263,7 @@ export default function Dashboard() {
 
       <div>
         <h2 className="text-lg font-semibold mb-3">{t("dashboard.start_here")}</h2>
-        <div className="grid sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="grid sm:grid-cols-2 gap-3 sm:gap-4">
           {quickActions.map((action, i) => (
             <QuickAction key={`${action.href}-${action.title}`} {...action} index={i} />
           ))}
@@ -300,7 +303,7 @@ export default function Dashboard() {
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <Tags className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
-                      <span className="text-sm font-medium truncate">{category.name}</span>
+                      <span className="text-sm font-medium truncate">{categoryDisplayName(category, lang)}</span>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
                       {typeof category.count === "number" && <span>{category.count}</span>}

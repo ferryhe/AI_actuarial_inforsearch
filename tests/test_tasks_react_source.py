@@ -102,11 +102,11 @@ def test_file_import_form_uses_browser_upload_batches_not_server_folder_browser(
 
 def test_recommended_markdown_conversion_tools_are_in_frontend_defaults():
     src = (ROOT / "hooks" / "use-task-options.ts").read_text(encoding="utf-8")
-    settings_src = (ROOT / "pages" / "Settings.tsx").read_text(encoding="utf-8")
+    settings_src = (ROOT / "pages" / "settings" / "MarkdownConversionTab.tsx").read_text(encoding="utf-8")
 
-    for tool in ("opendataloader", "markitdown", "mistral", "docling", "mathpix"):
-        assert f'"{tool}"' in src
-        assert f'name: "{tool}"' in settings_src
+    assert '"/api/config/markdown-conversion"' in settings_src
+    assert "default_tool" in settings_src
+    assert "candidate_chain" in settings_src
 
 
 def test_task_options_uses_native_ai_config_response_contracts():
@@ -179,6 +179,20 @@ def test_rag_index_form_supports_explicit_file_urls():
     assert "parseFileUrls" in src
     assert "file_urls: fileUrls.length > 0 ? fileUrls : undefined" in src
     assert 'data-testid="input-rag-file-urls"' in src
+
+
+def test_tasks_page_exposes_agentic_site_monitoring_form():
+    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
+    form_src = (ROOT / "pages" / "tasks" / "WebListeningForm.tsx").read_text(encoding="utf-8")
+
+    assert 'type: "web_listening"' in tasks_src
+    assert "<WebListeningForm" in tasks_src
+    assert '"/api/web-listening/rules/draft"' in form_src
+    assert '"/api/web-listening/rules/validate"' in form_src
+    assert '"/api/web-listening/rules/materialize"' in form_src
+    assert '"/api/schedule/reinit"' in form_src
+    assert 'scheduled-tasks:changed' in form_src
+    assert 'data-testid="form-web-listening"' in form_src
 
 
 def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
