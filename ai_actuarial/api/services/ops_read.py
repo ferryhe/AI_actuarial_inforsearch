@@ -13,6 +13,7 @@ from ai_actuarial.ai_runtime import (
     build_model_discovery_credentials,
     resolve_search_engine_credentials,
 )
+from ai_actuarial.markdown_conversion_config import get_markdown_conversion_options
 from ai_actuarial.config import settings
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.shared_runtime import (
@@ -92,6 +93,10 @@ def get_search_engines(*, storage: Storage | None = None) -> dict[str, list[dict
             }
         )
     return {"engines": engines}
+
+
+def get_markdown_conversion_config() -> dict[str, Any]:
+    return get_markdown_conversion_options()
 
 
 def get_config_sites() -> dict[str, object]:

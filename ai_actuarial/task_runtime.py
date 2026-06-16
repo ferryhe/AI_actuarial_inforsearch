@@ -16,7 +16,8 @@ from urllib.parse import urlparse
 
 import schedule
 
-from ai_actuarial.ai_runtime import get_search_runtime_credentials, resolve_ocr_runtime
+from ai_actuarial.ai_runtime import apply_ocr_runtime_environment, get_search_runtime_credentials, resolve_ocr_runtime
+from ai_actuarial.markdown_conversion_config import HARD_MAX_SCAN_COUNT, candidate_chain_for_path, load_markdown_conversion_config
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
 from ai_actuarial.collectors.file import FileCollector
@@ -880,10 +881,22 @@ class NativeTaskRuntime:
                 metadata={"source_type": "markdown_conversion"},
             )
 
-        conversion_tool = str(data.get("conversion_tool") or "opendataloader").strip().lower()
-        ocr_runtime = resolve_ocr_runtime(storage=storage, yaml_config=config, engine_override=conversion_tool)
-        if ocr_runtime.provider != "local" and not ocr_runtime.api_key:
-            raise RuntimeError(f"OCR provider '{ocr_runtime.provider}' is not configured")
+        md_config = load_markdown_conversion_config()
+        conversion_tool = str(data.get("conversion_tool") or md_config.get("default_tool") or "auto").strip().lower() or "auto"
+        explicit_runtime = None
+        if conversion_tool != "auto":
+            explicit_tool_cfg = (md_config.get("tools") or {}).get(conversion_tool) or {}
+            if not isinstance(explicit_tool_cfg, dict) or not explicit_tool_cfg.get("enabled", True):
+                raise RuntimeError(f"Markdown conversion tool '{conversion_tool}' is disabled or not configured")
+            explicit_model = explicit_tool_cfg.get("model")
+            explicit_runtime = resolve_ocr_runtime(
+                storage=storage,
+                yaml_config=config,
+                engine_override=conversion_tool,
+                model_override=str(explicit_model).strip() if explicit_model else None,
+            )
+            if explicit_runtime.provider != "local" and not explicit_runtime.api_key:
+                raise RuntimeError(f"OCR provider '{explicit_runtime.provider}' is not configured")
 
         overwrite_existing = bool(data.get("overwrite_existing", False))
         skip_existing = bool(data.get("skip_existing", True)) and not overwrite_existing
@@ -893,6 +906,8 @@ class NativeTaskRuntime:
         skipped = 0
         total = len(file_rows)
         progress(0, total, "Starting markdown conversion")
+        last_resolved_engine = explicit_runtime.engine if explicit_runtime is not None else "auto"
+        last_provider = explicit_runtime.provider if explicit_runtime is not None else "auto"
 
         for index, row in enumerate(file_rows, start=1):
             file_url = str(row.get("url") or "").strip()
@@ -909,20 +924,25 @@ class NativeTaskRuntime:
                 progress(index, total, f"Missing file {index}/{total}")
                 continue
             try:
-                output = _convert_document_path(
+                output, provider = self._convert_markdown_candidate_chain(
                     local_path,
-                    engine=ocr_runtime.engine,  # type: ignore[arg-type]
-                    model=ocr_runtime.model,
-                    api_key=ocr_runtime.api_key,
-                    base_url=ocr_runtime.base_url,
+                    conversion_tool=conversion_tool,
+                    explicit_runtime=explicit_runtime,
+                    storage=storage,
+                    config=config,
+                    md_config=md_config,
                 )
+                last_resolved_engine = output.engine
+                source_model = str(output.model)
+                source_engine = str(output.engine)
                 ok, reason = storage.update_file_markdown(
                     file_url,
                     output.markdown,
-                    markdown_source=f"{output.engine}:{output.model}".strip(":"),
+                    markdown_source=f"{source_engine}:{source_model}".strip(":"),
                 )
                 if ok:
                     converted += 1
+                    last_provider = provider
                 else:
                     errors.append(f"{file_url}: {reason or 'markdown update failed'}")
             except Exception as exc:  # noqa: BLE001
@@ -938,10 +958,68 @@ class NativeTaskRuntime:
             metadata={
                 "source_type": "markdown_conversion",
                 "conversion_tool": conversion_tool,
-                "resolved_engine": ocr_runtime.engine,
-                "provider": ocr_runtime.provider,
+                "resolved_engine": last_resolved_engine,
+                "provider": last_provider,
             },
         )
+
+    def _convert_markdown_candidate_chain(
+        self,
+        local_path: Path,
+        *,
+        conversion_tool: str,
+        explicit_runtime: Any | None,
+        storage: Storage,
+        config: dict[str, Any],
+        md_config: dict[str, Any],
+    ) -> Any:
+        if explicit_runtime is not None:
+            apply_ocr_runtime_environment(explicit_runtime)
+            output = _convert_document_path(
+                local_path,
+                engine=explicit_runtime.engine,  # type: ignore[arg-type]
+                model=explicit_runtime.model,
+                api_key=explicit_runtime.api_key,
+                base_url=explicit_runtime.base_url,
+            )
+            return output, explicit_runtime.provider
+
+        candidates = candidate_chain_for_path(local_path, md_config, auto_only=True)
+        if not candidates:
+            raise RuntimeError(f"No auto conversion candidates configured for {local_path.name}")
+
+        last_exc: Exception | None = None
+        skipped_unconfigured: list[str] = []
+        for candidate in candidates:
+            tool_cfg = (md_config.get("tools") or {}).get(candidate) or {}
+            candidate_model = tool_cfg.get("model") if isinstance(tool_cfg, dict) else None
+            runtime = resolve_ocr_runtime(
+                storage=storage,
+                yaml_config=config,
+                engine_override=candidate,
+                model_override=str(candidate_model).strip() if candidate_model else None,
+            )
+            if runtime.provider != "local" and not runtime.api_key:
+                skipped_unconfigured.append(candidate)
+                continue
+            try:
+                apply_ocr_runtime_environment(runtime)
+                output = _convert_document_path(
+                    local_path,
+                    engine=runtime.engine,  # type: ignore[arg-type]
+                    model=runtime.model,
+                    api_key=runtime.api_key,
+                    base_url=runtime.base_url,
+                )
+                return output, runtime.provider
+            except Exception as exc:  # noqa: BLE001 - auto mode tries fallbacks
+                last_exc = exc
+                continue
+
+        details = ""
+        if skipped_unconfigured:
+            details = f" (skipped unconfigured API tools: {', '.join(skipped_unconfigured)})"
+        raise RuntimeError(f"Auto conversion failed for {local_path.name}{details}") from last_exc
 
     def _run_chunk_generation(
         self,
@@ -1146,7 +1224,12 @@ class NativeTaskRuntime:
         where = _CONVERTIBLE_MARKDOWN_PREDICATE + category_sql
         if skip_existing:
             where += " AND (c.markdown_content IS NULL OR c.markdown_content = '')"
-        limit = self._positive_int(data.get("scan_count"), 50)
+        md_config = load_markdown_conversion_config()
+        raw_limits = md_config.get("limits")
+        limits = raw_limits if isinstance(raw_limits, dict) else {}
+        default_limit = self._positive_int(limits.get("default_scan_count"), 50)
+        max_limit = min(HARD_MAX_SCAN_COUNT, max(default_limit, self._positive_int(limits.get("max_scan_count"), 2000)))
+        limit = min(self._positive_int(data.get("scan_count"), default_limit), max_limit)
         offset = max(0, self._positive_int(data.get("scan_start_index"), 1) - 1)
         rows = conn.execute(
             f"""

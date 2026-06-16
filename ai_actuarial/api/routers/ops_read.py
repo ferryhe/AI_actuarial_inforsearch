@@ -16,6 +16,7 @@ from ..services.ops_read import (
     get_config_sites,
     get_global_logs,
     get_llm_providers,
+    get_markdown_conversion_config,
     get_schedule_status,
     get_scheduled_tasks,
     get_search_engines,
@@ -186,6 +187,14 @@ def api_config_backend_settings(
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
     return get_backend_settings()
+
+
+@router.get("/config/markdown-conversion")
+def api_config_markdown_conversion(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.read")),
+) -> dict[str, object]:
+    return get_markdown_conversion_config()
 
 
 @router.get("/config/llm-providers")

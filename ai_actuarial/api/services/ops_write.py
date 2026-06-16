@@ -42,6 +42,7 @@ from ai_actuarial.shared_runtime import (
     serialize_backend_settings,
 )
 from ai_actuarial.config import settings
+from ai_actuarial.markdown_conversion_config import write_markdown_conversion_config
 from ai_actuarial.rag.defaults import get_embedding_model_defaults
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
 from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
@@ -757,6 +758,33 @@ def update_categories_config(data: dict[str, Any]) -> dict[str, Any]:
         "ai_filter_keywords": normalized_ai_filter_keywords,
         "ai_keywords": normalized_ai_keywords,
         "success": True,
+    }
+
+
+def update_markdown_conversion_config(data: dict[str, Any]) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+    normalized = write_markdown_conversion_config(candidate)
+    _reload_runtime_caches()
+    return {
+        "success": True,
+        "config": normalized,
+        "tools": [
+            {
+                "name": name,
+                "provider": tool.get("provider"),
+                "displayName": tool.get("display_name", name),
+                "display_name": tool.get("display_name", name),
+                "enabled": bool(tool.get("enabled", True)),
+                "auto_enabled": bool(tool.get("auto_enabled", False)),
+                "paid_or_api": bool(tool.get("paid_or_api", False)),
+            }
+            for name, tool in (normalized.get("tools") or {}).items()
+            if isinstance(tool, dict) and bool(tool.get("enabled", True))
+        ],
+        "default_tool": normalized.get("default_tool", "auto"),
+        "formats": normalized.get("formats", {}),
+        "limits": normalized.get("limits", {}),
     }
 
 

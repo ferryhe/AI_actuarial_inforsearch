@@ -516,13 +516,14 @@ export default function FileDetail() {
   const mdEditMode = mdTab === "edit";
 
   useEffect(() => {
+    const fallbackEngine = taskOptions.defaultConversionTool || taskOptions.conversionToolsInfo[0]?.name || "auto";
     if (!convertEngine && taskOptions.conversionToolsInfo.length > 0) {
-      setConvertEngine(taskOptions.conversionToolsInfo[0].name);
+      setConvertEngine(fallbackEngine);
     } else if (convertEngine && taskOptions.conversionToolsInfo.length > 0) {
       const valid = taskOptions.conversionToolsInfo.some((t) => t.name === convertEngine);
-      if (!valid) setConvertEngine(taskOptions.conversionToolsInfo[0].name);
+      if (!valid) setConvertEngine(fallbackEngine);
     }
-  }, [taskOptions.conversionToolsInfo, convertEngine]);
+  }, [taskOptions.conversionToolsInfo, taskOptions.defaultConversionTool, convertEngine]);
 
   useEffect(() => { fetchFile(); }, [fetchFile]);
 

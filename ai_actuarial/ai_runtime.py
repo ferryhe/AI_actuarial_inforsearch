@@ -901,12 +901,86 @@ def apply_ocr_runtime_environment(runtime: OCRRuntime) -> None:
             os.environ[base_env] = runtime.base_url
 
     os.environ["DEFAULT_ENGINE"] = runtime.engine
+    _apply_markdown_conversion_tuning(runtime.engine)
     if runtime.provider == "mistral":
         os.environ["MISTRAL_DEFAULT_MODEL"] = runtime.model
     elif runtime.provider == "siliconflow":
         os.environ["SILICONFLOW_DEFAULT_MODEL"] = runtime.model
 
     _reload_settings_if_available()
+
+
+def _apply_markdown_conversion_tuning(engine: str) -> None:
+    """Project non-secret markdown conversion tuning config into legacy env settings."""
+    try:
+        from ai_actuarial.markdown_conversion_config import load_markdown_conversion_config
+    except Exception:
+        return
+
+    try:
+        cfg = load_markdown_conversion_config()
+    except Exception:
+        logger.exception("Failed to load markdown conversion tuning config")
+        return
+
+    tool_cfg = ((cfg.get("tools") or {}).get(str(engine or "").strip().lower()) or {})
+    tuning = tool_cfg.get("tuning") if isinstance(tool_cfg, dict) else {}
+    if not isinstance(tuning, Mapping):
+        return
+
+    env_map = {
+        "opendataloader": {
+            "hybrid": "OPENDATALOADER_HYBRID",
+            "use_struct_tree": "OPENDATALOADER_USE_STRUCT_TREE",
+        },
+        "markitdown": {
+            "enable_plugins": "MARKITDOWN_ENABLE_PLUGINS",
+            "enable_builtins": "MARKITDOWN_ENABLE_BUILTINS",
+        },
+        "docling": {
+            "max_pages": "DOCLING_MAX_PAGES",
+            "raise_on_error": "DOCLING_RAISE_ON_ERROR",
+        },
+        "marker": {
+            "use_llm": "MARKER_USE_LLM",
+            "processors": "MARKER_PROCESSORS",
+            "page_range": "MARKER_PAGE_RANGE",
+            "extract_images": "MARKER_EXTRACT_IMAGES",
+            "llm_service": "MARKER_LLM_SERVICE",
+        },
+        "mistral": {
+            "max_pdf_tokens": "MISTRAL_MAX_PDF_TOKENS",
+            "max_pages_per_chunk": "MISTRAL_MAX_PAGES_PER_CHUNK",
+            "timeout_seconds": "MISTRAL_TIMEOUT_SECONDS",
+            "retry_attempts": "MISTRAL_RETRY_ATTEMPTS",
+            "extract_header": "MISTRAL_EXTRACT_HEADER",
+            "extract_footer": "MISTRAL_EXTRACT_FOOTER",
+        },
+        "deepseekocr": {
+            "max_input_tokens": "SILICONFLOW_MAX_INPUT_TOKENS",
+            "chunk_overlap_tokens": "SILICONFLOW_CHUNK_OVERLAP_TOKENS",
+            "timeout_seconds": "SILICONFLOW_TIMEOUT_SECONDS",
+            "retry_attempts": "SILICONFLOW_RETRY_ATTEMPTS",
+        },
+        "mathpix": {
+            "timeout_seconds": "MATHPIX_TIMEOUT_SECONDS",
+            "retry_attempts": "MATHPIX_RETRY_ATTEMPTS",
+            "poll_interval_seconds": "MATHPIX_POLL_INTERVAL_SECONDS",
+            "output_format": "MATHPIX_OUTPUT_FORMAT",
+            "base_url": "MATHPIX_BASE_URL",
+        },
+    }.get(str(engine or "").strip().lower(), {})
+
+    for key, env_name in env_map.items():
+        if key not in tuning:
+            continue
+        value = tuning.get(key)
+        if value is None:
+            os.environ.pop(env_name, None)
+        elif isinstance(value, bool):
+            os.environ[env_name] = "true" if value else "false"
+        else:
+            os.environ[env_name] = str(value)
 
 
 def resolve_provider_credentials(
@@ -1149,7 +1223,7 @@ def _resolve_ocr_engine(provider: str, model: str, *, engine_override: str | Non
     if engine_override:
         normalized_override = str(engine_override).strip().lower()
         if normalized_override == "auto":
-            return "docling"
+            return "auto"
         return normalized_override
 
     normalized_provider = _normalize_provider(provider, default="local")

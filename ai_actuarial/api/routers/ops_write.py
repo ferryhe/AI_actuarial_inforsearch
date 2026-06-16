@@ -34,6 +34,7 @@ from ..services.ops_write import (
     update_ai_routing,
     update_backend_settings,
     update_categories_config,
+    update_markdown_conversion_config,
     update_scheduled_task,
     update_site,
     upsert_provider_credential,
@@ -239,6 +240,23 @@ def api_config_categories_update(
             if not provided_token or provided_token != expected_token:
                 return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_categories_config(payload)
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/config/markdown-conversion")
+def api_config_markdown_conversion_update(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("config.write")),
+):
+    try:
+        expected_token = _config_write_auth_token()
+        if expected_token:
+            provided_token = request.headers.get("X-Auth-Token")
+            if not provided_token or provided_token != expected_token:
+                return JSONResponse(status_code=403, content={"error": "Forbidden"})
+        return update_markdown_conversion_config(payload)
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 
