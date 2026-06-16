@@ -12,6 +12,8 @@ from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml
 
 logger = logging.getLogger(__name__)
 
+_MARKDOWN_CONVERSION_TUNING_CACHE: dict[str, Any] = {"path": None, "mtime_ns": None, "config": None}
+
 AI_SUPPORTED_PROVIDERS = {
     "openai",
     "azure_openai",
@@ -913,12 +915,28 @@ def apply_ocr_runtime_environment(runtime: OCRRuntime) -> None:
 def _apply_markdown_conversion_tuning(engine: str) -> None:
     """Project non-secret markdown conversion tuning config into legacy env settings."""
     try:
-        from ai_actuarial.markdown_conversion_config import load_markdown_conversion_config
+        from ai_actuarial.markdown_conversion_config import (
+            get_markdown_conversion_config_path,
+            load_markdown_conversion_config,
+        )
     except Exception:
         return
 
     try:
-        cfg = load_markdown_conversion_config()
+        path = get_markdown_conversion_config_path()
+        try:
+            mtime_ns = os.stat(path).st_mtime_ns
+        except OSError:
+            mtime_ns = None
+        if (
+            _MARKDOWN_CONVERSION_TUNING_CACHE.get("path") == path
+            and _MARKDOWN_CONVERSION_TUNING_CACHE.get("mtime_ns") == mtime_ns
+            and isinstance(_MARKDOWN_CONVERSION_TUNING_CACHE.get("config"), dict)
+        ):
+            cfg = _MARKDOWN_CONVERSION_TUNING_CACHE["config"]
+        else:
+            cfg = load_markdown_conversion_config(path)
+            _MARKDOWN_CONVERSION_TUNING_CACHE.update({"path": path, "mtime_ns": mtime_ns, "config": cfg})
     except Exception:
         logger.exception("Failed to load markdown conversion tuning config")
         return

@@ -4,7 +4,7 @@
 - Branch: `codex/p0-1-markdown-conversion-config`
 - Baseline: `origin/main` at `32ebedd`.
 - Scope: P0-1 Markdown conversion config split and admin/UI/runtime integration.
-- PR: pending creation.
+- PR: [#147](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/147) — open; CI passed; Copilot comments addressed.
 - Previous PRs: [#146](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/146) — merged; [#145](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/145) — merged.
 
 ## Current State
@@ -17,11 +17,13 @@
 
 ## Verification
 
-- `python3 -m pytest tests/test_markdown_conversion_config.py tests/test_doc_to_md_engine_defaults.py tests/test_fastapi_ops_write_endpoints.py::test_markdown_conversion_config_read_write_endpoint_roundtrip -q` passed: 13 tests.
-- `npm test` passed and ran the Vite production build; Vite still emits the existing large chunk warning.
+- `python3 -m pytest tests/test_markdown_conversion_config.py tests/test_doc_to_md_engine_defaults.py tests/test_fastapi_ops_write_endpoints.py::test_markdown_conversion_config_read_write_endpoint_roundtrip -q` passed: 13 tests after Copilot fixes.
+- `npm test` passed and ran the Vite production build after Copilot fixes; Vite still emits the existing large chunk warning.
 - `git diff --check` passed.
+- GitHub CI `python-smoke` passed on PR #147.
 - Independent spec review pass 2: PASS.
 - Independent code-quality/security review pass 2: PASS for markdown conversion scope after excluding `docker-compose.override.yml`; noted the unrelated override as not-to-commit.
+- Copilot review comments addressed: stable POST tool ordering, markdown tuning config cache, UI scan count lower bound, markdown config payload guard, and removal of an unused task runtime parameter.
 
 ## Notes
 

@@ -67,13 +67,14 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
 
   const buildTask = (): Record<string, unknown> | null => {
     if (scopeMode === "category" && !category.trim()) return null;
+    const parsedScanCount = parseInt(scanCount, 10) || markdownConversionLimits.defaultScanCount;
     return {
       type: "markdown_conversion",
       name: `Markdown (${tool})`,
       conversion_tool: tool,
       scope_mode: scopeMode,
       category: scopeMode === "category" ? category : undefined,
-      scan_count: Math.min(parseInt(scanCount) || markdownConversionLimits.defaultScanCount, markdownConversionLimits.maxScanCount),
+      scan_count: Math.max(1, Math.min(parsedScanCount, markdownConversionLimits.maxScanCount)),
       scan_start_index: startIndex ? parseInt(startIndex) : undefined,
       skip_existing: skipExisting,
       overwrite_existing: overwriteExisting,
@@ -105,6 +106,8 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
             }}
             placeholder={String(markdownConversionLimits.defaultScanCount)}
             type="number"
+            min={1}
+            max={markdownConversionLimits.maxScanCount}
             testId="input-md-scan-count"
           />
         </FormField>

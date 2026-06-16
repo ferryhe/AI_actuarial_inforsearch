@@ -98,6 +98,9 @@ const FALLBACK_CONVERSION_TOOLS_INFO: ConversionTool[] = [
   { name: "local", provider: "local", displayName: "Local (Basic)" },
 ];
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 const cache: {
   engines?: SearchEngine[];
   providers?: string[];
@@ -295,9 +298,9 @@ export function useTaskOptions(): TaskOptions {
     // show a tool as available when its provider key is missing.
     const configuredProviderNamesSet = new Set(fetchedProviders);
 
-    const markdownConfigLoaded = markdownConfigResult.status === "fulfilled";
+    const markdownConfigLoaded = markdownConfigResult.status === "fulfilled" && isRecord(markdownConfigResult.value);
     if (markdownConfigLoaded) {
-      const mdConfig = markdownConfigResult.value;
+      const mdConfig = markdownConfigResult.value as MarkdownConversionConfigResponse;
       const toolsFromApi = Array.isArray(mdConfig.tools) ? mdConfig.tools : [];
       if (toolsFromApi.length > 0) {
         fetchedToolsInfo = toolsFromApi

@@ -926,7 +926,6 @@ class NativeTaskRuntime:
             try:
                 output, provider = self._convert_markdown_candidate_chain(
                     local_path,
-                    conversion_tool=conversion_tool,
                     explicit_runtime=explicit_runtime,
                     storage=storage,
                     config=config,
@@ -967,7 +966,6 @@ class NativeTaskRuntime:
         self,
         local_path: Path,
         *,
-        conversion_tool: str,
         explicit_runtime: Any | None,
         storage: Storage,
         config: dict[str, Any],
