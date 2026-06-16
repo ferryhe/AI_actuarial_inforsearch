@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import yaml
@@ -140,24 +139,15 @@ def test_weekly_updates_api_lists_summaries_and_empty_latest(tmp_path: Path, mon
     assert body["summaries"][0]["period_start"] == PERIOD_START
 
 
-def test_weekly_updates_api_requires_files_read_permission(tmp_path: Path, monkeypatch) -> None:
-    db_path, config_path = _write_config(tmp_path)
-    storage = Storage(str(db_path))
-    try:
-        storage.upsert_auth_token_by_hash(
-            subject="reader",
-            group_name="reader",
-            token_hash=hashlib.sha256(b"reader-token").hexdigest(),
-            is_active=True,
-        )
-    finally:
-        storage.close()
+def test_weekly_updates_api_is_public_readable_when_auth_required(tmp_path: Path, monkeypatch) -> None:
+    _db_path, config_path = _write_config(tmp_path)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("REQUIRE_AUTH", "true")
 
     client = TestClient(create_app())
-    response = client.get("/api/weekly-updates/latest", headers={"Authorization": "Bearer reader-token"})
+    response = client.get("/api/weekly-updates/latest")
     assert response.status_code == 200
+    assert response.json() == {"summary": None}
 
 
 def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) -> None:
@@ -183,3 +173,36 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
         storage.close()
     assert latest is not None
     assert latest["files"][0]["url"] == "https://current-first-seen.example/current.pdf"
+
+
+def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(tmp_path: Path, monkeypatch) -> None:
+    db_path, config_path = _write_config(tmp_path)
+    _seed_weekly_files(db_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+
+    runtime = NativeTaskRuntime()
+    result = runtime._run_collection(
+        "task-weekly-summary-invalid-max",
+        "weekly_summary",
+        {"period_start": PERIOD_START, "period_end": PERIOD_END, "max_files": "not-a-number"},
+    )
+
+    assert result.success is True
+    assert result.items_found == 1
+
+
+def test_generate_weekly_summary_can_reuse_existing_storage(tmp_path: Path) -> None:
+    db_path, _config_path = _write_config(tmp_path)
+    _seed_weekly_files(db_path)
+    storage = Storage(str(db_path))
+    try:
+        summary = generate_weekly_update_summary(
+            db_path=str(db_path),
+            storage=storage,
+            period_start=PERIOD_START,
+            period_end=PERIOD_END,
+        )
+        assert summary["file_count"] == 1
+        assert storage.get_latest_weekly_update_summary() is not None
+    finally:
+        storage.close()

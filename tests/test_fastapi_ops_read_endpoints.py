@@ -98,6 +98,7 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
                 "exclude_prefixes": ["/skip"],
                 "schedule_interval": "weekly",
                 "content_selector": "main article",
+                "collect_page_content": "false",
             }
         ],
         "scheduled_tasks": [
@@ -390,6 +391,7 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
         body = fast.json()
         if endpoint == "/api/config/sites":
             assert body["sites"][0]["name"] == "Alpha Site"
+            assert body["sites"][0]["collect_page_content"] is False
         elif endpoint == "/api/schedule/status":
             assert body["count"] == 1
             assert body["jobs"][0]["label"].startswith("daily")

@@ -17,6 +17,7 @@ from ai_actuarial.markdown_conversion_config import get_markdown_conversion_opti
 from ai_actuarial.config import settings
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.shared_runtime import (
+    coerce_bool,
     get_categories_config_path,
     get_sites_config_path,
     load_yaml,
@@ -119,7 +120,7 @@ def get_config_sites() -> dict[str, object]:
                 "allow_url_patterns": site.get("allow_url_patterns", []),
                 "queries": site.get("queries", []),
                 "file_exts": site.get("file_exts", site_defaults.get("file_exts", [])),
-                "collect_page_content": bool(site.get("collect_page_content", False)),
+                "collect_page_content": coerce_bool(site.get("collect_page_content"), default=False),
             }
         )
     global_schedule = site_defaults.get("schedule_interval")

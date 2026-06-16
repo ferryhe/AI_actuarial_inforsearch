@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
@@ -68,6 +67,7 @@ def _format_summary_markdown(*, period_start: str, period_end: str, files: list[
 def generate_weekly_update_summary(
     *,
     db_path: str,
+    storage: Storage | None = None,
     period_start: str | None = None,
     period_end: str | None = None,
     max_files: int = 500,
@@ -77,14 +77,14 @@ def generate_weekly_update_summary(
         period_start = period_start or default_start
         period_end = period_end or default_end
 
-    storage = Storage(db_path)
+    active_storage = storage or Storage(db_path)
     try:
         files = [
             _project_weekly_file(row)
-            for row in storage.list_files_first_seen_between(
+            for row in active_storage.list_files_first_seen_between(
                 period_start=period_start,
                 period_end=period_end,
-                limit=max(1, int(max_files or 500)),
+                limit=parse_int_clamped(max_files, default=500, min_value=1, max_value=10_000),
             )
         ]
         summary = {
@@ -102,9 +102,10 @@ def generate_weekly_update_summary(
                 "content_change_detection": False,
             },
         }
-        stored = storage.upsert_weekly_update_summary(summary)
+        stored = active_storage.upsert_weekly_update_summary(summary)
     finally:
-        storage.close()
+        if storage is None:
+            active_storage.close()
     return stored
 
 

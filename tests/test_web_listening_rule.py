@@ -133,7 +133,7 @@ def test_task_runtime_passes_collect_page_content_from_yaml() -> None:
                 {
                     "name": "Content Site",
                     "url": "https://content.example",
-                    "collect_page_content": True,
+                    "collect_page_content": "false",
                     "content_selector": "article",
                     "allow_url_patterns": ["/research"],
                 }
@@ -142,6 +142,6 @@ def test_task_runtime_passes_collect_page_content_from_yaml() -> None:
         {"site": "Content Site"},
     )
     assert len(site_configs) == 1
-    assert site_configs[0].collect_page_content is True
+    assert site_configs[0].collect_page_content is False
     assert site_configs[0].content_selector == "article"
     assert site_configs[0].allow_url_patterns == ["/research"]
