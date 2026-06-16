@@ -232,8 +232,8 @@ Chatbot and AI interaction endpoints.
 | GET | `/chat/available-documents` | List available documents |
 | POST | `/chat/query` | Send a chat query |
 
-### Migration (`/api/migration`)
-Flask-to-FastAPI migration utilities.
+### Migration Diagnostics (`/api/migration`)
+FastAPI runtime status and optional migration-inventory diagnostics. The legacy runtime is not an active product surface.
 
 | Method | Path | Description |
 |--------|------|-------------|

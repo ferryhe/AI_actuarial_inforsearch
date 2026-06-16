@@ -17,18 +17,21 @@ The active RAG posture has two paths:
 - **Standard RAG**: vector indexes, embeddings, LLM-backed answer generation, multi-KB chat, and direct selected-document comparison.
 - **Agentic RAG**: KB-scoped ready_data manifests, deterministic local read tools, structured evidence/citations, and tool traces for a single Agentic-ready KB.
 
+The Feishu-plan roadmap is complete on `main`: Markdown conversion config, customer Dashboard, web-listening rules, weekly updates, and KB-first Chat are active product surfaces rather than future phases.
+
 ## Core System Chain
 
 ```text
-site config
--> crawling / web collection
+site config + markdown conversion config
+-> crawling / web collection / web-listening rule materialization
 -> file download + SHA256 dedupe
--> cataloging + markdown conversion
+-> cataloging + Markdown conversion
+-> weekly-update summaries from first_seen files
 -> semantic chunking + embeddings
 -> knowledge base indexing
--> standard RAG retrieval + chat
+-> standard RAG retrieval + KB-first chat
 -> optional Agentic RAG ready_data build + deterministic evidence loop
--> React operations UI
+-> React customer/admin operations UI
 ```
 
 ## Frontend / Backend Split
@@ -51,6 +54,9 @@ site config
 4. Do not add direct non-API route proxies for auth pages; `/login` and `/register` are React routes using `/api/auth/*`.
 5. Keep deployment config aligned with FastAPI + React only.
 6. Standard RAG and Agentic RAG must remain explicit modes; Agentic Chat currently requires exactly one ready KB and cannot be combined with direct document context.
+7. Dashboard should stay customer-facing by default; operational processing metrics belong in admin/ops routes.
+8. Markdown conversion behavior belongs in `config/markdown_conversion.yaml` plus Settings, not hard-coded tool order lists.
+9. Web-listening rule materialization must preserve the typed `web-listening-agent-rule.v1` contract.
 
 ## Key Subsystems
 
@@ -73,9 +79,23 @@ site config
 ### Web and API
 
 - `client/`
+- `client/src/pages/Dashboard.tsx`: customer-facing sources/categories/weekly updates/Agent entry point.
+- `client/src/pages/Chat.tsx`: KB-first Chat surface for standard and Agentic RAG modes.
 - `ai_actuarial/api/app.py`
 - `ai_actuarial/api/routers/*`
 - `ai_actuarial/api/services/*`
+
+### Web-listening Rules
+
+- `ai_actuarial/web_listening_rule.py`: `web-listening-agent-rule.v1` schema and validation.
+- `ai_actuarial/api/services/ops_write.py`: draft/validate/materialize operations.
+- Materialized config lives in the standard site/schedule config surfaces.
+
+### Weekly Updates
+
+- `ai_actuarial/api/services/weekly_updates.py`: summary generation from `files.first_seen`.
+- `weekly_update_summaries` storage table and `weekly_summary` collection task.
+- `/api/weekly-updates` and `/api/weekly-updates/latest` expose summaries to Dashboard/product UI.
 
 ### RAG and Chat
 
@@ -110,6 +130,8 @@ Product API/UI ready_data builds are constrained to the configured SQLite databa
 
 ### Document Conversion
 
+- `config/markdown_conversion.yaml`: active non-secret conversion policy.
+- `ai_actuarial/markdown_conversion_config.py`: normalization, defaults, and persisted config handling.
 - `doc_to_md/registry.py`
 - `doc_to_md/engines/*`
 - `doc_to_md/pipeline/text_extraction.py`
@@ -119,6 +141,9 @@ Product API/UI ready_data builds are constrained to the configured SQLite databa
 - `GET /api/health`
 - `GET /api/migration/status`
 - `GET /api/migration/inventory` when `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`
+- `GET /api/config/markdown-conversion`
+- `GET /api/weekly-updates/latest`
+- `POST /api/web-listening/rules/validate`
 - `GET /api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest`
 - `POST /api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`
 
