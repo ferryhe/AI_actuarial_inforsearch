@@ -4,7 +4,7 @@
 - Branch: `fix/pr152-copilot-followups`
 - Baseline: current branch created from `origin/main` after merged PR #152.
 - Scope: Follow-up fixes for post-merge Copilot comments on PR #152.
-- PR: follow-up PR not opened yet; addresses comments from merged [#152](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/152).
+- PR: [#153](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/153) — open; addresses comments from merged [#152](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/152).
 - Previous PRs: [#147](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/147) through [#152](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/152) — merged.
 
 ## Current State
