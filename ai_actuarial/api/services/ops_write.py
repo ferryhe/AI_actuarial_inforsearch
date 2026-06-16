@@ -65,6 +65,7 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "catalog",
     "markdown_conversion",
     "chunk_generation",
+    "weekly_summary",
     "rag_indexing",
     "kb_index_build",
 ]
@@ -88,6 +89,7 @@ _VALID_COLLECTION_TYPES = {
     "quick_check",
     "markdown_conversion",
     "chunk_generation",
+    "weekly_summary",
     "rag_indexing",
     "kb_index_build",
 }

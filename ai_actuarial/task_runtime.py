@@ -515,9 +515,36 @@ class NativeTaskRuntime:
             if collection_type == "chunk_generation":
                 return self._run_chunk_generation(task_id, storage, db_path, data)
 
+            if collection_type == "weekly_summary":
+                return self._run_weekly_summary(db_path, data)
+
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
             storage.close()
+
+    def _run_weekly_summary(self, db_path: str, data: dict[str, Any]) -> CollectionResult:
+        from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
+
+        summary = generate_weekly_update_summary(
+            db_path=db_path,
+            period_start=str(data.get("period_start") or "").strip() or None,
+            period_end=str(data.get("period_end") or "").strip() or None,
+            max_files=int(data.get("max_files") or 500),
+        )
+        file_count = int(summary.get("file_count") or 0)
+        return CollectionResult(
+            success=True,
+            items_found=file_count,
+            items_downloaded=0,
+            items_skipped=0,
+            errors=[],
+            metadata={
+                "period_start": summary.get("period_start"),
+                "period_end": summary.get("period_end"),
+                "summary_id": summary.get("id"),
+                "file_count": file_count,
+            },
+        )
 
     def _enqueue_site_query_search_fallbacks(
         self,

@@ -503,7 +503,7 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     recorder = _BridgeRecorder()
     _install_bridge(app, recorder)
     config_path = Path(os.environ["CONFIG_PATH"])
-    headers = {"X-Auth-Token": seed["operator_token"]}
+    headers = {"X-Auth-Token": str(seed["operator_token"])}
 
     for invalid_interval in ("every 5 hourly", "every 1 hours extra", "every 0 hours"):
         invalid_response = client.post(
@@ -548,6 +548,37 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     assert add_response.status_code == 200, add_response.text
     written_task = next(task for task in _read_scheduled_tasks(config_path) if task["name"] == "Weekly Chunk")
     assert written_task["interval"] == "daily at 02:00"
+
+    weekly_summary_response = client.post(
+        "/api/scheduled-tasks/add",
+        json={
+            "name": "Weekly Update Summary",
+            "type": "weekly_summary",
+            "interval": "weekly",
+            "enabled": True,
+            "params": {"max_files": 50},
+        },
+        headers=headers,
+    )
+    assert weekly_summary_response.status_code == 200, weekly_summary_response.text
+    weekly_summary_task = next(
+        task for task in _read_scheduled_tasks(config_path) if task["name"] == "Weekly Update Summary"
+    )
+    assert weekly_summary_task["type"] == "weekly_summary"
+
+    run_weekly_summary = client.post(
+        "/api/collections/run",
+        json={
+            "name": "Run Weekly Summary",
+            "type": "weekly_summary",
+            "period_start": "2026-03-09T00:00:00+00:00",
+            "period_end": "2026-03-16T00:00:00+00:00",
+        },
+        headers=headers,
+    )
+    assert run_weekly_summary.status_code == 200, run_weekly_summary.text
+    assert recorder.started[-1][0] == "weekly_summary"
+    assert recorder.started[-1][1]["period_start"] == "2026-03-09T00:00:00+00:00"
 
     update_response = client.post(
         "/api/scheduled-tasks/update",

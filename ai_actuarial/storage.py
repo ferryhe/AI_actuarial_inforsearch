@@ -48,6 +48,7 @@ class Storage:
             "kb_index_versions",
             "kb_index_items",
             "agentic_ready_manifests",
+            "weekly_update_summaries",
             "rag_knowledge_bases",
             "users",
             "user_quotas",
@@ -504,6 +505,21 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS weekly_update_summaries (
+                id TEXT PRIMARY KEY,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                file_count INTEGER NOT NULL DEFAULT 0,
+                files_json TEXT NOT NULL DEFAULT '[]',
+                summary_markdown TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                UNIQUE(period_start, period_end)
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_file_url
             ON file_chunk_sets(file_url)
             """
@@ -542,6 +558,12 @@ class Storage:
             """
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_manifests_kb_profile
             ON agentic_ready_manifests(kb_id, profile)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_weekly_update_summaries_period
+            ON weekly_update_summaries(period_start, period_end)
             """
         )
         self._ensure_columns(
@@ -1627,9 +1649,156 @@ class Storage:
         
         return files, total
     
+    def list_files_first_seen_between(
+        self,
+        *,
+        period_start: str,
+        period_end: str,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return non-deleted files first discovered in [period_start, period_end)."""
+        safe_limit = max(1, min(int(limit or 500), 5000))
+        cur = self._conn.execute(
+            """
+            SELECT
+                f.url, f.title, f.source_site, f.source_page_url, f.original_filename,
+                f.bytes, f.content_type, f.published_time, f.first_seen, f.last_seen,
+                ci.summary, ci.category, ci.keywords
+            FROM files f
+            LEFT JOIN catalog_items ci ON ci.file_url = f.url
+            WHERE f.deleted_at IS NULL
+              AND f.first_seen IS NOT NULL
+              AND f.first_seen >= ?
+              AND f.first_seen < ?
+            ORDER BY f.first_seen DESC, f.url ASC
+            LIMIT ?
+            """,
+            (period_start, period_end, safe_limit),
+        )
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        files = []
+        for row in rows:
+            item = dict(zip(columns, row))
+            raw_keywords = item.get("keywords")
+            if isinstance(raw_keywords, str) and raw_keywords.strip():
+                try:
+                    item["keywords"] = json.loads(raw_keywords)
+                except json.JSONDecodeError:
+                    item["keywords"] = [raw_keywords]
+            elif raw_keywords in (None, ""):
+                item["keywords"] = []
+            files.append(item)
+        return files
+
+    def _decode_weekly_update_summary_row(self, row: sqlite3.Row | tuple[Any, ...] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        keys = [
+            "id",
+            "period_start",
+            "period_end",
+            "generated_at",
+            "file_count",
+            "files_json",
+            "summary_markdown",
+            "metadata_json",
+        ]
+        data = dict(zip(keys, row))
+        for json_field, output_field, default in (
+            ("files_json", "files", []),
+            ("metadata_json", "metadata", {}),
+        ):
+            try:
+                data[output_field] = json.loads(data.pop(json_field) or json.dumps(default))
+            except json.JSONDecodeError:
+                data[output_field] = default
+        return data
+
+    def upsert_weekly_update_summary(self, summary: dict[str, Any]) -> dict[str, Any]:
+        period_start = str(summary.get("period_start") or "").strip()
+        period_end = str(summary.get("period_end") or "").strip()
+        if not period_start or not period_end:
+            raise ValueError("period_start and period_end are required")
+        generated_at = self.now()
+        summary_id = str(summary.get("id") or f"weekly-{period_start}-{period_end}")
+        files = list(summary.get("files") or [])
+        metadata = dict(summary.get("metadata") or {})
+        file_count = int(summary.get("file_count", len(files)) or 0)
+        summary_markdown = str(summary.get("summary_markdown") or "")
+        self._conn.execute(
+            """
+            INSERT INTO weekly_update_summaries (
+                id, period_start, period_end, generated_at, file_count,
+                files_json, summary_markdown, metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(period_start, period_end) DO UPDATE SET
+                generated_at=excluded.generated_at,
+                file_count=excluded.file_count,
+                files_json=excluded.files_json,
+                summary_markdown=excluded.summary_markdown,
+                metadata_json=excluded.metadata_json
+            """,
+            (
+                summary_id,
+                period_start,
+                period_end,
+                generated_at,
+                file_count,
+                json.dumps(files, ensure_ascii=False, sort_keys=True),
+                summary_markdown,
+                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self._maybe_commit()
+        return self.get_weekly_update_summary(period_start=period_start, period_end=period_end) or {}
+
+    def get_weekly_update_summary(self, *, period_start: str, period_end: str) -> dict[str, Any] | None:
+        cur = self._conn.execute(
+            """
+            SELECT id, period_start, period_end, generated_at, file_count,
+                   files_json, summary_markdown, metadata_json
+            FROM weekly_update_summaries
+            WHERE period_start = ? AND period_end = ?
+            LIMIT 1
+            """,
+            (period_start, period_end),
+        )
+        return self._decode_weekly_update_summary_row(cur.fetchone())
+
+    def get_latest_weekly_update_summary(self) -> dict[str, Any] | None:
+        cur = self._conn.execute(
+            """
+            SELECT id, period_start, period_end, generated_at, file_count,
+                   files_json, summary_markdown, metadata_json
+            FROM weekly_update_summaries
+            ORDER BY period_start DESC, generated_at DESC
+            LIMIT 1
+            """
+        )
+        return self._decode_weekly_update_summary_row(cur.fetchone())
+
+    def list_weekly_update_summaries(self, *, limit: int = 20, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+        safe_limit = max(1, min(int(limit or 20), 100))
+        safe_offset = max(0, int(offset or 0))
+        total = int(self._conn.execute("SELECT COUNT(*) FROM weekly_update_summaries").fetchone()[0])
+        cur = self._conn.execute(
+            """
+            SELECT id, period_start, period_end, generated_at, file_count,
+                   files_json, summary_markdown, metadata_json
+            FROM weekly_update_summaries
+            ORDER BY period_start DESC, generated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (safe_limit, safe_offset),
+        )
+        summaries = [self._decode_weekly_update_summary_row(row) or {} for row in cur.fetchall()]
+        return summaries, total
+
     def mark_file_deleted(self, url: str, deleted_time: str) -> None:
         """Mark a file and its catalog item as deleted.
-        
+
         Args:
             url: File URL
             deleted_time: ISO timestamp for deletion
