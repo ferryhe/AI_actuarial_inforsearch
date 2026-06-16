@@ -243,6 +243,20 @@ function getKbResultCountLabel(kb: KnowledgeBase, ragMode: RagMode, t: Translate
   return "";
 }
 
+function getKbAvailabilityLabel(kb: KnowledgeBase, ragMode: RagMode, t: Translate): string {
+  const isAgenticReady = isAgenticKbReady(kb);
+  const agenticStatus = String(kb.agentic_ready_manifest?.status || "missing").trim() || "missing";
+  if (ragMode === "agentic") {
+    return isAgenticReady
+      ? t("chat.agentic_status_ready")
+      : t("chat.agentic_status").replace("{status}", agenticStatus);
+  }
+  if (kb.availability === "needs_reindex") return t("chat.kb_status.needs_reindex");
+  if (kb.availability === "building") return t("chat.kb_status.building");
+  if (kb.availability === "ready") return t("chat.kb_status.ready");
+  return kb.availability || "";
+}
+
 function normalizeAgenticToolTrace(value: unknown): AgenticToolTraceEntry[] {
   if (Array.isArray(value)) {
     return value.filter((item): item is AgenticToolTraceEntry => Boolean(item && typeof item === "object"));
@@ -873,12 +887,17 @@ export default function Chat() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setSidebarTab(sidebarTab === "documents" && canUseConversations ? "conversations" : "documents")}
+                  onClick={() => {
+                    if (!canUseConversations) return;
+                    setSidebarTab((current) => current === "documents" ? "conversations" : "documents");
+                  }}
+                  disabled={!canUseConversations}
                   className={cn(
                     "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                     sidebarTab === "documents"
                       ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-card hover:text-foreground"
+                      : "text-muted-foreground hover:bg-card hover:text-foreground",
+                    !canUseConversations && "cursor-not-allowed opacity-60"
                   )}
                   data-testid="button-toggle-documents-panel"
                 >
@@ -911,19 +930,8 @@ export default function Chat() {
                     const isUsable = kb.usable !== false;
                     const isAgenticReady = isAgenticKbReady(kb);
                     const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
-                    const agenticStatus = String(kb.agentic_ready_manifest?.status || "missing").trim() || "missing";
                     const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
-                    const availabilityLabel = ragMode === "agentic"
-                      ? (isAgenticReady
-                        ? t("chat.agentic_status_ready")
-                        : t("chat.agentic_status").replace("{status}", agenticStatus))
-                      : kb.availability === "needs_reindex"
-                        ? t("chat.kb_status.needs_reindex")
-                        : kb.availability === "building"
-                          ? t("chat.kb_status.building")
-                          : kb.availability === "ready"
-                            ? t("chat.kb_status.ready")
-                            : kb.availability || "";
+                    const availabilityLabel = getKbAvailabilityLabel(kb, ragMode, t);
                     return (
                       <button
                         key={kb.kb_id}
@@ -1378,19 +1386,8 @@ export default function Chat() {
                         const isUsable = kb.usable !== false;
                         const isAgenticReady = isAgenticKbReady(kb);
                         const isSelectable = ragMode === "agentic" ? isAgenticReady : isUsable;
-                        const agenticStatus = String(kb.agentic_ready_manifest?.status || "missing").trim() || "missing";
                         const resultCountLabel = getKbResultCountLabel(kb, ragMode, t);
-                        const availabilityLabel = ragMode === "agentic"
-                          ? (isAgenticReady
-                            ? t("chat.agentic_status_ready")
-                            : t("chat.agentic_status").replace("{status}", agenticStatus))
-                          : kb.availability === "needs_reindex"
-                          ? "需重建"
-                          : kb.availability === "building"
-                            ? "构建中"
-                            : kb.availability === "ready"
-                              ? "可用"
-                              : kb.availability || "";
+                        const availabilityLabel = getKbAvailabilityLabel(kb, ragMode, t);
                         return (
                         <button
                           key={kb.kb_id}
