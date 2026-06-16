@@ -1216,6 +1216,7 @@ class Storage:
         'title': 'f.title',
         'source_site': 'f.source_site',
         'bytes': 'f.bytes',
+        'first_seen': 'f.first_seen',
         'last_seen': 'f.last_seen',
         'crawl_time': 'f.crawl_time',
     }
