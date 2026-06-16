@@ -17,6 +17,7 @@ from ..services.ops_write import (
     delete_provider_credential,
     delete_scheduled_task,
     delete_site,
+    draft_web_listening_rule,
     export_sites_yaml,
     get_catalog_stats,
     get_chunk_generation_stats,
@@ -24,6 +25,7 @@ from ..services.ops_write import (
     import_provider_credentials_from_env,
     import_sites,
     list_backups,
+    materialize_web_listening_rule,
     reencrypt_provider_credentials,
     request_task_stop,
     reinitialize_scheduler,
@@ -38,6 +40,7 @@ from ..services.ops_write import (
     update_scheduled_task,
     update_site,
     upsert_provider_credential,
+    validate_web_listening_rule,
 )
 
 router = APIRouter()
@@ -60,6 +63,42 @@ def _config_write_auth_token() -> str:
 
 def _handle_ops_error(exc: OpsWriteError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+
+
+@router.post("/web-listening/rules/draft")
+def api_web_listening_rules_draft(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
+):
+    try:
+        return draft_web_listening_rule(payload)
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/web-listening/rules/validate")
+def api_web_listening_rules_validate(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
+):
+    try:
+        return validate_web_listening_rule(payload)
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/web-listening/rules/materialize")
+def api_web_listening_rules_materialize(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("sites.write", "schedule.write")),
+):
+    try:
+        return materialize_web_listening_rule(payload, bridge=_bridge(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
 
 
 @router.post("/config/sites/add")

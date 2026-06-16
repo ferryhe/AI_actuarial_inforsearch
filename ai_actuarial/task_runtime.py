@@ -1163,6 +1163,7 @@ class NativeTaskRuntime:
                 content_selector=str(row.get("content_selector") or "").strip() or None,
                 allow_url_patterns=self._coerce_list(row.get("allow_url_patterns")),
                 queries=list(row.get("queries") or []),
+                collect_page_content=bool(row.get("collect_page_content", False)),
                 check_database=bool(data.get("check_database", True)),
             )
             for row in site_rows
