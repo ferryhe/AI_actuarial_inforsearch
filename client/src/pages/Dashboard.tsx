@@ -1,27 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Link, useLocation } from "wouter";
 import {
   FileText,
-  BarChart3,
   Building2,
-  Activity,
   Search,
   MessageSquare,
-  BookOpen,
   ArrowRight,
   FileIcon,
   Inbox,
+  Tags,
+  CalendarPlus,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
+import { buildFileDetailPath } from "@/lib/navigation";
 
 interface Stats {
   total_files: number;
-  cataloged_files: number;
   total_sources: number;
-  active_tasks: number;
 }
 
 interface FileItem {
@@ -31,14 +30,26 @@ interface FileItem {
   source_site: string;
   content_type: string;
   last_seen: string;
+  category?: string | null;
 }
+
+interface CategoryOption {
+  name: string;
+  count?: number | null;
+}
+
+interface CategoriesResponse {
+  categories?: Array<string | CategoryOption>;
+}
+
+const WEEKLY_FILE_LIMIT = 8;
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
   visible: (i: number) => ({
     opacity: 1,
     y: 0,
-    transition: { delay: i * 0.08, duration: 0.4, ease: "easeOut" },
+    transition: { delay: i * 0.08, duration: 0.4, ease: "easeOut" as const },
   }),
 };
 
@@ -99,7 +110,7 @@ function QuickAction({
     >
       <Link href={href}>
         <div
-          className="group cursor-pointer rounded-xl border border-border bg-card p-5 hover:border-primary/30 hover:shadow-md transition-all duration-300"
+          className="group cursor-pointer rounded-xl border border-border bg-card p-5 hover:border-primary/30 hover:shadow-md transition-all duration-300 h-full"
           data-testid={`action-${title.toLowerCase().replace(/\s+/g, "-")}`}
         >
           <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center mb-3", color)}>
@@ -136,38 +147,80 @@ function contentTypeLabel(ct: string): string {
   return ct.split("/").pop()?.toUpperCase() || ct;
 }
 
+function normalizeCategories(items: CategoriesResponse["categories"]): CategoryOption[] {
+  return (items || [])
+    .map((item) => {
+      if (typeof item === "string") {
+        const name = item.trim();
+        return name ? { name } : null;
+      }
+      if (item && typeof item.name === "string" && item.name.trim()) {
+        return {
+          name: item.name.trim(),
+          count: typeof item.count === "number" ? item.count : null,
+        };
+      }
+      return null;
+    })
+    .filter((item): item is CategoryOption => item !== null);
+}
+
+function getStartOfCalendarWeek(now: Date): Date {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - start.getDay());
+  return start;
+}
+
+function isThisCalendarWeek(dateStr: string, now = new Date()): boolean {
+  if (!dateStr) return false;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return false;
+  const start = getStartOfCalendarWeek(now);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 7);
+  return date >= start && date < end;
+}
+
+function databaseCategoryPath(category: string): string {
+  const params = new URLSearchParams({ category });
+  return `/database?${params.toString()}`;
+}
+
 export default function Dashboard() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       apiGet<Stats>("/api/stats"),
-      apiGet<{ files: FileItem[] }>("/api/files?limit=8&order_by=last_seen&order_dir=desc"),
+      apiGet<{ files: FileItem[] }>("/api/files?limit=24&order_by=last_seen&order_dir=desc"),
+      apiGet<CategoriesResponse>("/api/categories?mode=used"),
     ])
-      .then(([statsData, filesData]) => {
+      .then(([statsData, filesData, categoriesData]) => {
         setStats(statsData);
-        setFiles(filesData.files || []);
+        setFiles((filesData.files || []).filter((file) => isThisCalendarWeek(file.last_seen)).slice(0, WEEKLY_FILE_LIMIT));
+        setCategories(normalizeCategories(categoriesData.categories).slice(0, 8));
       })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  const statCards = [
-    { icon: FileText, label: t("dashboard.total_files"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-    { icon: BarChart3, label: t("dashboard.cataloged"), value: stats?.cataloged_files ?? "-", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  const statCards = useMemo(() => [
+    { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
     { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
-    { icon: Activity, label: t("dashboard.active_tasks"), value: stats?.active_tasks ?? "-", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  ];
+    { icon: Tags, label: t("dashboard.categories"), value: categories.length || "-", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: files.length, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  ], [categories.length, files.length, stats?.total_files, stats?.total_sources, t]);
 
   const quickActions = [
-    { icon: Search, title: t("dashboard.browse_db"), desc: t("dashboard.browse_db_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-    { icon: MessageSquare, title: t("dashboard.chat"), desc: t("dashboard.chat_desc"), href: "/chat", color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
-    { icon: Activity, title: t("dashboard.task_center"), desc: t("dashboard.task_center_desc"), href: "/tasks", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-    { icon: BookOpen, title: t("knowledge.title"), desc: t("knowledge.subtitle"), href: "/knowledge", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
+    { icon: Search, title: t("dashboard.browse_materials"), desc: t("dashboard.browse_materials_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+    { icon: FolderOpen, title: t("dashboard.browse_categories"), desc: t("dashboard.browse_categories_desc"), href: "/database", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+    { icon: MessageSquare, title: t("dashboard.ask_agent"), desc: t("dashboard.ask_agent_desc"), href: "/chat", color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   ];
 
   return (
@@ -192,74 +245,126 @@ export default function Dashboard() {
       </div>
 
       <div>
-        <h2 className="text-lg font-semibold mb-3">{t("dashboard.quick_actions")}</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <h2 className="text-lg font-semibold mb-3">{t("dashboard.start_here")}</h2>
+        <div className="grid sm:grid-cols-3 gap-3 sm:gap-4">
           {quickActions.map((action, i) => (
-            <QuickAction key={action.href} {...action} index={i} />
+            <QuickAction key={`${action.href}-${action.title}`} {...action} index={i} />
           ))}
         </div>
       </div>
 
-      <div>
-        <h2 className="text-lg font-semibold mb-3">{t("dashboard.recent_files")}</h2>
-        {loading ? (
-          <div className="space-y-2">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-14 rounded-lg bg-muted animate-pulse" />
-            ))}
+      <div className="grid lg:grid-cols-[360px_1fr] gap-4">
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold">{t("dashboard.category_entry")}</h2>
+            <Link href="/database">
+              <span className="text-xs text-primary hover:underline cursor-pointer">{t("dashboard.view_all")}</span>
+            </Link>
           </div>
-        ) : files.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-center py-16 rounded-xl border border-dashed border-border bg-card"
-          >
-            <Inbox className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
-            <p className="font-medium text-muted-foreground">{t("dashboard.no_files")}</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">{t("dashboard.no_files_desc")}</p>
-          </motion.div>
-        ) : (
-          <div className="rounded-xl border border-border bg-card overflow-hidden">
-            <div className="hidden sm:grid grid-cols-[1fr_150px_80px_100px] gap-4 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              <span>{t("table.title")}</span>
-              <span>{t("table.source")}</span>
-              <span>{t("table.type")}</span>
-              <span>{t("table.date")}</span>
+          {loading ? (
+            <div className="space-y-2">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="h-11 rounded-lg bg-muted animate-pulse" />
+              ))}
             </div>
-            {files.map((file, i) => (
-              <motion.div
-                key={file.url}
-                custom={i}
-                variants={fadeUp}
-                initial="hidden"
-                animate="visible"
-                className="grid sm:grid-cols-[1fr_150px_80px_100px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer"
-                onClick={() => navigate(`/file-detail?url=${encodeURIComponent(file.url)}`)}
-                data-testid={`file-row-${i}`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
-                  <span className="text-sm font-medium truncate">
-                    {file.title || file.original_filename || "Untitled"}
-                  </span>
-                </div>
-                <span className="text-sm text-muted-foreground truncate hidden sm:block">
-                  {file.source_site || "-"}
-                </span>
-                <span className="hidden sm:block">
-                  {file.content_type && (
-                    <span className="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                      {contentTypeLabel(file.content_type)}
-                    </span>
-                  )}
-                </span>
-                <span className="text-xs text-muted-foreground hidden sm:block">
-                  {formatDate(file.last_seen)}
-                </span>
-              </motion.div>
-            ))}
+          ) : categories.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">
+              <Tags className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">{t("dashboard.no_categories")}</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              {categories.map((category, i) => (
+                <Link key={category.name} href={databaseCategoryPath(category.name)}>
+                  <motion.div
+                    custom={i}
+                    variants={fadeUp}
+                    initial="hidden"
+                    animate="visible"
+                    className="flex items-center justify-between gap-3 px-4 py-3 border-t first:border-t-0 border-border hover:bg-muted/30 transition-colors cursor-pointer"
+                    data-testid={`category-row-${i}`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Tags className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
+                      <span className="text-sm font-medium truncate">{category.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+                      {typeof category.count === "number" && <span>{category.count}</span>}
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </div>
+                  </motion.div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold">{t("dashboard.this_week_additions")}</h2>
+            <Link href="/database?order_by=last_seen&order_dir=desc">
+              <span className="text-xs text-primary hover:underline cursor-pointer">{t("dashboard.view_all")}</span>
+            </Link>
           </div>
-        )}
+          {loading ? (
+            <div className="space-y-2">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="h-14 rounded-lg bg-muted animate-pulse" />
+              ))}
+            </div>
+          ) : files.length === 0 ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-center py-16 rounded-xl border border-dashed border-border bg-card"
+            >
+              <Inbox className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
+              <p className="font-medium text-muted-foreground">{t("dashboard.no_weekly_files")}</p>
+              <p className="text-xs text-muted-foreground/70 mt-1">{t("dashboard.no_weekly_files_desc")}</p>
+            </motion.div>
+          ) : (
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
+              <div className="hidden sm:grid grid-cols-[1fr_150px_80px_100px] gap-4 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                <span>{t("table.title")}</span>
+                <span>{t("table.source")}</span>
+                <span>{t("table.type")}</span>
+                <span>{t("table.date")}</span>
+              </div>
+              {files.map((file, i) => (
+                <motion.div
+                  key={file.url}
+                  custom={i}
+                  variants={fadeUp}
+                  initial="hidden"
+                  animate="visible"
+                  className="grid sm:grid-cols-[1fr_150px_80px_100px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer"
+                  onClick={() => navigate(buildFileDetailPath(file.url, "/"))}
+                  data-testid={`file-row-${i}`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
+                    <span className="text-sm font-medium truncate">
+                      {file.title || file.original_filename || t("dashboard.untitled_material")}
+                    </span>
+                  </div>
+                  <span className="text-sm text-muted-foreground truncate hidden sm:block">
+                    {file.source_site || "-"}
+                  </span>
+                  <span className="hidden sm:block">
+                    {file.content_type && (
+                      <span className="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                        {contentTypeLabel(file.content_type)}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-xs text-muted-foreground hidden sm:block">
+                    {formatDate(file.last_seen)}
+                  </span>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
