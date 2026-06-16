@@ -20,6 +20,7 @@ The planned Agentic RAG implementation sequence is merged on `main`:
 - PR5b: Chat UI integration through `rag_mode="agentic"`, evidence rendering, and tool trace display.
 - PR6: L2 formula profile with formula cards, structured tables, calculation terms, and formula tools.
 - PR7: Agentic answer/evidence eval, structured citation coverage, no-evidence refusal checks, and CI smoke coverage.
+- Post-plan QA follow-up PR #145: CJK ready_data query matching, Agentic Chat KB section-count labels, and raw Agentic score display.
 
 ## Profiles And Artifacts
 

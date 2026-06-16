@@ -23,7 +23,7 @@ The 2026 FastAPI/React migration, security/RBAC rollout, and Agentic RAG impleme
 - Chat/RAG document comparison accepts at most 3 selected document sources, bounds document context size, reports truncation notices, and labels retrieved/document context as untrusted in prompts.
 - Login and registration submissions are IP-scoped rate limited before session mutation, with user-friendly 429 and 5xx error messages in the UI.
 - Agentic RAG now has ready_data builders, manifest registry/UI status, deterministic read tools, a Chat mode, structured citations/tool traces, formula/regulation profile support, and CI-backed eval smoke coverage.
-- The planned Agentic RAG PR sequence is merged through PR #142; the status file was reconciled in PR #143.
+- The planned Agentic RAG PR sequence is merged through PR #142; the status file was reconciled in PR #143, and PR #145 added the post-plan QA fixes for CJK ready_data query matching, Agentic Chat KB section counts, and raw Agentic score display.
 
 ## Features
 
@@ -47,7 +47,7 @@ The 2026 FastAPI/React migration, security/RBAC rollout, and Agentic RAG impleme
 Requirements:
 
 - Python 3.10+
-- Node.js 18+
+- Node.js `^20.19.0` or `>=22.12.0` for the Vite 7 frontend toolchain
 - Java 11+ on `PATH` when using OpenDataLoader PDF conversion
 - `FASTAPI_SESSION_SECRET` in `.env` when session login is enabled
 - `TOKEN_ENCRYPTION_KEY` in `.env` when provider credentials are stored in the database
