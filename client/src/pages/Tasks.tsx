@@ -245,7 +245,7 @@ export default function Tasks() {
       case "adhoc_url": return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "file_import": return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "web_search": return <WebSearchForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "web_listening": return <WebListeningForm onMaterialized={async () => { await fetchSites(); window.dispatchEvent(new CustomEvent("scheduled-tasks:changed")); setTaskView("scheduled"); }} />;
+      case "web_listening": return <WebListeningForm onMaterialized={async () => { await fetchSites(); setTaskView("scheduled"); }} />;
       case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;

@@ -814,7 +814,7 @@ def _synthesize_agentic_response(
 ) -> tuple[str, str]:
     chunks = _agentic_blocks_to_llm_chunks(retrieved_blocks)
     if not chunks:
-        return _friendly_no_results_message(), "no_results"
+        return _friendly_no_results_message(), "deterministic_fallback"
     fallback = _deterministic_agentic_fallback_answer(query, retrieved_blocks)
     try:
         llm_client = modules["llm"].LLMClient(config, storage=storage)

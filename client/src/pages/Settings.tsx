@@ -25,6 +25,7 @@ import {
   MessageSquare,
   Pencil,
   Download,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
