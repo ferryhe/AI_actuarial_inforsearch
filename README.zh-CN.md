@@ -2,56 +2,68 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-AI Actuarial Info Search 用于帮助精算和保险团队发现、下载、编目、转换并问答检索 AI 相关文档，数据来源可以是公开机构网站，也可以是浏览器选择的本地文件。
-
-当前正式产品栈是 **FastAPI + React**：
-
-| 产品面 | 技术栈 | 本地地址 | 角色 |
-| --- | --- | --- | --- |
-| 产品 API | Python + FastAPI | `http://127.0.0.1:8000/api/*` | 产品 API 唯一权威入口 |
-| 产品 UI | React 19 + TypeScript + Vite | `http://127.0.0.1:5173` | 当前维护的 Web 界面 |
-
-旧的服务端 HTML 运行时和 Replit workflow 文件已经退出当前项目结构。React 页面只应调用原生 FastAPI 端点。
+AI Actuarial Info Search 是面向精算和保险研究场景的 FastAPI + React 文档智能平台，用于发现、下载、编目、转换、搜索并问答公开网站文档和浏览器上传的本地文件。
 
 ## 当前状态
 
-2026 FastAPI/React 迁移、安全/RBAC rollout，以及 Agentic RAG 实施计划都已经合入 `main`：
+`main` 已体现 2026 产品整合与飞书计划路线图的最终状态：
 
-- 文件导入面向浏览器选择的本地文件/文件夹，使用 upload batch；当前 `type=file` 任务必须带 `upload_batch_id`，不能直接读取任意服务器 `directory_path`。
-- 公共 URL 抓取已加入 SSRF 防护、重定向复验和不安全地址拒绝。
-- 权限已拆分 `sites.write`、`schedule.write`、`tasks.run` 和 admin-only 服务器文件系统辅助权限。
-- Chat/RAG 文档对比最多选择 3 个文档来源，限制上下文大小，返回裁剪提示，并在 prompt 中把检索/文档上下文标为不可信。
-- 登录/注册在 session mutation 前按 IP 限流，前端对 429 和 5xx 展示友好提示。
-- Agentic RAG 已具备 ready_data 构建器、清单注册表/UI 状态、确定性 read tools、Chat 模式、结构化引用/tool trace、法规/公式 profile，以及 CI 覆盖的 eval smoke。
-- 计划中的 Agentic RAG PR 序列已经合并到 PR #142；状态文档在 PR #143 中完成收尾同步，PR #145 继续补上 CJK ready_data 查询匹配、Agentic Chat KB section 数显示，以及 Agentic 原始 score 展示等 QA 修复。
+- **运行时：** FastAPI 是唯一 `/api/*` 权威入口；React/Vite 是唯一维护中的产品 UI。旧 server-rendered/Replit 时代工作流已退出当前产品。
+- **安全/RBAC：** session/token 鉴权、细粒度权限、upload-batch 文件导入、公共 URL SSRF 防护、登录/注册限流，以及 Chat 文档上下文边界控制已启用。
+- **客户产品面：** Dashboard 优先展示客户关心的来源、分类、本周新增、资料详情和问 Agent 入口；后台处理指标放在 admin/ops 页面，不再作为首页主内容。
+- **Markdown 转换：** 由 `config/markdown_conversion.yaml` 和 Settings 管理工具顺序、格式路由、付费/API 工具开关和 tuning；付费/API 工具默认不自动触发。
+- **采集自动化：** 支持配置站点爬取、搜索服务兜底、浏览器上传文件导入、定时任务，以及 web-listening 规则 draft/validate/materialize。
+- **本周新增：** `/api/weekly-updates` 和 `/api/weekly-updates/latest` 基于 `files.first_seen` 汇总新发现资料。
+- **RAG 和 Chat：** 标准向量 RAG 与 Agentic RAG 并存。Chat 已转为知识库优先体验，保留会话历史，支持标准多知识库 Chat 和单个 ready KB 的 Agentic 模式。
+- **路线图完成：** Agentic RAG PR #133-#145 以及后续路线图 PR #147-#154 均已合并；`.hermes/project-status.md` 中的 managed backlog 已完成。
 
-## 功能
+## 功能集
+
+### 发现、导入和编目
 
 - 爬取精算和保险组织网站。
-- 通过 Brave、SerpAPI 等搜索服务扩展发现范围。
+- 通过 Brave/SerpAPI 等搜索服务扩展发现范围。
 - 下载 PDF、Word、PowerPoint、Excel 和 HTML 来源。
 - 通过浏览器选择并上传本地文件/文件夹。
-- 使用 SHA256 去重。
-- 增量编目文件，生成摘要、关键词和分类。
+- 使用 SHA-256 去重，并增量生成摘要、关键词和分类。
+- 基于新发现文件生成 weekly update 摘要。
+
+### Markdown 转换
+
 - 使用本地或 API 引擎将文档转换为 Markdown。
-- 管理 RAG 知识库、chunk profile 和索引任务。
-- 使用标准向量 RAG 做文档问答；单次文档对比最多 3 个选择来源。
-- 为知识库构建 Agentic RAG ready_data 清单，支持 `general`、`regulation`、`formula` 三种 profile。
-- 在 Chat 中使用 Agentic RAG 模式，对单个已就绪知识库进行确定性 ready_data 证据检索，返回结构化引用和可检查 tool trace。
-- 直接调用 ready_data summary、title、section、relation、formula、table、calculation-term 工具。
-- 在 Settings 中配置 AI/search provider credential。
-- 通过 React UI 管理 dashboard、database、tasks、settings、knowledge、chat、logs、users 和 file detail 工作流。
+- 通过 `config/markdown_conversion.yaml` 或 Settings 配置转换行为。
+- 按格式路由工具、调整 scan/page 限制，并让付费/API 工具保持 opt-in。
+
+### Web-listening 规则
+
+- 根据来源 URL 和采集目标生成 `web-listening-agent-rule.v1` YAML 草稿。
+- 在应用前校验 rule YAML。
+- 将校验后的规则 materialize 为 acquisition profile、monitor task、section selection 和 monitor scope 配置。
+
+### RAG、Agentic RAG 和 Chat
+
+- 管理 RAG 知识库、文件、分类、chunk profile 和索引任务。
+- 使用标准向量 RAG 与知识库对话。
+- 单次文档对比最多选择 3 个文档来源。
+- 为知识库构建 `general`、`regulation`、`formula` 三种 Agentic RAG `ready_data` 清单。
+- 在 Chat 中使用 Agentic RAG，对单个 ready KB 返回确定性证据、结构化引用和可检查 tool trace。
+- 直接使用 ready-data summary、title、section、relation、formula、table、calculation-term 工具。
+
+### 管理和运维
+
+- 从 Settings 保存 AI/search provider credential 为数据库加密凭据。
+- 通过 React UI 管理站点、schedule、任务、日志、用户、安全设置、模型目录和知识库。
+- 生产密钥放在 `.env`/环境变量和加密 DB credential 中，不提交到 YAML。
 
 ## 快速开始
 
 ### 环境要求
 
 - Python 3.10+
-- Node.js `^20.19.0` 或 `>=22.12.0`，用于当前 Vite 7 前端工具链
-- 使用 OpenDataLoader PDF 转换时，需要 PATH 中有 Java 11+
-- 如果启用邮箱/session 登录，需要 `FASTAPI_SESSION_SECRET`
-- 如果 provider credential 存入数据库，需要稳定的 `TOKEN_ENCRYPTION_KEY`
-- Provider credential 建议从 Settings 保存为数据库加密 credential
+- Node.js `^20.19.0` 或 `>=22.12.0`，用于 Vite 7 前端工具链
+- 使用 OpenDataLoader PDF 转换时，`PATH` 中需要 Java 11+
+- 启用 session 登录时需要 `FASTAPI_SESSION_SECRET`
+- provider credential 存入数据库时需要稳定的 `TOKEN_ENCRYPTION_KEY`
 
 ### 启动 API
 
@@ -69,64 +81,37 @@ npm run dev
 
 浏览器打开 `http://127.0.0.1:5173`。Vite 会把 `/api/*` 代理到 `http://127.0.0.1:8000`。
 
-如果 `http://127.0.0.1:5173/` 返回 `404`，通常说明另一个 Node/Vite 进程占用了该端口，或者当前浏览器指向的不是本项目 UI。请在本仓库目录运行 `npm run dev`，并使用 Vite 输出的地址。
+如果 `http://127.0.0.1:5173/` 返回 `404`，通常说明另一个 Node/Vite 进程占用了该端口。请在本仓库目录运行 `npm run dev`，并使用 Vite 输出的地址。
 
-## Agentic RAG
+## 核心配置
 
-Agentic RAG 是建立在现有 catalog、chunks、知识库注册表和 Chat 产品之上的结构化证据层。它不替代标准向量 RAG；当前两种模式并存：
+当前有四类配置来源：
 
-- **标准 RAG** 使用向量索引和 LLM 生成，支持多知识库选择，也支持直接选中文档上下文。
-- **Agentic RAG** 使用单个已构建 ready_data 清单的知识库，通过确定性本地工具读取结构化 artifact，返回有根据的 evidence/citations，并记录 `metadata.tool_trace`。
-
-知识库现在带有 `manifest_profile`：
-
-| Profile | 主要 artifact | 适用场景 |
-| --- | --- | --- |
-| `general` | `doc_catalog.jsonl`、`sections.jsonl`、`ready_data_manifest.json` | 通用研究/内部文档 |
-| `regulation` | 通用 artifact，加 aliases、summaries、structured sections、relations | 法规、标准、合规文档 |
-| `formula` | 法规 artifact，加 formula cards、structured tables、calculation terms | 精算公式和计算密集型文档 |
-
-CLI 构建 ready_data 清单：
-
-```bash
-python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
-```
-
-运行确定性 eval smoke：
-
-```bash
-python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
-```
-
-更多 profile、API、UI 行为、存储路径和 eval 命令见 [Agentic RAG Guide](docs/guides/AGENTIC_RAG.md)。
-
-## 配置
-
-主要配置来源有三类：
-
-- `config/sites.yaml`：非密钥运行配置，包括 AI routing、路径、RAG、搜索、scheduled tasks 和 `features`。
+- `config/sites.yaml`：非密钥运行配置，包括站点、路径、AI routing、RAG、搜索、schedule、feature switches 和 web-listening materialized 配置。
+- `config/markdown_conversion.yaml`：Markdown 转换工具顺序、格式路由、付费工具开关和 tuning。
 - 数据库加密 credential：provider API key、base URL 等，从 Settings 管理。
-- `.env`：进程密钥和部署级覆盖项。
+- `.env` / 进程环境：部署密钥和生产级显式覆盖项。
 
 不要把 provider API key 提交到 YAML，也不要长期放在 `.env`。建议从 Settings 保存为加密 credential，再在 `sites.yaml` 中绑定稳定 credential id，例如 `openai:llm:instance:default`。
 
 重要变量：
 
-- `TOKEN_ENCRYPTION_KEY`：数据库中保存 provider credential 时必需。
 - `FASTAPI_SESSION_SECRET`：session 登录必需。
-- `FASTAPI_SESSION_COOKIE_SECURE`：HTTPS 部署设为 `true`；如果省略，在生产环境且启用鉴权时默认开启。
-- `BOOTSTRAP_ADMIN_TOKEN`：可选的本地/admin bootstrap token。
+- `TOKEN_ENCRYPTION_KEY`：解密数据库 provider credential 必需，必须保持稳定。
+- `BOOTSTRAP_ADMIN_TOKEN`：可选的本地/admin 恢复 token。
 - `FASTAPI_CORS_ORIGINS`：部署后允许访问 API 的浏览器 origin。
 - `TRUST_PROXY`：只有当 API 只能被可信反向代理直连时才设为 `true`。
 - `CONFIG_WRITE_AUTH_TOKEN`、`LOGS_READ_AUTH_TOKEN`、`FILE_DELETION_AUTH_TOKEN`：兼容 token，除非明确需要 `X-Auth-Token`，否则可不启用。
 
 鉴权、全局日志、文件删除、限流、CSRF、错误详情和安全响应头等功能开关在 `config/sites.yaml -> features` 中，也可以从 Settings 修改。如果进程环境变量设置了同名部署覆盖，Settings 会将该值标记为 locked。
 
+SQLite 路径以 `config/sites.yaml -> paths.db` 为准；`DB_PATH` 只是 YAML 路径缺失时的 fallback。
+
 ## 鉴权和权限
 
 - `features.require_auth=true`：用户必须通过 session 或 token 登录。
 - `features.require_auth=false`：访客只读。
-- 运行任务、管理 schedule、写 settings、下载和删除文件、写站点配置都需要相应权限。
+- 运行任务、管理 schedule、写 settings、下载、删除文件、写站点配置都需要对应权限。
 - `operator` 可以管理站点。`files.import.server` 只保留给 admin-only 的服务器文件系统辅助能力，不属于普通浏览器上传流程。
 - 本地 admin 恢复 token 可通过 `BOOTSTRAP_ADMIN_TOKEN` 配置；真实 token 不要提交到仓库。
 
@@ -136,9 +121,9 @@ python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_case
 
 `type=file` collection run 必须带 `upload_batch_id`。只传 `directory_path` 的请求会被拒绝；不要把任意服务器路径导入写成普通 operator 工作流。
 
-在 **Tasks -> Configured Tasks** 中，`parameters` 必须是合法 JSON。Schedule 触发时，这个对象会传给原生后台任务。
+在 **Tasks -> Configured Tasks** 中，`parameters` 必须是合法 JSON。支持的 interval 包括 `daily`、`weekly`、`daily at 02:00`、`every 6 hours`、`every 30 minutes`。
 
-常见示例：
+常见任务参数：
 
 ```json
 {}
@@ -163,7 +148,47 @@ python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_case
 }
 ```
 
-支持的 interval 包括 `daily`、`weekly`、`daily at 02:00`、`every 6 hours`、`every 30 minutes`。
+运行 weekly summary：
+
+```json
+{
+  "period_start": "2026-06-01T00:00:00+00:00",
+  "period_end": "2026-06-08T00:00:00+00:00",
+  "max_files": 500
+}
+```
+
+## Agentic RAG
+
+Agentic RAG 是建立在现有 catalog、chunks、知识库注册表和 Chat 产品之上的结构化证据层。它不替代标准向量 RAG；当前两种模式并存：
+
+| 模式 | 入口 | 数据依赖 | 主要约束 |
+| --- | --- | --- | --- |
+| 标准 RAG | `/api/chat/query` 默认 `rag_mode` | 向量索引和检索 chunk | 允许多知识库和直接选中文档上下文 |
+| Agentic RAG Chat | `/api/chat/query` 且 `rag_mode="agentic"` | 一个 ready KB manifest | 必须且只能选择一个 ready KB；不能混用直接文档上下文 |
+| Agentic read APIs | `/api/agentic-rag/*` | KB manifest 或允许的显式 `output_dir` | 返回确定性工具结果/答案 |
+
+知识库带有 `manifest_profile`：
+
+| Profile | 主要 artifact | 适用场景 |
+| --- | --- | --- |
+| `general` | `doc_catalog.jsonl`、`sections.jsonl`、`ready_data_manifest.json` | 通用研究/内部文档 |
+| `regulation` | 通用 artifact，加 aliases、summaries、structured sections、relations | 法规、标准、合规文档 |
+| `formula` | regulation artifact，加 formula cards、structured tables、calculation terms | 精算公式和计算密集型文档 |
+
+CLI 构建 ready-data 清单：
+
+```bash
+python -m ai_actuarial.agentic_rag.ready_data_builder --db data/index.db --kb-id <kb-id> --profile formula --validate
+```
+
+运行确定性 eval smoke：
+
+```bash
+python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
+```
+
+更多 profile、API、UI 行为、存储路径和 eval 命令见 [Agentic RAG Guide](docs/guides/AGENTIC_RAG.md)。
 
 ## 安全状态
 
@@ -184,7 +209,7 @@ AI_actuarial_inforsearch/
 ├─ config/                 # YAML 配置
 ├─ data/                   # 本地运行数据、下载文件、日志和 SQLite DB
 ├─ doc_to_md/              # 文档转 Markdown 引擎
-├─ docs/                   # 架构、指南、历史计划和报告
+├─ docs/                   # 当前文档和历史归档
 ├─ scripts/                # 维护脚本
 ├─ tests/                  # Python 和源码级测试
 ├─ vite.config.ts          # Vite 开发服务器和构建配置
@@ -212,6 +237,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 npm run build
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py -q
+python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py -q
 python -m pytest tests/agentic_rag/test_eval.py tests/agentic_rag/test_planner_agentic_loop.py -q
 python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
 ```
@@ -227,12 +253,12 @@ python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_case
 - [Rate Limiting](docs/rate-limit-config.md)
 - [Production Security Config](docs/guides/PRODUCTION_SECURITY_CONFIG.md)
 - [Service Start Guide](docs/guides/SERVICE_START_GUIDE.md)
+- [历史文档归档](docs/archive/README.md)
 
 ## 输出文件
 
 - 下载文件：`data/files/`
 - SQLite 数据库：以 `config/sites.yaml -> paths.db` 为准，缺省 fallback 为 `data/index.db`
-- Catalog 输出：`data/catalog.jsonl`、`data/catalog.md`
-- 更新日志：`data/updates/`
+- Agentic ready data：默认位于 DB 邻近的 `agentic_ready_data/` 目录
 - 应用日志：`data/app.log`
 - 任务日志：`data/task_logs/*.log`

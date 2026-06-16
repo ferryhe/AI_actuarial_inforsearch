@@ -16,21 +16,30 @@ The legacy server-rendered runtime has been retired from the active tree. React 
 - **Unmatched `/api/*`:** FastAPI returns `410`
 - **Migration inventory:** available only when `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`
 - **RAG modes:** standard vector RAG and Agentic RAG both use native FastAPI endpoints.
+- **Roadmap surfaces:** Markdown conversion config, web-listening rule draft/validate/materialize, weekly updates, customer Dashboard, and KB-first Chat are all native FastAPI + React surfaces.
 
 ## Product Contract Status
 
 The routed React product shell is expected to use native FastAPI endpoints for:
 
 - Dashboard
+  - Customer-facing sources, categories, weekly additions, file-detail links, and Agent entry points
+  - Backend processing metrics stay in admin/ops surfaces rather than the homepage
 - Database
 - File Detail / File Preview
 - Chat
+  - Knowledge-base-first entry point
+  - Standard multi-KB mode
+  - Agentic single-ready-KB mode
 - Tasks
 - Logs
 - Knowledge / KB Detail
 - Agentic ready_data manifest status/build actions
 - Agentic RAG Chat mode, evidence rendering, and tool trace display
 - Settings
+  - AI/search credentials
+  - Markdown conversion config
+  - site, schedule, security, and model settings
 - Login / Register / Profile / Users
 
 ## Representative Native FastAPI Surface
@@ -64,6 +73,7 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - `/api/config/backend-settings`
 - `/api/config/ai-models`
 - `/api/config/llm-providers`
+- `/api/config/markdown-conversion`
 - `/api/config/categories`
 - `/api/schedule/status`
 - `/api/schedule/reinit`
@@ -77,6 +87,17 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - `/api/tasks/stop/{task_id}`
 - `/api/collections/run`
 - `/api/utils/browse-folder`
+
+### Weekly Updates
+
+- `/api/weekly-updates`
+- `/api/weekly-updates/latest`
+
+### Web-listening Rules
+
+- `/api/web-listening/rules/draft`
+- `/api/web-listening/rules/validate`
+- `/api/web-listening/rules/materialize`
 
 ### RAG / Knowledge / Chat
 
@@ -135,9 +156,11 @@ Agentic Chat is also exposed through the main chat contract by sending `rag_mode
 
 ## Enforcement
 
-- `tests/test_react_fastapi_authority.py` scans the routed React shell and fails if any referenced endpoint is not native FastAPI.
-- `tests/test_fastapi_no_flask_runtime.py` proves `create_app()` starts without a legacy web package.
-- `tests/test_fastapi_react_cleanup.py` keeps the cleaned FastAPI + React project boundary from regressing.
+- `tests/test_fastapi_entrypoint.py`, `tests/test_fastapi_no_flask_runtime.py`, `tests/test_react_fastapi_authority.py`, and `tests/test_fastapi_react_cleanup.py` keep the FastAPI + React product boundary from regressing.
+- `tests/test_markdown_conversion_config.py` and related ops endpoint tests cover Markdown conversion config normalization, caching, and Settings read/write behavior.
+- `tests/test_web_listening_rule.py` covers rule draft/validate/materialize behavior and YAML coercion.
+- `tests/test_weekly_updates.py` covers weekly summary API/task behavior using `files.first_seen`.
+- `tests/test_fastapi_chat_endpoints.py` and source-level Chat tests cover KB-first Chat behavior.
 - `tests/agentic_rag/test_eval.py` and the CI Agentic eval smoke keep the deterministic ready_data eval path active.
 
 ## Migration Policy
@@ -158,6 +181,8 @@ Agentic Chat is also exposed through the main chat contract by sending `rag_mode
 
 ```bash
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
+python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py -q
+python -m pytest tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py -q
 npm run build
 python -m pytest tests/agentic_rag/test_eval.py -q
 python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
