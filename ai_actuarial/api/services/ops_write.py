@@ -584,7 +584,7 @@ def validate_web_listening_rule(data: dict[str, Any]) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     raw_rule = payload.get("rule_yaml") or payload.get("yaml") or payload.get("rule")
     if raw_rule is None:
-        raise OpsWriteError("rule or rule_yaml is required")
+        raise OpsWriteError("rule, rule_yaml, or yaml is required")
     rule, errors, warnings = validate_rule(raw_rule, check_url_safety=True)
     result: dict[str, Any] = {
         "success": not errors,
@@ -608,7 +608,7 @@ def materialize_web_listening_rule(data: dict[str, Any], *, bridge: BridgeState 
     payload = _coerce_required_dict(data)
     raw_rule = payload.get("rule_yaml") or payload.get("yaml") or payload.get("rule")
     if raw_rule is None:
-        raise OpsWriteError("rule or rule_yaml is required")
+        raise OpsWriteError("rule, rule_yaml, or yaml is required")
     rule, errors, warnings = validate_rule(raw_rule, check_url_safety=True)
     if errors or rule is None:
         raise OpsWriteError("; ".join(errors) or "Invalid web listening rule")

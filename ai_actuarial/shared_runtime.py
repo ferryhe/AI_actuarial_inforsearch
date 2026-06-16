@@ -24,7 +24,7 @@ def _env_flag_override(*names: str) -> bool | None:
     return None
 
 
-def _coerce_bool(value: object, default: bool = False) -> bool:
+def coerce_bool(value: object, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -36,6 +36,10 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
     if value is None:
         return default
     return bool(value)
+
+
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    return coerce_bool(value, default)
 
 
 def _feature_bool(

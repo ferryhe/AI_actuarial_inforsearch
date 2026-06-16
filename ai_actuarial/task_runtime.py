@@ -27,7 +27,7 @@ from ai_actuarial.crawler import Crawler, SiteConfig
 from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.search import search_all
-from ai_actuarial.shared_runtime import append_task_log, get_sites_config_path, load_yaml, task_log_path
+from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_config_path, load_yaml, parse_int_clamped, task_log_path
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -516,20 +516,21 @@ class NativeTaskRuntime:
                 return self._run_chunk_generation(task_id, storage, db_path, data)
 
             if collection_type == "weekly_summary":
-                return self._run_weekly_summary(db_path, data)
+                return self._run_weekly_summary(db_path, data, storage=storage)
 
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
             storage.close()
 
-    def _run_weekly_summary(self, db_path: str, data: dict[str, Any]) -> CollectionResult:
+    def _run_weekly_summary(self, db_path: str, data: dict[str, Any], *, storage: Storage | None = None) -> CollectionResult:
         from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
 
         summary = generate_weekly_update_summary(
             db_path=db_path,
+            storage=storage,
             period_start=str(data.get("period_start") or "").strip() or None,
             period_end=str(data.get("period_end") or "").strip() or None,
-            max_files=int(data.get("max_files") or 500),
+            max_files=parse_int_clamped(data.get("max_files"), default=500, min_value=1, max_value=10_000),
         )
         file_count = int(summary.get("file_count") or 0)
         return CollectionResult(
@@ -1190,7 +1191,7 @@ class NativeTaskRuntime:
                 content_selector=str(row.get("content_selector") or "").strip() or None,
                 allow_url_patterns=self._coerce_list(row.get("allow_url_patterns")),
                 queries=list(row.get("queries") or []),
-                collect_page_content=bool(row.get("collect_page_content", False)),
+                collect_page_content=coerce_bool(row.get("collect_page_content"), default=False),
                 check_database=bool(data.get("check_database", True)),
             )
             for row in site_rows

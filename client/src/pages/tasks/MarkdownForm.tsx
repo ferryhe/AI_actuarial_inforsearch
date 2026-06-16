@@ -102,6 +102,11 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
             value={scanCount}
             onChange={(value) => {
               setScanCountTouched(true);
+              const parsed = parseInt(value, 10);
+              if (!Number.isNaN(parsed) && parsed < 1) {
+                setScanCount("1");
+                return;
+              }
               setScanCount(value);
             }}
             placeholder={String(markdownConversionLimits.defaultScanCount)}

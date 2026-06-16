@@ -12,7 +12,7 @@ from ai_actuarial.markdown_conversion_config import (
     normalize_markdown_conversion_config,
     write_markdown_conversion_config,
 )
-from ai_actuarial.ai_runtime import resolve_ocr_runtime
+from ai_actuarial.ai_runtime import OCRRuntime, apply_ocr_runtime_environment, resolve_ocr_runtime
 from doc_to_md.registry import pick_auto_engine
 
 
@@ -137,3 +137,36 @@ def test_resolve_ocr_runtime_auto_does_not_become_docling(monkeypatch):
     runtime = resolve_ocr_runtime(engine_override="auto", yaml_config={"ai_config": {"ocr": {"provider": "local", "model": "docling"}}})
 
     assert runtime.engine == "auto"
+
+
+def test_apply_ocr_runtime_environment_reuses_markdown_config_cache(monkeypatch, tmp_path):
+    target = tmp_path / "markdown_conversion.yaml"
+    target.write_text(yaml.safe_dump({"tools": {"markitdown": {"tuning": {"max_pages": 3}}}}), encoding="utf-8")
+    monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(target))
+
+    import ai_actuarial.ai_runtime as ai_runtime
+    import ai_actuarial.markdown_conversion_config as markdown_config
+
+    ai_runtime._MARKDOWN_CONVERSION_TUNING_CACHE.clear()
+    calls = []
+    real_loader = markdown_config.load_markdown_conversion_config
+
+    def counting_loader(path=None):
+        calls.append(path)
+        return real_loader(path)
+
+    monkeypatch.setattr(markdown_config, "load_markdown_conversion_config", counting_loader)
+    runtime = OCRRuntime(
+        engine="markitdown",
+        provider="local",
+        model="markitdown",
+        api_key=None,
+        base_url=None,
+        credential_source="test",
+        raw_config={},
+    )
+
+    apply_ocr_runtime_environment(runtime)
+    apply_ocr_runtime_environment(runtime)
+
+    assert len(calls) == 1
