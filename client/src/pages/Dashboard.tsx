@@ -197,26 +197,37 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
+    Promise.allSettled([
       apiGet<Stats>("/api/stats"),
       apiGet<{ files: FileItem[] }>("/api/files?limit=24&order_by=first_seen&order_dir=desc"),
       apiGet<CategoriesResponse>("/api/categories?mode=used"),
     ])
-      .then(([statsData, filesData, categoriesData]) => {
-        setStats(statsData);
-        setFiles((filesData.files || []).filter((file) => isThisCalendarWeek(file.first_seen)).slice(0, WEEKLY_FILE_LIMIT));
-        setCategories(normalizeCategories(categoriesData.categories));
+      .then(([statsResult, filesResult, categoriesResult]) => {
+        if (statsResult.status === "fulfilled") {
+          setStats(statsResult.value);
+        } else {
+          console.error(statsResult.reason);
+        }
+        if (filesResult.status === "fulfilled") {
+          setFiles((filesResult.value.files || []).filter((file) => isThisCalendarWeek(file.first_seen)).slice(0, WEEKLY_FILE_LIMIT));
+        } else {
+          console.error(filesResult.reason);
+        }
+        if (categoriesResult.status === "fulfilled") {
+          setCategories(normalizeCategories(categoriesResult.value.categories));
+        } else {
+          console.error(categoriesResult.reason);
+        }
       })
-      .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
   const statCards = useMemo(() => [
     { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
     { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
-    { icon: Tags, label: t("dashboard.categories"), value: categories.length || "-", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: files.length, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  ], [categories.length, files.length, stats?.total_files, stats?.total_sources, t]);
+    { icon: Tags, label: t("dashboard.categories"), value: loading ? "-" : categories.length, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : files.length, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  ], [categories.length, files.length, loading, stats?.total_files, stats?.total_sources, t]);
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_materials"), desc: t("dashboard.browse_materials_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },

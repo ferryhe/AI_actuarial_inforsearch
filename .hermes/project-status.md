@@ -25,6 +25,7 @@
 - `git diff --check` passed.
 - Independent spec review pass 2: PASS after `first_seen` ordering fix.
 - Independent code-quality/security review pass 2: PASS after `first_seen` ordering fix.
+- Copilot comments addressed: independent Dashboard API loading with `Promise.allSettled`, consistent loading/zero stat counts, and PR status doc updated.
 - Mandatory local Codex review gate attempted with `codex exec review --base origin/main` but blocked by expired/reused Codex auth refresh token (401); Hermes independent reviewers were used for this gate.
 
 ## Notes
