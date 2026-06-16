@@ -13,12 +13,19 @@ export interface ConversionTool {
   displayName: string;
 }
 
+export interface MarkdownConversionLimits {
+  defaultScanCount: number;
+  maxScanCount: number;
+}
+
 interface TaskOptions {
   engines: SearchEngine[];
   providers: string[];
   categories: string[];
   conversionTools: string[];
   conversionToolsInfo: ConversionTool[];
+  defaultConversionTool: string;
+  markdownConversionLimits: MarkdownConversionLimits;
   catalogProviders: string[];
   loading: boolean;
   error: string | null;
@@ -61,6 +68,20 @@ interface AiModelsResponse {
   [key: string]: unknown;
 }
 
+interface MarkdownConversionConfigResponse {
+  tools?: Array<{
+    name?: string;
+    provider?: string;
+    displayName?: string;
+    display_name?: string;
+    enabled?: boolean;
+  }>;
+  default_tool?: string;
+  limits?: { default_scan_count?: number; max_scan_count?: number };
+  config?: { default_tool?: string; limits?: { default_scan_count?: number; max_scan_count?: number } };
+  [key: string]: unknown;
+}
+
 const FALLBACK_ENGINES: SearchEngine[] = [
   { name: "Brave Search", value: "brave", available: true },
   { name: "Google (SerpAPI)", value: "google", available: true },
@@ -68,14 +89,17 @@ const FALLBACK_ENGINES: SearchEngine[] = [
   { name: "Tavily", value: "tavily", available: true },
 ];
 
-const FALLBACK_CONVERSION_TOOLS = ["opendataloader", "markitdown", "mistral", "docling", "mathpix"];
+const FALLBACK_CONVERSION_TOOLS = ["auto", "opendataloader", "markitdown", "docling", "local"];
 const FALLBACK_CONVERSION_TOOLS_INFO: ConversionTool[] = [
+  { name: "auto", provider: "auto", displayName: "Auto (configured chain)" },
   { name: "opendataloader", provider: "local", displayName: "OpenDataLoader" },
   { name: "markitdown", provider: "local", displayName: "MarkItDown" },
-  { name: "mistral", provider: "mistral", displayName: "Mistral OCR" },
   { name: "docling", provider: "local", displayName: "Docling" },
-  { name: "mathpix", provider: "mathpix", displayName: "Mathpix" },
+  { name: "local", provider: "local", displayName: "Local (Basic)" },
 ];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 
 const cache: {
   engines?: SearchEngine[];
@@ -83,11 +107,14 @@ const cache: {
   categories?: string[];
   conversionTools?: string[];
   conversionToolsInfo?: ConversionTool[];
+  defaultConversionTool?: string;
+  markdownConversionLimits?: MarkdownConversionLimits;
   catalogProviders?: string[];
   timestamp?: number;
 } = {};
 
 const CACHE_TTL = 60000;
+const FALLBACK_MARKDOWN_CONVERSION_LIMITS: MarkdownConversionLimits = { defaultScanCount: 50, maxScanCount: 2000 };
 
 function isCacheValid(): boolean {
   return !!cache.timestamp && Date.now() - cache.timestamp < CACHE_TTL;
@@ -196,6 +223,10 @@ export function useTaskOptions(): TaskOptions {
   const [categories, setCategories] = useState<string[]>(cache.categories || []);
   const [conversionTools, setConversionTools] = useState<string[]>(cache.conversionTools || FALLBACK_CONVERSION_TOOLS);
   const [conversionToolsInfo, setConversionToolsInfo] = useState<ConversionTool[]>(cache.conversionToolsInfo || FALLBACK_CONVERSION_TOOLS_INFO);
+  const [defaultConversionTool, setDefaultConversionTool] = useState<string>(cache.defaultConversionTool || "auto");
+  const [markdownConversionLimits, setMarkdownConversionLimits] = useState<MarkdownConversionLimits>(
+    cache.markdownConversionLimits || FALLBACK_MARKDOWN_CONVERSION_LIMITS
+  );
   const [catalogProviders, setCatalogProviders] = useState<string[]>(cache.catalogProviders || []);
   const [loading, setLoading] = useState(!isCacheValid());
   const [error, setError] = useState<string | null>(null);
@@ -208,6 +239,8 @@ export function useTaskOptions(): TaskOptions {
       setCategories(cache.categories || []);
       setConversionTools(cache.conversionTools || FALLBACK_CONVERSION_TOOLS);
       setConversionToolsInfo(cache.conversionToolsInfo || FALLBACK_CONVERSION_TOOLS_INFO);
+      setDefaultConversionTool(cache.defaultConversionTool || "auto");
+      setMarkdownConversionLimits(cache.markdownConversionLimits || FALLBACK_MARKDOWN_CONVERSION_LIMITS);
       setCatalogProviders(cache.catalogProviders || []);
       return;
     }
@@ -220,9 +253,10 @@ export function useTaskOptions(): TaskOptions {
       apiGet<ProviderResponse>("/api/config/llm-providers"),
       apiGet<CategoryResponse>("/api/categories?mode=used"),
       apiGet<AiModelsResponse>("/api/config/ai-models"),
+      apiGet<MarkdownConversionConfigResponse>("/api/config/markdown-conversion"),
     ]);
 
-    const [enginesResult, providersResult, categoriesResult, modelsResult] = results;
+    const [enginesResult, providersResult, categoriesResult, modelsResult, markdownConfigResult] = results;
 
     let fetchedEngines = FALLBACK_ENGINES;
     if (enginesResult.status === "fulfilled" && enginesResult.value?.engines) {
@@ -251,6 +285,8 @@ export function useTaskOptions(): TaskOptions {
 
     let fetchedTools = FALLBACK_CONVERSION_TOOLS;
     let fetchedToolsInfo = FALLBACK_CONVERSION_TOOLS_INFO;
+    let fetchedDefaultConversionTool = "auto";
+    let fetchedMarkdownConversionLimits = FALLBACK_MARKDOWN_CONVERSION_LIMITS;
     let fetchedCatalogProviders: string[] = [];
     const knownProviders =
       providersResult.status === "fulfilled" && providersResult.value?.known && typeof providersResult.value.known === "object"
@@ -262,13 +298,37 @@ export function useTaskOptions(): TaskOptions {
     // show a tool as available when its provider key is missing.
     const configuredProviderNamesSet = new Set(fetchedProviders);
 
+    const markdownConfigLoaded = markdownConfigResult.status === "fulfilled" && isRecord(markdownConfigResult.value);
+    if (markdownConfigLoaded) {
+      const mdConfig = markdownConfigResult.value as MarkdownConversionConfigResponse;
+      const toolsFromApi = Array.isArray(mdConfig.tools) ? mdConfig.tools : [];
+      if (toolsFromApi.length > 0) {
+        fetchedToolsInfo = toolsFromApi
+          .filter((tool) => tool.enabled !== false && tool.name)
+          .map((tool) => ({
+            name: String(tool.name),
+            provider: String(tool.provider || "local"),
+            displayName: String(tool.displayName || tool.display_name || tool.name),
+          }));
+        fetchedTools = fetchedToolsInfo.map((tool) => tool.name);
+      }
+      fetchedDefaultConversionTool = String(mdConfig.default_tool || mdConfig.config?.default_tool || fetchedTools[0] || "auto");
+      const limits = mdConfig.limits || mdConfig.config?.limits || {};
+      fetchedMarkdownConversionLimits = {
+        defaultScanCount: Number(limits.default_scan_count || FALLBACK_MARKDOWN_CONVERSION_LIMITS.defaultScanCount),
+        maxScanCount: Number(limits.max_scan_count || FALLBACK_MARKDOWN_CONVERSION_LIMITS.maxScanCount),
+      };
+    }
     if (modelsResult.status === "fulfilled") {
       const modelRes = modelsResult.value;
       if (modelRes?.available && typeof modelRes.available === "object") {
-        const ocrTools = extractOcrTools(modelRes.available, configuredProviderNamesSet);
-        if (ocrTools.length > 0) {
-          fetchedToolsInfo = ocrTools;
-          fetchedTools = ocrTools.map((t) => t.name);
+        if (!markdownConfigLoaded) {
+          const ocrTools = extractOcrTools(modelRes.available, configuredProviderNamesSet);
+          if (ocrTools.length > 0) {
+            fetchedToolsInfo = ocrTools;
+            fetchedTools = ocrTools.map((t) => t.name);
+            fetchedDefaultConversionTool = fetchedTools[0] || fetchedDefaultConversionTool;
+          }
         }
         fetchedCatalogProviders = extractConfiguredCatalogSelection(
           modelRes.available,
@@ -290,6 +350,8 @@ export function useTaskOptions(): TaskOptions {
     cache.categories = fetchedCategories;
     cache.conversionTools = fetchedTools;
     cache.conversionToolsInfo = fetchedToolsInfo;
+    cache.defaultConversionTool = fetchedDefaultConversionTool;
+    cache.markdownConversionLimits = fetchedMarkdownConversionLimits;
     cache.catalogProviders = fetchedCatalogProviders;
     cache.timestamp = Date.now();
 
@@ -298,6 +360,8 @@ export function useTaskOptions(): TaskOptions {
     setCategories(fetchedCategories);
     setConversionTools(fetchedTools);
     setConversionToolsInfo(fetchedToolsInfo);
+    setDefaultConversionTool(fetchedDefaultConversionTool);
+    setMarkdownConversionLimits(fetchedMarkdownConversionLimits);
     setCatalogProviders(fetchedCatalogProviders);
     setLoading(false);
 
@@ -320,5 +384,5 @@ export function useTaskOptions(): TaskOptions {
     fetchOptions(true);
   }, [fetchOptions]);
 
-  return { engines, providers, categories, conversionTools, conversionToolsInfo, catalogProviders, loading, error, refresh };
+  return { engines, providers, categories, conversionTools, conversionToolsInfo, defaultConversionTool, markdownConversionLimits, catalogProviders, loading, error, refresh };
 }

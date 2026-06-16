@@ -11,11 +11,11 @@ export function FormField({ label, children, hint }: { label: string; children: 
   );
 }
 
-export function InputField({ value, onChange, placeholder, type = "text", testId }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; type?: string; testId?: string;
+export function InputField({ value, onChange, placeholder, type = "text", min, max, testId }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; type?: string; min?: number; max?: number; testId?: string;
 }) {
   return (
-    <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+    <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} min={min} max={max}
       className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
       data-testid={testId} />
   );

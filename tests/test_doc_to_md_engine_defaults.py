@@ -11,10 +11,12 @@ def test_registry_supports_recommended_markdown_engines():
     assert registry._import_engine("mathpix").__name__ == "MathpixEngine"
 
 
-def test_auto_pdf_candidates_start_with_recommended_default_tools():
+def test_auto_pdf_candidates_use_configured_local_safe_default_chain():
     candidates = registry._auto_candidates(Path("sample.pdf"))
 
-    assert candidates[:5] == ["opendataloader", "markitdown", "mistral", "docling", "mathpix"]
+    assert candidates == ["opendataloader", "markitdown", "docling", "local"]
+    assert "mistral" not in candidates
+    assert "mathpix" not in candidates
 
 
 def test_settings_accepts_new_markdown_engine_configuration():

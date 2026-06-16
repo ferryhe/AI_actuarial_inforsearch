@@ -69,39 +69,46 @@ def _import_engine(engine: str):
 
 
 def pick_auto_engine(path: Path) -> str:
-    """Pick a reasonable default engine based on extension.
+    """Pick the first configured auto candidate without triggering paid/API tools by default."""
 
-Conservative default: prefer local tools first to avoid unexpected paid API calls.
-"""
+    candidates = _auto_candidates(path)
+    if candidates:
+        return candidates[0]
+    try:
+        from ai_actuarial.markdown_conversion_config import markdown_conversion_config_file_exists
 
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        return "opendataloader"
-    if suffix in {".docx", ".pptx"}:
-        return "markitdown"
-    if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
-        return "deepseekocr"
+        if markdown_conversion_config_file_exists():
+            raise RuntimeError(f"No auto conversion candidates configured for {path.name}")
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
     return "markitdown"
 
 
 def _auto_candidates(path: Path) -> list[str]:
+    try:
+        from ai_actuarial.markdown_conversion_config import (
+            candidate_chain_for_path,
+            markdown_conversion_config_file_exists,
+        )
+
+        candidates = candidate_chain_for_path(path, auto_only=True)
+        if candidates:
+            return candidates
+        if markdown_conversion_config_file_exists():
+            return []
+    except Exception:
+        pass
+
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return [
-            "opendataloader",
-            "markitdown",
-            "mistral",
-            "docling",
-            "mathpix",
-            "marker",
-            "deepseekocr",
-            "local",
-        ]
+        return ["opendataloader", "markitdown", "docling", "local"]
     if suffix in {".docx", ".pptx"}:
-        return ["markitdown", "docling", "mistral", "mathpix", "local"]
+        return ["markitdown", "docling", "local"]
     if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
-        return ["mathpix", "deepseekocr", "mistral", "local"]
-    return ["markitdown", "docling", "mistral", "local"]
+        return ["local"]
+    return ["markitdown", "docling", "local"]
 
 
 def convert_path(

@@ -8,12 +8,13 @@ import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
   const { t } = useTranslation();
-  const { conversionTools, categories: dynamicCategories } = useTaskOptions();
+  const { conversionToolsInfo, defaultConversionTool, markdownConversionLimits, categories: dynamicCategories } = useTaskOptions();
   const [scopeMode, setScopeMode] = useState("index");
   const [category, setCategory] = useState("");
-  const [scanCount, setScanCount] = useState("50");
+  const [scanCount, setScanCount] = useState(String(markdownConversionLimits.defaultScanCount));
+  const [scanCountTouched, setScanCountTouched] = useState(false);
   const [startIndex, setStartIndex] = useState("");
-  const [tool, setTool] = useState("opendataloader");
+  const [tool, setTool] = useState(defaultConversionTool || "auto");
   const [skipExisting, setSkipExisting] = useState(true);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
@@ -23,15 +24,22 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
     ...dynamicCategories.map((c) => ({ value: c, label: c })),
   ];
 
-  const tools = conversionTools.length > 0
-    ? conversionTools.map((t) => ({ value: t, label: t.charAt(0).toUpperCase() + t.slice(1) }))
-    : [
-        { value: "opendataloader", label: "OpenDataLoader" },
-        { value: "markitdown", label: "MarkItDown" },
-        { value: "mistral", label: "Mistral OCR" },
-        { value: "docling", label: "Docling" },
-        { value: "mathpix", label: "Mathpix" },
-      ];
+  const tools = conversionToolsInfo.length > 0
+    ? conversionToolsInfo.map((t) => ({ value: t.name, label: t.displayName || t.name }))
+    : [{ value: "auto", label: "Auto (configured chain)" }];
+
+  useEffect(() => {
+    const fallbackTool = defaultConversionTool || conversionToolsInfo[0]?.name || "auto";
+    if (!tool || !conversionToolsInfo.some((candidate) => candidate.name === tool)) {
+      setTool(fallbackTool);
+    }
+  }, [conversionToolsInfo, defaultConversionTool, tool]);
+
+  useEffect(() => {
+    if (!scanCountTouched) {
+      setScanCount(String(markdownConversionLimits.defaultScanCount));
+    }
+  }, [markdownConversionLimits.defaultScanCount, scanCountTouched]);
 
   const loadStats = useCallback(async (cat?: string) => {
     setStatsLoading(true);
@@ -59,13 +67,14 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
 
   const buildTask = (): Record<string, unknown> | null => {
     if (scopeMode === "category" && !category.trim()) return null;
+    const parsedScanCount = parseInt(scanCount, 10) || markdownConversionLimits.defaultScanCount;
     return {
       type: "markdown_conversion",
       name: `Markdown (${tool})`,
       conversion_tool: tool,
       scope_mode: scopeMode,
       category: scopeMode === "category" ? category : undefined,
-      scan_count: parseInt(scanCount) || 50,
+      scan_count: Math.max(1, Math.min(parsedScanCount, markdownConversionLimits.maxScanCount)),
       scan_start_index: startIndex ? parseInt(startIndex) : undefined,
       skip_existing: skipExisting,
       overwrite_existing: overwriteExisting,
@@ -88,8 +97,19 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
         <FormField label={t("tasks.form.conversion_tool")}>
           <SelectField value={tool} onChange={setTool} options={tools} testId="select-tool" />
         </FormField>
-        <FormField label={t("tasks.form.scan_count")} hint={t("tasks.form.max_hint") + " 2000"}>
-          <InputField value={scanCount} onChange={setScanCount} placeholder="50" type="number" testId="input-md-scan-count" />
+        <FormField label={t("tasks.form.scan_count")} hint={t("tasks.form.max_hint") + ` ${markdownConversionLimits.maxScanCount}`}>
+          <InputField
+            value={scanCount}
+            onChange={(value) => {
+              setScanCountTouched(true);
+              setScanCount(value);
+            }}
+            placeholder={String(markdownConversionLimits.defaultScanCount)}
+            type="number"
+            min={1}
+            max={markdownConversionLimits.maxScanCount}
+            testId="input-md-scan-count"
+          />
         </FormField>
       </div>
       <FormField label={t("tasks.form.start_index")} hint={t("tasks.form.start_index_hint")}>

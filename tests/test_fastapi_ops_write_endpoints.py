@@ -317,6 +317,44 @@ def test_site_config_write_rejects_unsafe_urls(tmp_path: Path, monkeypatch) -> N
     assert "Import Blocked" not in site_names
 
 
+def test_markdown_conversion_config_read_write_endpoint_roundtrip(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    markdown_config_path = tmp_path / "markdown_conversion.yaml"
+    monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(markdown_config_path))
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    admin_headers = {"X-Auth-Token": str(seed["admin_token"])}
+
+    unauthenticated = client.get("/api/config/markdown-conversion")
+    assert unauthenticated.status_code == 401
+
+    forbidden = client.post(
+        "/api/config/markdown-conversion",
+        json={"default_tool": "markitdown"},
+        headers={"Authorization": f"Bearer {seed['reader_token']}"},
+    )
+    assert forbidden.status_code == 403
+
+    update = client.post(
+        "/api/config/markdown-conversion",
+        json={
+            "default_tool": "markitdown",
+            "limits": {"default_scan_count": 25, "max_scan_count": 50000},
+            "formats": {"pdf": {"candidate_chain": ["mistral", "markitdown", "local"]}},
+        },
+        headers=admin_headers,
+    )
+    assert update.status_code == 200, update.text
+    body = update.json()
+    assert body["success"] is True
+    assert body["config"]["default_tool"] == "markitdown"
+    assert body["config"]["limits"]["max_scan_count"] == 10000
+    assert body["config"]["formats"]["pdf"]["candidate_chain"] == ["mistral", "markitdown", "local"]
+
+    read_back = client.get("/api/config/markdown-conversion", headers=admin_headers)
+    assert read_back.status_code == 200, read_back.text
+    assert read_back.json()["config"]["default_tool"] == "markitdown"
+    assert markdown_config_path.exists()
+
 
 def test_backend_settings_write_roundtrip_is_native_fastapi(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)

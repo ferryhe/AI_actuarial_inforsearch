@@ -1,0 +1,129 @@
+version: 1
+default_tool: auto
+tools:
+  auto:
+    display_name: Auto (configured chain)
+    provider: auto
+    enabled: true
+    auto_enabled: true
+    paid_or_api: false
+  opendataloader:
+    display_name: OpenDataLoader
+    provider: local
+    enabled: true
+    auto_enabled: true
+    paid_or_api: false
+    tuning:
+      hybrid: null
+      use_struct_tree: false
+  markitdown:
+    display_name: MarkItDown
+    provider: local
+    enabled: true
+    auto_enabled: true
+    paid_or_api: false
+    tuning:
+      enable_plugins: true
+      enable_builtins: true
+  docling:
+    display_name: Docling
+    provider: local
+    enabled: true
+    auto_enabled: true
+    paid_or_api: false
+    tuning:
+      max_pages: null
+      raise_on_error: true
+  marker:
+    display_name: Marker
+    provider: local
+    enabled: true
+    auto_enabled: false
+    paid_or_api: false
+    tuning:
+      use_llm: false
+      processors: null
+      page_range: null
+      extract_images: false
+      llm_service: null
+  local:
+    display_name: Local (Basic)
+    provider: local
+    enabled: true
+    auto_enabled: true
+    paid_or_api: false
+    tuning: {}
+  mistral:
+    display_name: Mistral OCR
+    provider: mistral
+    enabled: true
+    auto_enabled: false
+    paid_or_api: true
+    model: mistral-ocr-latest
+    tuning:
+      max_pdf_tokens: 9000
+      max_pages_per_chunk: 10
+      timeout_seconds: 60
+      retry_attempts: 3
+      extract_header: true
+      extract_footer: true
+  deepseekocr:
+    display_name: DeepSeek OCR
+    provider: siliconflow
+    enabled: true
+    auto_enabled: false
+    paid_or_api: true
+    model: deepseek-ai/DeepSeek-OCR
+    tuning:
+      max_input_tokens: 3500
+      chunk_overlap_tokens: 200
+      timeout_seconds: 60
+      retry_attempts: 3
+  mathpix:
+    display_name: Mathpix
+    provider: mathpix
+    enabled: true
+    auto_enabled: false
+    paid_or_api: true
+    model: mathpix
+    tuning:
+      timeout_seconds: 120
+      retry_attempts: 3
+      poll_interval_seconds: 5
+      output_format: md
+      base_url: https://api.mathpix.com/v3
+formats:
+  pdf:
+    extensions:
+    - .pdf
+    candidate_chain:
+    - opendataloader
+    - markitdown
+    - docling
+    - local
+  office:
+    extensions:
+    - .docx
+    - .pptx
+    candidate_chain:
+    - markitdown
+    - docling
+    - local
+  image:
+    extensions:
+    - .png
+    - .jpg
+    - .jpeg
+    - .webp
+    - .bmp
+    candidate_chain:
+    - local
+  default:
+    extensions: []
+    candidate_chain:
+    - markitdown
+    - docling
+    - local
+limits:
+  default_scan_count: 50
+  max_scan_count: 2000
