@@ -3,11 +3,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 CHAT_TSX = ROOT / "pages" / "Chat.tsx"
+CHAT_TYPES_TS = ROOT / "pages" / "chat" / "types.ts"
+CHAT_API_TS = ROOT / "pages" / "chat" / "api.ts"
+CHAT_SESSION_TS = ROOT / "pages" / "chat" / "useChatSession.ts"
 I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 
+def read_chat_sources() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (CHAT_TSX, CHAT_TYPES_TS, CHAT_API_TS, CHAT_SESSION_TS)
+    )
+
+
 def test_chat_page_renders_citation_quote_fallback_and_retrieved_blocks():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
 
     assert "citation.quote" in src, "Chat citations should render quote fallback from native API responses"
     assert "retrievedBlocks" in src, "Chat page should track retrieved blocks from the query response"
@@ -15,10 +25,38 @@ def test_chat_page_renders_citation_quote_fallback_and_retrieved_blocks():
     assert "Retrieved blocks" in src, "Chat page should render a retrieved blocks section"
 
 
-def test_chat_document_explain_posts_markdown_document_context():
+def test_chat_p1_2_extracts_api_types_and_session_hook():
+    chat_src = CHAT_TSX.read_text(encoding="utf-8")
+    api_src = CHAT_API_TS.read_text(encoding="utf-8")
+    types_src = CHAT_TYPES_TS.read_text(encoding="utf-8")
+    session_src = CHAT_SESSION_TS.read_text(encoding="utf-8")
+
+    assert 'import { useChatSession } from "./chat/useChatSession";' in chat_src
+    assert 'from "./chat/api"' in chat_src
+    assert 'from "./chat/types"' in chat_src
+    assert "export interface KnowledgeBase" in types_src
+    assert "export async function fetchKnowledgeBases" in api_src
+    assert "export async function queryChat" in api_src
+    assert "export function useChatSession" in session_src
+    assert "apiGet" not in chat_src
+    assert "apiPost" not in chat_src
+    assert "apiDelete" not in chat_src
+
+
+def test_chat_sidebar_is_kb_first_and_documents_deemphasized():
     src = CHAT_TSX.read_text(encoding="utf-8")
 
-    assert "/api/files/${encodeURIComponent(doc.file_url)}/markdown" in src
+    assert 'data-testid="kb-first-sidebar"' in src
+    assert 'data-testid={`kb-sidebar-option-${kb.kb_id}`}' in src
+    assert 'data-testid="button-toggle-documents-panel"' in src
+    assert 'data-testid="tab-documents"' not in src
+    assert 'data-testid="tab-conversations"' not in src
+
+
+def test_chat_document_explain_posts_markdown_document_context():
+    src = read_chat_sources()
+
+    assert "/api/files/${encodeURIComponent(fileUrl)}/markdown" in src
     assert "data?: { markdown?" not in src
     assert "res.data?.markdown" not in src
     assert "sendMessage({ text: questionText, document: doc })" in src
@@ -29,7 +67,7 @@ def test_chat_document_explain_posts_markdown_document_context():
 
 
 def test_chat_accepts_database_explain_document_route_state():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
 
     assert 'import { useLocation } from "wouter";' in src
     assert 'import { useHistoryState } from "wouter/use-browser-location";' in src
@@ -41,7 +79,7 @@ def test_chat_accepts_database_explain_document_route_state():
 
 
 def test_chat_document_sidebar_uses_multi_category_filter_and_filename_only_rows():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
 
     assert "selectedDocCategories" in src
     assert "params.append(\"category\", category)" in src
@@ -54,7 +92,7 @@ def test_chat_document_sidebar_uses_multi_category_filter_and_filename_only_rows
 
 
 def test_chat_document_sidebar_supports_multi_document_comparison():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
 
     assert "selectedCompareDocs" in src
     assert "toggleCompareDocument" in src
@@ -71,7 +109,7 @@ def test_chat_document_sidebar_supports_multi_document_comparison():
 
 
 def test_chat_document_comparison_limits_selection_and_shows_truncation_notice():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert "MAX_DOCUMENT_CONTEXT_SOURCES = 3" in src
@@ -86,7 +124,7 @@ def test_chat_document_comparison_limits_selection_and_shows_truncation_notice()
 
 
 def test_chat_citation_links_use_react_file_routes():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
 
     assert 'import { buildFileDetailPath, buildFilePreviewPath } from "@/lib/navigation";' in src
     assert "normalizeFileRouteHref" in src
@@ -95,7 +133,7 @@ def test_chat_citation_links_use_react_file_routes():
 
 
 def test_chat_citation_actions_are_i18n_labels():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert 't("chat.file_detail")' in src
@@ -107,7 +145,7 @@ def test_chat_citation_actions_are_i18n_labels():
 
 
 def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert 'type RagMode = "standard" | "agentic"' in src
@@ -146,7 +184,7 @@ def test_chat_supports_agentic_rag_mode_and_endpoint_contract():
 
 
 def test_chat_agentic_kb_dropdown_labels_ready_data_sections_not_standard_chunks():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert "section_count?: number" in src
@@ -164,7 +202,7 @@ def test_chat_agentic_kb_dropdown_labels_ready_data_sections_not_standard_chunks
 
 
 def test_chat_formats_agentic_scores_as_raw_scores_not_similarity_percentages():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
 
     assert "score?: number" in src
     assert "function formatCitationScore" in src
@@ -176,7 +214,7 @@ def test_chat_formats_agentic_scores_as_raw_scores_not_similarity_percentages():
 
 
 def test_chat_maps_agentic_evidence_and_renders_tool_trace():
-    src = CHAT_TSX.read_text(encoding="utf-8")
+    src = read_chat_sources()
     i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert "interface AgenticToolTraceEntry" in src
