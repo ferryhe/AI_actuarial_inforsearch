@@ -361,6 +361,9 @@ class NativeTaskRuntime:
         if not os.path.isabs(download_dir):
             download_dir = os.path.abspath(download_dir)
 
+        if collection_type == "full_pipeline":
+            return self._run_full_pipeline(task_id, data, db_path)
+
         storage = Storage(db_path)
         try:
             if collection_type == "file":
@@ -521,6 +524,200 @@ class NativeTaskRuntime:
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
             storage.close()
+
+    def _run_full_pipeline(self, task_id: str, data: dict[str, Any], db_path: str | None = None) -> CollectionResult:
+        """Run collection -> markdown -> catalog -> chunks -> optional RAG indexing."""
+        source_type = str(
+            data.get("source_collection_type")
+            or data.get("source_type")
+            or data.get("collection_type")
+            or "scheduled"
+        ).strip().lower() or "scheduled"
+        if source_type == "full_pipeline":
+            source_type = "scheduled"
+
+        stage_specs: list[tuple[str, str, dict[str, Any]]] = [
+            ("source_collection", source_type, self._stage_payload(data, source_type)),
+            ("markdown_conversion", "markdown_conversion", self._stage_payload(data, "markdown_conversion")),
+            ("catalog", "catalog", self._stage_payload(data, "catalog")),
+            ("chunk_generation", "chunk_generation", self._stage_payload(data, "chunk_generation")),
+        ]
+
+        kb_id = str(data.get("kb_id") or "").strip()
+        run_rag_indexing = coerce_bool(data.get("run_rag_indexing"), default=bool(kb_id))
+        if run_rag_indexing:
+            rag_payload = self._stage_payload(data, "rag_indexing")
+            rag_payload["kb_id"] = kb_id
+            stage_specs.append(("rag_indexing", "rag_indexing", rag_payload))
+
+        stage_results: list[dict[str, Any]] = []
+        errors: list[str] = []
+        items_found = 0
+        items_downloaded = 0
+        items_skipped = 0
+        stopped = False
+        failed = False
+        source_stage_started_at: str | None = None
+        append_task_log(task_id, "INFO", f"Full pipeline source stage: {source_type}")
+
+        for stage_name, collection_type, payload in stage_specs:
+            if self._stop_requested(task_id):
+                stopped = True
+                errors.append("Task stopped by user")
+                break
+            if collection_type == "rag_indexing" and not str(payload.get("kb_id") or "").strip():
+                errors.append("rag_indexing: kb_id is required for RAG indexing")
+                break
+
+            self._update_task(task_id, current_activity=f"Full pipeline: {stage_name}")
+            append_task_log(task_id, "INFO", f"Full pipeline stage started: {stage_name} ({collection_type})")
+            if stage_name == "source_collection" and db_path:
+                source_stage_started_at = self._full_pipeline_storage_now(db_path)
+            try:
+                result = self._run_collection(task_id, collection_type, payload)
+            except Exception as exc:  # noqa: BLE001
+                message = f"{stage_name}: {exc}"
+                errors.append(message)
+                stage_results.append({"stage": stage_name, "type": collection_type, "success": False, "errors": [str(exc)]})
+                append_task_log(task_id, "ERROR", f"Full pipeline stage failed: {message}")
+                break
+
+            stage_errors = [str(error) for error in list(result.errors or [])]
+            stage_stopped = bool((result.metadata or {}).get("stopped")) or any(
+                "stopped" in error.lower() for error in stage_errors
+            )
+            stage_results.append(
+                {
+                    "stage": stage_name,
+                    "type": collection_type,
+                    "success": bool(result.success),
+                    "items_found": int(result.items_found or 0),
+                    "items_downloaded": int(result.items_downloaded or 0),
+                    "items_skipped": int(result.items_skipped or 0),
+                    "errors": stage_errors,
+                    "metadata": dict(result.metadata or {}),
+                    "stopped": stage_stopped,
+                }
+            )
+            items_found += int(result.items_found or 0)
+            items_downloaded += int(result.items_downloaded or 0)
+            items_skipped += int(result.items_skipped or 0)
+            errors.extend(f"{stage_name}: {error}" for error in stage_errors)
+            append_task_log(task_id, "INFO", f"Full pipeline stage finished: {stage_name} (success={result.success})")
+
+            if stage_name == "source_collection" and db_path and source_stage_started_at:
+                collected_file_urls = self._full_pipeline_recent_file_urls(db_path, source_stage_started_at, data)
+                if collected_file_urls:
+                    for _, downstream_type, downstream_payload in stage_specs[1:]:
+                        if downstream_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
+                            downstream_payload["file_urls"] = collected_file_urls
+
+            if stage_stopped or self._stop_requested(task_id):
+                stopped = True
+                if not errors:
+                    errors.append("Task stopped by user")
+                break
+            if not result.success:
+                failed = True
+                if not stage_errors:
+                    errors.append(f"{stage_name}: stage returned unsuccessful result")
+                break
+
+        return CollectionResult(
+            success=not errors and not stopped and not failed,
+            items_found=items_found,
+            items_downloaded=items_downloaded,
+            items_skipped=items_skipped,
+            errors=errors,
+            metadata={
+                "source_type": "full_pipeline",
+                "source_collection_type": source_type,
+                "stages": stage_results,
+                "stage_count": len(stage_results),
+                "requested_stage_count": len(stage_specs),
+                "stopped": stopped,
+                "kb_id": kb_id or None,
+                "run_rag_indexing": run_rag_indexing,
+            },
+        )
+
+    def _stage_payload(self, data: dict[str, Any], collection_type: str) -> dict[str, Any]:
+        payload = dict(data)
+        payload["type"] = collection_type
+        payload.setdefault("name", str(data.get("name") or "Full Pipeline"))
+        if collection_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
+            file_urls = self._full_pipeline_file_urls(data)
+            if file_urls and not payload.get("file_urls"):
+                payload["file_urls"] = file_urls
+        return payload
+
+    @staticmethod
+    def _full_pipeline_file_urls(data: dict[str, Any]) -> list[str]:
+        urls: list[str] = []
+        for raw_url in list(data.get("file_urls") or data.get("urls") or []):
+            url = str(raw_url).strip()
+            if url and url not in urls:
+                urls.append(url)
+        single_url = str(data.get("url") or "").strip()
+        if single_url and single_url not in urls:
+            urls.append(single_url)
+        return urls
+
+    @staticmethod
+    def _full_pipeline_storage_now(db_path: str) -> str:
+        storage = Storage(db_path)
+        try:
+            return storage.now()
+        finally:
+            storage.close()
+
+    @staticmethod
+    def _full_pipeline_recent_file_urls(db_path: str, started_at: str, data: dict[str, Any]) -> list[str]:
+        explicit_urls = NativeTaskRuntime._full_pipeline_file_urls(data)
+        site = str(data.get("site") or "").strip()
+        filters: list[str] = []
+        params: list[Any] = [started_at]
+        if explicit_urls:
+            placeholders = ",".join("?" for _ in explicit_urls)
+            filters.append(f"(url IN ({placeholders}) OR source_page_url IN ({placeholders}))")
+            params.extend(explicit_urls)
+            params.extend(explicit_urls)
+        if site:
+            filters.append("source_site = ?")
+            params.append(site)
+        scoped_filter = f"\n                  AND ({' OR '.join(filters)})" if filters else ""
+
+        storage = Storage(db_path)
+        try:
+            rows = storage._conn.execute(
+                f"""
+                SELECT url
+                FROM files
+                WHERE deleted_at IS NULL
+                  AND local_path IS NOT NULL
+                  AND local_path != ''
+                  AND last_seen >= ?
+                  {scoped_filter}
+                ORDER BY last_seen ASC, id ASC
+                """,
+                params,
+            ).fetchall()
+        finally:
+            storage.close()
+
+        row_urls: list[str] = []
+        for row in rows:
+            file_url = str(row[0] if not isinstance(row, dict) else row.get("url") or "").strip()
+            if file_url and file_url not in row_urls:
+                row_urls.append(file_url)
+        if row_urls:
+            return row_urls
+
+        urls: list[str] = []
+        for raw_url in explicit_urls:
+            if raw_url and raw_url not in urls:
+                urls.append(raw_url)
+        return urls
 
     def _run_weekly_summary(self, db_path: str, data: dict[str, Any], *, storage: Storage | None = None) -> CollectionResult:
         from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
@@ -1452,12 +1649,13 @@ class NativeTaskRuntime:
             task_data = self.active_tasks.pop(task_id, None)
         if task_data is None:
             return
+        stopped = bool((result.metadata or {}).get("stopped"))
         task_data.update(
             {
-                "status": "completed" if result.success else "error",
+                "status": "stopped" if stopped else ("completed" if result.success else "error"),
                 "progress": 100,
                 "completed_at": datetime.now().isoformat(),
-                "current_activity": "Completed" if result.success else "Completed with errors",
+                "current_activity": "Stopped" if stopped else ("Completed" if result.success else "Completed with errors"),
                 "items_processed": result.items_found,
                 "items_total": result.items_found,
                 "items_downloaded": result.items_downloaded,

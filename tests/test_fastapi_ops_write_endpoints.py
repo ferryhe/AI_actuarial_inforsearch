@@ -566,6 +566,23 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     )
     assert weekly_summary_task["type"] == "weekly_summary"
 
+    full_pipeline_response = client.post(
+        "/api/scheduled-tasks/add",
+        json={
+            "name": "Nightly Full Pipeline",
+            "type": "full_pipeline",
+            "interval": "daily",
+            "enabled": True,
+            "params": {"source_collection_type": "scheduled", "run_rag_indexing": False},
+        },
+        headers=headers,
+    )
+    assert full_pipeline_response.status_code == 200, full_pipeline_response.text
+    full_pipeline_task = next(
+        task for task in _read_scheduled_tasks(config_path) if task["name"] == "Nightly Full Pipeline"
+    )
+    assert full_pipeline_task["type"] == "full_pipeline"
+
     run_weekly_summary = client.post(
         "/api/collections/run",
         json={
@@ -579,6 +596,20 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     assert run_weekly_summary.status_code == 200, run_weekly_summary.text
     assert recorder.started[-1][0] == "weekly_summary"
     assert recorder.started[-1][1]["period_start"] == "2026-03-09T00:00:00+00:00"
+
+    run_full_pipeline = client.post(
+        "/api/collections/run",
+        json={
+            "name": "Run Full Pipeline",
+            "type": "full_pipeline",
+            "source_collection_type": "scheduled",
+            "run_rag_indexing": False,
+        },
+        headers=headers,
+    )
+    assert run_full_pipeline.status_code == 200, run_full_pipeline.text
+    assert recorder.started[-1][0] == "full_pipeline"
+    assert recorder.started[-1][1]["source_collection_type"] == "scheduled"
 
     update_response = client.post(
         "/api/scheduled-tasks/update",
