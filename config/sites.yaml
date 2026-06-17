@@ -624,6 +624,14 @@ scheduled_tasks:
   enabled: true
   params:
     name: Scheduled Collection
+- name: Weekly Update Summary
+  type: weekly_summary
+  interval: weekly
+  enabled: true
+  params:
+    name: Weekly Update Summary
+    relative_period: previous_week
+    max_files: 500
 ai_config:
   catalog:
     provider: openai

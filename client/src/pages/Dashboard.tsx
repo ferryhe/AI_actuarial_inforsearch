@@ -170,21 +170,11 @@ function normalizeCategories(items: CategoriesResponse["categories"]): CategoryO
     .filter((item): item is CategoryOption => item !== null);
 }
 
-function getStartOfCalendarWeek(now: Date): Date {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - start.getDay());
-  return start;
-}
-
-function isThisCalendarWeek(dateStr: string, now = new Date()): boolean {
-  if (!dateStr) return false;
-  const date = new Date(dateStr);
-  if (Number.isNaN(date.getTime())) return false;
-  const start = getStartOfCalendarWeek(now);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 7);
-  return date >= start && date < end;
+interface WeeklyUpdateResponse {
+  summary?: {
+    file_count?: number;
+    files?: FileItem[];
+  } | null;
 }
 
 function databaseCategoryPath(category: string): string {
@@ -197,25 +187,28 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const [stats, setStats] = useState<Stats | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
+  const [weeklyFileCount, setWeeklyFileCount] = useState<number | null>(null);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.allSettled([
       apiGet<Stats>("/api/stats"),
-      apiGet<{ files: FileItem[] }>("/api/files?limit=24&order_by=first_seen&order_dir=desc"),
+      apiGet<WeeklyUpdateResponse>("/api/weekly-updates/latest"),
       apiGet<CategoriesResponse>("/api/categories?mode=used"),
     ])
-      .then(([statsResult, filesResult, categoriesResult]) => {
+      .then(([statsResult, weeklyResult, categoriesResult]) => {
         if (statsResult.status === "fulfilled") {
           setStats(statsResult.value);
         } else {
           console.error(statsResult.reason);
         }
-        if (filesResult.status === "fulfilled") {
-          setFiles((filesResult.value.files || []).filter((file) => isThisCalendarWeek(file.first_seen)).slice(0, WEEKLY_FILE_LIMIT));
+        if (weeklyResult.status === "fulfilled") {
+          const summary = weeklyResult.value.summary;
+          setFiles((summary?.files || []).slice(0, WEEKLY_FILE_LIMIT));
+          setWeeklyFileCount(typeof summary?.file_count === "number" ? summary.file_count : 0);
         } else {
-          console.error(filesResult.reason);
+          console.error(weeklyResult.reason);
         }
         if (categoriesResult.status === "fulfilled") {
           setCategories(normalizeCategories(categoriesResult.value.categories));
@@ -230,8 +223,8 @@ export default function Dashboard() {
     { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
     { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
     { icon: Tags, label: t("dashboard.categories"), value: loading ? "-" : categories.length, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : files.length, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  ], [categories.length, files.length, loading, stats?.total_files, stats?.total_sources, t]);
+    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weeklyFileCount ?? 0), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  ], [categories.length, loading, stats?.total_files, stats?.total_sources, t, weeklyFileCount]);
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_materials"), desc: t("dashboard.browse_materials_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
@@ -320,7 +313,7 @@ export default function Dashboard() {
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold">{t("dashboard.this_week_additions")}</h2>
-            <Link href="/database?order_by=last_seen&order_dir=desc">
+            <Link href="/database?order_by=first_seen&order_dir=desc">
               <span className="text-xs text-primary hover:underline cursor-pointer">{t("dashboard.view_all")}</span>
             </Link>
           </div>

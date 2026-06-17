@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
-from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary
+from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary, previous_utc_iso_week_period
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
@@ -110,6 +111,13 @@ def test_weekly_summary_uses_first_seen_not_last_seen(tmp_path: Path) -> None:
     assert "files.first_seen" in summary["metadata"]["logic"]
 
 
+def test_previous_utc_iso_week_period_returns_completed_iso_week() -> None:
+    start, end = previous_utc_iso_week_period(datetime(2026, 3, 18, 12, tzinfo=timezone.utc))
+
+    assert start == "2026-03-09T00:00:00+00:00"
+    assert end == "2026-03-16T00:00:00+00:00"
+
+
 def test_weekly_updates_api_lists_summaries_and_empty_latest(tmp_path: Path, monkeypatch) -> None:
     db_path, config_path = _write_config(tmp_path)
     _seed_weekly_files(db_path)
@@ -159,7 +167,7 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
     result = runtime._run_collection(
         "task-weekly-summary",
         "weekly_summary",
-        {"period_start": PERIOD_START, "period_end": PERIOD_END},
+        {"period_start": PERIOD_START, "period_end": PERIOD_END, "relative_period": "previous_week"},
     )
 
     assert result.success is True
@@ -173,6 +181,7 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
         storage.close()
     assert latest is not None
     assert latest["files"][0]["url"] == "https://current-first-seen.example/current.pdf"
+    assert latest["metadata"]["relative_period"] == "previous_week"
 
 
 def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(tmp_path: Path, monkeypatch) -> None:
@@ -189,6 +198,18 @@ def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(tmp_path: P
 
     assert result.success is True
     assert result.items_found == 1
+
+
+def test_default_config_includes_previous_weekly_summary_schedule() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "config" / "sites.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    task = next(task for task in config.get("scheduled_tasks", []) if task.get("name") == "Weekly Update Summary")
+
+    assert task["type"] == "weekly_summary"
+    assert task["interval"] == "weekly"
+    assert task["enabled"] is True
+    assert task["params"]["relative_period"] == "previous_week"
+    assert task["params"]["max_files"] == 500
 
 
 def test_generate_weekly_summary_can_reuse_existing_storage(tmp_path: Path) -> None:
