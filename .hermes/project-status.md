@@ -25,6 +25,7 @@
   - `python3 -m pytest tests/test_settings_react_source.py tests/test_tasks_react_source.py tests/test_web_listening_rule.py tests/test_fastapi_ops_write_endpoints.py::test_markdown_conversion_config_read_write_endpoint_roundtrip -q`: 30 passed, 3 warnings.
   - `npm run build`: passed; Vite emitted only the existing large-chunk warning.
   - `git diff --check`: passed.
+- Codex CLI pre-PR review initially found two valid P2 issues (non-matching Web Listening history filter and schedule-only Web Listening visibility); both were fixed before opening PR #160. Copilot then left one valid Markdown limit-edit UX comment on PR #160; this branch now uses editable per-limit draft strings and resets invalid drafts on blur.
 
 ## Notes
 
