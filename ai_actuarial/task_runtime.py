@@ -361,6 +361,9 @@ class NativeTaskRuntime:
         if not os.path.isabs(download_dir):
             download_dir = os.path.abspath(download_dir)
 
+        if collection_type == "full_pipeline":
+            return self._run_full_pipeline(task_id, data, db_path)
+
         storage = Storage(db_path)
         try:
             if collection_type == "file":
@@ -514,9 +517,6 @@ class NativeTaskRuntime:
 
             if collection_type == "chunk_generation":
                 return self._run_chunk_generation(task_id, storage, db_path, data)
-
-            if collection_type == "full_pipeline":
-                return self._run_full_pipeline(task_id, data, db_path)
 
             if collection_type == "weekly_summary":
                 return self._run_weekly_summary(db_path, data, storage=storage)
@@ -685,8 +685,7 @@ class NativeTaskRuntime:
         if site:
             filters.append("source_site = ?")
             params.append(site)
-        if not filters:
-            return explicit_urls
+        scoped_filter = f"\n                  AND ({' OR '.join(filters)})" if filters else ""
 
         storage = Storage(db_path)
         try:
@@ -698,7 +697,7 @@ class NativeTaskRuntime:
                   AND local_path IS NOT NULL
                   AND local_path != ''
                   AND last_seen >= ?
-                  AND ({" OR ".join(filters)})
+                  {scoped_filter}
                 ORDER BY last_seen ASC, id ASC
                 """,
                 params,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ai_actuarial.collectors.base import CollectionResult
+from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
 
@@ -98,6 +99,68 @@ def test_full_pipeline_uses_recently_collected_file_urls_for_downstream_stages(m
     assert calls[0][1]["url"] == "https://example.com/page"
     for _collection_type, payload in calls[1:]:
         assert payload["file_urls"] == ["https://example.com/downloaded.pdf"]
+
+
+def test_full_pipeline_recent_file_urls_without_scope_returns_new_downloads(tmp_path) -> None:
+    db_path = tmp_path / "full-pipeline.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            """
+            INSERT INTO files (url, source_site, local_path, first_seen, last_seen, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "https://example.com/new.pdf",
+                "example",
+                "/tmp/new.pdf",
+                "2026-06-18T00:01:00+00:00",
+                "2026-06-18T00:01:00+00:00",
+                None,
+            ),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO files (url, source_site, local_path, first_seen, last_seen, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "https://example.com/old.pdf",
+                "example",
+                "/tmp/old.pdf",
+                "2026-06-17T23:59:00+00:00",
+                "2026-06-17T23:59:00+00:00",
+                None,
+            ),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    assert NativeTaskRuntime._full_pipeline_recent_file_urls(
+        str(db_path),
+        "2026-06-18T00:00:00+00:00",
+        {},
+    ) == ["https://example.com/new.pdf"]
+
+
+def test_run_collection_dispatches_full_pipeline_before_opening_storage(monkeypatch) -> None:
+    runtime = NativeTaskRuntime()
+    monkeypatch.setattr(
+        runtime,
+        "_load_site_config",
+        lambda: {"paths": {"db": "data/test.db", "download_dir": "data/files"}},
+    )
+    monkeypatch.setattr(runtime, "_run_full_pipeline", lambda task_id, data, db_path: _result("full_pipeline"))
+
+    def fail_storage(db_path: str) -> None:
+        raise AssertionError("full_pipeline should not open an outer Storage connection")
+
+    monkeypatch.setattr("ai_actuarial.task_runtime.Storage", fail_storage)
+
+    result = runtime._run_collection("task-full", "full_pipeline", {})
+
+    assert result.success is True
 
 
 def test_full_pipeline_omits_rag_when_not_requested(monkeypatch) -> None:
