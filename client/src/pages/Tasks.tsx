@@ -20,6 +20,7 @@ import { FileImportForm } from "./tasks/FileImportForm";
 import { WebSearchForm } from "./tasks/WebSearchForm";
 import { CatalogForm } from "./tasks/CatalogForm";
 import { MarkdownForm } from "./tasks/MarkdownForm";
+import { WebListeningForm } from "./tasks/WebListeningForm";
 import { ChunkForm } from "./tasks/ChunkForm";
 import { RagIndexForm } from "./tasks/RagIndexForm";
 import { FilterBar } from "./tasks/FilterBar";
@@ -35,6 +36,7 @@ const taskTypes = [
   { type: "adhoc_url", apiType: "url", icon: Link2, color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   { type: "file_import", apiType: "file", icon: FileUp, color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
   { type: "web_search", apiType: "search", icon: Search, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  { type: "web_listening", apiType: "web_listening", icon: Globe, color: "bg-sky-500/10 text-sky-600 dark:text-sky-400" },
   { type: "markdown", apiType: "markdown_conversion", icon: FileText, color: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
   { type: "catalog", apiType: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   { type: "chunk", apiType: "chunk_generation", icon: Layers, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
@@ -243,6 +245,7 @@ export default function Tasks() {
       case "adhoc_url": return <AdhocUrlForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "file_import": return <FileImportForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "web_search": return <WebSearchForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "web_listening": return <WebListeningForm onMaterialized={async () => { await fetchSites(); setTaskView("scheduled"); }} />;
       case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;

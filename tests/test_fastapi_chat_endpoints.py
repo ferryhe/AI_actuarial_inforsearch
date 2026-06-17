@@ -628,7 +628,9 @@ def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(tmp_pat
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert data["response"].startswith("Found ")
+    assert "Key evidence" in data["response"] or data["metadata"]["synthesis_source"] == "llm"
+    assert data["metadata"]["synthesis_source"] in {"llm", "deterministic_fallback"}
+    assert data["metadata"]["synthesis_model"] is None or isinstance(data["metadata"]["synthesis_model"], str)
     assert data["metadata"]["rag_mode"] == "agentic"
     assert data["metadata"]["profile"] == "regulation"
     assert data["metadata"]["kb_id"] == "chat-kb-a"

@@ -37,7 +37,6 @@ def test_dashboard_i18n_has_customer_facing_en_and_zh_labels():
         "dashboard.categories",
         "dashboard.this_week_additions",
         "dashboard.browse_materials",
-        "dashboard.browse_categories",
         "dashboard.ask_agent",
         "dashboard.no_weekly_files",
     ]

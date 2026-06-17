@@ -43,6 +43,9 @@ MAX_DOCUMENT_SOURCES = 3
 MAX_DOCUMENT_SOURCE_CONTENT_CHARS = 15000
 MAX_DOCUMENT_CONTEXT_CHARS = 45000
 MAX_DOCUMENT_FIELD_CHARS = 512
+MAX_AGENTIC_SYNTHESIS_CHUNKS = 8
+MAX_AGENTIC_SYNTHESIS_CONTENT_CHARS = 4000
+MAX_AGENTIC_FALLBACK_ITEMS = 5
 
 
 def _ensure_conversation_schema(storage: Storage) -> None:
@@ -757,6 +760,79 @@ def _serialize_agentic_evidence(
     return citations, retrieved_blocks
 
 
+def _agentic_blocks_to_llm_chunks(retrieved_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    for index, block in enumerate(retrieved_blocks[:MAX_AGENTIC_SYNTHESIS_CHUNKS], start=1):
+        content = _normalize_text(block.get("content") or block.get("quote") or block.get("filename"))
+        if not content:
+            continue
+        if len(content) > MAX_AGENTIC_SYNTHESIS_CONTENT_CHARS:
+            content = content[:MAX_AGENTIC_SYNTHESIS_CONTENT_CHARS].rstrip() + "…"
+        chunks.append(
+            {
+                "content": content,
+                "metadata": {
+                    "filename": _normalize_text(block.get("filename")) or f"Agentic evidence {index}",
+                    "kb_id": _normalize_text(block.get("kb_id")),
+                    "kb_name": _normalize_text(block.get("kb_name")),
+                    "similarity_score": block.get("score"),
+                    "chunk_id": _normalize_text(block.get("chunk_id")) or f"agentic_{index}",
+                    "file_url": _normalize_text(block.get("file_url") or block.get("source_url")),
+                    "untrusted_context": True,
+                    "source": "agentic_rag",
+                },
+            }
+        )
+    return chunks
+
+
+def _deterministic_agentic_fallback_answer(query: str, retrieved_blocks: list[dict[str, Any]]) -> str:
+    if not retrieved_blocks:
+        return _friendly_no_results_message()
+    bullets: list[str] = []
+    for block in retrieved_blocks[:MAX_AGENTIC_FALLBACK_ITEMS]:
+        title = _normalize_text(block.get("filename")) or "Evidence"
+        quote = _normalize_text(block.get("quote") or block.get("content"))
+        if len(quote) > 320:
+            quote = quote[:320].rstrip() + "…"
+        bullets.append(f"- {title}: {quote}" if quote else f"- {title}")
+    return (
+        f'I found relevant ready-data evidence for "{query}", but could not generate a full narrative answer. '
+        "Key evidence:\n" + "\n".join(bullets)
+    )
+
+
+def _synthesize_agentic_response(
+    *,
+    modules: Mapping[str, Any],
+    config: Any,
+    storage: Storage,
+    query: str,
+    retrieved_blocks: list[dict[str, Any]],
+    mode: str,
+    conversation_history: list[dict[str, Any]],
+) -> tuple[str, str]:
+    chunks = _agentic_blocks_to_llm_chunks(retrieved_blocks)
+    if not chunks:
+        return _friendly_no_results_message(), "deterministic_fallback"
+    fallback = _deterministic_agentic_fallback_answer(query, retrieved_blocks)
+    try:
+        llm_client = modules["llm"].LLMClient(config, storage=storage)
+        answer = _normalize_text(
+            llm_client.generate_response(
+                query=query,
+                chunks=chunks,
+                mode=mode,
+                conversation_history=conversation_history,
+            )
+        )
+        if answer:
+            return answer, "llm"
+    except Exception:  # pragma: no cover - exact provider errors vary by configured runtime
+        logger.exception("Agentic RAG synthesis failed; using deterministic evidence fallback")
+    return fallback, "deterministic_fallback"
+
+
 def _bounded_source_text(value: Any, *, fallback: str = "", max_chars: int = MAX_DOCUMENT_FIELD_CHARS) -> str:
     text = _normalize_text(value) or fallback
     return text[:max_chars]
@@ -933,7 +1009,15 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 kb_id=agentic_kb_id,
                 kb_name=kb_name,
             )
-            response_text = _normalize_text(agentic_response.get("answer")) or _friendly_no_results_message()
+            response_text, synthesis_source = _synthesize_agentic_response(
+                modules=modules,
+                config=config,
+                storage=storage,
+                query=message,
+                retrieved_blocks=retrieved_blocks,
+                mode=mode,
+                conversation_history=conversation_history,
+            )
             agentic_metadata = agentic_response.get("metadata") if isinstance(agentic_response.get("metadata"), dict) else {}
             assistant_metadata = {
                 "model": "agentic-ready-data",
@@ -941,6 +1025,8 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 "rag_mode": "agentic",
                 "retrieval_time_ms": 0,
                 "generation_time_ms": 0,
+                "synthesis_source": synthesis_source,
+                "synthesis_model": getattr(config, "model", None) if synthesis_source == "llm" else None,
                 "num_chunks": len(retrieved_blocks),
                 "no_results": len(retrieved_blocks) == 0,
                 "used_threshold": None,
@@ -981,6 +1067,8 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                         "model": "agentic-ready-data",
                         "mode": mode,
                         "rag_mode": "agentic",
+                        "synthesis_source": assistant_metadata["synthesis_source"],
+                        "synthesis_model": assistant_metadata["synthesis_model"],
                         "num_chunks": len(retrieved_blocks),
                         "no_results": len(retrieved_blocks) == 0,
                         "used_threshold": None,

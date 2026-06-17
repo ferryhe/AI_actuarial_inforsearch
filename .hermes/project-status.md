@@ -1,39 +1,32 @@
 # Project Status
 
 - Date: 2026-06-17
-- Branch: `docs/final-readme-cleanup`
-- Baseline: `origin/main` after merged PR #154.
-- Scope: Documentation cleanup after completion of the AI Actuarial Feishu-plan managed PR backlog.
-- Completed roadmap PRs:
-  - [#147](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/147) — P0-1 Markdown conversion config split and admin/UI/runtime integration.
-  - [#148](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/148) — P0-2 customer-facing dashboard homepage.
-  - [#149](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/149) — P0-3 web-listening-agent-rule schema/API/materialization.
-  - [#150](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/150) — P1-1 weekly updates API/storage/task runtime.
-  - [#151](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/151) — follow-up fixes for valid Copilot comments on #147/#149/#150.
-  - [#152](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/152) — P1-2 Chat KB-first UI plus Chat API/types/session extraction.
-  - [#153](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/153) — follow-up fixes for valid Copilot comments on #152.
-  - [#154](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/154) — final roadmap status marker.
-- Previous Agentic RAG PRs: #133-#145 plus [#146](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/146) are complete; Agentic RAG is out of scope for new implementation work.
+- Branch: `task/product-ux-followups`
+- PR: [#156](https://github.com/ferryhe/AI_actuarial_inforsearch/pull/156)
+- Scope: PR gate follow-up for product UX changes.
 
 ## Current State
 
-- The remaining Feishu-plan backlog named in the managed controller prompt is complete and merged into `main`.
-- This branch cleans up documentation so the active README/docs describe the final product state rather than old phase plans.
-- Historical dated plans/reports/test notes/security summaries were moved into `docs/archive/` with an archive README warning that they may contain stale status or commands.
-- Active docs now emphasize current production surfaces: FastAPI + React, customer Dashboard, Markdown conversion config, web-listening rules, weekly updates, KB-first Chat, standard RAG, and Agentic RAG.
-- Local `docker-compose.override.yml` still has an unrelated production override diff and must remain uncommitted.
+- PR #156 is open and mergeable.
+- GitHub CI check `python-smoke` was passing before follow-up fixes.
+- Copilot left four valid review comments; this run applied safe fixes on the same PR branch:
+  - imported `FileText` in Settings for the Markdown Conversion tab;
+  - removed duplicate `scheduled-tasks:changed` dispatch from the parent Tasks callback;
+  - guarded browser-only event dispatch in `WebListeningForm`;
+  - kept agentic `synthesis_source` within the documented `llm` / `deterministic_fallback` contract for no-result responses.
 
 ## Verification
 
-- `git status --short --branch` checked before work; only the expected local production override was dirty on `main`.
-- GitHub open PR state checked with `gh pr list --state open` before starting; there were no open PRs.
-- Active Markdown relative-link check passed for 17 active docs outside `docs/archive/`.
+- `git status --short --branch` checked before work; unrelated local `docker-compose.override.yml` production override remains dirty and uncommitted.
+- `gh pr view 156 --json state,mergeable,statusCheckRollup,reviewDecision,comments,reviews,url` checked.
+- `gh api repos/ferryhe/AI_actuarial_inforsearch/pulls/156/comments --paginate` checked Copilot inline comments.
+- `gh pr checks 156 --watch=false` showed `python-smoke` passing before follow-up push.
+- `python3 -m pytest tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py tests/test_settings_react_source.py` passed: 46 passed, 3 warnings.
+- `npm run build` passed; Vite emitted only the existing large-chunk warning.
 - `git diff --check` passed.
-- `python3 -m ai_actuarial --help` passed.
-- Two read-only reviewer agents checked the docs; findings were resolved by fixing the web-listening module path and archiving stale OpenAPI exports.
-- This documentation cleanup does not alter application runtime code.
+- Required Codex CLI local review gate was attempted with `codex exec -s read-only review --uncommitted`, but could not run because Codex auth token refresh failed with 401 `refresh_token_reused` / `token_expired`.
 
 ## Notes
 
-- Sibling repositories remain out of scope for this project run.
-- Do not copy secrets, `.env` files, generated credentials, active Docker volumes, logs, or local production overrides into PRs.
+- Sibling repositories remain out of scope.
+- Do not commit local `.env`, secrets, generated credentials, or `docker-compose.override.yml`.

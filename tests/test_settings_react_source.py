@@ -62,6 +62,19 @@ def test_settings_categories_preserve_ai_keywords_alias():
     assert "ai_keywords: aiFilterKw" in src
 
 
+def test_settings_exposes_markdown_conversion_as_independent_tab():
+    src = SETTINGS_TSX.read_text(encoding="utf-8")
+    tab_src = (ROOT / "pages" / "settings" / "MarkdownConversionTab.tsx").read_text(encoding="utf-8")
+    i18n = I18N_TS.read_text(encoding="utf-8")
+
+    assert 'testId="tab-markdown-conversion"' in src
+    assert 'activeTab === "markdown"' in src
+    assert "<MarkdownConversionTab />" in src
+    assert '"/api/config/markdown-conversion"' in tab_src
+    assert 'data-testid="markdown-conversion-tab"' in tab_src
+    assert '"settings.tab_markdown_conversion"' in i18n
+
+
 def test_settings_exposes_provider_maintenance_actions():
     src = SETTINGS_TSX.read_text(encoding="utf-8")
 
