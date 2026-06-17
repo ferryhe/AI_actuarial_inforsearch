@@ -29,6 +29,66 @@ interface ScheduleStatus {
   count?: number;
 }
 
+type ParamField = {
+  key: string;
+  labelKey: string;
+  type?: "text" | "number" | "boolean" | "textarea";
+  placeholder?: string;
+};
+
+const scheduledParamFields: Record<string, ParamField[]> = {
+  scheduled: [
+    { key: "site", labelKey: "tasks.sched.param.site" },
+    { key: "max_pages", labelKey: "tasks.sched.param.max_pages", type: "number" },
+    { key: "max_depth", labelKey: "tasks.sched.param.max_depth", type: "number" },
+  ],
+  quick_check: [
+    { key: "url", labelKey: "tasks.sched.param.url", placeholder: "https://example.com" },
+    { key: "max_pages", labelKey: "tasks.sched.param.max_pages", type: "number" },
+  ],
+  catalog: [
+    { key: "site", labelKey: "tasks.sched.param.site" },
+    { key: "scan_count", labelKey: "tasks.sched.param.scan_count", type: "number" },
+    { key: "scan_start_index", labelKey: "tasks.sched.param.scan_start_index", type: "number" },
+  ],
+  markdown_conversion: [
+    { key: "category", labelKey: "tasks.sched.param.category", placeholder: "AI" },
+    { key: "overwrite_existing", labelKey: "tasks.sched.param.overwrite_existing", type: "boolean" },
+  ],
+  chunk_generation: [
+    { key: "category", labelKey: "tasks.sched.param.category", placeholder: "AI" },
+    { key: "profile_id", labelKey: "tasks.sched.param.profile_id" },
+    { key: "kb_id", labelKey: "tasks.sched.param.kb_id" },
+  ],
+  rag_indexing: [
+    { key: "kb_id", labelKey: "tasks.sched.param.kb_id" },
+    { key: "file_urls", labelKey: "tasks.sched.param.file_urls", type: "textarea", placeholder: "One URL per line" },
+    { key: "force_reindex", labelKey: "tasks.sched.param.force_reindex", type: "boolean" },
+  ],
+  search: [
+    { key: "query", labelKey: "tasks.sched.param.query" },
+    { key: "engine", labelKey: "tasks.sched.param.engine" },
+    { key: "count", labelKey: "tasks.sched.param.count", type: "number" },
+  ],
+  url: [
+    { key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea", placeholder: "One URL per line" },
+  ],
+  weekly_summary: [
+    { key: "max_files", labelKey: "tasks.sched.param.max_files", type: "number" },
+    { key: "period_start", labelKey: "tasks.sched.param.period_start", placeholder: "2026-03-09T00:00:00+00:00" },
+    { key: "period_end", labelKey: "tasks.sched.param.period_end", placeholder: "2026-03-16T00:00:00+00:00" },
+  ],
+};
+
+const parseParamsObject = (value: string): Record<string, unknown> | null => {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+};
+
 export function ScheduledTasksSection() {
   const { t } = useTranslation();
   const { permissions } = useAuth();
@@ -48,6 +108,41 @@ export function ScheduledTasksSection() {
   const [formInterval, setFormInterval] = useState("daily");
   const [formEnabled, setFormEnabled] = useState(true);
   const [formParams, setFormParams] = useState("{}");
+
+  const parsedFormParams = parseParamsObject(formParams);
+
+  const updateTypedParam = (field: ParamField, value: string | boolean) => {
+    const params = { ...(parseParamsObject(formParams) || {}) };
+    if (field.type === "boolean") {
+      params[field.key] = Boolean(value);
+    } else if (field.type === "number") {
+      const trimmed = String(value).trim();
+      if (trimmed === "") delete params[field.key];
+      else {
+        const nextNumber = Number(trimmed);
+        if (Number.isFinite(nextNumber)) params[field.key] = nextNumber;
+      }
+    } else if (field.key === "file_urls" || field.key === "urls") {
+      const urls = String(value).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (urls.length === 0) delete params[field.key];
+      else params[field.key] = urls;
+    } else {
+      const nextValue = String(value);
+      if (nextValue === "") delete params[field.key];
+      else params[field.key] = nextValue;
+    }
+    setFormParams(JSON.stringify(params, null, 2));
+  };
+
+  const getTypedParamValue = (field: ParamField) => {
+    const value = parsedFormParams?.[field.key];
+    if (field.type === "boolean") {
+      if (typeof value === "string") return value.trim().toLowerCase() === "true";
+      return Boolean(value);
+    }
+    if ((field.key === "file_urls" || field.key === "urls") && Array.isArray(value)) return value.join("\n");
+    return value === undefined || value === null ? "" : String(value);
+  };
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -179,10 +274,12 @@ export function ScheduledTasksSection() {
     { value: "markdown_conversion", label: t("tasks.type.markdown") },
     { value: "chunk_generation", label: t("tasks.type.chunk") },
     { value: "rag_indexing", label: t("tasks.type.rag_index") },
+    { value: "weekly_summary", label: t("tasks.type.weekly_summary") },
     { value: "search", label: t("tasks.type.web_search") },
     { value: "url", label: t("tasks.type.adhoc_url") },
   ];
   const jobCount = scheduleStatus ? (scheduleStatus.job_count ?? scheduleStatus.count ?? scheduleStatus.jobs?.length ?? 0) : 0;
+  const typedParamFields = scheduledParamFields[formType] || [];
 
   return (
     <div className="space-y-5">
@@ -299,7 +396,44 @@ export function ScheduledTasksSection() {
                     </button>
                   </FormField>
                 </div>
-                <FormField label={t("tasks.sched.parameters")} hint="JSON">
+                <div className="space-y-2">
+                  <div>
+                    <div className="text-xs font-medium text-foreground">{t("tasks.sched.typed_parameters")}</div>
+                    <p className="text-[11px] text-muted-foreground">{t("tasks.sched.typed_parameters_hint")}</p>
+                  </div>
+                  {typedParamFields.length > 0 && parsedFormParams ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      {typedParamFields.map((field) => (
+                        <FormField key={field.key} label={t(field.labelKey)}>
+                          {field.type === "boolean" ? (
+                            <button type="button" onClick={() => updateTypedParam(field, !getTypedParamValue(field))}
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border bg-background w-full"
+                              data-testid={`toggle-sched-param-${field.key}`}>
+                              {getTypedParamValue(field) ? <ToggleRight className="w-5 h-5 text-primary" /> : <ToggleLeft className="w-5 h-5 text-muted-foreground" />}
+                              {getTypedParamValue(field) ? t("tasks.sched.enabled") : t("tasks.sched.disabled")}
+                            </button>
+                          ) : field.type === "textarea" ? (
+                            <textarea value={String(getTypedParamValue(field))} onChange={(e) => updateTypedParam(field, e.target.value)} rows={2}
+                              placeholder={field.placeholder}
+                              className="w-full px-3 py-2 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                              data-testid={`input-sched-param-${field.key}`} />
+                          ) : (
+                            <input value={String(getTypedParamValue(field))} onChange={(e) => updateTypedParam(field, e.target.value)}
+                              type={field.type === "number" ? "number" : "text"}
+                              placeholder={field.placeholder}
+                              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                              data-testid={`input-sched-param-${field.key}`} />
+                          )}
+                        </FormField>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] px-3 py-2 rounded-lg border border-dashed border-border text-muted-foreground">
+                      {parsedFormParams ? t("tasks.sched.no_typed_parameters") : t("tasks.sched.fix_json_for_typed_parameters")}
+                    </div>
+                  )}
+                </div>
+                <FormField label={t("tasks.sched.advanced_parameters")} hint={t("tasks.sched.advanced_parameters_hint")}>
                   <textarea value={formParams} onChange={(e) => setFormParams(e.target.value)} rows={3}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
                     data-testid="input-sched-params" />

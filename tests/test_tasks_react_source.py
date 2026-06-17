@@ -27,6 +27,32 @@ def test_scheduled_tasks_section_surfaces_write_errors_instead_of_silently_ignor
     assert "setErrorMsg" in src
 
 
+def test_scheduled_tasks_section_uses_typed_params_with_advanced_json_fallback():
+    src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
+
+    assert "scheduledParamFields" in src
+    assert 'weekly_summary: [' in src
+    assert '{ value: "weekly_summary", label: t("tasks.type.weekly_summary") }' in src
+    assert 'value: "file"' not in src
+    assert 'data-testid={`input-sched-param-${field.key}`}' in src
+    assert 'data-testid="input-sched-params"' in src
+    assert 't("tasks.sched.advanced_parameters")' in src
+    assert "parseParamsObject(formParams) || {}" in src
+    assert "JSON.stringify(params, null, 2)" in src
+    assert '{ key: "site", labelKey: "tasks.sched.param.site" }' in src
+    assert '{ key: "max_depth", labelKey: "tasks.sched.param.max_depth", type: "number" }' in src
+    assert '{ key: "count", labelKey: "tasks.sched.param.count", type: "number" }' in src
+    assert '{ key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
+    assert '{ key: "overwrite_existing", labelKey: "tasks.sched.param.overwrite_existing", type: "boolean" }' in src
+    assert 'key: "source_dir"' not in src
+    assert 'key: "force", labelKey: "tasks.sched.param.force"' not in src
+    assert "const nextNumber = Number(trimmed);" in src
+    assert "Number.isFinite(nextNumber)" in src
+    assert 'value.trim().toLowerCase() === "true"' in src
+    assert 'url: [' in src
+    assert '{ key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
+
+
 def test_add_to_schedule_error_dismiss_button_is_accessible():
     src = SCHEDULE_FROM_TASK_TSX.read_text(encoding="utf-8")
 
