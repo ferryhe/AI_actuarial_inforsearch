@@ -13,6 +13,7 @@ PRODUCT_SOURCE_FILES = [
     ROOT / "hooks" / "use-task-options.ts",
     ROOT / "lib" / "api.ts",
     ROOT / "pages" / "Chat.tsx",
+    ROOT / "pages" / "Categories.tsx",
     ROOT / "pages" / "Dashboard.tsx",
     ROOT / "pages" / "Database.tsx",
     ROOT / "pages" / "FileDetail.tsx",

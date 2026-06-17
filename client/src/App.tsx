@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import Layout from "@/components/Layout";
+import Categories from "@/pages/Categories";
 import Dashboard from "@/pages/Dashboard";
 import Database from "@/pages/Database";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -72,6 +73,11 @@ function Router() {
               </RequirePermission>
             </Route>
             <Route path="/database" component={Database} />
+            <Route path="/categories">
+              <RequirePermission permission="files.read">
+                <Categories />
+              </RequirePermission>
+            </Route>
             <Route path="/file-detail" component={FileDetail} />
             <Route path="/file-preview" component={FilePreview} />
             <Route path="/chat" component={Chat} />
