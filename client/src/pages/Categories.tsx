@@ -103,6 +103,7 @@ export default function Categories() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t("categories.search_placeholder")}
+            aria-label={t("categories.search_placeholder")}
             className="w-full rounded-lg border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none transition-colors focus:border-primary"
             data-testid="input-category-search"
           />

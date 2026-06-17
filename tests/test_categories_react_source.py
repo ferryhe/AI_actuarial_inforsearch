@@ -39,6 +39,7 @@ def test_categories_page_uses_fastapi_categories_and_database_filter_links():
     assert "`/database?${params.toString()}`" in src
     assert 'data-testid="categories-grid"' in src
     assert 'data-testid="input-category-search"' in src
+    assert 'aria-label={t("categories.search_placeholder")}' in src
 
 
 def test_dashboard_links_to_standalone_categories_entry():
