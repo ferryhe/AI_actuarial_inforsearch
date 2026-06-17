@@ -46,7 +46,11 @@ def test_scheduled_tasks_section_uses_typed_params_with_advanced_json_fallback()
     assert '{ key: "overwrite_existing", labelKey: "tasks.sched.param.overwrite_existing", type: "boolean" }' in src
     assert 'key: "source_dir"' not in src
     assert 'key: "force", labelKey: "tasks.sched.param.force"' not in src
-    assert 'url: [\n    { key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
+    assert "const nextNumber = Number(trimmed);" in src
+    assert "Number.isFinite(nextNumber)" in src
+    assert 'value.trim().toLowerCase() === "true"' in src
+    assert 'url: [' in src
+    assert '{ key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
 
 
 def test_add_to_schedule_error_dismiss_button_is_accessible():

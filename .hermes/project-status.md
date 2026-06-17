@@ -25,6 +25,7 @@
 - `git diff --check`: passed.
 - `codex exec -s read-only review --uncommitted`: initially found backend-param alignment issues; after fixes, passed with no discrete correctness issues.
 - Independent reviewer subagent: initially found an ignored `category` typed field for catalog/url; after fixes, passed with no blocking security or logic issues.
+- PR #161 remote review: Copilot later left 3 valid comments (NaN number serialization, legacy string boolean display, brittle source assertion); fixed locally on the same branch before follow-up push.
 
 ## Local Notes
 

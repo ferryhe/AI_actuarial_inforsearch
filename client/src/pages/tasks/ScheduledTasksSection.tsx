@@ -118,7 +118,10 @@ export function ScheduledTasksSection() {
     } else if (field.type === "number") {
       const trimmed = String(value).trim();
       if (trimmed === "") delete params[field.key];
-      else params[field.key] = Number(trimmed);
+      else {
+        const nextNumber = Number(trimmed);
+        if (Number.isFinite(nextNumber)) params[field.key] = nextNumber;
+      }
     } else if (field.key === "file_urls" || field.key === "urls") {
       const urls = String(value).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       if (urls.length === 0) delete params[field.key];
@@ -133,7 +136,10 @@ export function ScheduledTasksSection() {
 
   const getTypedParamValue = (field: ParamField) => {
     const value = parsedFormParams?.[field.key];
-    if (field.type === "boolean") return Boolean(value);
+    if (field.type === "boolean") {
+      if (typeof value === "string") return value.trim().toLowerCase() === "true";
+      return Boolean(value);
+    }
     if ((field.key === "file_urls" || field.key === "urls") && Array.isArray(value)) return value.join("\n");
     return value === undefined || value === null ? "" : String(value);
   };
