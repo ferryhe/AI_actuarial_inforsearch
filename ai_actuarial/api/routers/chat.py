@@ -123,10 +123,10 @@ def api_delete_conversation(
 @router.get("/chat/knowledge-bases")
 def api_list_chat_knowledge_bases(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("chat.view")),
+    auth: AuthContext = Depends(require_permissions("chat.view")),
 ):
     try:
-        return list_knowledge_bases(db_path=_db_path(request))
+        return list_knowledge_bases(db_path=_db_path(request), auth=auth)
     except ChatApiError as exc:
         return _error_response(exc)
 

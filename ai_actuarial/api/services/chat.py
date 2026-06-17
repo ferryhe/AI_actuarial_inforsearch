@@ -46,6 +46,79 @@ MAX_DOCUMENT_FIELD_CHARS = 512
 MAX_AGENTIC_SYNTHESIS_CHUNKS = 8
 MAX_AGENTIC_SYNTHESIS_CONTENT_CHARS = 4000
 MAX_AGENTIC_FALLBACK_ITEMS = 5
+DEFAULT_VISITOR_DEMO_KB_ID = "demo"
+
+
+def _visitor_demo_kb_id() -> str:
+    configured = _normalize_text(os.getenv("CHAT_VISITOR_DEMO_KB_ID"))
+    return configured or DEFAULT_VISITOR_DEMO_KB_ID
+
+
+def _visitor_demo_kb_only_error() -> ChatApiError:
+    return ChatApiError(
+        "Visitor chat is limited to the Demo knowledge base",
+        status_code=403,
+        payload={
+            "success": False,
+            "code": "VISITOR_DEMO_KB_ONLY",
+            "error": "Visitor chat is limited to the Demo knowledge base",
+        },
+    )
+
+
+def _is_visitor_auth(auth: AuthContext | None) -> bool:
+    token = (auth.token if auth else None) or {}
+    group_name = _normalize_text(token.get("group_name")).lower()
+    permissions = auth.permissions if auth else frozenset()
+    return not token or group_name in {"guest", "anonymous"} or "chat.conversations" not in permissions
+
+
+def _requested_kb_ids(kb_ids: Any) -> list[str]:
+    if isinstance(kb_ids, list):
+        values = kb_ids
+    elif isinstance(kb_ids, str):
+        if kb_ids.strip().lower() in {"", "auto", "all"}:
+            return []
+        values = [kb_ids]
+    else:
+        return []
+    requested: list[str] = []
+    for value in values:
+        normalized = _normalize_text(value)
+        if normalized.lower() in {"auto", "all"}:
+            continue
+        if normalized and normalized not in requested:
+            requested.append(normalized)
+    return requested
+
+
+def _kb_exists(storage: Storage, kb_id: str) -> bool:
+    try:
+        row = storage._conn.execute("SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ? LIMIT 1", (kb_id,)).fetchone()
+    except sqlite3.OperationalError:
+        return False
+    return row is not None
+
+
+def _enforce_visitor_demo_kb_selection(kb_ids: Any) -> str:
+    demo_kb_id = _visitor_demo_kb_id()
+    requested = _requested_kb_ids(kb_ids)
+    if requested and requested != [demo_kb_id]:
+        raise _visitor_demo_kb_only_error()
+    return demo_kb_id
+
+
+def _enforce_visitor_demo_kb_available(storage: Storage, demo_kb_id: str) -> None:
+    if not demo_kb_id or not _kb_exists(storage, demo_kb_id):
+        raise ChatApiError(
+            "Visitor Demo knowledge base is not available",
+            status_code=403,
+            payload={
+                "success": False,
+                "code": "VISITOR_DEMO_KB_UNAVAILABLE",
+                "error": "Visitor Demo knowledge base is not available",
+            },
+        )
 
 
 def _ensure_conversation_schema(storage: Storage) -> None:
@@ -416,9 +489,10 @@ def _embedding_metadata_matches(
 
 
 
-def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
+def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
+        demo_kb_id = _visitor_demo_kb_id() if auth is not None and _is_visitor_auth(auth) else ""
         embeddings_runtime = resolve_ai_function_runtime("embeddings", storage=storage)
         current_embeddings = {
             "provider": embeddings_runtime.provider,
@@ -456,6 +530,8 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
             ).fetchall()
         for row in rows:
             kb_id = row[0]
+            if demo_kb_id and kb_id != demo_kb_id:
+                continue
             composition = storage.get_kb_composition_status(kb_id)
             latest_index = composition.get("latest_index") or {}
             has_index = bool(composition.get("has_index"))
@@ -509,7 +585,10 @@ def list_knowledge_bases(*, db_path: str) -> dict[str, Any]:
                     "usable": usable,
                 }
             )
-        return {"success": True, "data": {"knowledge_bases": knowledge_bases, "current_embeddings": current_embeddings}}
+        data: dict[str, Any] = {"knowledge_bases": knowledge_bases, "current_embeddings": current_embeddings}
+        if demo_kb_id:
+            data["visitor_demo_kb_id"] = demo_kb_id
+        return {"success": True, "data": data}
     finally:
         storage.close()
 
@@ -920,7 +999,6 @@ def _prepare_document_source_chunks(
 
 
 def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, Any]) -> tuple[dict[str, Any], SessionUpdate | None]:
-    modules = _full_chat_modules()
     if not isinstance(payload, dict):
         raise ChatApiError("Invalid or missing JSON body", status_code=400)
 
@@ -935,6 +1013,9 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         raise ChatApiError(f"Invalid rag_mode '{rag_mode}'", status_code=400)
 
     kb_ids = payload.get("kb_ids")
+    visitor_demo_kb_id = _enforce_visitor_demo_kb_selection(kb_ids) if _is_visitor_auth(auth) else ""
+    if visitor_demo_kb_id:
+        kb_ids = [visitor_demo_kb_id]
     conversation_id = _normalize_text(payload.get("conversation_id")) or None
     document_content = _normalize_text(payload.get("document_content"))
     document_filename = _normalize_text(payload.get("document_filename")) or "Document"
@@ -945,11 +1026,17 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         raise ChatApiError("Too many files selected; choose up to 3.", status_code=400)
     if rag_mode == "agentic" and (document_content or document_sources):
         raise ChatApiError("Agentic RAG cannot be combined with direct document context", status_code=400)
+    if visitor_demo_kb_id and (document_content or document_sources):
+        raise _visitor_demo_kb_only_error()
     agentic_kb_id = _selected_agentic_kb_id(kb_ids) if rag_mode == "agentic" else None
+
+    modules = _full_chat_modules()
 
     user_id, session_update = _resolve_chat_user(request, auth)
     storage = Storage(db_path)
     try:
+        if visitor_demo_kb_id:
+            _enforce_visitor_demo_kb_available(storage, visitor_demo_kb_id)
         _enforce_chat_quota(storage=storage, request=request, auth=auth)
         config = modules["config"].ChatbotConfig.from_config(storage=storage, default_mode=mode)
         conversation_manager = modules["conversation"].ConversationManager(storage, config)
@@ -961,6 +1048,8 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 raise ChatApiError("Conversation not found", status_code=404)
             if conversation.get("user_id") != user_id:
                 raise ChatApiError("Access denied", status_code=403)
+            if visitor_demo_kb_id and conversation.get("kb_id") != visitor_demo_kb_id:
+                raise _visitor_demo_kb_only_error()
         else:
             primary_kb = None
             if agentic_kb_id:
