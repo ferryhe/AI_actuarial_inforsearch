@@ -58,7 +58,11 @@ def _visitor_demo_kb_only_error() -> ChatApiError:
     return ChatApiError(
         "Visitor chat is limited to the Demo knowledge base",
         status_code=403,
-        payload={"success": False, "code": "VISITOR_DEMO_KB_ONLY", "error": "Visitor chat is limited to the Demo knowledge base"},
+        payload={
+            "success": False,
+            "code": "VISITOR_DEMO_KB_ONLY",
+            "error": "Visitor chat is limited to the Demo knowledge base",
+        },
     )
 
 
