@@ -84,10 +84,12 @@ export function MarkdownConversionTab() {
   };
 
   const updateLimit = (name: string, value: string) => {
+    if (!value.trim()) return;
     const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return;
     setConfig((prev) => prev ? {
       ...prev,
-      limits: { ...(prev.limits || {}), [name]: Number.isFinite(parsed) ? parsed : 0 },
+      limits: { ...(prev.limits || {}), [name]: parsed },
     } : prev);
   };
 

@@ -72,6 +72,8 @@ def test_settings_exposes_markdown_conversion_as_independent_tab():
     assert "<MarkdownConversionTab />" in src
     assert '"/api/config/markdown-conversion"' in tab_src
     assert 'data-testid="markdown-conversion-tab"' in tab_src
+    assert "if (!value.trim()) return" in tab_src
+    assert "!Number.isFinite(parsed) || parsed < 0" in tab_src
     assert '"settings.tab_markdown_conversion"' in i18n
 
 

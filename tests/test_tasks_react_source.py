@@ -195,6 +195,17 @@ def test_tasks_page_exposes_agentic_site_monitoring_form():
     assert 'data-testid="form-web-listening"' in form_src
 
 
+def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
+    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
+    filter_src = (ROOT / "pages" / "tasks" / "FilterBar.tsx").read_text(encoding="utf-8")
+
+    assert 'tt.type === "web_listening"' in tasks_src
+    assert "return canManageSites" in tasks_src
+    assert "const canShowTaskEntryGrid = visibleTaskTypes.length > 0" in tasks_src
+    assert "{canShowTaskEntryGrid ? <div>" in tasks_src
+    assert '<option value="rag_indexing">RAG Indexing</option>' in filter_src
+
+
 def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
     src = TASKS_TSX.read_text(encoding="utf-8")
 
