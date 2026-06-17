@@ -58,7 +58,7 @@ def test_chat_persistent_conversations_require_chat_conversations_permission():
     assert 'if (canUseConversations) {' in src and 'loadConversations();' in src
     assert 'if (!canUseConversations) return;' in src
     assert '{canUseConversations && (' in src and 'data-testid="button-new-conversation"' in src
-    assert '{canUseConversations && (' in src and 'data-testid="tab-conversations"' in src
+    assert 'disabled={!canUseConversations}' in src and 'data-testid="button-toggle-documents-panel"' in src
     assert 'sidebarTab === "conversations" && canUseConversations ? (' in src
 
 

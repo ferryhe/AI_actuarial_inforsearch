@@ -66,6 +66,8 @@ def import_batch_root() -> Path:
 
 def _safe_relative_path(raw_path: str, fallback_name: str) -> str:
     raw = (raw_path or fallback_name or "uploaded-file").replace("\\", "/").strip()
+    if raw in {"", "."} or raw.startswith("/") or raw.startswith("../") or raw == ".." or "/../" in raw:
+        raise ImportBatchError("Invalid relative path")
     raw = posixpath.normpath(raw)
     if raw in {"", "."} or raw.startswith("/") or raw.startswith("../") or raw == ".." or "/../" in raw:
         raise ImportBatchError("Invalid relative path")

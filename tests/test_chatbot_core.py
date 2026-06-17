@@ -407,7 +407,7 @@ class TestPrompts(unittest.TestCase):
         
         prompt = format_context_prompt(chunks)
         
-        self.assertIn("RETRIEVED INFORMATION", prompt)
+        self.assertIn("UNTRUSTED CONTEXT FROM KNOWLEDGE BASE", prompt)
         self.assertIn("test1.pdf", prompt)
         self.assertIn("test2.pdf", prompt)
         self.assertIn("Test content 1", prompt)
