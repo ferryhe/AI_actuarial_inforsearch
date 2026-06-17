@@ -541,7 +541,7 @@ def test_rate_limit_defaults_are_enforced_from_runtime_features(tmp_path: Path, 
     app.state.enable_rate_limiting = True
     app.state.rate_limit_defaults = "2 per minute"
     app.state.rate_limit_storage_uri = f"memory://ops-read-{tmp_path.name}"
-    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+    headers = {"Authorization": f"Bearer {seed['admin_token']}"}
     payload = {"type": "file", "directory_path": "/does/not/exist"}
 
     first = client.post("/api/collections/run", json=payload, headers=headers)

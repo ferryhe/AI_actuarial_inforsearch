@@ -3,9 +3,33 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_fastapi_env(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "sites.yaml"
+    categories_path = tmp_path / "categories.yaml"
+    config_path.write_text(
+        "paths:\n  db: {}\n  download_dir: {}\n  updates_dir: {}\n"
+        "features:\n  require_auth: false\n  enable_csrf: false\n  enable_rate_limiting: false\n"
+        "sites: []\nscheduled_tasks: []\n".format(
+            tmp_path / "index.db",
+            tmp_path / "files",
+            tmp_path / "updates",
+        ),
+        encoding="utf-8",
+    )
+    categories_path.write_text("categories: {}\n", encoding="utf-8")
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
+    monkeypatch.setenv("REQUIRE_AUTH", "0")
+    monkeypatch.setenv("ENABLE_CSRF", "0")
+    monkeypatch.setenv("ENABLE_RATE_LIMITING", "0")
+    monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-entrypoint-test-secret")
 
 
 def test_fastapi_health_endpoint_returns_ok() -> None:

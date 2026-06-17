@@ -57,9 +57,16 @@ class TestSafeUnpickler:
         """Attempting to execute os.system should raise error."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
         
-        # Try to execute code via pickle - this is a common attack vector
-        # This particular pickle would try to execute: os.system('echo pwned')
-        malicious = b"\x80\x04\x95\x08\x00\x00\x00\x00\x00\x00\x00\x8c\x05os\x94\x8c\x06system\x94\x93\x94\x8c\x0becho pwned\x94\x85\x94\x86\x94."
+        class EvilOSSystem:
+            def __reduce__(self):
+                import os
+
+                # os.system pickles as posix.system on POSIX platforms.
+                return (os.system, ("echo pwned",))
+
+        # Real REDUCE payload that would execute os.system/posix.system under
+        # pickle.loads. SafeUnpickler must reject the global before REDUCE runs.
+        malicious = pickle.dumps(EvilOSSystem(), protocol=4)
         
         with pytest.raises(pickle.UnpicklingError):
             SafeUnpickler(io.BytesIO(malicious)).load()
@@ -141,16 +148,13 @@ class TestSafeUnpickler:
         """pickle.loads should not be in whitelist to prevent bypass."""
         from ai_actuarial.rag.vector_store import SafeUnpickler
         
-        # Build a pickle payload that explicitly references pickle.loads and
-        # attempts to call it with an inner pickle payload via REDUCE.
-        # This should be blocked because 'pickle' module is not in SAFE_GLOBALS.
-        inner_payload = pickle.dumps({"hack": "data"})
-        
-        # Construct: call pickle.loads(inner_payload)
-        malicious = pickle.dumps({
-            "action": inner_payload  # Just a dict containing bytes - will fail when trying to reference pickle.loads
-        })
-        
-        # The payload references pickle module which is not in SAFE_GLOBALS
+        class EvilPickleLoads:
+            def __reduce__(self):
+                return (pickle.loads, (pickle.dumps({"hack": "data"}),))
+
+        # Real REDUCE payload that attempts to call _pickle.loads on an inner
+        # pickle. SafeUnpickler must reject _pickle.loads before REDUCE runs.
+        malicious = pickle.dumps(EvilPickleLoads(), protocol=4)
+
         with pytest.raises(pickle.UnpicklingError):
             SafeUnpickler(io.BytesIO(malicious)).load()

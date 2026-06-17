@@ -25,6 +25,7 @@ from ai_actuarial.storage import Storage
 from ai_actuarial.catalog_incremental import _connect, _count_candidates, _upsert_catalog_row
 from ai_actuarial.crawler import Crawler
 from ai_actuarial.catalog import CatalogItem
+from ai_actuarial.api.services.import_batches import ImportBatchError, _safe_relative_path
 
 
 class TestSkippedItemsStatus(unittest.TestCase):
@@ -655,16 +656,22 @@ class TestOrderByDocumentation(unittest.TestCase):
 class TestPathTraversalProtection(unittest.TestCase):
     """Test that path traversal attacks are prevented."""
     
-    def test_path_validation_in_code(self):
-        """Test that path validation exists in web app."""
-        project_root = Path(__file__).resolve().parents[1]
-        app_path = project_root / "ai_actuarial" / "web" / "app.py"
-        with open(app_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        # Verify path validation is present
-        self.assertIn("resolved_path.relative_to(data_dir)", content)
-        self.assertIn("Security: Validate that resolved path", content)
+    def test_import_batch_relative_path_rejects_traversal(self):
+        """Test current upload/import path validation rejects traversal."""
+        traversal_paths = [
+            "../escape.pdf",
+            "nested/../../escape.pdf",
+            "/absolute/escape.pdf",
+            "..",
+            "safe/../escape.pdf",
+        ]
+
+        for path in traversal_paths:
+            with self.subTest(path=path):
+                with self.assertRaises(ImportBatchError):
+                    _safe_relative_path(path, "fallback.pdf")
+
+        self.assertEqual(_safe_relative_path("safe/report.pdf", "fallback.pdf"), "safe/report.pdf")
 
 
 if __name__ == "__main__":
