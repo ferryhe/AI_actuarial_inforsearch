@@ -254,7 +254,12 @@ export default function Tasks() {
     }
   }
 
-  const visibleTaskTypes = taskTypes.filter((tt) => tt.type !== "site_config" || canManageSites);
+  const visibleTaskTypes = taskTypes.filter((tt) => {
+    if (tt.type === "site_config") return canManageSites;
+    if (tt.type === "web_listening") return canManageSites;
+    return canRunTasks;
+  });
+  const canShowTaskEntryGrid = visibleTaskTypes.length > 0;
   const activeTaskType = visibleTaskTypes.find((tt) => tt.type === activeForm);
 
   return (
@@ -303,7 +308,7 @@ export default function Tasks() {
         </div>
       )}
       {/* 1. All Tasks (task type selection grid) */}
-      {canRunTasks ? <div>
+      {canShowTaskEntryGrid ? <div>
         <h2 className="text-lg font-semibold mb-3">{t("tasks.new_task")}</h2>
         <AnimatePresence mode="wait">
           {activeForm ? (

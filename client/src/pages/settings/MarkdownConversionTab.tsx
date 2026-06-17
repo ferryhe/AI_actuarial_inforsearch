@@ -48,18 +48,21 @@ export function MarkdownConversionTab() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [limitDrafts, setLimitDrafts] = useState<Record<string, string>>({});
 
   const loadConfig = async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await apiGet<MarkdownConversionOptions>("/api/config/markdown-conversion");
-      setConfig(res.config || {
+      const nextConfig = res.config || {
         default_tool: res.default_tool,
         tools: Object.fromEntries((res.tools || []).map((tool) => [tool.name, tool])),
         formats: res.formats,
         limits: res.limits,
-      });
+      };
+      setConfig(nextConfig);
+      setLimitDrafts(Object.fromEntries(Object.entries(nextConfig.limits || {}).map(([key, limit]) => [key, String(limit)])));
     } catch (e) {
       setError(e instanceof Error ? e.message : t("settings.markdown_load_error"));
     } finally {
@@ -84,11 +87,19 @@ export function MarkdownConversionTab() {
   };
 
   const updateLimit = (name: string, value: string) => {
+    setLimitDrafts((prev) => ({ ...prev, [name]: value }));
+    if (!value.trim()) return;
     const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return;
     setConfig((prev) => prev ? {
       ...prev,
-      limits: { ...(prev.limits || {}), [name]: Number.isFinite(parsed) ? parsed : 0 },
+      limits: { ...(prev.limits || {}), [name]: parsed },
     } : prev);
+  };
+
+  const resetLimitDraft = (name: string) => {
+    const current = config?.limits?.[name];
+    setLimitDrafts((prev) => ({ ...prev, [name]: current == null ? "" : String(current) }));
   };
 
   const saveConfig = async () => {
@@ -188,7 +199,7 @@ export function MarkdownConversionTab() {
         {Object.entries(config.limits || {}).map(([name, value]) => (
           <label key={name} className="grid sm:grid-cols-[220px_1fr] gap-3 items-center text-sm">
             <span className="text-muted-foreground">{name}</span>
-            <input type="number" value={value} onChange={(e) => updateLimit(name, e.target.value)} className="rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+            <input type="number" value={limitDrafts[name] ?? String(value)} onChange={(e) => updateLimit(name, e.target.value)} onBlur={() => resetLimitDraft(name)} className="rounded-lg border border-border bg-background px-3 py-2 text-sm" />
           </label>
         ))}
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><AlertTriangle className="w-3.5 h-3.5" />{t("settings.markdown_paid_hint")}</p>
