@@ -32,7 +32,9 @@ def test_scheduled_tasks_section_uses_typed_params_with_advanced_json_fallback()
 
     assert "scheduledParamFields" in src
     assert 'weekly_summary: [' in src
+    assert 'full_pipeline: [' in src
     assert '{ value: "weekly_summary", label: t("tasks.type.weekly_summary") }' in src
+    assert '{ value: "full_pipeline", label: t("tasks.type.full_pipeline") }' in src
     assert 'value: "file"' not in src
     assert 'data-testid={`input-sched-param-${field.key}`}' in src
     assert 'data-testid="input-sched-params"' in src
@@ -51,6 +53,9 @@ def test_scheduled_tasks_section_uses_typed_params_with_advanced_json_fallback()
     assert 'value.trim().toLowerCase() === "true"' in src
     assert 'url: [' in src
     assert '{ key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
+    assert '{ key: "source_collection_type", labelKey: "tasks.sched.param.source_collection_type"' in src
+    assert '{ key: "query", labelKey: "tasks.sched.param.query" }' in src
+    assert '{ key: "run_rag_indexing", labelKey: "tasks.sched.param.run_rag_indexing", type: "boolean" }' in src
 
 
 def test_add_to_schedule_error_dismiss_button_is_accessible():
@@ -98,6 +103,7 @@ def test_each_task_form_exposes_add_to_schedule_control():
         "CatalogForm.tsx",
         "MarkdownForm.tsx",
         "ChunkForm.tsx",
+        "FullPipelineForm.tsx",
         "RagIndexForm.tsx",
     ]
 
@@ -230,6 +236,22 @@ def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
     assert "const canShowTaskEntryGrid = visibleTaskTypes.length > 0" in tasks_src
     assert "{canShowTaskEntryGrid ? <div>" in tasks_src
     assert '<option value="rag_indexing">RAG Indexing</option>' in filter_src
+    assert '<option value="full_pipeline">Full Pipeline</option>' in filter_src
+
+
+def test_tasks_page_exposes_full_pipeline_form():
+    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
+    form_src = (ROOT / "pages" / "tasks" / "FullPipelineForm.tsx").read_text(encoding="utf-8")
+
+    assert 'type: "full_pipeline"' in tasks_src
+    assert 'apiType: "full_pipeline"' in tasks_src
+    assert "<FullPipelineForm onSubmit={handleSubmitTask} submitting={submitting} />" in tasks_src
+    assert 'data-testid="form-full-pipeline"' in form_src
+    assert 'type: "full_pipeline"' in form_src
+    assert "source_collection_type: sourceType" in form_src
+    assert "run_rag_indexing: runRagIndexing" in form_src
+    assert "kb_id: runRagIndexing ? selectedKbId : undefined" in form_src
+    assert "ScheduleFromTaskButton" in form_src
 
 
 def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
