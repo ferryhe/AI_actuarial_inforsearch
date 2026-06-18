@@ -59,6 +59,8 @@ def test_auth_react_shell_restores_native_auth_routes_and_contracts():
     assert 'permissions.includes("users.manage")' in layout_src
     assert 'i18n.t("nav.users")' in layout_src
     assert 'i18n.t("auth.signIn")' in layout_src
+    assert 'data-testid="button-login"' in layout_src
+    assert 'flex items-center rounded-md border border-border px-2 py-1 text-xs' in layout_src
     assert 'i18n.t("auth.register")' in layout_src
     assert 'apiGet<AuthMeResponse>("/api/auth/me")' in auth_ctx_src
     assert 'apiPost("/api/auth/logout")' in auth_ctx_src

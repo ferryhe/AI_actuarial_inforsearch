@@ -1,43 +1,33 @@
 # Project Status
 
 - Date: 2026-06-18
-- Branch: `docs/final-state-readme-refresh`
-- Scope: Final-state README/docs refresh after managed roadmap completion; deploy latest `main` afterward.
+- Branch: `fix/guest-chat-login-entry`
+- Scope: Fix guest Chat KB selection / explain-file flow and add compact top-right login entry.
 
 ## Current State
 
-- PR-A / #156 through PR-I / #164 are merged into `main`.
-- There are no open PRs for the managed roadmap.
-- PR-I / #164 completed the Web Listening automatic loop: materialized rules now create scheduled `full_pipeline` tasks rather than collection-only `scheduled` tasks.
-- Materialized Web Listening full-pipeline params include `source_collection_type: scheduled`, the selected `site`, a `Full Pipeline: <site>` run name, `check_database: true`, and `run_rag_indexing: false` by default.
-- Tasks UI/i18n copy describes the Web Listening materialized task as a scheduled full-pipeline monitor.
-- Documentation refresh is in progress on `docs/final-state-readme-refresh`: README, Chinese README, docs index, architecture, and API migration status are being updated to reflect PR-A through PR-I, weekly summaries, typed scheduled tasks, and `full_pipeline`.
+- PR-A / #156 through PR-I / #164 and docs refresh PR #165 are merged into `main`.
+- Production guest QA found Chat regressions for non-logged-in users:
+  - `/chat` showed no selectable KBs even though public Knowledge Bases listed ready KBs.
+  - Guest chat sent questions to a missing Demo KB and returned `Visitor Demo knowledge base is not available`.
+  - Database/File Detail “Explain with AI” redirected to Chat but failed with `Visitor chat is limited to the Demo knowledge base`.
+- Root cause: backend visitor policy in `ai_actuarial/api/services/chat.py` filtered guest KB listing and forced/rejected guest queries based on `CHAT_VISITOR_DEMO_KB_ID` / default `demo`.
+- Fix in progress removes the Demo-only visitor chat restriction while keeping guest chat quota enforcement; guests can list/select public ready KBs and send direct document context through Chat.
+- Header login entry now stays visible as a compact top-right button on small screens.
 - Sibling repositories remain out of scope.
 
 ## Verification
 
-- PR-I local focused tests before merge:
-  - `python3 -m pytest tests/test_web_listening_rule.py tests/test_task_runtime_full_pipeline.py tests/test_tasks_react_source.py -q`: 32 passed; existing SWIG deprecation warnings.
-  - `python3 -m pytest tests/test_fastapi_ops_write_endpoints.py::test_scheduled_tasks_write_and_schedule_reinit_roundtrip tests/test_web_listening_rule.py -q`: 5 passed; existing SWIG deprecation warnings.
+- Guest QA subagent on production before fix: confirmed database/category/file browsing work for guests; confirmed Chat KB selection and explain-file fail; no console errors observed.
+- Read-only code investigation subagent: traced guest KB filtering and direct-document rejection to `ai_actuarial/api/services/chat.py`; located header login controls in `client/src/components/Layout.tsx`.
+- Focused local verification after fix:
+  - `python3 -m pytest tests/test_fastapi_chat_endpoints.py::test_visitor_chat_knowledge_bases_show_public_ready_kbs tests/test_fastapi_chat_endpoints.py::test_guest_equivalent_tokens_can_list_public_chat_kbs tests/test_fastapi_chat_endpoints.py::test_visitor_chat_knowledge_bases_do_not_depend_on_demo_kb_config tests/test_fastapi_chat_endpoints.py::test_visitor_chat_query_allows_selected_public_kb tests/test_fastapi_chat_endpoints.py::test_visitor_chat_query_allows_direct_document_context tests/test_auth_react_source.py -q`: 6 passed; existing SWIG deprecation warnings.
+  - `python3 -m pytest tests/test_fastapi_chat_endpoints.py tests/test_auth_react_source.py tests/test_fastapi_auth_endpoints.py -q`: 47 passed; existing SWIG deprecation warnings.
   - `npm run build`: passed; Vite emitted the existing large-chunk warning.
   - `git diff --check`: passed.
-  - Static added-line security scan: no findings.
-  - Independent reviewer subagent: passed with no blocking security or logic findings.
-  - `codex exec -s read-only ...`: `NO BLOCKING FINDINGS`.
-- PR #164 remote CI: `python-smoke` succeeded.
-- PR #164 Copilot review: generated no inline comments.
-- Post-merge: `git fetch origin --prune` confirmed the remote PR-I branch is deleted; `gh pr list --state open` returned no open PRs.
-- Docs refresh verification on `docs/final-state-readme-refresh`:
-  - Active doc relative-link scan: passed.
-  - Active doc stale-current-status scan: passed.
-  - `python3 -m ai_actuarial --help`: passed.
-  - `python3 -m pytest tests/test_web_listening_rule.py tests/test_weekly_updates.py tests/test_task_runtime_full_pipeline.py tests/test_tasks_react_source.py -q`: 40 passed; existing SWIG deprecation warnings.
-  - `npm run build`: passed; Vite emitted the existing large-chunk warning.
-  - `git diff --check`: passed.
-  - Independent reviewer subagents: one found an incorrect `web_page` typed-param doc claim; fixed. Follow-up links/stale reviewer passed.
-  - `codex exec -s read-only ...`: `NO BLOCKING FINDINGS`.
 
 ## Local Notes
 
+- Modified files: `.hermes/project-status.md`, `ai_actuarial/api/services/chat.py`, `client/src/components/Layout.tsx`, `tests/test_fastapi_chat_endpoints.py`, `tests/test_auth_react_source.py`.
 - Existing protected stashes from earlier work remain untouched, including `protected-project-status-before-pr-f` and `protected-local-files-before-pr-d-review`.
-- Next gate: verify docs refresh, commit/push/open/merge docs PR, sync `main`, then update the website service to latest `main` and run public health checks.
+- Next gate: independent review / Codex review, commit/push/open PR, inspect CI/Copilot comments, merge, deploy, and run production guest smoke.
