@@ -225,6 +225,9 @@ def test_tasks_page_exposes_agentic_site_monitoring_form():
     assert '"/api/schedule/reinit"' in form_src
     assert 'scheduled-tasks:changed' in form_src
     assert 'data-testid="form-web-listening"' in form_src
+    i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
+    assert "scheduled full pipeline task" in i18n_src
+    assert "完整流水线任务" in i18n_src
 
 
 def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
