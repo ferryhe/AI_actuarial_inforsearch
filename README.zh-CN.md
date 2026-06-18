@@ -10,12 +10,12 @@ AI Actuarial Info Search 是面向精算和保险研究场景的 FastAPI + React
 
 - **运行时：** FastAPI 是唯一 `/api/*` 权威入口；React/Vite 是唯一维护中的产品 UI。旧 server-rendered/Replit 时代工作流已退出当前产品。
 - **安全/RBAC：** session/token 鉴权、细粒度权限、upload-batch 文件导入、公共 URL SSRF 防护、登录/注册限流，以及 Chat 文档上下文边界控制已启用。
-- **客户产品面：** Dashboard 优先展示客户关心的来源、分类、本周新增、资料详情和问 Agent 入口；后台处理指标放在 admin/ops 页面，不再作为首页主内容。
+- **客户产品面：** Dashboard 优先展示客户关心的来源、分类、来自后端 weekly summary 的最新周报新增、资料详情和问 Agent 入口；后台处理指标放在 admin/ops 页面，不再作为首页主内容。
 - **Markdown 转换：** 由 `config/markdown_conversion.yaml` 和 Settings 管理工具顺序、格式路由、付费/API 工具开关和 tuning；付费/API 工具默认不自动触发。
-- **采集自动化：** 支持配置站点爬取、搜索服务兜底、浏览器上传文件导入、定时任务，以及 web-listening 规则 draft/validate/materialize。
-- **本周新增：** `/api/weekly-updates` 和 `/api/weekly-updates/latest` 基于 `files.first_seen` 汇总新发现资料。
+- **采集自动化：** 支持配置站点爬取、搜索服务兜底、浏览器上传文件导入、typed 定时任务、`weekly_summary`、`full_pipeline`，以及 web-listening 规则 draft/validate/materialize。
+- **周报新增：** `/api/weekly-updates` 和 `/api/weekly-updates/latest` 基于 `files.first_seen` 汇总新发现资料；默认 weekly task 使用 `relative_period: previous_week` 覆盖已完成的 UTC ISO 周。
 - **RAG 和 Chat：** 标准向量 RAG 与 Agentic RAG 并存。Chat 已转为知识库优先体验，保留会话历史，支持标准多知识库 Chat 和单个 ready KB 的 Agentic 模式。
-- **路线图完成：** Agentic RAG PR #133-#145 以及后续路线图 PR #147-#154 均已合并；`.hermes/project-status.md` 中的 managed backlog 已完成。
+- **路线图完成：** Agentic RAG PR #133-#145、整合 PR #147-#154，以及飞书计划 managed PR-A 到 PR-I（#156-#164）均已合并；当前没有未完成的 managed-roadmap PR。
 
 ## 功能集
 
@@ -38,7 +38,7 @@ AI Actuarial Info Search 是面向精算和保险研究场景的 FastAPI + React
 
 - 根据来源 URL 和采集目标生成 `web-listening-agent-rule.v1` YAML 草稿。
 - 在应用前校验 rule YAML。
-- 将校验后的规则 materialize 为 acquisition profile、monitor task、section selection 和 monitor scope 配置。
+- 将校验后的规则 materialize 为 acquisition profile、定时 `full_pipeline` monitor task、section selection 和 monitor scope 配置。
 
 ### RAG、Agentic RAG 和 Chat
 
@@ -148,12 +148,11 @@ SQLite 路径以 `config/sites.yaml -> paths.db` 为准；`DB_PATH` 只是 YAML 
 }
 ```
 
-运行 weekly summary：
+运行已完成 UTC ISO 周的 weekly summary：
 
 ```json
 {
-  "period_start": "2026-06-01T00:00:00+00:00",
-  "period_end": "2026-06-08T00:00:00+00:00",
+  "relative_period": "previous_week",
   "max_files": 500
 }
 ```
@@ -237,7 +236,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 npm run build
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py -q
-python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py -q
+python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py tests/test_task_runtime_full_pipeline.py -q
 python -m pytest tests/agentic_rag/test_eval.py tests/agentic_rag/test_planner_agentic_loop.py -q
 python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
 ```

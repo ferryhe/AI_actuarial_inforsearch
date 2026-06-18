@@ -17,7 +17,7 @@ The active RAG posture has two paths:
 - **Standard RAG**: vector indexes, embeddings, LLM-backed answer generation, multi-KB chat, and direct selected-document comparison.
 - **Agentic RAG**: KB-scoped ready_data manifests, deterministic local read tools, structured evidence/citations, and tool traces for a single Agentic-ready KB.
 
-The Feishu-plan roadmap is complete on `main`: Markdown conversion config, customer Dashboard, web-listening rules, weekly updates, and KB-first Chat are active product surfaces rather than future phases.
+The Feishu-plan roadmap PR-A through PR-I (#156-#164) is complete on `main`: Markdown conversion config, customer Dashboard, typed scheduled tasks, weekly summaries, `full_pipeline` chaining, web-listening rules, and KB-first Chat are active product surfaces rather than future phases.
 
 ## Core System Chain
 
@@ -27,6 +27,7 @@ site config + markdown conversion config
 -> file download + SHA256 dedupe
 -> cataloging + Markdown conversion
 -> weekly-update summaries from first_seen files
+-> optional full_pipeline chaining across collection, Markdown, catalog, chunking, and RAG indexing
 -> semantic chunking + embeddings
 -> knowledge base indexing
 -> standard RAG retrieval + KB-first chat
@@ -56,7 +57,7 @@ site config + markdown conversion config
 6. Standard RAG and Agentic RAG must remain explicit modes; Agentic Chat currently requires exactly one ready KB and cannot be combined with direct document context.
 7. Dashboard should stay customer-facing by default; operational processing metrics belong in admin/ops routes.
 8. Markdown conversion behavior belongs in `config/markdown_conversion.yaml` plus Settings, not hard-coded tool order lists.
-9. Web-listening rule materialization must preserve the typed `web-listening-agent-rule.v1` contract.
+9. Web-listening rule materialization must preserve the typed `web-listening-agent-rule.v1` contract and create scheduled `full_pipeline` monitors, not collection-only tasks.
 
 ## Key Subsystems
 
@@ -89,12 +90,12 @@ site config + markdown conversion config
 
 - `ai_actuarial/web_listening_rule.py`: `web-listening-agent-rule.v1` schema and validation.
 - `ai_actuarial/api/services/ops_write.py`: draft/validate/materialize operations.
-- Materialized config lives in the standard site/schedule config surfaces.
+- Materialized config lives in the standard site/schedule config surfaces and uses scheduled `full_pipeline` tasks with `source_collection_type: scheduled`, `check_database: true`, and RAG indexing disabled unless explicitly requested.
 
 ### Weekly Updates
 
 - `ai_actuarial/api/services/weekly_updates.py`: summary generation from `files.first_seen`.
-- `weekly_update_summaries` storage table and `weekly_summary` collection task.
+- `weekly_update_summaries` storage table and `weekly_summary` collection task; default scheduling uses `relative_period: previous_week` for the completed UTC ISO week.
 - `/api/weekly-updates` and `/api/weekly-updates/latest` expose summaries to Dashboard/product UI.
 
 ### RAG and Chat
@@ -144,6 +145,7 @@ Product API/UI ready_data builds are constrained to the configured SQLite databa
 - `GET /api/config/markdown-conversion`
 - `GET /api/weekly-updates/latest`
 - `POST /api/web-listening/rules/validate`
+- `POST /api/collections/run` with `type: full_pipeline`
 - `GET /api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest`
 - `POST /api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build`
 

@@ -16,14 +16,14 @@ The legacy server-rendered runtime has been retired from the active tree. React 
 - **Unmatched `/api/*`:** FastAPI returns `410`
 - **Migration inventory:** available only when `FASTAPI_ENABLE_MIGRATION_INVENTORY=1`
 - **RAG modes:** standard vector RAG and Agentic RAG both use native FastAPI endpoints.
-- **Roadmap surfaces:** Markdown conversion config, web-listening rule draft/validate/materialize, weekly updates, customer Dashboard, and KB-first Chat are all native FastAPI + React surfaces.
+- **Roadmap surfaces:** Markdown conversion config, typed scheduled tasks, `weekly_summary`, `full_pipeline`, web-listening rule draft/validate/materialize, weekly updates, customer Dashboard, and KB-first Chat are all native FastAPI + React surfaces.
 
 ## Product Contract Status
 
 The routed React product shell is expected to use native FastAPI endpoints for:
 
 - Dashboard
-  - Customer-facing sources, categories, weekly additions, file-detail links, and Agent entry points
+  - Customer-facing sources, categories, latest weekly additions from `/api/weekly-updates/latest`, file-detail links, and Agent entry points
   - Backend processing metrics stay in admin/ops surfaces rather than the homepage
 - Database
 - File Detail / File Preview
@@ -32,6 +32,7 @@ The routed React product shell is expected to use native FastAPI endpoints for:
   - Standard multi-KB mode
   - Agentic single-ready-KB mode
 - Tasks
+  - Typed scheduled task parameters for backend-supported `catalog`, `url`, `weekly_summary`, and `full_pipeline` params
 - Logs
 - Knowledge / KB Detail
 - Agentic ready_data manifest status/build actions
@@ -85,7 +86,7 @@ The routed React product shell is expected to use native FastAPI endpoints for:
 - `/api/tasks/history`
 - `/api/tasks/log/{task_id}`
 - `/api/tasks/stop/{task_id}`
-- `/api/collections/run`
+- `/api/collections/run` (`scheduled`, `weekly_summary`, and `full_pipeline` run types)
 - `/api/utils/browse-folder`
 
 ### Weekly Updates
@@ -158,8 +159,9 @@ Agentic Chat is also exposed through the main chat contract by sending `rag_mode
 
 - `tests/test_fastapi_entrypoint.py`, `tests/test_fastapi_no_flask_runtime.py`, `tests/test_react_fastapi_authority.py`, and `tests/test_fastapi_react_cleanup.py` keep the FastAPI + React product boundary from regressing.
 - `tests/test_markdown_conversion_config.py` and related ops endpoint tests cover Markdown conversion config normalization, caching, and Settings read/write behavior.
-- `tests/test_web_listening_rule.py` covers rule draft/validate/materialize behavior and YAML coercion.
-- `tests/test_weekly_updates.py` covers weekly summary API/task behavior using `files.first_seen`.
+- `tests/test_web_listening_rule.py` covers rule draft/validate/materialize behavior, YAML coercion, and materialized `full_pipeline` monitor tasks.
+- `tests/test_weekly_updates.py` covers weekly summary API/task behavior using `files.first_seen`, including previous-week relative periods.
+- `tests/test_task_runtime_full_pipeline.py` covers automatic full-pipeline chaining and failure handling.
 - `tests/test_fastapi_chat_endpoints.py` and source-level Chat tests cover KB-first Chat behavior.
 - `tests/agentic_rag/test_eval.py` and the CI Agentic eval smoke keep the deterministic ready_data eval path active.
 
@@ -181,7 +183,7 @@ Agentic Chat is also exposed through the main chat contract by sending `rag_mode
 
 ```bash
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
-python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py -q
+python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py tests/test_task_runtime_full_pipeline.py -q
 python -m pytest tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py -q
 npm run build
 python -m pytest tests/agentic_rag/test_eval.py -q
