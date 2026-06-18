@@ -33,6 +33,13 @@ def current_utc_iso_week_period(now: datetime | None = None) -> tuple[str, str]:
     return start.isoformat(), end.isoformat()
 
 
+def previous_utc_iso_week_period(now: datetime | None = None) -> tuple[str, str]:
+    current_start, _current_end = current_utc_iso_week_period(now)
+    end = datetime.fromisoformat(current_start)
+    start = end - timedelta(days=7)
+    return start.isoformat(), end.isoformat()
+
+
 def parse_weekly_update_list_query(raw_query: Mapping[str, str | None]) -> dict[str, int]:
     return {
         "limit": parse_int_clamped(raw_query.get("limit", 20), default=20, min_value=1, max_value=100),
@@ -70,10 +77,14 @@ def generate_weekly_update_summary(
     storage: Storage | None = None,
     period_start: str | None = None,
     period_end: str | None = None,
+    relative_period: str | None = None,
     max_files: int = 500,
 ) -> dict[str, Any]:
     if not period_start or not period_end:
-        default_start, default_end = current_utc_iso_week_period()
+        if str(relative_period or "").strip().lower() in {"previous_week", "previous_iso_week"}:
+            default_start, default_end = previous_utc_iso_week_period()
+        else:
+            default_start, default_end = current_utc_iso_week_period()
         period_start = period_start or default_start
         period_end = period_end or default_end
 
@@ -100,6 +111,7 @@ def generate_weekly_update_summary(
             "metadata": {
                 "logic": "files.first_seen >= period_start AND files.first_seen < period_end",
                 "content_change_detection": False,
+                "relative_period": str(relative_period or "").strip() or None,
             },
         }
         stored = active_storage.upsert_weekly_update_summary(summary)

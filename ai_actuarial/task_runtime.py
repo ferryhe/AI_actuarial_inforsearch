@@ -727,6 +727,7 @@ class NativeTaskRuntime:
             storage=storage,
             period_start=str(data.get("period_start") or "").strip() or None,
             period_end=str(data.get("period_end") or "").strip() or None,
+            relative_period=str(data.get("relative_period") or "").strip() or None,
             max_files=parse_int_clamped(data.get("max_files"), default=500, min_value=1, max_value=10_000),
         )
         file_count = int(summary.get("file_count") or 0)
