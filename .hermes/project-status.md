@@ -7,7 +7,7 @@
 ## Current State
 
 - PR-A / #156 through PR-G / #162 are merged into `main`.
-- PR-H is implemented locally on `feature/pr-h-weekly-summary-dashboard-schedule`.
+- PR-H is open as PR #163 on `feature/pr-h-weekly-summary-dashboard-schedule`.
 - Dashboard now reads latest weekly update data from `GET /api/weekly-updates/latest` instead of deriving weekly additions from `/api/files` in the browser.
 - Dashboard weekly count uses latest summary `file_count`; displayed rows use latest summary `files` capped to the existing Dashboard list limit.
 - Dashboard weekly labels now use customer-facing “latest weekly additions / 周报新增” wording instead of browser-local “this week” wording.
@@ -23,9 +23,12 @@
 - Static added-line security scan: no findings.
 - Independent reviewer subagent: passed with no blocking security or logic findings.
 - `codex exec -s read-only ...`: `NO BLOCKING FINDINGS`.
+- PR #163 remote CI: `python-smoke` succeeded.
+- PR #163 Copilot comments: 4 valid comments found; fixed locally by clearing weekly rows on API failure, rendering unknown count as `-`, and updating EN/ZH Dashboard subtitles.
+- Follow-up verification after comment fixes: `python3 -m pytest tests/test_dashboard_react_source.py tests/test_weekly_updates.py -q` passed (10 passed, existing SWIG warnings); `npm run build` passed (existing large-chunk warning); `git diff --check` passed.
 
 ## Local Notes
 
-- Modified files: `.hermes/project-status.md`, `ai_actuarial/api/services/weekly_updates.py`, `ai_actuarial/task_runtime.py`, `client/src/hooks/use-i18n.ts`, `client/src/pages/Dashboard.tsx`, `config/sites.yaml`, `tests/test_dashboard_react_source.py`, `tests/test_weekly_updates.py`.
+- Modified files for PR-H: `.hermes/project-status.md`, `ai_actuarial/api/services/weekly_updates.py`, `ai_actuarial/task_runtime.py`, `client/src/hooks/use-i18n.ts`, `client/src/pages/Dashboard.tsx`, `config/sites.yaml`, `tests/test_dashboard_react_source.py`, `tests/test_weekly_updates.py`.
 - Existing protected stashes from earlier work remain untouched, including `protected-project-status-before-pr-f` and `protected-local-files-before-pr-d-review`.
-- Next gate: commit, push, open PR-H, then inspect CI/Copilot/review comments after the initial and delayed GitHub checks.
+- Next gate: commit and push the Copilot follow-up fixes, then re-check PR #163 CI/review status before merge.

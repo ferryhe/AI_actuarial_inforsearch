@@ -209,6 +209,8 @@ export default function Dashboard() {
           setWeeklyFileCount(typeof summary?.file_count === "number" ? summary.file_count : 0);
         } else {
           console.error(weeklyResult.reason);
+          setFiles([]);
+          setWeeklyFileCount(null);
         }
         if (categoriesResult.status === "fulfilled") {
           setCategories(normalizeCategories(categoriesResult.value.categories));
@@ -223,7 +225,7 @@ export default function Dashboard() {
     { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
     { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
     { icon: Tags, label: t("dashboard.categories"), value: loading ? "-" : categories.length, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weeklyFileCount ?? 0), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weeklyFileCount ?? "-"), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   ], [categories.length, loading, stats?.total_files, stats?.total_sources, t, weeklyFileCount]);
 
   const quickActions = [
