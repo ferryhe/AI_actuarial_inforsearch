@@ -45,6 +45,8 @@ MAX_DOCUMENT_FIELD_CHARS = 512
 MAX_AGENTIC_SYNTHESIS_CHUNKS = 8
 MAX_AGENTIC_SYNTHESIS_CONTENT_CHARS = 4000
 MAX_AGENTIC_FALLBACK_ITEMS = 5
+
+
 def _ensure_conversation_schema(storage: Storage) -> None:
     conn = storage._conn
     conn.execute(
