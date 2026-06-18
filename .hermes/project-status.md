@@ -1,34 +1,30 @@
 # Project Status
 
 - Date: 2026-06-18
-- Branch: `feature/pr-h-weekly-summary-dashboard-schedule`
-- Scope: PR-H weekly_summary Dashboard data source and default schedule.
+- Branch: `feature/pr-i-web-listening-full-loop`
+- Scope: PR-I Web Listening full automatic loop.
 
 ## Current State
 
-- PR-A / #156 through PR-G / #162 are merged into `main`.
-- PR-H is open as PR #163 on `feature/pr-h-weekly-summary-dashboard-schedule`.
-- Dashboard now reads latest weekly update data from `GET /api/weekly-updates/latest` instead of deriving weekly additions from `/api/files` in the browser.
-- Dashboard weekly count uses latest summary `file_count`; displayed rows use latest summary `files` capped to the existing Dashboard list limit.
-- Dashboard weekly labels now use customer-facing “latest weekly additions / 周报新增” wording instead of browser-local “this week” wording.
-- Default `config/sites.yaml` now includes an enabled weekly `weekly_summary` scheduled task with `relative_period: previous_week` and `max_files: 500`.
-- Weekly summary runtime accepts `relative_period`; `previous_week` resolves to the previous completed UTC ISO week so Monday 00:30 schedules summarize the completed week rather than the just-started current week.
+- PR-A / #156 through PR-H / #163 are merged into `main`.
+- PR-I implementation is prepared on `feature/pr-i-web-listening-full-loop`.
+- Web Listening rule materialization now creates an enabled `full_pipeline` scheduled task instead of a collection-only `scheduled` task.
+- Materialized Web Listening full-pipeline params include `source_collection_type: scheduled`, the selected `site`, a `Full Pipeline: <site>` run name, `check_database: true`, and `run_rag_indexing: false` by default.
+- Tasks UI/i18n copy now describes the Web Listening materialized task as a scheduled full-pipeline monitor.
 - Sibling repositories remain out of scope.
 
 ## Verification
 
-- `python3 -m pytest tests/test_weekly_updates.py tests/test_dashboard_react_source.py tests/test_fastapi_ops_write_endpoints.py::test_scheduled_tasks_write_and_schedule_reinit_roundtrip tests/test_tasks_react_source.py -q`: 31 passed; existing SWIG deprecation warnings.
+- `python3 -m pytest tests/test_web_listening_rule.py tests/test_task_runtime_full_pipeline.py tests/test_tasks_react_source.py -q`: 32 passed; existing SWIG deprecation warnings.
+- `python3 -m pytest tests/test_fastapi_ops_write_endpoints.py::test_scheduled_tasks_write_and_schedule_reinit_roundtrip tests/test_web_listening_rule.py -q`: 5 passed; existing SWIG deprecation warnings.
 - `npm run build`: passed; Vite emitted the existing large-chunk warning.
 - `git diff --check`: passed.
 - Static added-line security scan: no findings.
 - Independent reviewer subagent: passed with no blocking security or logic findings.
 - `codex exec -s read-only ...`: `NO BLOCKING FINDINGS`.
-- PR #163 remote CI: `python-smoke` succeeded.
-- PR #163 Copilot comments: 4 valid comments found; fixed locally by clearing weekly rows on API failure, rendering unknown count as `-`, and updating EN/ZH Dashboard subtitles.
-- Follow-up verification after comment fixes: `python3 -m pytest tests/test_dashboard_react_source.py tests/test_weekly_updates.py -q` passed (10 passed, existing SWIG warnings); `npm run build` passed (existing large-chunk warning); `git diff --check` passed.
 
 ## Local Notes
 
-- Modified files for PR-H: `.hermes/project-status.md`, `ai_actuarial/api/services/weekly_updates.py`, `ai_actuarial/task_runtime.py`, `client/src/hooks/use-i18n.ts`, `client/src/pages/Dashboard.tsx`, `config/sites.yaml`, `tests/test_dashboard_react_source.py`, `tests/test_weekly_updates.py`.
+- Modified files for PR-I: `.hermes/project-status.md`, `ai_actuarial/web_listening_rule.py`, `client/src/hooks/use-i18n.ts`, `tests/test_tasks_react_source.py`, `tests/test_web_listening_rule.py`.
 - Existing protected stashes from earlier work remain untouched, including `protected-project-status-before-pr-f` and `protected-local-files-before-pr-d-review`.
-- Next gate: commit and push the Copilot follow-up fixes, then re-check PR #163 CI/review status before merge.
+- Next gate: commit, push, open PR-I, then inspect CI/review/Copilot comments before merge.
