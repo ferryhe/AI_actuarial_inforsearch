@@ -10,12 +10,12 @@ AI Actuarial Info Search is a FastAPI + React document-intelligence platform for
 
 - **Runtime:** FastAPI is the only `/api/*` authority; React/Vite is the only maintained product UI. The legacy server-rendered/Replit-era workflow is retired.
 - **Security/RBAC:** session/token auth, scoped permissions, upload-batch file import, SSRF-safe public URL fetch, auth/rate-limit hardening, and bounded untrusted Chat document context are active.
-- **Customer product surface:** the Dashboard is customer-facing first: sources, categories, weekly additions, document detail, and Agent entry points. Backend processing metrics live in admin/ops pages instead of the homepage.
+- **Customer product surface:** the Dashboard is customer-facing first: sources, categories, latest weekly additions from backend weekly summaries, document detail, and Agent entry points. Backend processing metrics live in admin/ops pages instead of the homepage.
 - **Document conversion:** Markdown conversion is driven by `config/markdown_conversion.yaml` and Settings. Tool ordering, format routing, paid/API-tool enablement, and tuning are configurable; paid/API tools are not auto-selected by default.
-- **Collection automation:** configured crawls, search-provider fallback, browser-upload file imports, scheduled tasks, and web-listening rule draft/validate/materialize workflows are supported.
-- **Weekly updates:** `/api/weekly-updates` and `/api/weekly-updates/latest` summarize newly discovered files using `files.first_seen`.
+- **Collection automation:** configured crawls, search-provider fallback, browser-upload file imports, typed scheduled tasks, `weekly_summary`, `full_pipeline`, and web-listening rule draft/validate/materialize workflows are supported.
+- **Weekly updates:** `/api/weekly-updates` and `/api/weekly-updates/latest` summarize newly discovered files using `files.first_seen`; the default weekly task uses `relative_period: previous_week` for the completed UTC ISO week.
 - **RAG and Chat:** standard vector RAG and Agentic RAG coexist. Chat is knowledge-base first, keeps conversation/session history, and supports standard multi-KB chat plus single-ready-KB Agentic mode.
-- **Roadmap completion:** Agentic RAG PRs #133-#145 plus roadmap PRs #147-#154 are merged; the managed backlog in `.hermes/project-status.md` is complete.
+- **Roadmap completion:** Agentic RAG PRs #133-#145, consolidation PRs #147-#154, and managed Feishu-plan PR-A through PR-I (#156-#164) are merged; there are no open managed-roadmap PRs.
 
 ## Feature Set
 
@@ -38,7 +38,7 @@ AI Actuarial Info Search is a FastAPI + React document-intelligence platform for
 
 - Draft `web-listening-agent-rule.v1` YAML rules from a source URL and acquisition goal.
 - Validate rule YAML before applying it.
-- Materialize validated rules into acquisition profile, monitor task, section selection, and monitor scope configuration.
+- Materialize validated rules into acquisition profile, scheduled `full_pipeline` monitor task, section selection, and monitor scope configuration.
 
 ### RAG, Agentic RAG, and Chat
 
@@ -148,12 +148,11 @@ Run a configured site crawl:
 }
 ```
 
-Run a weekly summary task:
+Run a weekly summary task for the previously completed UTC ISO week:
 
 ```json
 {
-  "period_start": "2026-06-01T00:00:00+00:00",
-  "period_end": "2026-06-08T00:00:00+00:00",
+  "relative_period": "previous_week",
   "max_files": 500
 }
 ```
@@ -237,7 +236,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 npm run build
 python -m pytest tests/test_fastapi_entrypoint.py tests/test_fastapi_no_flask_runtime.py tests/test_react_fastapi_authority.py tests/test_fastapi_react_cleanup.py -q
 python -m pytest tests/test_fastapi_auth_endpoints.py tests/test_auth_react_source.py tests/test_fastapi_chat_endpoints.py tests/test_tasks_react_source.py -q
-python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py -q
+python -m pytest tests/test_markdown_conversion_config.py tests/test_web_listening_rule.py tests/test_weekly_updates.py tests/test_task_runtime_full_pipeline.py -q
 python -m pytest tests/agentic_rag/test_eval.py tests/agentic_rag/test_planner_agentic_loop.py -q
 python -m ai_actuarial.agentic_rag.eval --mode agentic --cases eval/agentic_cases.jsonl --output-dir eval/fixtures/agentic_ready_data --profile formula --json
 ```

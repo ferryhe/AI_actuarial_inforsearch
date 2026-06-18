@@ -4,10 +4,10 @@ This directory keeps maintained documentation first. Historical implementation r
 
 ## Current References
 
-- [Root README](../README.md): current product overview, final roadmap status, setup, feature set, and common commands.
+- [Root README](../README.md): current product overview, final PR-A through PR-I roadmap status, setup, feature set, and common commands.
 - [Chinese README](../README.zh-CN.md): Chinese product overview and setup notes.
 - [Security Policy](../SECURITY.md): maintained security posture and production checklist.
-- [Architecture](ARCHITECTURE.md): current FastAPI + React architecture, standard/Agentic RAG modes, Markdown conversion, weekly updates, and web-listening rule surfaces.
+- [Architecture](ARCHITECTURE.md): current FastAPI + React architecture, standard/Agentic RAG modes, Markdown conversion, weekly updates, `full_pipeline`, and web-listening rule surfaces.
 - [API Migration Status](API_MIGRATION_STATUS.md): source of truth for the React/FastAPI boundary and maintained representative native API surfaces.
 - [Deployment Runbook](deployment-runbook.md): deployment operations.
 - [Rate Limiting](rate-limit-config.md): active rate-limit behavior for product endpoints and auth credential submissions.
@@ -29,11 +29,13 @@ This directory keeps maintained documentation first. Historical implementation r
 - FastAPI is the only product API authority for `/api/*`; React is the only maintained product UI.
 - Security/RBAC hardening is merged, including upload-batch file import, SSRF checks, scoped permissions, auth rate limits, and bounded Chat document context.
 - Agentic RAG is complete: KB ready-data manifests, `general` / `regulation` / `formula` profiles, deterministic read tools, Agentic Chat, structured citations, tool traces, and CI-backed eval smoke coverage.
-- Final Feishu-plan roadmap items are complete on `main`:
+- Final Feishu-plan roadmap items PR-A through PR-I (#156-#164) are complete on `main`:
   - Markdown conversion config split into `config/markdown_conversion.yaml` plus Settings/runtime integration.
-  - Customer-facing Dashboard focused on document sources, categories, weekly additions, details, and Agent entry points.
+  - Customer-facing Dashboard focused on document sources, categories, latest weekly additions, details, and Agent entry points.
   - `web-listening-agent-rule.v1` draft/validate/materialize workflow.
-  - Weekly updates API/storage/task runtime using `files.first_seen`.
+  - Weekly updates API/storage/task runtime using `files.first_seen`, plus a default previous-week `weekly_summary` schedule.
+  - Typed Scheduled Tasks UI with backend-supported params, `weekly_summary`, and `full_pipeline`.
+  - Web-listening materialization now creates scheduled `full_pipeline` monitor tasks.
   - Knowledge-base-first Chat UI plus API/types/session extraction.
 - Valid remote Copilot/review follow-up comments from the roadmap PR sequence were handled in dedicated follow-up PRs before the backlog was marked complete.
 
