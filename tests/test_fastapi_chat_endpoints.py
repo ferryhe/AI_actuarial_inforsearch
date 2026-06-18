@@ -480,7 +480,7 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
     assert missing.status_code == 404, missing.text
 
 
-def test_visitor_chat_knowledge_bases_are_limited_to_configured_demo_kb(tmp_path: Path, monkeypatch) -> None:
+def test_visitor_chat_knowledge_bases_show_public_ready_kbs(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     monkeypatch.setenv("CHAT_VISITOR_DEMO_KB_ID", "chat-kb-a")
@@ -488,11 +488,11 @@ def test_visitor_chat_knowledge_bases_are_limited_to_configured_demo_kb(tmp_path
     assert response.status_code == 200, response.text
     payload = response.json()["data"]
 
-    assert payload["visitor_demo_kb_id"] == "chat-kb-a"
-    assert [item["kb_id"] for item in payload["knowledge_bases"]] == ["chat-kb-a"]
+    assert "visitor_demo_kb_id" not in payload
+    assert {item["kb_id"] for item in payload["knowledge_bases"]} >= {"chat-kb-a", "chat-kb-b"}
 
 
-def test_guest_equivalent_tokens_are_limited_to_configured_demo_kb(tmp_path: Path, monkeypatch) -> None:
+def test_guest_equivalent_tokens_can_list_public_chat_kbs(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     token = "unknown-role-token"
@@ -512,11 +512,11 @@ def test_guest_equivalent_tokens_are_limited_to_configured_demo_kb(tmp_path: Pat
     assert response.status_code == 200, response.text
     payload = response.json()["data"]
 
-    assert payload["visitor_demo_kb_id"] == "chat-kb-a"
-    assert [item["kb_id"] for item in payload["knowledge_bases"]] == ["chat-kb-a"]
+    assert "visitor_demo_kb_id" not in payload
+    assert {item["kb_id"] for item in payload["knowledge_bases"]} >= {"chat-kb-a", "chat-kb-b"}
 
 
-def test_visitor_chat_knowledge_bases_empty_when_default_demo_kb_missing(tmp_path: Path, monkeypatch) -> None:
+def test_visitor_chat_knowledge_bases_do_not_depend_on_demo_kb_config(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
 
     monkeypatch.delenv("CHAT_VISITOR_DEMO_KB_ID", raising=False)
@@ -524,88 +524,156 @@ def test_visitor_chat_knowledge_bases_empty_when_default_demo_kb_missing(tmp_pat
     assert response.status_code == 200, response.text
     payload = response.json()["data"]
 
-    assert payload["visitor_demo_kb_id"] == "demo"
-    assert payload["knowledge_bases"] == []
+    assert "visitor_demo_kb_id" not in payload
+    assert {item["kb_id"] for item in payload["knowledge_bases"]} >= {"chat-kb-a", "chat-kb-b"}
 
 
-def test_visitor_chat_knowledge_bases_fail_closed_for_blank_demo_kb_config(tmp_path: Path, monkeypatch) -> None:
+def _install_guest_chat_fakes(monkeypatch) -> None:
+    import ai_actuarial.api.services.chat as chat_service
+
+    monkeypatch.setattr(
+        chat_service,
+        "AI_CHAT_QUOTA",
+        {**chat_service.AI_CHAT_QUOTA, "anonymous": 2, "guest": 2},
+    )
+    monkeypatch.setattr(chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None))
+
+    class FakeConversationManager:
+        def __init__(self, storage, config):
+            self.storage = storage
+            chat_service._ensure_conversation_schema(storage)
+
+        def create_conversation(self, user_id: str, kb_id: str | None = None, mode: str = "expert", metadata=None):
+            conversation_id = "conv_guest_query"
+            now = "2026-04-16T00:00:00+00:00"
+            self.storage._conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            self.storage._conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            self.storage._conn.execute(
+                """
+                INSERT INTO conversations
+                (conversation_id, user_id, title, kb_id, mode, created_at, updated_at, message_count, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (conversation_id, user_id, "Guest Query", kb_id, mode, now, now, 0, json.dumps(metadata) if metadata else None),
+            )
+            self.storage._conn.commit()
+            return conversation_id
+
+        def get_conversation(self, conversation_id: str):
+            row = self.storage._conn.execute(
+                "SELECT conversation_id, user_id, title, kb_id, mode, created_at, updated_at, message_count, metadata FROM conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "conversation_id": row[0],
+                "user_id": row[1],
+                "title": row[2],
+                "kb_id": row[3],
+                "mode": row[4],
+                "metadata": json.loads(row[8]) if row[8] else None,
+            }
+
+        def add_message(self, conversation_id: str, role: str, content: str, citations=None, metadata=None):
+            message_id = f"msg_{role}"
+            self.storage._conn.execute(
+                """
+                INSERT OR REPLACE INTO messages
+                (message_id, conversation_id, role, content, citations, created_at, token_count, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (message_id, conversation_id, role, content, json.dumps(citations) if citations else None, "2026-04-16T00:00:00+00:00", None, json.dumps(metadata) if metadata else None),
+            )
+            self.storage._conn.commit()
+            return message_id
+
+        def get_context(self, conversation_id: str):
+            return []
+
+    class FakeRetriever:
+        def __init__(self, storage, config):
+            pass
+
+        def retrieve(self, query, kb_ids):
+            return [{"content": "Chat KB B public content", "metadata": {"filename": "kb-b.pdf", "kb_id": "chat-kb-b"}}]
+
+    class FakeLLMClient:
+        def __init__(self, config, storage=None):
+            pass
+
+        def generate_response(self, query, chunks, mode, conversation_history):
+            return "Guest chat response"
+
+    class FakeQueryRouter:
+        def __init__(self, storage, config):
+            pass
+
+        def select_kb(self, query):
+            return ["chat-kb-b"]
+
+    class FakeConfigModule:
+        class ChatbotConfig:
+            @staticmethod
+            def from_config(storage=None, default_mode="expert"):
+                return SimpleNamespace(available_modes=["expert"], similarity_threshold=0.35, model="fake-chat-model")
+
+    class FakeExceptionsModule:
+        class NoResultsException(Exception):
+            pass
+
+        class EmbeddingConfigurationMismatchException(Exception):
+            pass
+
+    monkeypatch.setattr(
+        chat_service,
+        "_full_chat_modules",
+        lambda: {
+            "config": FakeConfigModule,
+            "conversation": SimpleNamespace(ConversationManager=FakeConversationManager),
+            "exceptions": FakeExceptionsModule,
+            "retrieval": SimpleNamespace(RAGRetriever=FakeRetriever),
+            "llm": SimpleNamespace(LLMClient=FakeLLMClient),
+            "router": SimpleNamespace(QueryRouter=FakeQueryRouter),
+        },
+    )
+
+
+def test_visitor_chat_query_allows_selected_public_kb(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    _install_guest_chat_fakes(monkeypatch)
 
-    monkeypatch.setenv("CHAT_VISITOR_DEMO_KB_ID", "   ")
-    response = client.get("/api/chat/knowledge-bases", headers={"X-Auth-Token": ""})
-    assert response.status_code == 200, response.text
-    payload = response.json()["data"]
-
-    assert payload["visitor_demo_kb_id"] == "demo"
-    assert payload["knowledge_bases"] == []
-
-
-def test_visitor_chat_query_rejects_crafted_non_demo_kb(tmp_path: Path, monkeypatch) -> None:
-    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
-
-    monkeypatch.setenv("CHAT_VISITOR_DEMO_KB_ID", "chat-kb-a")
     response = client.post(
         "/api/chat/query",
         json={"message": "capital", "kb_ids": ["chat-kb-b"], "mode": "expert"},
         headers={"X-Auth-Token": ""},
     )
 
-    assert response.status_code == 403, response.text
-    body = response.json()
-    assert body["code"] == "VISITOR_DEMO_KB_ONLY"
-    assert "Demo knowledge base" in body["error"]
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["conversation_id"] == "conv_guest_query"
+    assert payload["citations"][0]["kb_id"] == "chat-kb-b"
 
 
-def test_visitor_chat_selection_treats_list_sentinels_as_demo_kb(monkeypatch) -> None:
-    import ai_actuarial.api.services.chat as chat_service
-
-    monkeypatch.setenv("CHAT_VISITOR_DEMO_KB_ID", "chat-kb-a")
-
-    assert chat_service._enforce_visitor_demo_kb_selection(["all"]) == "chat-kb-a"
-    assert chat_service._enforce_visitor_demo_kb_selection(["auto"]) == "chat-kb-a"
-
-
-def test_visitor_chat_query_rejects_legacy_empty_kb_conversation(tmp_path: Path, monkeypatch) -> None:
+def test_visitor_chat_query_allows_direct_document_context(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
-
-    import ai_actuarial.api.services.chat as chat_service
-
-    monkeypatch.setenv("CHAT_VISITOR_DEMO_KB_ID", "chat-kb-a")
-    monkeypatch.setattr(chat_service, "_resolve_chat_user", lambda request, auth: ("guest:test", None))
-    storage = Storage(str(tmp_path / "index.db"))
-    try:
-        chat_service._ensure_conversation_schema(storage)
-        storage._conn.execute(
-            """
-            INSERT INTO conversations
-            (conversation_id, user_id, title, kb_id, mode, created_at, updated_at, message_count, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "conv_legacy_empty_kb",
-                "guest:test",
-                "Legacy visitor conversation",
-                None,
-                "expert",
-                "2026-04-16T00:00:00+00:00",
-                "2026-04-16T00:00:00+00:00",
-                0,
-                None,
-            ),
-        )
-        storage._conn.commit()
-    finally:
-        storage.close()
+    _install_guest_chat_fakes(monkeypatch)
 
     response = client.post(
         "/api/chat/query",
-        json={"message": "capital", "kb_ids": ["chat-kb-a"], "conversation_id": "conv_legacy_empty_kb"},
+        json={
+            "message": "Explain this document",
+            "mode": "expert",
+            "document_content": "Important guest-visible document content.",
+            "document_filename": "public.pdf",
+        },
         headers={"X-Auth-Token": ""},
     )
 
-    assert response.status_code == 403, response.text
-    body = response.json()
-    assert body["code"] == "VISITOR_DEMO_KB_ONLY"
+    assert response.status_code == 200, response.text
+    payload = response.json()["data"]
+    assert payload["metadata"]["context_notice"]["original_chars"] > 0
+    assert payload["citations"][0]["filename"] == "public.pdf"
 
 
 def test_fastapi_chat_knowledge_bases_defaults_manifest_profile_for_legacy_schema(monkeypatch) -> None:

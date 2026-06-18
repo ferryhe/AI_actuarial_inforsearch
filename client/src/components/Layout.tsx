@@ -175,7 +175,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               ) : (
                 <>
                   <Link href="/login">
-                    <div className="hidden sm:flex items-center rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted cursor-pointer">
+                    <div className="flex items-center rounded-md border border-border px-2 py-1 text-xs sm:px-3 sm:py-1.5 sm:text-sm hover:bg-muted cursor-pointer" data-testid="button-login">
                       {i18n.t("auth.signIn")}
                     </div>
                   </Link>
