@@ -1552,17 +1552,28 @@ class Storage:
         
         params = []
         
+        # Join with catalog_items when query/category filters need catalog fields,
+        # and later for result projection even without filters.
+        join_clause = ""
+
         if query:
-            filters.append("(LOWER(f.title) LIKE ? OR LOWER(f.original_filename) LIKE ? OR LOWER(f.url) LIKE ?)")
+            join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+            filters.append(
+                "(LOWER(IFNULL(f.title, '')) LIKE ? "
+                "OR LOWER(IFNULL(f.original_filename, '')) LIKE ? "
+                "OR LOWER(IFNULL(f.url, '')) LIKE ? "
+                "OR LOWER(IFNULL(c.summary, '')) LIKE ? "
+                "OR LOWER(IFNULL(c.keywords, '')) LIKE ? "
+                "OR LOWER(IFNULL(c.category, '')) LIKE ? "
+                "OR LOWER(IFNULL(c.markdown_content, '')) LIKE ?)"
+            )
             search_term = f"%{query.lower()}%"
-            params.extend([search_term, search_term, search_term])
+            params.extend([search_term] * 7)
         
         if source:
             filters.append("LOWER(f.source_site) LIKE ?")
             params.append(f"%{source.lower()}%")
         
-        # Join with catalog_items if filtering by category (or always for data)
-        join_clause = ""
         if category:
             join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
             if category == '__uncategorized__':

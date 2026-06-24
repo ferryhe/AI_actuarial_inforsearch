@@ -241,6 +241,30 @@ def test_fastapi_files_supports_filters_sorting_and_deleted(tmp_path: Path, monk
     assert filtered_body["files"][0]["title"] == "Alpha Document"
     assert filtered_body["files"][0]["category"] == "AI; Risk"
 
+    summary_search = client.get("/api/files?query=Beta%20summary")
+    assert summary_search.status_code == 200
+    summary_body = summary_search.json()
+    assert summary_body["total"] == 1
+    assert summary_body["files"][0]["title"] == "Beta Document"
+
+    keyword_search = client.get("/api/files?query=pricing")
+    assert keyword_search.status_code == 200
+    keyword_body = keyword_search.json()
+    assert keyword_body["total"] == 1
+    assert keyword_body["files"][0]["title"] == "Beta Document"
+
+    category_search = client.get("/api/files?query=Risk")
+    assert category_search.status_code == 200
+    category_body = category_search.json()
+    assert category_body["total"] == 1
+    assert category_body["files"][0]["title"] == "Alpha Document"
+
+    markdown_search = client.get("/api/files?query=Markdown%20content")
+    assert markdown_search.status_code == 200
+    markdown_body = markdown_search.json()
+    assert markdown_body["total"] == 1
+    assert markdown_body["files"][0]["title"] == "Alpha Document"
+
     deleted = client.get(
         "/api/files?include_deleted=true&order_by=title&order_dir=asc",
         headers={"Authorization": f"Bearer {seed['operator_token_plain']}"},

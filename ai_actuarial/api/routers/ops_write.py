@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from ai_actuarial.config import settings
 from ..deps import AuthContext, require_permissions
 from ..services.ops_write import (
     BridgeState,
@@ -55,10 +53,6 @@ def _db_path(request: Request) -> str:
     if not db_path:
         raise OpsWriteError("Database path is unavailable", status_code=500)
     return db_path
-
-
-def _config_write_auth_token() -> str:
-    return os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
 
 
 def _handle_ops_error(exc: OpsWriteError) -> JSONResponse:
@@ -256,11 +250,6 @@ def api_config_backend_settings_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_backend_settings(payload, bridge=_bridge(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -273,11 +262,6 @@ def api_config_categories_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_categories_config(payload)
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -290,11 +274,6 @@ def api_config_markdown_conversion_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_markdown_conversion_config(payload)
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -307,11 +286,6 @@ def api_config_ai_models_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_ai_models_config(payload, db_path=_db_path(request), bridge=_bridge(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -324,11 +298,6 @@ def api_config_provider_credentials_upsert(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return upsert_provider_credential(payload, db_path=_db_path(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -341,11 +310,6 @@ def api_config_provider_credentials_import_env(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return import_provider_credentials_from_env(payload, db_path=_db_path(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -358,11 +322,6 @@ def api_config_provider_credentials_reencrypt(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return reencrypt_provider_credentials(payload, db_path=_db_path(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
@@ -375,11 +334,6 @@ def api_config_provider_credentials_delete(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         category = str(request.query_params.get("category") or "llm").strip().lower() or "llm"
         instance_id = str(request.query_params.get("instance_id") or "").strip() or None
         return delete_provider_credential(provider_id, db_path=_db_path(request), category=category, instance_id=instance_id)
@@ -394,11 +348,6 @@ def api_config_ai_routing_update(
     _auth: AuthContext = Depends(require_permissions("config.write")),
 ):
     try:
-        expected_token = _config_write_auth_token()
-        if expected_token:
-            provided_token = request.headers.get("X-Auth-Token")
-            if not provided_token or provided_token != expected_token:
-                return JSONResponse(status_code=403, content={"error": "Forbidden"})
         return update_ai_routing(payload, db_path=_db_path(request), bridge=_bridge(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)

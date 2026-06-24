@@ -321,8 +321,11 @@ def test_markdown_conversion_config_read_write_endpoint_roundtrip(tmp_path: Path
     _patch_available_models(monkeypatch)
     markdown_config_path = tmp_path / "markdown_conversion.yaml"
     monkeypatch.setenv("MARKDOWN_CONVERSION_CONFIG_PATH", str(markdown_config_path))
-    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "legacy-config-write-token")
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     admin_headers = {"X-Auth-Token": str(seed["admin_token"])}
+    admin_session_cookie = _make_session_cookie(app, {"email_user_id": seed["admin_user_id"]})
+    admin_session_cookies = {app.state.fastapi_session_cookie_name: admin_session_cookie}
 
     unauthenticated = client.get("/api/config/markdown-conversion")
     assert unauthenticated.status_code == 401
@@ -341,7 +344,7 @@ def test_markdown_conversion_config_read_write_endpoint_roundtrip(tmp_path: Path
             "limits": {"default_scan_count": 25, "max_scan_count": 50000},
             "formats": {"pdf": {"candidate_chain": ["mistral", "markitdown", "local"]}},
         },
-        headers=admin_headers,
+        cookies=admin_session_cookies,
     )
     assert update.status_code == 200, update.text
     body = update.json()
