@@ -1,3 +1,5 @@
+import { useSearch as useBrowserSearch } from "wouter/use-browser-location";
+
 function isSafeRelativePath(value: string): boolean {
   return value.startsWith("/") && !value.startsWith("//");
 }
@@ -17,6 +19,15 @@ export function getCurrentRelativeLocation(): string {
 
   const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   return sanitizeReturnPath(next) || "/";
+}
+
+export function getRawSearchParams(rawSearch?: string): URLSearchParams {
+  const search = rawSearch ?? (typeof window === "undefined" ? "" : window.location.search);
+  return new URLSearchParams(search);
+}
+
+export function useRawSearchParams(): URLSearchParams {
+  return getRawSearchParams(useBrowserSearch());
 }
 
 export function getReturnPathFromSearch(search: string): string | null {

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useEffect, useState, type ReactNode } from "react";
+import { useLocation } from "wouter";
 import { ArrowLeft, ExternalLink, FileText, Loader2 } from "lucide-react";
 import { apiGet } from "@/lib/api";
-import { getReturnPathFromSearch } from "@/lib/navigation";
+import { sanitizeReturnPath, useRawSearchParams } from "@/lib/navigation";
 
 type FileData = {
   url: string;
@@ -53,11 +53,10 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
 }
 
 export default function NativeFileDetail() {
-  const search = useSearch();
   const [, navigate] = useLocation();
-  const params = useMemo(() => new URLSearchParams(search), [search]);
+  const params = useRawSearchParams();
   const fileUrl = params.get("url") || "";
-  const returnPath = getReturnPathFromSearch(search) || "/database";
+  const returnPath = sanitizeReturnPath(params.get("from")) || "/database";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
