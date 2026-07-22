@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -14,10 +14,11 @@ import {
   ImageIcon,
   Lock,
 } from "lucide-react";
-import { buildFileDetailPath, getReturnPathFromSearch } from "@/lib/navigation";
+import { buildFileDetailPath, sanitizeReturnPath, useRawSearchParams } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
+import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { apiGet } from "@/lib/api";
 
 interface FileInfo {
@@ -286,11 +287,10 @@ export default function FilePreview() {
   const isGuest = !isLoggedIn || user?.role === "guest";
   const canDownload = permissions.includes("files.download");
   const [, navigate] = useLocation();
-  const searchStr = useSearch();
-  const searchParams = new URLSearchParams(searchStr);
+  const searchParams = useRawSearchParams();
   const fileUrl = searchParams.get("file_url") || "";
   const initialChunkSetId = searchParams.get("chunk_set_id") || "";
-  const fromParam = getReturnPathFromSearch(searchStr);
+  const fromParam = sanitizeReturnPath(searchParams.get("from"));
 
   const isDesktop = useMediaQuery("(min-width: 1024px)");
 
@@ -298,22 +298,29 @@ export default function FilePreview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeChunkSetId, setActiveChunkSetId] = useState(initialChunkSetId);
+  const beginPreviewRequest = useLatestRequestGuard(fileUrl);
 
   const fetchPreview = useCallback(async (chunkSetId?: string) => {
-    if (!fileUrl) return;
+    const requestIdentity = fileUrl;
+    const isLatest = beginPreviewRequest(requestIdentity);
+    if (!requestIdentity || !isLatest()) return;
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ file_url: fileUrl });
+      const params = new URLSearchParams({ file_url: requestIdentity });
       if (chunkSetId) params.set("chunk_set_id", chunkSetId);
       const res = await apiGet<{ data?: PreviewData } & PreviewData>(`/api/rag/files/preview?${params}`);
       const d = res.data || res;
+      if (!isLatest()) return;
       setData(d);
       setActiveChunkSetId(d.active_chunk_set_id || "");
     } catch (e) {
+      if (!isLatest()) return;
       setError(e instanceof Error ? e.message : "Failed to load preview");
-    } finally { setLoading(false); }
-  }, [fileUrl]);
+    } finally {
+      if (isLatest()) setLoading(false);
+    }
+  }, [beginPreviewRequest, fileUrl]);
 
   useEffect(() => { fetchPreview(initialChunkSetId); }, [fetchPreview, initialChunkSetId]);
 

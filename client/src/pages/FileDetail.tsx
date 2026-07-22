@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -25,11 +25,12 @@ import {
   Clock,
   CheckCircle2,
 } from "lucide-react";
-import { buildFileDetailPath, buildFilePreviewPath, getReturnPathFromSearch, sanitizeReturnPath } from "@/lib/navigation";
+import { buildFileDetailPath, buildFilePreviewPath, sanitizeReturnPath, useRawSearchParams } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { ApiError, apiGet, apiPost, setStoredAuthToken } from "@/lib/api";
 import { useTaskOptions } from "@/hooks/use-task-options";
+import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
@@ -393,9 +394,9 @@ export default function FileDetail() {
   const { t } = useTranslation();
   const { permissions } = useAuth();
   const [, navigate] = useLocation();
-  const searchString = useSearch();
-  const fileUrl = new URLSearchParams(searchString).get("url") || "";
-  const fromParam = getReturnPathFromSearch(searchString);
+  const searchParams = useRawSearchParams();
+  const fileUrl = searchParams.get("url") || "";
+  const fromParam = sanitizeReturnPath(searchParams.get("from"));
 
   function goBack() {
     // If navigated from within the app with an explicit "from" param, use it.
@@ -471,22 +472,37 @@ export default function FileDetail() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const beginFileRequest = useLatestRequestGuard(fileUrl);
+  const beginMarkdownRequest = useLatestRequestGuard(fileUrl);
+  const beginChunksRequest = useLatestRequestGuard(fileUrl);
+  const beginChunkSubmission = useLatestRequestGuard(fileUrl);
+
   const fetchFile = useCallback(async () => {
-    if (!fileUrl) return;
+    const requestIdentity = fileUrl;
+    const isLatest = beginFileRequest(requestIdentity);
+    if (!requestIdentity || !isLatest()) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiGet<{ file: FileData }>(`/api/files/detail?url=${encodeURIComponent(fileUrl)}`);
+      const res = await apiGet<{ file: FileData }>(`/api/files/detail?url=${encodeURIComponent(requestIdentity)}`);
+      if (!isLatest()) return;
       setFile(res.file);
     } catch (e) {
+      if (!isLatest()) return;
       setError(e instanceof Error ? e.message : "Failed to load file");
-    } finally { setLoading(false); }
-  }, [fileUrl]);
+    } finally {
+      if (isLatest()) setLoading(false);
+    }
+  }, [beginFileRequest, fileUrl]);
 
   const refreshMarkdown = useCallback(async () => {
-    if (!fileUrl) return;
+    const requestIdentity = fileUrl;
+    const isLatest = beginMarkdownRequest(requestIdentity);
+    if (!requestIdentity || !isLatest()) return;
+    setMdLoading(true);
     try {
-      const res = await apiGet<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(fileUrl)}/markdown`);
+      const res = await apiGet<{ markdown?: MarkdownData }>(`/api/files/${encodeURIComponent(requestIdentity)}/markdown`);
+      if (!isLatest()) return;
       setMarkdown(res.markdown || null);
       setFile((current) => current ? {
         ...current,
@@ -494,16 +510,28 @@ export default function FileDetail() {
         markdown_updated_at: res.markdown?.markdown_updated_at,
       } : current);
       if (res.markdown?.markdown_content) setMdEditContent(res.markdown.markdown_content);
-    } catch { setMarkdown(null); }
-  }, [fileUrl]);
+    } catch {
+      if (isLatest()) setMarkdown(null);
+    } finally {
+      if (isLatest()) setMdLoading(false);
+    }
+  }, [beginMarkdownRequest, fileUrl]);
 
   const refreshChunks = useCallback(async () => {
-    if (!fileUrl) return;
+    const requestIdentity = fileUrl;
+    const isLatest = beginChunksRequest(requestIdentity);
+    if (!requestIdentity || !isLatest()) return;
+    setChunkSetsLoading(true);
     try {
-      const res = await apiGet<{ data?: { chunk_sets?: ChunkSet[] }; chunk_sets?: ChunkSet[] }>(`/api/files/${encodeURIComponent(fileUrl)}/chunk-sets`);
+      const res = await apiGet<{ data?: { chunk_sets?: ChunkSet[] }; chunk_sets?: ChunkSet[] }>(`/api/files/${encodeURIComponent(requestIdentity)}/chunk-sets`);
+      if (!isLatest()) return;
       setChunkSets(res.data?.chunk_sets || res.chunk_sets || []);
-    } catch { setChunkSets([]); }
-  }, [fileUrl]);
+    } catch {
+      if (isLatest()) setChunkSets([]);
+    } finally {
+      if (isLatest()) setChunkSetsLoading(false);
+    }
+  }, [beginChunksRequest, fileUrl]);
 
   const conversionPoller = useTaskPoller(refreshMarkdown);
   const catalogPoller = useTaskPoller(fetchFile);
@@ -529,14 +557,12 @@ export default function FileDetail() {
 
   useEffect(() => {
     if (!fileUrl) return;
-    setMdLoading(true);
-    refreshMarkdown().finally(() => setMdLoading(false));
+    void refreshMarkdown();
   }, [fileUrl, refreshMarkdown]);
 
   useEffect(() => {
     if (!fileUrl) return;
-    setChunkSetsLoading(true);
-    refreshChunks().finally(() => setChunkSetsLoading(false));
+    void refreshChunks();
   }, [fileUrl, refreshChunks]);
 
   useEffect(() => {
@@ -656,6 +682,9 @@ export default function FileDetail() {
 
   async function submitChunk() {
     if (!file) return;
+    const requestIdentity = file.url;
+    const isLatest = beginChunkSubmission(requestIdentity);
+    if (!isLatest()) return;
     setChunkSubmitting(true);
     const body: Record<string, unknown> = {
       overwrite_same_profile: chunkOverwrite,
@@ -673,16 +702,19 @@ export default function FileDetail() {
       body.kb_id = selectedKbId;
     }
     try {
-      await apiPost(`/api/files/${encodeURIComponent(file.url)}/chunk-sets/generate`, body);
+      await apiPost(`/api/files/${encodeURIComponent(requestIdentity)}/chunk-sets/generate`, body);
+      if (!isLatest()) return;
       setShowChunkModal(false);
       await refreshChunks();
     } catch (error) {
+      if (!isLatest()) return;
       if (error instanceof ApiError && error.status === 403) {
         const token = window.prompt(t("fv.chunk_auth_token_prompt"), "") || "";
         if (token.trim()) {
           try {
             setStoredAuthToken(token, false);
-            await apiPost(`/api/files/${encodeURIComponent(file.url)}/chunk-sets/generate`, body);
+            await apiPost(`/api/files/${encodeURIComponent(requestIdentity)}/chunk-sets/generate`, body);
+            if (!isLatest()) return;
             setShowChunkModal(false);
             await refreshChunks();
             return;
@@ -691,7 +723,9 @@ export default function FileDetail() {
           }
         }
       }
-    } finally { setChunkSubmitting(false); }
+    } finally {
+      if (isLatest()) setChunkSubmitting(false);
+    }
   }
 
   async function handleDelete() {
