@@ -14,6 +14,7 @@
 - Site YAML CRUD/read/sample management and both React configuration forms expose monitoring goal, path allow-list, search queries, file extensions, acquisition tools, content policy, selector, and schedule.
 - Runtime collection honors explicit strategy: search-only sites skip direct crawling, crawler-only sites skip search fallback, linked-file collection can be disabled, and search-discovered pages can be stored as page content.
 - Legacy site YAML remains compatible: omitted strategy fields retain prior crawler/file behavior, and the UI infers search only when legacy queries exist.
+- Draft PR `#169` was created at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/169` from commit `b931795`.
 - Sibling repositories remain out of scope.
 
 ## Verification
@@ -35,4 +36,4 @@
 - No unrelated uncommitted or untracked files were present before implementation; browser smoke temporary files and processes were removed.
 - Blocker: local Codex CLI executable access is denied by WindowsApps; this prevents the automated pre-PR review command but does not block tests, build, browser validation, or GitHub publication.
 - GitHub authentication was refreshed and verified through the Windows keyring for `ferryhe` with `repo` and `workflow` scopes.
-- Next action: commit the scoped implementation, push the task branch, create a draft PR, and evaluate CI plus remote review/Copilot comments after the required wait.
+- Next action: wait about 15 minutes after PR creation, then evaluate GitHub checks and remote review/Copilot comments and fix only confirmed-safe findings.
