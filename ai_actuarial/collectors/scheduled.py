@@ -114,6 +114,29 @@ class ScheduledCollector(BaseCollector):
                         prefix = f"[{i+1}/{total_sites}] {site_config.name}"
                         progress_callback(c, t, f"{prefix}: {m}")
                 
+                tools = {
+                    str(tool).strip().lower()
+                    for tool in (site_config.acquisition_tools or [])
+                    if str(tool).strip()
+                }
+                if tools and "crawler" not in tools:
+                    site_results.append(
+                        {
+                            "name": site_config.name,
+                            "url": site_config.url,
+                            "items_found": 0,
+                            "items_downloaded": 0,
+                            "items_skipped": 0,
+                            "success": True,
+                            "failed": False,
+                            "error": "",
+                            "error_text": "",
+                            "blocked": False,
+                            "classification": "search_only",
+                            "fallback_reason": "search_only",
+                        }
+                    )
+                    continue
                 try:
                     new_items = self.crawler.crawl_site(site_config, progress_callback=site_progress)
                     site_items_found = len(new_items)

@@ -99,6 +99,12 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path]:
                 "schedule_interval": "weekly",
                 "content_selector": "main article",
                 "collect_page_content": "false",
+                "web_listening_goal": "Track pricing research",
+                "allow_url_patterns": ["/research/"],
+                "queries": ["site:alpha.example pricing"],
+                "acquisition_tools": ["search"],
+                "collect_linked_files": "false",
+                "file_exts": [".pdf"],
             }
         ],
         "scheduled_tasks": [
@@ -392,6 +398,11 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
         if endpoint == "/api/config/sites":
             assert body["sites"][0]["name"] == "Alpha Site"
             assert body["sites"][0]["collect_page_content"] is False
+            assert body["sites"][0]["web_listening_goal"] == "Track pricing research"
+            assert body["sites"][0]["allow_url_patterns"] == ["/research/"]
+            assert body["sites"][0]["queries"] == ["site:alpha.example pricing"]
+            assert body["sites"][0]["acquisition_tools"] == ["search"]
+            assert body["sites"][0]["collect_linked_files"] is False
         elif endpoint == "/api/schedule/status":
             assert body["count"] == 1
             assert body["jobs"][0]["label"].startswith("daily")

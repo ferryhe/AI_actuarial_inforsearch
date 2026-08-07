@@ -19,6 +19,21 @@ interface SiteConfig {
   exclude_prefixes?: string[];
   schedule_interval?: string;
   content_selector?: string;
+  web_listening_goal?: string;
+  allow_url_patterns?: string[];
+  queries?: string[];
+  file_exts?: string[];
+  acquisition_tools?: string[];
+  collect_linked_files?: boolean;
+  collect_page_content?: boolean;
+}
+
+function joinList(values?: string[]): string {
+  return values?.join("\n") || "";
+}
+
+function parseList(value: string): string[] {
+  return value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
 }
 
 function formatDate(dateStr: string): string {
@@ -48,7 +63,9 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
   const [deletingSite, setDeletingSite] = useState<string | null>(null);
   const [expandedSite, setExpandedSite] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [exploring, setExploring] = useState(false);
 
+  const [exploreError, setExploreError] = useState<string | null>(null);
   const [site, setSite] = useState("");
   const [maxPages, setMaxPages] = useState("");
   const [maxDepth, setMaxDepth] = useState("");
@@ -62,6 +79,12 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
   const [formExcludePfx, setFormExcludePfx] = useState("");
   const [formSelector, setFormSelector] = useState("");
   const [formInterval, setFormInterval] = useState("");
+  const [formGoal, setFormGoal] = useState("");
+  const [formAllowPatterns, setFormAllowPatterns] = useState("");
+  const [formQueries, setFormQueries] = useState("");
+  const [formFileExts, setFormFileExts] = useState("");
+  const [formTools, setFormTools] = useState<string[]>(["crawler"]);
+  const [formContentTypes, setFormContentTypes] = useState<string[]>(["file", "webpage"]);
 
   const [backups, setBackups] = useState<Array<{ filename: string; timestamp?: string; size?: number }>>([]);
   const [showBackups, setShowBackups] = useState(false);
@@ -70,13 +93,18 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
   const resetSiteForm = () => {
     setFormName(""); setFormUrl(""); setFormMaxPages(""); setFormMaxDepth("");
     setFormKeywords(""); setFormExcludeKw(""); setFormExcludePfx("");
-    setFormSelector(""); setFormInterval("");
+    setFormSelector(""); setFormInterval(""); setFormGoal("");
+    setFormAllowPatterns(""); setFormQueries(""); setFormFileExts("");
+    setFormTools(["crawler"]);
+    setFormContentTypes(["file", "webpage"]);
+    setExploreError(null);
     setShowAddSite(false); setEditingSite(null);
   };
 
   const openEditForm = (s: SiteConfig) => {
     setEditingSite(s);
     setFormName(s.name);
+    setExploreError(null);
     setFormUrl(s.url || "");
     setFormMaxPages(s.max_pages?.toString() || "");
     setFormMaxDepth(s.max_depth?.toString() || "");
@@ -85,19 +113,70 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
     setFormExcludePfx(s.exclude_prefixes?.join(", ") || "");
     setFormSelector(s.content_selector || "");
     setFormInterval(s.schedule_interval || "");
+    setFormGoal(s.web_listening_goal || "");
+    setFormAllowPatterns(joinList(s.allow_url_patterns));
+    setFormQueries(joinList(s.queries));
+    setFormFileExts(s.file_exts?.join(", ") || "");
+    setFormTools(s.acquisition_tools?.length ? s.acquisition_tools : ["crawler", ...(s.queries?.length ? ["search"] : [])]);
+    setFormContentTypes([
+      ...(s.collect_linked_files === false ? [] : ["file"]),
+      ...(s.collect_page_content ? ["webpage"] : []),
+    ]);
     setShowAddSite(true);
   };
 
+  const toggleSelection = (value: string, current: string[], setCurrent: (values: string[]) => void) => {
+    setCurrent(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
+  };
+  const searchQueryRequired = formTools.includes("search") && parseList(formQueries).length === 0;
+  const siteStrategyReady = formTools.length > 0 && formContentTypes.length > 0 && !searchQueryRequired;
+
+  const handleExploreSite = async () => {
+    if (!formUrl.trim() || !formGoal.trim()) return;
+    setExploring(true);
+    setExploreError(null);
+    try {
+      const res = await apiPost<{
+        suggestions?: {
+          tools?: string[];
+          content_types?: string[];
+          allow_url_patterns?: string[];
+          queries?: string[];
+          content_selector?: string | null;
+        };
+      }>("/api/web-listening/rules/explore", {
+        website_url: formUrl.trim(),
+        goal: formGoal.trim(),
+      });
+      const suggestions = res.suggestions || {};
+      if (suggestions.tools?.length) setFormTools(suggestions.tools);
+      if (suggestions.content_types?.length) setFormContentTypes(suggestions.content_types);
+      setFormAllowPatterns(joinList(suggestions.allow_url_patterns));
+      setFormQueries(joinList(suggestions.queries));
+      setFormSelector(suggestions.content_selector || "");
+    } catch (e) {
+      setExploreError(e instanceof Error ? e.message : t("tasks.web_listening.explore_error"));
+    }
+    finally { setExploring(false); }
+  };
+
   const handleSaveSite = async () => {
-    if (!formName.trim() || !formUrl.trim()) return;
+    if (!formName.trim() || !formUrl.trim() || !siteStrategyReady) return;
     setSaving(true);
     try {
       const data: Record<string, unknown> = {
         name: formName.trim(), url: formUrl.trim(),
         max_pages: formMaxPages || undefined, max_depth: formMaxDepth || undefined,
-        keywords: formKeywords || undefined, exclude_keywords: formExcludeKw || undefined,
-        exclude_prefixes: formExcludePfx || undefined,
-        content_selector: formSelector || undefined, schedule_interval: formInterval || undefined,
+        keywords: formKeywords, exclude_keywords: formExcludeKw,
+        exclude_prefixes: formExcludePfx,
+        content_selector: formSelector, schedule_interval: formInterval,
+        web_listening_goal: formGoal.trim(),
+        allow_url_patterns: parseList(formAllowPatterns),
+        queries: parseList(formQueries),
+        file_exts: parseList(formFileExts),
+        acquisition_tools: formTools,
+        collect_linked_files: formContentTypes.includes("file"),
+        collect_page_content: formContentTypes.includes("webpage"),
       };
       if (editingSite) {
         data.original_name = editingSite.name;
@@ -107,7 +186,9 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
       }
       resetSiteForm();
       onSitesChanged();
-    } catch { /* ignore */ }
+    } catch (e) {
+      setExploreError(e instanceof Error ? e.message : "Failed to save site");
+    }
     finally { setSaving(false); }
   };
 
@@ -322,6 +403,64 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
                 <InputField value={formUrl} onChange={setFormUrl} placeholder="https://www.soa.org" testId="input-site-url" />
               </FormField>
             </div>
+            <FormField label={t("tasks.web_listening.goal")}>
+              <textarea value={formGoal} onChange={(e) => setFormGoal(e.target.value)} rows={2}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                data-testid="input-site-goal" />
+            </FormField>
+            <button type="button" onClick={handleExploreSite} disabled={exploring || !formUrl.trim() || !formGoal.trim()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+              data-testid="button-site-explore">
+              <RefreshCw className={`w-3 h-3 ${exploring ? "animate-spin" : ""}`} />{t("tasks.web_listening.explore")}
+            </button>
+            {exploreError && (
+              <p className="text-xs text-destructive" data-testid="text-site-explore-error">{exploreError}</p>
+            )}
+            <div className="grid grid-cols-2 gap-3 rounded-lg border border-border p-3">
+              <fieldset className="space-y-2">
+                <legend className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.tools")}</legend>
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={formTools.includes("crawler")} onChange={() => toggleSelection("crawler", formTools, setFormTools)} data-testid="checkbox-site-tool-crawler" />
+                  {t("tasks.web_listening.tool_crawler")}
+                </label>
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={formTools.includes("search")} onChange={() => toggleSelection("search", formTools, setFormTools)} data-testid="checkbox-site-tool-search" />
+                  {t("tasks.web_listening.tool_search")}
+                </label>
+              </fieldset>
+              <fieldset className="space-y-2">
+                <legend className="text-xs font-medium text-muted-foreground">{t("tasks.web_listening.content_types")}</legend>
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={formContentTypes.includes("file")} onChange={() => toggleSelection("file", formContentTypes, setFormContentTypes)} data-testid="checkbox-site-content-file" />
+                  {t("tasks.web_listening.content_file")}
+                </label>
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={formContentTypes.includes("webpage")} onChange={() => toggleSelection("webpage", formContentTypes, setFormContentTypes)} data-testid="checkbox-site-content-webpage" />
+                  {t("tasks.web_listening.content_webpage")}
+                </label>
+              </fieldset>
+            </div>
+            {(formTools.length === 0 || formContentTypes.length === 0) && (
+              <p className="text-xs text-destructive">{t("tasks.web_listening.strategy_required")}</p>
+            )}
+            {searchQueryRequired && (
+              <p className="text-xs text-destructive">{t("tasks.web_listening.search_query_required")}</p>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label={t("tasks.web_listening.allow_patterns")}>
+                <textarea value={formAllowPatterns} onChange={(e) => setFormAllowPatterns(e.target.value)} rows={3}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
+                  placeholder="/research/&#10;/globalassets/" data-testid="input-site-allow-patterns" />
+              </FormField>
+              <FormField label={t("tasks.web_listening.queries")}>
+                <textarea value={formQueries} onChange={(e) => setFormQueries(e.target.value)} rows={3}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                  placeholder="site:example.com actuarial AI filetype:pdf" data-testid="input-site-queries" />
+              </FormField>
+            </div>
+            <FormField label="File extensions" hint={t("tasks.form.comma_separated")}>
+              <InputField value={formFileExts} onChange={setFormFileExts} placeholder=".pdf, .docx, .xlsx" testId="input-site-file-exts" />
+            </FormField>
             <div className="grid grid-cols-3 gap-3">
               <FormField label={t("tasks.form.max_pages")}>
                 <InputField value={formMaxPages} onChange={setFormMaxPages} placeholder="200" type="number" testId="input-site-max-pages" />
@@ -351,7 +490,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
               <button onClick={resetSiteForm}
                 className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"
                 data-testid="button-cancel-site">{t("tasks.sched.cancel")}</button>
-              <button onClick={handleSaveSite} disabled={saving || !formName.trim() || !formUrl.trim()}
+              <button onClick={handleSaveSite} disabled={saving || !formName.trim() || !formUrl.trim() || !siteStrategyReady}
                 className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                 data-testid="button-save-site">
                 {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
@@ -414,6 +553,40 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
                       <div><span className="text-muted-foreground">{t("tasks.form.max_pages")}:</span> <span className="font-medium">{s.max_pages ?? "—"}</span></div>
                       <div><span className="text-muted-foreground">{t("tasks.form.max_depth")}:</span> <span className="font-medium">{s.max_depth ?? "—"}</span></div>
                     </div>
+                    {s.web_listening_goal && (
+                      <div><span className="text-muted-foreground">{t("tasks.web_listening.goal")}:</span> <span className="font-medium">{s.web_listening_goal}</span></div>
+                    )}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5" data-testid={`site-strategy-${s.name}`}>
+                      <div>
+                        <span className="text-muted-foreground">{t("tasks.web_listening.tools")}:</span>{" "}
+                        <span className="font-medium">{(s.acquisition_tools?.length ? s.acquisition_tools : ["crawler", ...(s.queries?.length ? ["search"] : [])]).join(", ")}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">{t("tasks.web_listening.content_types")}:</span>{" "}
+                        <span className="font-medium">
+                          {[
+                            ...(s.collect_linked_files === false ? [] : ["file"]),
+                            ...(s.collect_page_content ? ["webpage"] : []),
+                          ].join(", ") || "?"}
+                        </span>
+                      </div>
+                    </div>
+                    {s.allow_url_patterns && s.allow_url_patterns.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">{t("tasks.web_listening.allow_patterns")}:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {s.allow_url_patterns.map((pattern) => <code key={pattern} className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{pattern}</code>)}
+                        </div>
+                      </div>
+                    )}
+                    {s.queries && s.queries.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">{t("tasks.web_listening.queries")}:</span>
+                        <div className="space-y-1 mt-1">
+                          {s.queries.map((query) => <code key={query} className="block rounded bg-muted px-1.5 py-0.5 text-[10px]">{query}</code>)}
+                        </div>
+                      </div>
+                    )}
                     {s.keywords && s.keywords.length > 0 && (
                       <div>
                         <span className="text-muted-foreground">{t("tasks.form.keywords")}:</span>

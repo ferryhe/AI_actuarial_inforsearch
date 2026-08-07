@@ -120,7 +120,10 @@ def get_config_sites() -> dict[str, object]:
                 "allow_url_patterns": site.get("allow_url_patterns", []),
                 "queries": site.get("queries", []),
                 "file_exts": site.get("file_exts", site_defaults.get("file_exts", [])),
+                "acquisition_tools": site.get("acquisition_tools", []),
+                "collect_linked_files": coerce_bool(site.get("collect_linked_files"), default=True),
                 "collect_page_content": coerce_bool(site.get("collect_page_content"), default=False),
+                "web_listening_goal": str(site.get("web_listening_goal") or ""),
             }
         )
     global_schedule = site_defaults.get("schedule_interval")

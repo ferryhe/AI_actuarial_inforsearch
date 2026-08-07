@@ -9,11 +9,11 @@
 
 - Local `main` was fast-forwarded from `32ebedd` to the latest GitHub `origin/main` at `a73bac6`.
 - The task branch `codex/agentic-search-web-listening` was created from that clean baseline.
-- Current `main` already includes web-listening rule validation, task runtime integration, React task configuration, and focused tests.
-- The current repository has no `agentic_search` symbol or module. Its existing `web_listening` v1 flow drafts a rule and materializes one `sites.yaml` entry plus one scheduled full-pipeline task.
-- Existing executable acquisition paths are direct crawler collection, search fallback, linked-file downloads, and optional HTML page-content capture.
-- The site manager does not yet expose a structured per-site tracking scope, acquisition-tool choice, or file-versus-webpage content policy.
-- Product implementation is waiting for the exact sibling repository that owns the already-built `agentic_search` module so this repository can match its `web_listening` tool contract instead of inventing a competing schema.
+- `Agentic Site Monitoring` now has an SSRF-safe, bounded one-page exploration endpoint that observes same-domain page/file links and recommends tracking scope, acquisition tools, content types, queries, and a content selector without downloading files.
+- The backward-compatible `web-listening-agent-rule.v1` contract now supports optional `crawler`/`search` acquisition tools and `file`/`webpage` content policies, then materializes them into the site YAML and scheduled full-pipeline task.
+- Site YAML CRUD/read/sample management and both React configuration forms expose monitoring goal, path allow-list, search queries, file extensions, acquisition tools, content policy, selector, and schedule.
+- Runtime collection honors explicit strategy: search-only sites skip direct crawling, crawler-only sites skip search fallback, linked-file collection can be disabled, and search-discovered pages can be stored as page content.
+- Legacy site YAML remains compatible: omitted strategy fields retain prior crawler/file behavior, and the UI infers search only when legacy queries exist.
 - Sibling repositories remain out of scope.
 
 ## Verification
@@ -22,11 +22,17 @@
 - `git merge --ff-only origin/main`: passed.
 - `git switch -c codex/agentic-search-web-listening`: passed.
 - Baseline check: branch starts from `a73bac6`, matching `origin/main` before this status update.
-- Current-repository source search and call-chain inspection completed for `web_listening_rule.py`, site CRUD/read APIs, scheduler registration, task runtime, crawler, collectors, and React site management.
+- Focused regression suite: `107 passed` across rule, crawler, collector, task runtime, API, and React source tests.
+- Frontend production build: passed; Vite reports the existing large-chunk advisory only.
+- Browser smoke: passed against isolated local API/database; verified Agentic form strategy controls and enablement plus per-site YAML exploration/configuration controls, with no new console errors.
+- `git diff --check`: passed.
+- `python -m ruff check` surfaced six pre-existing lint findings outside the added lines (existing import order/unused imports); no task-scoped lint regression was identified.
+- Mandatory Codex CLI review was attempted in normal and approved system-level execution, but WindowsApps returned `Access is denied` both times. A manual full-diff review found and fixed the legacy site/search inference and missing-query UI issue; final tests/build were rerun afterward.
 
 ## Local Notes
 
-- Files in scope for branch initialization: `.hermes/project-status.md` only.
-- No unrelated uncommitted or untracked files were present before branch creation.
-- Likely current-repository files in scope after contract confirmation: `ai_actuarial/web_listening_rule.py`, `ai_actuarial/crawler.py`, `ai_actuarial/task_runtime.py`, site config APIs/UI, `config/sites.yaml`, and focused tests.
-- Blocker: the sibling repository name/path containing `agentic_search` has not been provided.
+- Files in scope: rule/schema, crawler/collector/task runtime, site read/write APIs, the Agentic and site-manager React forms/i18n, focused tests, and this status file.
+- No unrelated uncommitted or untracked files were present before implementation; browser smoke temporary files and processes were removed.
+- Blocker: local Codex CLI executable access is denied by WindowsApps; this prevents the automated pre-PR review command but does not block tests, build, browser validation, or GitHub publication.
+- GitHub authentication was refreshed and verified through the Windows keyring for `ferryhe` with `repo` and `workflow` scopes.
+- Next action: commit the scoped implementation, push the task branch, create a draft PR, and evaluate CI plus remote review/Copilot comments after the required wait.

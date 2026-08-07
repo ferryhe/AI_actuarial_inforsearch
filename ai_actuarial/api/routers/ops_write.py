@@ -16,6 +16,7 @@ from ..services.ops_write import (
     delete_scheduled_task,
     delete_site,
     draft_web_listening_rule,
+    explore_web_listening_site,
     export_sites_yaml,
     get_catalog_stats,
     get_chunk_generation_stats,
@@ -57,6 +58,18 @@ def _db_path(request: Request) -> str:
 
 def _handle_ops_error(exc: OpsWriteError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+
+
+@router.post("/web-listening/rules/explore")
+def api_web_listening_rules_explore(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("sites.write")),
+):
+    try:
+        return explore_web_listening_site(payload)
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
 
 
 @router.post("/web-listening/rules/draft")

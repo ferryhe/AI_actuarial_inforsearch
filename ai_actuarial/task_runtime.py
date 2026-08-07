@@ -766,6 +766,13 @@ class NativeTaskRuntime:
         child_task_ids: list[str] = []
 
         for site_config in site_configs:
+            tools = {
+                str(tool).strip().lower()
+                for tool in (site_config.acquisition_tools or [])
+                if str(tool).strip()
+            }
+            if tools and "search" not in tools:
+                continue
             queries = [str(query).strip() for query in (site_config.queries or []) if str(query).strip()]
             if not queries:
                 continue
@@ -810,7 +817,7 @@ class NativeTaskRuntime:
         engine = str(data.get("engine") or search_cfg.get("engine") or "brave").strip().lower() or "brave"
         site_host = self._site_filter_for_query(site_config.url, query)
 
-        return {
+        task_data = {
             "name": site_config.name,
             "query": query,
             "site": site_host,
@@ -822,6 +829,11 @@ class NativeTaskRuntime:
             "search_exclude_keywords": list(site_config.exclude_keywords or []),
             "check_database": bool(data.get("check_database", True)),
         }
+        if site_config.collect_linked_files is not None:
+            task_data["collect_linked_files"] = site_config.collect_linked_files
+        if site_config.collect_page_content is not None:
+            task_data["collect_page_content"] = site_config.collect_page_content
+        return task_data
 
     def _site_filter_for_query(self, site_url: str, query: str) -> str:
         query_site = self._site_filter_from_query(query)
@@ -1060,6 +1072,16 @@ class NativeTaskRuntime:
                     keywords=keywords,
                     file_exts=file_exts,
                     exclude_keywords=exclude_keywords,
+                    collect_linked_files=(
+                        coerce_bool(data.get("collect_linked_files"), default=True)
+                        if "collect_linked_files" in data
+                        else None
+                    ),
+                    collect_page_content=(
+                        coerce_bool(data.get("collect_page_content"), default=False)
+                        if "collect_page_content" in data
+                        else None
+                    ),
                     check_database=bool(data.get("check_database", True)),
                 )
                 new_items = crawler.scan_page_for_files(result.url, site_config, source_site=result.source)
@@ -1386,10 +1408,20 @@ class NativeTaskRuntime:
                 file_exts=list(row.get("file_exts") or defaults.get("file_exts") or []),
                 exclude_keywords=self._dedupe_list(default_exclude_keywords + self._coerce_list(row.get("exclude_keywords"))),
                 exclude_prefixes=self._dedupe_list(default_exclude_prefixes + self._coerce_list(row.get("exclude_prefixes"))),
+                collect_linked_files=(
+                    coerce_bool(row.get("collect_linked_files"), default=True)
+                    if "collect_linked_files" in row
+                    else None
+                ),
+                collect_page_content=(
+                    coerce_bool(row.get("collect_page_content"), default=False)
+                    if "collect_page_content" in row
+                    else None
+                ),
+                acquisition_tools=self._coerce_list(row.get("acquisition_tools")) or None,
                 content_selector=str(row.get("content_selector") or "").strip() or None,
                 allow_url_patterns=self._coerce_list(row.get("allow_url_patterns")),
                 queries=list(row.get("queries") or []),
-                collect_page_content=coerce_bool(row.get("collect_page_content"), default=False),
                 check_database=bool(data.get("check_database", True)),
             )
             for row in site_rows
