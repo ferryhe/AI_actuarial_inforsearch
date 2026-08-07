@@ -14,8 +14,10 @@
 - Site YAML CRUD/read/sample management and both React configuration forms expose monitoring goal, path allow-list, search queries, file extensions, acquisition tools, content policy, selector, and schedule.
 - Runtime collection honors explicit strategy: search-only sites skip direct crawling, crawler-only sites skip search fallback, linked-file collection can be disabled, and search-discovered pages can be stored as page content.
 - Legacy site YAML remains compatible: omitted strategy fields retain prior crawler/file behavior, and the UI infers search only when legacy queries exist.
-- Draft PR `#169` was created at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/169` from commit `b931795`.
-- Sibling repositories remain out of scope.
+- Draft PR `#169` was created at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/169`; its last reviewed head is `832855d`.
+- A user-authorized, read-only contract audit was completed against sibling repository `C:\Project\web_listening`; no sibling files were changed and its local `main` remained clean.
+- The audit established that this PR's `web-listening-agent-rule.v1` is an application-layer prototype, not the canonical `web_listening` contract. Formal execution in `web_listening` binds a monitor scope, `acquisition-profile.v1`, and a versioned `site-skill.v1` package with exact version/hash/executor fields.
+- PR `#169` should therefore remain Draft and should not be merged unchanged as the final integration. `AI_actuarial_inforsearch` should ultimately consume `web_listening` through MCP/API and persist job/scope/manifest identities instead of owning a second crawler/search/YAML authority.
 
 ## Verification
 
@@ -29,11 +31,13 @@
 - `git diff --check`: passed.
 - `python -m ruff check` surfaced six pre-existing lint findings outside the added lines (existing import order/unused imports); no task-scoped lint regression was identified.
 - Mandatory Codex CLI review was attempted in normal and approved system-level execution, but WindowsApps returned `Access is denied` both times. A manual full-diff review found and fixed the legacy site/search inference and missing-query UI issue; final tests/build were rerun afterward.
+- The post-PR review performed more than 15 minutes after creation passed: PR is open, Draft, and mergeable; CI run `31189169343` completed successfully; no PR comments, reviews, or unresolved review threads were present.
 
 ## Local Notes
 
-- Files in scope: rule/schema, crawler/collector/task runtime, site read/write APIs, the Agentic and site-manager React forms/i18n, focused tests, and this status file.
+- Files in scope: rule/schema, crawler/collector/task runtime, site read/write APIs, the Agentic and site-manager React forms/i18n, focused tests, and this status file. The sibling audit was read-only.
 - No unrelated uncommitted or untracked files were present before implementation; browser smoke temporary files and processes were removed.
 - Blocker: local Codex CLI executable access is denied by WindowsApps; this prevents the automated pre-PR review command but does not block tests, build, browser validation, or GitHub publication.
 - GitHub authentication was refreshed and verified through the Windows keyring for `ferryhe` with `repo` and `workflow` scopes.
-- Next action: wait about 15 minutes after PR creation, then evaluate GitHub checks and remote review/Copilot comments and fix only confirmed-safe findings.
+- Architecture decision: move the next implementation phase to `C:\Project\web_listening`. Add missing planning/Site Skill/health service APIs first, then a minimal local three-page UI for Explore & Build Skill, Run by Skill, and Evidence & Content. Keep the skill-maintenance health loop independent from the pinned work-agent execution loop.
+- Next action: switch the writable workspace to `C:\Project\web_listening`, update its `main`, and implement the work as staged PRs before replacing this application's prototype runtime with a thin MCP/API adapter.
