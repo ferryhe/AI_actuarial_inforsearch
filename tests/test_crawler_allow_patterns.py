@@ -227,6 +227,42 @@ class TestAllowUrlPatternsFileDownload(unittest.TestCase):
         self.assertIn("https://example.com/report-b.pdf", downloaded)
 
 
+
+class TestContentTypeStrategy(unittest.TestCase):
+    def test_scan_page_collects_webpage_without_downloading_linked_files(self):
+        html = _index_page([
+            ("https://example.com/report.pdf", "Report"),
+        ])
+        cfg = _sitecfg(
+            collect_linked_files=False,
+            collect_page_content=True,
+            content_selector="body",
+        )
+        page_item = {"url": "https://example.com/article", "content_type": "text/markdown"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = _make_storage(tmp)
+            try:
+                crawler = _make_crawler(storage, tmp)
+                with patch.object(
+                    crawler,
+                    "_request",
+                    return_value=(html.encode(), {"content-type": "text/html"}, "https://example.com/article"),
+                ), patch.object(
+                    crawler, "_handle_page_content", return_value=page_item
+                ) as handle_page, patch.object(crawler, "_download_file") as download_file:
+                    result = crawler.scan_page_for_files(
+                        "https://example.com/article",
+                        cfg,
+                        cfg.name,
+                    )
+            finally:
+                storage.close()
+
+        self.assertEqual(result, [page_item])
+        handle_page.assert_called_once()
+        download_file.assert_not_called()
+
 class TestAllowUrlPatternsInvalidRegex(unittest.TestCase):
     """Invalid regex patterns should be skipped with a warning, not crash."""
 

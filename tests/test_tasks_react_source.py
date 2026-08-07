@@ -219,16 +219,47 @@ def test_tasks_page_exposes_agentic_site_monitoring_form():
 
     assert 'type: "web_listening"' in tasks_src
     assert "<WebListeningForm" in tasks_src
+    assert '"/api/web-listening/rules/explore"' in form_src
+    assert 'data-testid="button-web-listening-explore"' in form_src
+    assert 'data-testid="panel-web-listening-exploration"' in form_src
     assert '"/api/web-listening/rules/draft"' in form_src
     assert '"/api/web-listening/rules/validate"' in form_src
     assert '"/api/web-listening/rules/materialize"' in form_src
     assert '"/api/schedule/reinit"' in form_src
     assert 'scheduled-tasks:changed' in form_src
     assert 'data-testid="form-web-listening"' in form_src
+    assert 'data-testid="checkbox-web-listening-tool-crawler"' in form_src
+    assert 'data-testid="checkbox-web-listening-tool-search"' in form_src
+    assert 'data-testid="checkbox-web-listening-content-file"' in form_src
+    assert 'data-testid="checkbox-web-listening-content-webpage"' in form_src
+    assert 'data-testid="input-web-listening-allow-patterns"' in form_src
+    assert 'data-testid="input-web-listening-queries"' in form_src
     i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
     assert "scheduled full pipeline task" in i18n_src
     assert "完整流水线任务" in i18n_src
 
+
+def test_site_config_form_manages_agentic_monitoring_strategy():
+    form_src = (ROOT / "pages" / "tasks" / "SiteConfigForm.tsx").read_text(encoding="utf-8")
+
+    for test_id in (
+        "input-site-goal",
+        "button-site-explore",
+        "checkbox-site-tool-crawler",
+        "checkbox-site-tool-search",
+        "checkbox-site-content-file",
+        "checkbox-site-content-webpage",
+        "input-site-allow-patterns",
+        "input-site-queries",
+    ):
+        assert f'data-testid="{test_id}"' in form_src
+    assert 'testId="input-site-file-exts"' in form_src
+    assert "acquisition_tools: formTools" in form_src
+    assert 'collect_linked_files: formContentTypes.includes("file")' in form_src
+    assert 'collect_page_content: formContentTypes.includes("webpage")' in form_src
+    assert 'formTools.includes("search") && parseList(formQueries).length === 0' in form_src
+    assert 'setFormTools(["crawler"])' in form_src
+    assert 's.queries?.length ? ["search"] : []' in form_src
 
 def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
     tasks_src = TASKS_TSX.read_text(encoding="utf-8")

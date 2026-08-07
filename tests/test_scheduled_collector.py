@@ -111,3 +111,30 @@ def test_scheduled_collector_marks_generic_diagnostic_error_failed() -> None:
     assert site_result["blocked"] is False
     assert site_result["fallback_reason"] == "error"
     assert "connection reset" in site_result["error_text"]
+
+
+def test_scheduled_collector_skips_direct_crawl_for_search_only_site() -> None:
+    storage = MagicMock()
+    crawler = MagicMock()
+    collector = ScheduledCollector(storage, crawler)
+
+    result = collector.collect(
+        CollectionConfig(
+            name="Scheduled",
+            source_type="scheduled",
+            metadata={
+                "site_configs": [
+                    SiteConfig(
+                        name="Search Only",
+                        url="https://search.example",
+                        acquisition_tools=["search"],
+                        queries=["site:search.example research"],
+                    )
+                ]
+            },
+        )
+    )
+
+    crawler.crawl_site.assert_not_called()
+    assert result.success is True
+    assert result.metadata["site_results"][0]["fallback_reason"] == "search_only"

@@ -71,7 +71,9 @@ class SiteConfig:
     file_exts: list[str] | None = None
     exclude_keywords: list[str] | None = None
     exclude_prefixes: list[str] | None = None
-    collect_page_content: bool = False  # Also save text extracted from HTML pages
+    collect_linked_files: bool | None = None  # None preserves the legacy file-collection default
+    collect_page_content: bool | None = None  # Also save text extracted from HTML pages
+    acquisition_tools: list[str] | None = None  # Supported values: crawler, search
     content_selector: str | None = None  # CSS selector to narrow link extraction to content area
     allow_url_patterns: list[str] | None = None  # Regex allow-list for sub-page URLs (Scrapy-style); if set, only matching sub-pages are queued
     queries: list[str] | None = None  # Site-specific search queries to supplement or bypass direct crawling (useful for anti-bot-protected sites)
@@ -431,6 +433,8 @@ class Crawler:
                 continue
 
             if self._is_file_url(final_url, exts):
+                if cfg.collect_linked_files is False:
+                    continue
                 if cfg.check_database and self.storage.file_exists(final_url):
                     sleep_with_jitter(cfg.delay_seconds)
                     continue
@@ -483,7 +487,7 @@ class Crawler:
                     continue
                 if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
                     continue
-                if self._is_file_url(link, exts):
+                if cfg.collect_linked_files is not False and self._is_file_url(link, exts):
                     # When allow_url_patterns is configured, enforce it on file links too
                     # (e.g. /globalassets/ pattern gates PDF downloads, not just subpage queuing).
                     if allow_patterns and not any(p.search(link) for p in allow_patterns):
@@ -877,6 +881,8 @@ class Crawler:
             return []
 
         if self._is_file_url(final_url, exts):
+            if cfg.collect_linked_files is False:
+                return []
             if cfg.check_database and self.storage.file_exists(final_url):
                 return []
             parsed = urlparse(final_url)
@@ -917,9 +923,16 @@ class Crawler:
             return []
 
         new_items: list[dict] = []
-        links = self._extract_links(final_url, html)
+        if cfg.collect_page_content and page_relevant:
+            page_item = self._handle_page_content(
+                final_url, html, page_title, published_time, cfg
+            )
+            if page_item:
+                new_items.append(page_item)
+
+        links = self._extract_links(final_url, html, content_selector=cfg.content_selector)
         for link, link_text in links:
-            if not self._is_file_url(link, exts):
+            if cfg.collect_linked_files is False or not self._is_file_url(link, exts):
                 continue
             if exclude and self._is_excluded(link, exclude):
                 continue

@@ -13,6 +13,8 @@ SCHEMA_VERSION = "web-listening-agent-rule.v1"
 DEFAULT_FILE_EXTS = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"]
 _DEFAULT_EXCLUDE_KEYWORDS = ["newsletter", "news letter", "login", "signin", "register"]
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
+AcquisitionTool = Literal["crawler", "search"]
+ContentType = Literal["file", "webpage"]
 
 
 class WebListeningRuleError(ValueError):
@@ -28,6 +30,8 @@ class AcquisitionProfile(BaseModel):
     delay_seconds: float = Field(default=0.5, ge=0, le=60)
     file_exts: list[str] = Field(default_factory=lambda: list(DEFAULT_FILE_EXTS))
     collect_page_content: bool = True
+    tools: list[AcquisitionTool] | None = None
+    content_types: list[ContentType] | None = None
 
     @field_validator("name", "website_url", "goal")
     @classmethod
@@ -50,6 +54,20 @@ class AcquisitionProfile(BaseModel):
             if ext not in out:
                 out.append(ext)
         return out or list(DEFAULT_FILE_EXTS)
+
+    @field_validator("tools", "content_types")
+    @classmethod
+    def _normalize_strategy_list(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        out: list[str] = []
+        for item in value:
+            normalized = str(item or "").strip().lower()
+            if normalized and normalized not in out:
+                out.append(normalized)
+        if not out:
+            raise ValueError("must contain at least one value")
+        return out
 
 
 class MonitorTask(BaseModel):
@@ -118,13 +136,16 @@ class WebListeningAgentRuleV1(BaseModel):
     monitor_scope: MonitorScope = Field(default_factory=MonitorScope)
 
     @model_validator(mode="after")
-    def _validate_url_and_schedule(self) -> "WebListeningAgentRuleV1":
+    def _validate_url_schedule_and_strategy(self) -> "WebListeningAgentRuleV1":
         url = self.acquisition_profile.website_url
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("acquisition_profile.website_url must be an absolute http(s) URL")
         if not _is_valid_schedule_interval(self.monitor_task.schedule_interval):
             raise ValueError("monitor_task.schedule_interval must be daily, weekly, daily at HH:MM, or every N hours/minutes")
+        tools = self.acquisition_profile.tools
+        if tools is not None and "search" in tools and not self.monitor_scope.queries:
+            raise ValueError("monitor_scope.queries must be non-empty when search acquisition is selected")
         return self
 
 
@@ -171,7 +192,18 @@ def validate_rule(value: str | dict[str, Any], *, check_url_safety: bool = True)
     return rule, [], warnings
 
 
-def generate_draft_rule(*, website_url: str, goal: str, name: str | None = None) -> WebListeningAgentRuleV1:
+def generate_draft_rule(
+    *,
+    website_url: str,
+    goal: str,
+    name: str | None = None,
+    tools: list[str] | None = None,
+    content_types: list[str] | None = None,
+    allow_url_patterns: list[str] | None = None,
+    queries: list[str] | None = None,
+    content_selector: str | None = None,
+    schedule_interval: str = "weekly",
+) -> WebListeningAgentRuleV1:
     url = str(website_url or "").strip()
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -185,15 +217,37 @@ def generate_draft_rule(*, website_url: str, goal: str, name: str | None = None)
     site_name = str(name or "").strip() or f"Web Listening: {host}"
     keywords = _keywords_from_goal(goal_text)
     path_pattern = re.escape(parsed.path.rstrip("/") or "/")
-    allow_patterns = [path_pattern] if parsed.path and parsed.path != "/" else []
-    acquisition = AcquisitionProfile(name=site_name, website_url=url, goal=goal_text)
-    monitor_task = MonitorTask(name=f"{site_name} Monitor", schedule_interval="weekly", enabled=True)
-    section_selection = SectionSelection(content_selector="main", allow_url_patterns=allow_patterns)
+    inferred_patterns = [path_pattern] if parsed.path and parsed.path != "/" else []
+    resolved_tools = ["crawler", "search"] if tools is None else tools
+    resolved_content_types = ["file", "webpage"] if content_types is None else content_types
+    if queries is None:
+        inferred_query = f"site:{host} {goal_text}"
+        if resolved_content_types == ["file"]:
+            inferred_query += " filetype:pdf"
+        resolved_queries = [inferred_query]
+    else:
+        resolved_queries = queries
+    acquisition = AcquisitionProfile(
+        name=site_name,
+        website_url=url,
+        goal=goal_text,
+        tools=resolved_tools,
+        content_types=resolved_content_types,
+    )
+    monitor_task = MonitorTask(
+        name=f"{site_name} Monitor",
+        schedule_interval=schedule_interval,
+        enabled=True,
+    )
+    section_selection = SectionSelection(
+        content_selector=content_selector or "main",
+        allow_url_patterns=inferred_patterns if allow_url_patterns is None else allow_url_patterns,
+    )
     scope = MonitorScope(
         keywords=keywords,
         exclude_keywords=list(_DEFAULT_EXCLUDE_KEYWORDS),
         exclude_prefixes=[],
-        queries=[f"site:{host} {goal_text} filetype:pdf"],
+        queries=resolved_queries,
     )
     return WebListeningAgentRuleV1(
         acquisition_profile=acquisition,
@@ -212,6 +266,13 @@ def materialize_rule(rule: WebListeningAgentRuleV1) -> MaterializedConfig:
     task = rule.monitor_task
     sections = rule.section_selection
     scope = rule.monitor_scope
+    content_types = acquisition.content_types
+    collect_linked_files = True if content_types is None else "file" in content_types
+    collect_page_content = (
+        acquisition.collect_page_content
+        if content_types is None
+        else "webpage" in content_types
+    )
     site: dict[str, Any] = {
         "name": acquisition.name,
         "url": acquisition.website_url,
@@ -219,9 +280,13 @@ def materialize_rule(rule: WebListeningAgentRuleV1) -> MaterializedConfig:
         "max_depth": acquisition.max_depth,
         "delay_seconds": acquisition.delay_seconds,
         "file_exts": list(acquisition.file_exts),
-        "collect_page_content": acquisition.collect_page_content,
+        "collect_linked_files": collect_linked_files,
+        "collect_page_content": collect_page_content,
+        "web_listening_goal": acquisition.goal,
         "web_listening_rule_schema_version": rule.schema_version,
     }
+    if acquisition.tools is not None:
+        site["acquisition_tools"] = list(acquisition.tools)
     if scope.keywords:
         site["keywords"] = list(scope.keywords)
     if scope.exclude_keywords:

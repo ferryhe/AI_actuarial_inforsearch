@@ -159,11 +159,24 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
             "url": "https://www.soa.org/news-and-publications/newsletters/ai-bulletin/",
             "max_pages": 25,
             "keywords": "ai, actuarial",
+            "web_listening_goal": "Track actuarial AI reports",
+            "allow_url_patterns": ["/news-and-publications/", "/resources/"],
+            "queries": ["site:soa.org actuarial AI filetype:pdf"],
+            "file_exts": [".pdf", ".docx"],
+            "acquisition_tools": ["crawler", "search"],
+            "collect_linked_files": True,
+            "collect_page_content": True,
         },
         headers=headers,
     )
     assert add_response.status_code == 200, add_response.text
-    assert any(site["name"] == "SOA AI Bulletin" for site in _read_sites(config_path))
+    added_site = next(site for site in _read_sites(config_path) if site["name"] == "SOA AI Bulletin")
+    assert added_site["web_listening_goal"] == "Track actuarial AI reports"
+    assert added_site["allow_url_patterns"] == ["/news-and-publications/", "/resources/"]
+    assert added_site["queries"] == ["site:soa.org actuarial AI filetype:pdf"]
+    assert added_site["acquisition_tools"] == ["crawler", "search"]
+    assert added_site["collect_linked_files"] is True
+    assert added_site["collect_page_content"] is True
     assert recorder.last_site_config is not None
 
     update_response = client.post(
@@ -174,6 +187,11 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
             "url": "https://www.soa.org/resources/research-reports/",
             "max_pages": 30,
             "exclude_keywords": "archive, curriculum",
+            "queries": ["site:soa.org research AI"],
+            "file_exts": [".pdf"],
+            "acquisition_tools": ["search"],
+            "collect_linked_files": False,
+            "collect_page_content": True,
         },
         headers=headers,
     )
@@ -181,6 +199,11 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
     updated_site = next(site for site in _read_sites(config_path) if site["name"] == "SOA AI Bulletin")
     assert updated_site["url"] == "https://www.soa.org/resources/research-reports/"
     assert updated_site["exclude_keywords"] == ["archive", "curriculum"]
+    assert updated_site["queries"] == ["site:soa.org research AI"]
+    assert updated_site["file_exts"] == [".pdf"]
+    assert updated_site["acquisition_tools"] == ["search"]
+    assert updated_site["collect_linked_files"] is False
+    assert updated_site["collect_page_content"] is True
 
     preview_response = client.post(
         "/api/config/sites/import",
@@ -243,6 +266,40 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
     restore_filename = restore_source.json()["backups"][0]["filename"]
     restore_response = client.post("/api/config/backups/restore", json={"filename": restore_filename}, headers=admin_headers)
     assert restore_response.status_code == 200, restore_response.text
+
+
+def test_site_config_write_rejects_incomplete_acquisition_strategy(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    _install_public_dns_resolver(monkeypatch, "strategy.example")
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["operator_token"]}
+
+    missing_queries = client.post(
+        "/api/config/sites/add",
+        json={
+            "name": "Search Missing Query",
+            "url": "https://strategy.example",
+            "acquisition_tools": ["search"],
+            "collect_linked_files": True,
+        },
+        headers=headers,
+    )
+    assert missing_queries.status_code == 400
+    assert "queries must be non-empty" in missing_queries.text
+
+    missing_content = client.post(
+        "/api/config/sites/add",
+        json={
+            "name": "No Content",
+            "url": "https://strategy.example",
+            "acquisition_tools": ["crawler"],
+            "collect_linked_files": False,
+            "collect_page_content": False,
+        },
+        headers=headers,
+    )
+    assert missing_content.status_code == 400
+    assert "At least one" in missing_content.text
 
 
 

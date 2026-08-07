@@ -1015,6 +1015,53 @@ def test_native_task_runtime_missing_site_results_do_not_enqueue_search_fallback
     runtime.start_background_task.assert_not_called()
 
 
+
+def test_native_task_runtime_crawler_only_site_does_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    runtime.start_background_task = MagicMock(return_value="child-not-used")
+    result = CollectionResult(
+        success=True,
+        items_found=0,
+        items_downloaded=0,
+        items_skipped=0,
+        errors=[],
+        metadata={
+            "site_results": [
+                {
+                    "name": "Crawler Only",
+                    "url": "https://crawler.example",
+                    "items_found": 0,
+                    "success": True,
+                    "fallback_reason": "zero_results",
+                }
+            ]
+        },
+    )
+    site_configs = [
+        SiteConfig(
+            name="Crawler Only",
+            url="https://crawler.example",
+            queries=["actuarial report"],
+            acquisition_tools=["crawler"],
+        )
+    ]
+
+    runtime._enqueue_site_query_search_fallbacks(
+        "task-crawler-only",
+        {"search": {"enabled": True}},
+        result,
+        site_configs,
+        {},
+    )
+
+    assert result.metadata["search_fallback_enqueued"] == 0
+    assert result.metadata["search_fallback_task_ids"] == []
+    runtime.start_background_task.assert_not_called()
+
 def test_native_task_runtime_unmatched_site_result_does_not_enqueue_search_fallback(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 

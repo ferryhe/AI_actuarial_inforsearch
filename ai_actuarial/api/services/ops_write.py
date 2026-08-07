@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 from cryptography.fernet import Fernet
@@ -34,6 +36,7 @@ from ai_actuarial.ai_runtime import (
 )
 from ai_actuarial.shared_runtime import (
     append_task_log,
+    coerce_bool,
     get_categories_config_path,
     get_default_catalog_provider,
     get_sites_config_path,
@@ -45,6 +48,7 @@ from ai_actuarial.config import settings
 from ai_actuarial.markdown_conversion_config import list_conversion_tools, write_markdown_conversion_config
 from ai_actuarial.rag.defaults import get_embedding_model_defaults
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
+from ai_actuarial.crawler import DEFAULT_FILE_EXTS, Crawler
 from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
 from ai_actuarial.web_listening_rule import (
@@ -54,6 +58,7 @@ from ai_actuarial.web_listening_rule import (
     rule_to_yaml,
     validate_rule,
 )
+from ai_actuarial.utils import extract_metadata, html_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -136,14 +141,28 @@ def _validate_ai_routing_model(binding_name: str, provider: str, model: str) -> 
         )
 
 _SAMPLE_SITES_YAML = """# AI Actuarial Info Search - Site Configuration Sample
-# Import this file to add sites for document crawling.
+# Import this file to add sites for Agentic Site Monitoring.
 # Each site requires at minimum: name and url.
 
 sites:
   - name: Society of Actuaries (SOA)
-    url: https://www.soa.org/
+    url: https://www.soa.org/resources/research-reports/
+    web_listening_goal: Track actuarial AI research reports and article updates
     max_pages: 200
     max_depth: 3
+    acquisition_tools:
+      - crawler
+      - search
+    collect_linked_files: true
+    collect_page_content: true
+    file_exts:
+      - .pdf
+      - .docx
+    allow_url_patterns:
+      - /resources/research-reports/
+      - /globalassets/
+    queries:
+      - site:soa.org artificial intelligence actuarial filetype:pdf
     keywords:
       - artificial intelligence
       - machine learning
@@ -156,28 +175,20 @@ sites:
     content_selector: main
     schedule_interval: weekly
 
-  - name: Institute and Faculty of Actuaries (IFoA)
-    url: https://www.actuaries.org.uk/
-    max_pages: 150
-    max_depth: 2
-    keywords:
-      - AI
-      - data science
-      - risk management
-    exclude_keywords:
-      - events
-    # schedule_interval is optional; omit to use the global schedule
-
 # Field Reference:
-# name (required)          - Unique display name for this site
-# url (required)           - Root URL to start crawling from
-# max_pages (optional)     - Maximum pages to crawl (default: from global config)
-# max_depth (optional)     - Maximum link depth (default: from global config)
-# keywords (optional)      - List of keywords to filter relevant pages
-# exclude_keywords (opt.)  - List of keywords to exclude pages
-# exclude_prefixes (opt.)  - URL path prefixes to skip
-# content_selector (opt.)  - CSS selector for main content area
-# schedule_interval (opt.) - Per-site schedule: daily, weekly, every N hours
+# name (required)              - Unique display name for this site
+# url (required)               - Root URL to explore/crawl
+# web_listening_goal (opt.)    - Human-readable monitoring objective
+# acquisition_tools (opt.)     - crawler, search, or both
+# collect_linked_files (opt.)  - Download matching linked documents
+# collect_page_content (opt.)  - Store matching HTML pages as Markdown
+# allow_url_patterns (opt.)    - Regex allow-list defining the tracking scope
+# queries (optional)           - Site-specific search queries/fallbacks
+# file_exts (optional)         - Linked document extensions to collect
+# max_pages/max_depth (opt.)   - Crawl exploration bounds
+# keywords/exclusions (opt.)   - Relevance and exclusion filters
+# content_selector (opt.)      - CSS selector for the main content area
+# schedule_interval (opt.)     - Per-site schedule: daily, weekly, every N hours
 """
 
 
@@ -269,6 +280,36 @@ def _normalize_list(value: Any, *, field_name: str) -> list[str]:
     raise OpsWriteError(f"{field_name} must be a list or string")
 
 
+_VALID_ACQUISITION_TOOLS = {"crawler", "search"}
+
+
+def _normalize_acquisition_tools(value: Any) -> list[str]:
+    tools = []
+    for raw_tool in _normalize_list(value, field_name="acquisition_tools"):
+        tool = raw_tool.lower()
+        if tool not in _VALID_ACQUISITION_TOOLS:
+            raise OpsWriteError(f"Unsupported acquisition tool: {raw_tool}")
+        if tool not in tools:
+            tools.append(tool)
+    if not tools:
+        raise OpsWriteError("acquisition_tools must contain crawler and/or search")
+    return tools
+
+
+def _validate_site_acquisition_strategy(site: dict[str, Any]) -> None:
+    tools = {
+        str(tool).strip().lower()
+        for tool in (site.get("acquisition_tools") or [])
+        if str(tool).strip()
+    }
+    if "search" in tools and not site.get("queries"):
+        raise OpsWriteError("queries must be non-empty when search acquisition is selected")
+    collect_linked_files = coerce_bool(site.get("collect_linked_files"), default=True)
+    collect_page_content = coerce_bool(site.get("collect_page_content"), default=False)
+    if not collect_linked_files and not collect_page_content:
+        raise OpsWriteError("At least one of collect_linked_files or collect_page_content must be enabled")
+
+
 def _coerce_bool_setting(value: Any, *, field_name: str) -> bool:
     if isinstance(value, bool):
         return value
@@ -357,19 +398,27 @@ def add_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict
         new_site["max_pages"] = max_pages
     if max_depth is not None:
         new_site["max_depth"] = max_depth
-    keywords = _split_csv_or_list(data.get("keywords"))
-    exclude_keywords = _split_csv_or_list(data.get("exclude_keywords"))
-    exclude_prefixes = _split_csv_or_list(data.get("exclude_prefixes"))
-    if keywords:
-        new_site["keywords"] = keywords
-    if exclude_keywords:
-        new_site["exclude_keywords"] = exclude_keywords
-    if exclude_prefixes:
-        new_site["exclude_prefixes"] = exclude_prefixes
-    if data.get("schedule_interval"):
-        new_site["schedule_interval"] = str(data["schedule_interval"]).strip()
-    if data.get("content_selector"):
-        new_site["content_selector"] = str(data["content_selector"]).strip()
+    for field_name in (
+        "keywords",
+        "exclude_keywords",
+        "exclude_prefixes",
+        "allow_url_patterns",
+        "queries",
+        "file_exts",
+    ):
+        values = _normalize_list(data.get(field_name), field_name=field_name)
+        if values:
+            new_site[field_name] = values
+    if "acquisition_tools" in data:
+        new_site["acquisition_tools"] = _normalize_acquisition_tools(data.get("acquisition_tools"))
+    for field_name, default in (("collect_linked_files", True), ("collect_page_content", False)):
+        if field_name in data:
+            new_site[field_name] = coerce_bool(data.get(field_name), default=default)
+    for field_name in ("schedule_interval", "content_selector", "web_listening_goal"):
+        value = str(data.get(field_name) or "").strip()
+        if value:
+            new_site[field_name] = value
+    _validate_site_acquisition_strategy(new_site)
 
     if _should_auto_backup():
         _backup_config("before_sites_add")
@@ -408,31 +457,38 @@ def update_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> d
             site["max_depth"] = max_depth
         else:
             site.pop("max_depth", None)
-        keywords = _split_csv_or_list(data.get("keywords"))
-        exclude_keywords = _split_csv_or_list(data.get("exclude_keywords"))
-        exclude_prefixes = _split_csv_or_list(data.get("exclude_prefixes"))
-        if keywords:
-            site["keywords"] = keywords
-        else:
-            site.pop("keywords", None)
-        if exclude_keywords:
-            site["exclude_keywords"] = exclude_keywords
-        else:
-            site.pop("exclude_keywords", None)
-        if exclude_prefixes:
-            site["exclude_prefixes"] = exclude_prefixes
-        else:
-            site.pop("exclude_prefixes", None)
-        schedule_interval = str(data.get("schedule_interval") or "").strip()
-        if schedule_interval:
-            site["schedule_interval"] = schedule_interval
-        else:
-            site.pop("schedule_interval", None)
-        content_selector = str(data.get("content_selector") or "").strip()
-        if content_selector:
-            site["content_selector"] = content_selector
-        else:
-            site.pop("content_selector", None)
+        for field_name in ("keywords", "exclude_keywords", "exclude_prefixes"):
+            values = _normalize_list(data.get(field_name), field_name=field_name)
+            if values:
+                site[field_name] = values
+            else:
+                site.pop(field_name, None)
+        for field_name in ("allow_url_patterns", "queries", "file_exts"):
+            if field_name not in data:
+                continue
+            values = _normalize_list(data.get(field_name), field_name=field_name)
+            if values:
+                site[field_name] = values
+            else:
+                site.pop(field_name, None)
+        if "acquisition_tools" in data:
+            site["acquisition_tools"] = _normalize_acquisition_tools(data.get("acquisition_tools"))
+        for field_name, default in (("collect_linked_files", True), ("collect_page_content", False)):
+            if field_name in data:
+                site[field_name] = coerce_bool(data.get(field_name), default=default)
+        for field_name in ("schedule_interval", "content_selector"):
+            value = str(data.get(field_name) or "").strip()
+            if value:
+                site[field_name] = value
+            else:
+                site.pop(field_name, None)
+        if "web_listening_goal" in data:
+            value = str(data.get("web_listening_goal") or "").strip()
+            if value:
+                site["web_listening_goal"] = value
+            else:
+                site.pop("web_listening_goal", None)
+        _validate_site_acquisition_strategy(site)
         found = True
         break
 
@@ -564,6 +620,143 @@ def _site_url_is_safe(url: str, *, errors: list[str] | None = None, site_name: s
         return False
 
 
+def explore_web_listening_site(data: dict[str, Any]) -> dict[str, Any]:
+    payload = _coerce_required_dict(data)
+    website_url = str(payload.get("website_url") or "").strip()
+    goal = str(payload.get("goal") or "").strip()
+    if not goal:
+        raise OpsWriteError("goal is required")
+    _validate_site_url(website_url)
+
+    config_data = load_yaml(get_sites_config_path(), default={})
+    defaults = config_data.get("defaults") if isinstance(config_data.get("defaults"), dict) else {}
+    user_agent = str((defaults or {}).get("user_agent") or "AI-Actuarial-InfoSearch/0.1")
+    unused_download_dir = Path(os.getenv("TEMP") or os.getenv("TMP") or ".") / "_ai_actuarial_site_explore"
+    crawler = Crawler(storage=None, download_dir=str(unused_download_dir), user_agent=user_agent)  # type: ignore[arg-type]
+
+    parsed_input = urlparse(website_url)
+    host = (parsed_input.hostname or "").lower()
+    search_host = host[4:] if host.startswith("www.") else host
+    observations: dict[str, Any] = {
+        "requested_url": website_url,
+        "reachable": False,
+        "final_url": website_url,
+        "title": None,
+        "sample_pages": [],
+        "sample_files": [],
+        "page_link_count": 0,
+        "file_link_count": 0,
+    }
+    warnings: list[str] = []
+    try:
+        raw, headers, final_url = crawler._request(website_url, timeout=15)
+    except Exception as exc:
+        message = str(exc).strip() or exc.__class__.__name__
+        observations["error"] = message[:300]
+        warnings.append("Direct exploration failed; search is recommended for this site.")
+        return {
+            "success": True,
+            "suggestions": {
+                "tools": ["search"],
+                "content_types": ["file", "webpage"],
+                "allow_url_patterns": [],
+                "queries": [f"site:{search_host} {goal}"],
+                "content_selector": None,
+            },
+            "observations": observations,
+            "warnings": warnings,
+        }
+
+    observations["reachable"] = True
+    observations["final_url"] = final_url
+    content_type = str(headers.get("content-type") or "").lower()
+    html = raw.decode("utf-8", errors="ignore")
+    title, _published_time = extract_metadata(html, final_url)
+    observations["title"] = title
+    text = html_to_text(html)
+    links = crawler._extract_links(final_url, html)
+    final_host = (urlparse(final_url).hostname or "").lower()
+
+    page_links: list[tuple[str, str]] = []
+    file_links: list[tuple[str, str]] = []
+    for link, label in links:
+        parsed_link = urlparse(link)
+        if (parsed_link.hostname or "").lower() != final_host:
+            continue
+        if any(parsed_link.path.lower().endswith(ext) for ext in DEFAULT_FILE_EXTS):
+            file_links.append((link, label))
+        else:
+            page_links.append((link, label))
+
+    goal_terms = {
+        term.lower()
+        for term in re.findall(r"[A-Za-z0-9_-]{3,}", goal)
+        if term.lower() not in {"and", "the", "for", "from", "with", "monitor", "track"}
+    }
+    relevant_links = [
+        item
+        for item in page_links + file_links
+        if not goal_terms or any(term in f"{item[0]} {item[1]}".lower() for term in goal_terms)
+    ]
+    scope_links = relevant_links or page_links + file_links
+    allow_patterns: list[str] = []
+    start_path = urlparse(final_url).path.rstrip("/")
+    if start_path:
+        allow_patterns.append(re.escape(start_path))
+    for link, _label in scope_links:
+        path = urlparse(link).path
+        segments = [segment for segment in path.split("/") if segment]
+        if any(path.lower().endswith(ext) for ext in DEFAULT_FILE_EXTS) and segments:
+            segments = segments[:-1]
+        if not segments:
+            continue
+        prefix = "/" + "/".join(segments[:2]) + "/"
+        pattern = re.escape(prefix)
+        if pattern not in allow_patterns:
+            allow_patterns.append(pattern)
+        if len(allow_patterns) >= 5:
+            break
+
+    observations["sample_pages"] = [url for url, _label in page_links[:10]]
+    observations["sample_files"] = [url for url, _label in file_links[:10]]
+    observations["page_link_count"] = len(page_links)
+    observations["file_link_count"] = len(file_links)
+
+    content_types: list[str] = []
+    if file_links or any(urlparse(final_url).path.lower().endswith(ext) for ext in DEFAULT_FILE_EXTS):
+        content_types.append("file")
+    if "html" in content_type or len(text.strip()) >= 200:
+        content_types.append("webpage")
+    if not content_types:
+        content_types.append("webpage")
+
+    if re.search(r"<main(?:\s|>)", html, flags=re.IGNORECASE):
+        content_selector = "main"
+    elif re.search(r"<article(?:\s|>)", html, flags=re.IGNORECASE):
+        content_selector = "article"
+    else:
+        content_selector = None
+
+    query = f"site:{search_host} {goal}"
+    if content_types == ["file"]:
+        query += " filetype:pdf"
+    if not allow_patterns:
+        warnings.append("No path-specific scope was discovered; review before using a domain-wide crawl.")
+
+    return {
+        "success": True,
+        "suggestions": {
+            "tools": ["crawler"],
+            "content_types": content_types,
+            "allow_url_patterns": allow_patterns,
+            "queries": [query],
+            "content_selector": content_selector,
+        },
+        "observations": observations,
+        "warnings": warnings,
+    }
+
+
 def draft_web_listening_rule(data: dict[str, Any]) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     try:
@@ -571,14 +764,36 @@ def draft_web_listening_rule(data: dict[str, Any]) -> dict[str, Any]:
             website_url=str(payload.get("website_url") or ""),
             goal=str(payload.get("goal") or ""),
             name=str(payload.get("name") or "").strip() or None,
+            tools=(
+                _normalize_list(payload.get("tools"), field_name="tools")
+                if "tools" in payload
+                else None
+            ),
+            content_types=(
+                _normalize_list(payload.get("content_types"), field_name="content_types")
+                if "content_types" in payload
+                else None
+            ),
+            allow_url_patterns=(
+                _normalize_list(payload.get("allow_url_patterns"), field_name="allow_url_patterns")
+                if "allow_url_patterns" in payload
+                else None
+            ),
+            queries=(
+                _normalize_list(payload.get("queries"), field_name="queries")
+                if "queries" in payload
+                else None
+            ),
+            content_selector=str(payload.get("content_selector") or "").strip() or None,
+            schedule_interval=str(payload.get("schedule_interval") or "weekly").strip(),
         )
-    except WebListeningRuleError as exc:
+    except (WebListeningRuleError, ValueError) as exc:
         raise OpsWriteError(str(exc)) from exc
     return {
         "success": True,
         "rule": rule.model_dump(mode="json"),
         "yaml": rule_to_yaml(rule),
-        "warnings": ["Draft generation does not fetch the website; review and edit before materializing."],
+        "warnings": ["Review the inferred path scope and acquisition strategy before materializing."],
     }
 
 
