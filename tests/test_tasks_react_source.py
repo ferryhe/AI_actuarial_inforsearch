@@ -265,7 +265,8 @@ def test_site_config_form_manages_agentic_monitoring_strategy():
     assert 'data-testid="text-site-save-error"' in form_src
     assert 'setExploreError(e instanceof Error ? e.message : "Failed to save site")' not in form_src
     i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
-    assert i18n_src.count('"tasks.sites.save_error"') == 2
+    assert '"tasks.sites.save_error": "Failed to save site"' in i18n_src
+    assert '"tasks.sites.save_error": "保存站点失败"' in i18n_src
 
 def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
     tasks_src = TASKS_TSX.read_text(encoding="utf-8")

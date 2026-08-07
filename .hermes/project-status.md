@@ -11,6 +11,7 @@
 - `SiteConfigForm` now keeps site-save failures separate from site-exploration failures.
 - Save failures render next to the Save controls through a dedicated `saveError` state and use localized English/Chinese fallback text.
 - Focused regression coverage exercises extension normalization on both add and update plus the independent save-error UI contract.
+- Follow-up PR `#170` is open. Its initial `python-smoke` check passed, and Copilot's one actionable test-maintainability comment was accepted: the i18n regression now asserts the English and Chinese translations directly instead of counting language-table occurrences.
 - PR `#169` is merged. Its broader `web-listening-agent-rule.v1` implementation remains an application-layer prototype; this follow-up is limited to correctness and UX hardening.
 
 ## Verification
@@ -22,6 +23,7 @@
 - `git diff --check`: passed.
 - Focused Ruff check reported two pre-existing findings outside the added lines: unused `PROVIDER_ENV_VARS` in `ops_write.py` and unused `src` in `test_tasks_react_source.py`.
 - Mandatory Codex CLI review: passed with no actionable findings; the reviewer independently reran `47` focused tests and the frontend build.
+- Post-review focused test: `21 passed` in `tests/test_tasks_react_source.py` after applying Copilot's PR `#170` feedback.
 
 ## Local Notes
 
@@ -29,4 +31,4 @@
 - No unrelated local changes were present before implementation.
 - The isolated smoke services, throwaway user/database, logs, and temporary configuration were stopped and removed after verification.
 - Sibling repositories were not read or modified.
-- Next action: commit, push, open the follow-up PR, and check CI/review after about 15 minutes.
+- Next action: push the reviewed PR `#170` follow-up and complete the remaining post-PR observation window.
