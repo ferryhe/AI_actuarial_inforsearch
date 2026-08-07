@@ -66,6 +66,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
   const [exploring, setExploring] = useState(false);
 
   const [exploreError, setExploreError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [site, setSite] = useState("");
   const [maxPages, setMaxPages] = useState("");
   const [maxDepth, setMaxDepth] = useState("");
@@ -98,6 +99,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
     setFormTools(["crawler"]);
     setFormContentTypes(["file", "webpage"]);
     setExploreError(null);
+    setSaveError(null);
     setShowAddSite(false); setEditingSite(null);
   };
 
@@ -105,6 +107,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
     setEditingSite(s);
     setFormName(s.name);
     setExploreError(null);
+    setSaveError(null);
     setFormUrl(s.url || "");
     setFormMaxPages(s.max_pages?.toString() || "");
     setFormMaxDepth(s.max_depth?.toString() || "");
@@ -163,6 +166,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
   const handleSaveSite = async () => {
     if (!formName.trim() || !formUrl.trim() || !siteStrategyReady) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const data: Record<string, unknown> = {
         name: formName.trim(), url: formUrl.trim(),
@@ -187,7 +191,7 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
       resetSiteForm();
       onSitesChanged();
     } catch (e) {
-      setExploreError(e instanceof Error ? e.message : "Failed to save site");
+      setSaveError(e instanceof Error ? e.message : t("tasks.sites.save_error"));
     }
     finally { setSaving(false); }
   };
@@ -486,6 +490,9 @@ export function SiteConfigForm({ sites, onSubmit, submitting, onSitesChanged }: 
                 <InputField value={formSelector} onChange={setFormSelector} placeholder="article.content" testId="input-site-selector" />
               </FormField>
             </div>
+            {saveError && (
+              <p className="text-xs text-destructive" data-testid="text-site-save-error">{saveError}</p>
+            )}
             <div className="flex items-center gap-2 justify-end">
               <button onClick={resetSiteForm}
                 className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors"

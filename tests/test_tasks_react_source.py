@@ -260,6 +260,12 @@ def test_site_config_form_manages_agentic_monitoring_strategy():
     assert 'formTools.includes("search") && parseList(formQueries).length === 0' in form_src
     assert 'setFormTools(["crawler"])' in form_src
     assert 's.queries?.length ? ["search"] : []' in form_src
+    assert "const [saveError, setSaveError]" in form_src
+    assert 'setSaveError(e instanceof Error ? e.message : t("tasks.sites.save_error"))' in form_src
+    assert 'data-testid="text-site-save-error"' in form_src
+    assert 'setExploreError(e instanceof Error ? e.message : "Failed to save site")' not in form_src
+    i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
+    assert i18n_src.count('"tasks.sites.save_error"') == 2
 
 def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
     tasks_src = TASKS_TSX.read_text(encoding="utf-8")
