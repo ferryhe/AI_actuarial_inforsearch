@@ -66,7 +66,7 @@ class URLCollector(BaseCollector):
                         url=url,
                         max_pages=1,
                         max_depth=1,
-                        delay_seconds=0.5,
+                        delay_seconds=self.crawler.default_delay_seconds,
                         keywords=config.keywords,
                         file_exts=config.file_exts,
                         exclude_keywords=config.exclude_keywords,

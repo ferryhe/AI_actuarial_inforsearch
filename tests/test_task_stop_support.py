@@ -821,6 +821,7 @@ def test_native_task_runtime_quick_check_uses_submitted_url_config(tmp_path, mon
                 "  user_agent: test-agent/1.0",
                 "  max_pages: 20",
                 "  max_depth: 4",
+                "  delay_seconds: 0",
                 "  file_exts: ['.pdf']",
                 "sites:",
                 "  - name: Configured Site",
@@ -838,7 +839,7 @@ def test_native_task_runtime_quick_check_uses_submitted_url_config(tmp_path, mon
     fake_crawler.crawl_site.return_value = [{"local_path": str(tmp_path / "report.pdf")}]
 
     runtime = NativeTaskRuntime()
-    with patch("ai_actuarial.task_runtime.Crawler", return_value=fake_crawler):
+    with patch("ai_actuarial.task_runtime.Crawler", return_value=fake_crawler) as crawler_cls:
         result = runtime._run_collection(
             "task-quick",
             "quick_check",
@@ -861,6 +862,8 @@ def test_native_task_runtime_quick_check_uses_submitted_url_config(tmp_path, mon
     assert site_cfg.keywords == ["risk"]
     assert site_cfg.file_exts == [".docx"]
     assert site_cfg.check_database is False
+    assert site_cfg.delay_seconds == 0
+    assert crawler_cls.call_args.kwargs["default_delay_seconds"] == 0
 
 
 def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_path, monkeypatch) -> None:
@@ -875,9 +878,11 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
                 f"  download_dir: {download_dir.as_posix()}",
                 "defaults:",
                 "  user_agent: test-agent/1.0",
+                "  delay_seconds: 1.25",
                 "  keywords: [actuarial]",
                 "  file_exts: ['.pdf']",
                 "search:",
+                "  delay_seconds: 0",
                 "  max_results: 5",
                 "  languages: [en]",
                 "  country: us",
@@ -901,7 +906,7 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
     ), patch("ai_actuarial.task_runtime.search_all", return_value=[search_result]) as mock_search, patch(
         "ai_actuarial.task_runtime.Crawler",
         return_value=fake_crawler,
-    ):
+    ) as crawler_cls:
         result = runtime._run_collection(
             "task-search",
             "search",
@@ -928,6 +933,8 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
     assert site_cfg.file_exts == [".pdf"]
     assert site_cfg.exclude_keywords == ["newsletter"]
     assert site_cfg.check_database is True
+    assert site_cfg.delay_seconds == 0
+    assert crawler_cls.call_args.kwargs["default_delay_seconds"] == 0
 
 
 def test_native_task_runtime_search_passes_check_database_false_to_scan_config(tmp_path, monkeypatch) -> None:

@@ -1,35 +1,44 @@
 # Project Status
 
-- Date: 2026-08-07
-- Branch: `codex/fix-pr169-copilot-feedback`
-- Baseline: `origin/main` at `0f66956` (merged PR `#169`).
-- Scope: Address the two Copilot review clusters left on merged PR `#169` without changing the prototype architecture or reading sibling repositories.
+- Date: 2026-08-08
+- Branch: `agent/respectful-crawler-requests`
+- Baseline: `origin/main` at `a455b36` (merged PR `#170`).
+- Scope: Repair the shared request path used by Site Configuration, Web Crawl, Ad-hoc URL, and Web Search after PR `#119`; Agentic Site Monitoring remains out of scope.
 
 ## Current State
 
-- Site add/update API writes now normalize `file_exts` to lowercase, dot-prefixed, first-seen-order values with duplicates removed.
-- `SiteConfigForm` now keeps site-save failures separate from site-exploration failures.
-- Save failures render next to the Save controls through a dedicated `saveError` state and use localized English/Chinese fallback text.
-- Focused regression coverage exercises extension normalization on both add and update plus the independent save-error UI contract.
-- Follow-up PR `#170` is open. Both `python-smoke` runs passed, and Copilot's one actionable test-maintainability comment was accepted: the i18n regression now asserts the English and Chinese translations directly instead of counting language-table occurrences.
-- PR `#169` is merged. Its broader `web-listening-agent-rule.v1` implementation remains an application-layer prototype; this follow-up is limited to correctness and UX hardening.
+- The crawler again uses `curl_cffi` browser-compatible TLS/HTTP2 behavior while retaining the configured, transparent project user agent.
+- Every URL and redirect hop still goes through the SSRF validator. `CURLOPT_RESOLVE` pins the validated public IP and environment proxies are disabled so the request cannot bypass that pin.
+- Redirects remain manual, sessions are reused per validated origin/address, and IPv4 is tried before IPv6 with IPv6 retained as fallback.
+- All actual page, redirect, retry, and file-download requests use per-origin randomized pacing. `delay_seconds` is the minimum and the jittered interval is between 1.0x and 1.5x that value.
+- `max_pages` is now a hard page-attempt limit, including failed/timed-out BFS pages. Crawl diagnostics include page attempts, request attempts, file-download attempts, dedup skips, and request errors.
+- Site Configuration, Web Crawl, Ad-hoc URL, Web Search, and the CLI update path now pass their configured delay into the shared request layer.
+- CLI site configuration now preserves and honors `acquisition_tools`, matching the native task runtime.
+- SOA's main profile is search-only. Its two focused crawler profiles are restricted to anchored `soa.org` research/globalassets URL patterns, use a 2-second minimum delay, and share a total 30-page attempt budget (25 + 5).
+- PR `#171` is open and ready for owner-directed merge after addressing Copilot's three actionable review comments.
+- Copilot's delay comments were accepted: native URL, scheduled/quick-check, search-result, site-config, and quick-check delay parsing now preserves explicit `delay_seconds: 0` instead of falling back through falsy `or 0.5` expressions.
+- Copilot's Windows SQLite test-cleanup comment was accepted: redirect revalidation tests use an in-memory `Storage` and register `storage.close` with `addCleanup`, so cleanup still runs if an assertion fails.
 
 ## Verification
 
-- Test-first reproduction: the new API and React assertions failed before implementation and passed afterward.
-- Focused regression suite: `62 passed` across site write/read APIs, crawler behavior, and React source contracts.
-- Frontend production build: passed; Vite reports the existing large-chunk advisory only.
-- Browser smoke: passed against isolated local API/database and Vite ports. A site saved with `PDF, .DocX, pdf` persisted as `.pdf, .docx`; an unsafe-URL save failure rendered only in `text-site-save-error`, with no Explore error node or new page console errors.
+- Test-first request-policy suite: the 8 initial assertions failed before implementation; the expanded suite now has 9 passing tests.
+- Focused and integration regression suite: `127 passed` across crawler policy, URL safety, allow patterns, scheduled/URL collection, task runtime, stop support, site configuration APIs, and web-listening materialization.
+- Full test suite: `703 passed`, with 5 unrelated baseline/environment failures. One SQLite migration test reproducibly leaves a failed transaction handle open before deleting its Windows temp DB; four frontend source tests invoke `npm` without the required `.cmd` suffix under Python `subprocess` on Windows.
+- Targeted Ruff checks for the new crawler policy and new tests: passed.
+- CLI checks: `python -m ai_actuarial --help` and `python -m ai_actuarial update --help` passed; `config/sites.yaml` loaded successfully with 32 sites and 3 SOA profiles.
+- Live, one-request canaries through the new pinned curl transport: SOA AI Topic, AAA, and CAS all returned successful HTML responses.
 - `git diff --check`: passed.
-- Focused Ruff check reported two pre-existing findings outside the added lines: unused `PROVIDER_ENV_VARS` in `ops_write.py` and unused `src` in `test_tasks_react_source.py`.
-- Mandatory Codex CLI review: passed with no actionable findings; the reviewer independently reran `47` focused tests and the frontend build.
-- Post-review focused test: `21 passed` in `tests/test_tasks_react_source.py` after applying Copilot's PR `#170` feedback.
-- Post-PR observation: completed after 15 minutes. Copilot marked its sole thread resolved/outdated after the fix; there are no other review threads or conversation comments.
+- Mandatory Codex CLI review: passed with no actionable findings; the reviewer independently reran 28 request-policy, URL-safety, and crawler tests.
+- Post-PR observation: Copilot later generated 3 actionable review comments.
+- Post-Copilot focused verification: `17 passed` for `tests/test_collection_request_policy.py`, the two affected `tests/test_task_stop_support.py` cases, and `tests/test_url_safety.py`.
+- Post-Copilot search check: no remaining `delay_seconds ... or ... 0.5` / `default_delay_seconds=float(... or ...)` patterns were found in `ai_actuarial`, `tests`, or `config`.
+- Post-Copilot Ruff check for the touched Python files: passed.
+- Post-Copilot `git diff --check`: passed.
+- Mandatory post-Copilot Codex CLI review gate could not run because the local `codex.exe` entrypoint under `WindowsApps` returns `Access is denied`.
 
 ## Local Notes
 
-- Files in scope: `ai_actuarial/api/services/ops_write.py`, `client/src/pages/tasks/SiteConfigForm.tsx`, `client/src/hooks/use-i18n.ts`, focused API/React tests, and this status file.
-- No unrelated local changes were present before implementation.
-- The isolated smoke services, throwaway user/database, logs, and temporary configuration were stopped and removed after verification.
+- Files in scope: shared crawler transport/pacing, CLI/runtime/collector wiring, SOA site configuration, focused tests, Copilot comment fixes, and this status file.
+- No unrelated local changes were present; the pre-existing local modifications in this pass matched Copilot's review comments and were retained after inspection.
 - Sibling repositories were not read or modified.
-- Next action: merge PR `#170` after owner review.
+- Next action: commit and push the Copilot comment fixes, wait for GitHub checks/review-thread refresh, then merge PR `#171`.

@@ -83,6 +83,8 @@ sites:
   - site:blackactuaries.org machine learning filetype:pdf
 - name: Society of Actuaries (SOA)
   url: https://www.soa.org/
+  acquisition_tools:
+  - search
   keywords:
   - artificial intelligence
   - machine learning
@@ -109,8 +111,12 @@ sites:
   - site:soa.org large language model filetype:pdf
 - name: SOA AI Topic Landing (Focused)
   url: https://www.soa.org/research/topics/artificial-intelligence-topic-landing/
-  max_pages: 100
-  max_depth: 3
+  max_pages: 25
+  max_depth: 2
+  delay_seconds: 2.0
+  allow_url_patterns:
+  - '^https://www\.soa\.org/research(?:/|$)'
+  - '^https://www\.soa\.org/globalassets(?:/|$)'
   keywords:
   - artificial intelligence
   - machine learning
@@ -132,11 +138,12 @@ sites:
   - book
 - name: SOA AI Bulletin (Focused)
   url: https://www.soa.org/resources/research-reports/2025/research-ai-bulletin/
-  max_pages: 100
-  max_depth: 2
+  max_pages: 5
+  max_depth: 1
+  delay_seconds: 2.0
   allow_url_patterns:
-  - /resources/research-reports/2025/research-ai-bulletin
-  - /globalassets/
+  - '^https://www\.soa\.org/resources/research-reports/2025/research-ai-bulletin(?:/|$)'
+  - '^https://www\.soa\.org/globalassets(?:/|$)'
   keywords:
   - artificial intelligence
   - machine learning

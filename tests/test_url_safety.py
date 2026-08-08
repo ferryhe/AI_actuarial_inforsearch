@@ -98,7 +98,7 @@ class TestEnsureSafeHttpUrl(unittest.TestCase):
 
 class TestCrawlerRedirectRevalidation(unittest.TestCase):
     def _make_crawler(self, tmp_dir: str) -> Crawler:
-        storage = Storage(str(Path(tmp_dir) / "test.db"))
+        storage = Storage(":memory:")
         self.addCleanup(storage.close)
         return Crawler(storage=storage, download_dir=tmp_dir, user_agent="TestAgent/1.0")
 
@@ -107,7 +107,7 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
             crawler = self._make_crawler(tmp_dir)
             resolved_during_open: list[str] = []
 
-            def fake_open(url, resolution, *, timeout: int):
+            def fake_open(url, resolution, *, timeout: int, delay_seconds=None):
                 resolved_during_open.extend(str(address) for address in resolution.addresses)
                 return _FakeResponse(200, headers={"Content-Type": "text/html"}, body=b"ok", url=url)
 
@@ -126,7 +126,7 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
             crawler = self._make_crawler(tmp_dir)
             seen_urls: list[str] = []
 
-            def fake_open(url, resolution, *, timeout: int):
+            def fake_open(url, resolution, *, timeout: int, delay_seconds=None):
                 seen_urls.append(url)
                 return _FakeResponse(
                     302,
@@ -147,7 +147,7 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             crawler = self._make_crawler(tmp_dir)
 
-            def fake_open(url, resolution, *, timeout: int):
+            def fake_open(url, resolution, *, timeout: int, delay_seconds=None):
                 return _FakeResponse(
                     304,
                     headers={},
@@ -170,7 +170,7 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
             seen_urls: list[str] = []
             target_dir = Path(tmp_dir) / "downloads"
 
-            def fake_open(url, resolution, *, timeout: int):
+            def fake_open(url, resolution, *, timeout: int, delay_seconds=None):
                 seen_urls.append(url)
                 return _FakeResponse(
                     302,
@@ -219,7 +219,7 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
             with patch("ai_actuarial.crawler.http.client.HTTPConnection", FakeHTTPConnection), patch(
                 "ai_actuarial.crawler.socket.create_connection", return_value=object()
             ):
-                with crawler._open_pinned_http(resolution.url, resolution, timeout=30):
+                with crawler._open_pinned_stdlib(resolution.url, resolution, timeout=30):
                     pass
 
         self.assertEqual("[2001:4860:4860::8888]:8080", FakeHTTPConnection.calls[0]["headers"]["Host"])
