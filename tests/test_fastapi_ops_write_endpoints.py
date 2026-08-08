@@ -162,7 +162,7 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
             "web_listening_goal": "Track actuarial AI reports",
             "allow_url_patterns": ["/news-and-publications/", "/resources/"],
             "queries": ["site:soa.org actuarial AI filetype:pdf"],
-            "file_exts": [".pdf", ".docx"],
+            "file_exts": ["PDF", ".DocX", "pdf", " .XLSX "],
             "acquisition_tools": ["crawler", "search"],
             "collect_linked_files": True,
             "collect_page_content": True,
@@ -174,6 +174,7 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
     assert added_site["web_listening_goal"] == "Track actuarial AI reports"
     assert added_site["allow_url_patterns"] == ["/news-and-publications/", "/resources/"]
     assert added_site["queries"] == ["site:soa.org actuarial AI filetype:pdf"]
+    assert added_site["file_exts"] == [".pdf", ".docx", ".xlsx"]
     assert added_site["acquisition_tools"] == ["crawler", "search"]
     assert added_site["collect_linked_files"] is True
     assert added_site["collect_page_content"] is True
@@ -188,7 +189,7 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
             "max_pages": 30,
             "exclude_keywords": "archive, curriculum",
             "queries": ["site:soa.org research AI"],
-            "file_exts": [".pdf"],
+            "file_exts": ["PPTX", ".PDF", "pptx"],
             "acquisition_tools": ["search"],
             "collect_linked_files": False,
             "collect_page_content": True,
@@ -200,7 +201,7 @@ def test_config_sites_crud_import_export_and_backups_roundtrip(tmp_path: Path, m
     assert updated_site["url"] == "https://www.soa.org/resources/research-reports/"
     assert updated_site["exclude_keywords"] == ["archive", "curriculum"]
     assert updated_site["queries"] == ["site:soa.org research AI"]
-    assert updated_site["file_exts"] == [".pdf"]
+    assert updated_site["file_exts"] == [".pptx", ".pdf"]
     assert updated_site["acquisition_tools"] == ["search"]
     assert updated_site["collect_linked_files"] is False
     assert updated_site["collect_page_content"] is True

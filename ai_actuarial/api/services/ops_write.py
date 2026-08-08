@@ -280,6 +280,17 @@ def _normalize_list(value: Any, *, field_name: str) -> list[str]:
     raise OpsWriteError(f"{field_name} must be a list or string")
 
 
+def _normalize_file_exts(value: Any, *, field_name: str) -> list[str]:
+    normalized: list[str] = []
+    for item in _normalize_list(value, field_name=field_name):
+        ext = item.lower()
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        if ext not in normalized:
+            normalized.append(ext)
+    return normalized
+
+
 _VALID_ACQUISITION_TOOLS = {"crawler", "search"}
 
 
@@ -398,17 +409,13 @@ def add_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> dict
         new_site["max_pages"] = max_pages
     if max_depth is not None:
         new_site["max_depth"] = max_depth
-    for field_name in (
-        "keywords",
-        "exclude_keywords",
-        "exclude_prefixes",
-        "allow_url_patterns",
-        "queries",
-        "file_exts",
-    ):
+    for field_name in ("keywords", "exclude_keywords", "exclude_prefixes", "allow_url_patterns", "queries"):
         values = _normalize_list(data.get(field_name), field_name=field_name)
         if values:
             new_site[field_name] = values
+    file_exts = _normalize_file_exts(data.get("file_exts"), field_name="file_exts")
+    if file_exts:
+        new_site["file_exts"] = file_exts
     if "acquisition_tools" in data:
         new_site["acquisition_tools"] = _normalize_acquisition_tools(data.get("acquisition_tools"))
     for field_name, default in (("collect_linked_files", True), ("collect_page_content", False)):
@@ -463,7 +470,7 @@ def update_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> d
                 site[field_name] = values
             else:
                 site.pop(field_name, None)
-        for field_name in ("allow_url_patterns", "queries", "file_exts"):
+        for field_name in ("allow_url_patterns", "queries"):
             if field_name not in data:
                 continue
             values = _normalize_list(data.get(field_name), field_name=field_name)
@@ -471,6 +478,12 @@ def update_site(data: dict[str, Any], *, bridge: BridgeState | None = None) -> d
                 site[field_name] = values
             else:
                 site.pop(field_name, None)
+        if "file_exts" in data:
+            file_exts = _normalize_file_exts(data.get("file_exts"), field_name="file_exts")
+            if file_exts:
+                site["file_exts"] = file_exts
+            else:
+                site.pop("file_exts", None)
         if "acquisition_tools" in data:
             site["acquisition_tools"] = _normalize_acquisition_tools(data.get("acquisition_tools"))
         for field_name, default in (("collect_linked_files", True), ("collect_page_content", False)):
