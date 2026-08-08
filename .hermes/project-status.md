@@ -27,10 +27,11 @@
 - Live, one-request canaries through the new pinned curl transport: SOA AI Topic, AAA, and CAS all returned successful HTML responses.
 - `git diff --check`: passed.
 - Mandatory Codex CLI review: passed with no actionable findings; the reviewer independently reran 28 request-policy, URL-safety, and crawler tests.
+- Post-PR observation: completed after 15 minutes. `python-smoke` passed, the PR is mergeable, and there are no conversation comments, reviews, or review threads.
 
 ## Local Notes
 
 - Files in scope: shared crawler transport/pacing, CLI/runtime/collector wiring, SOA site configuration, focused tests, and this status file.
 - No unrelated local changes were present before implementation.
 - Sibling repositories were not read or modified.
-- Next action: inspect PR `#171` checks and remote Copilot/review comments after the required observation window.
+- Next action: owner review, then mark PR `#171` ready and merge it.
