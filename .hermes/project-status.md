@@ -15,6 +15,7 @@
 - Site Configuration, Web Crawl, Ad-hoc URL, Web Search, and the CLI update path now pass their configured delay into the shared request layer.
 - CLI site configuration now preserves and honors `acquisition_tools`, matching the native task runtime.
 - SOA's main profile is search-only. Its two focused crawler profiles are restricted to anchored `soa.org` research/globalassets URL patterns, use a 2-second minimum delay, and share a total 30-page attempt budget (25 + 5).
+- Draft PR `#171` is open from commit `e8a44a8`.
 
 ## Verification
 
@@ -32,4 +33,4 @@
 - Files in scope: shared crawler transport/pacing, CLI/runtime/collector wiring, SOA site configuration, focused tests, and this status file.
 - No unrelated local changes were present before implementation.
 - Sibling repositories were not read or modified.
-- Next action: commit, push, create a draft PR, then inspect checks and remote Copilot/review comments after the required observation window.
+- Next action: inspect PR `#171` checks and remote Copilot/review comments after the required observation window.
