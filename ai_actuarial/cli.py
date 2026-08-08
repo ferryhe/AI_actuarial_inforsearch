@@ -79,6 +79,7 @@ def _site_configs(cfg: dict) -> list[SiteConfig]:
                 file_exts=s.get("file_exts", defaults.get("file_exts", [])),
                 exclude_keywords=excl_kw,
                 exclude_prefixes=excl_pfx,
+                acquisition_tools=s.get("acquisition_tools"),
                 content_selector=s.get("content_selector"),
                 allow_url_patterns=s.get("allow_url_patterns"),
                 queries=s.get("queries"),
@@ -90,7 +91,12 @@ def _site_configs(cfg: dict) -> list[SiteConfig]:
 def cmd_update(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
     storage = Storage(cfg["paths"]["db"])
-    crawler = Crawler(storage, cfg["paths"]["download_dir"], cfg["defaults"]["user_agent"])
+    crawler = Crawler(
+        storage,
+        cfg["paths"]["download_dir"],
+        cfg["defaults"]["user_agent"],
+        default_delay_seconds=float(cfg["defaults"].get("delay_seconds", 0.5)),
+    )
     search_credentials = get_search_runtime_credentials(storage=storage)
 
     all_new: list[dict] = []
@@ -108,11 +114,17 @@ def cmd_update(args: argparse.Namespace) -> int:
     run_search = not args.no_search and search_cfg.get("enabled", False)
 
     for site in sites:
-        new_items = crawler.crawl_site(site)
-        all_new.extend(new_items)
+        tools = {
+            str(tool).strip().lower()
+            for tool in (site.acquisition_tools or [])
+            if str(tool).strip()
+        }
+        if not tools or "crawler" in tools:
+            new_items = crawler.crawl_site(site)
+            all_new.extend(new_items)
 
         # Run site-specific search queries immediately after crawling the site
-        if run_search and site.queries:
+        if run_search and site.queries and (not tools or "search" in tools):
             brave_key = search_credentials.get("brave")
             serpapi_key = search_credentials.get("google")
             serper_key = search_credentials.get("serper")
@@ -443,7 +455,12 @@ def cmd_collect_url(args: argparse.Namespace) -> int:
     """Collect from specific URLs."""
     cfg = _load_config(args.config)
     storage = Storage(cfg["paths"]["db"])
-    crawler = Crawler(storage, cfg["paths"]["download_dir"], cfg["defaults"]["user_agent"])
+    crawler = Crawler(
+        storage,
+        cfg["paths"]["download_dir"],
+        cfg["defaults"]["user_agent"],
+        default_delay_seconds=float(cfg["defaults"].get("delay_seconds", 0.5)),
+    )
     
     collector = URLCollector(storage, crawler)
     

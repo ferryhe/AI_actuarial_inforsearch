@@ -4,6 +4,7 @@ import http.client
 import ipaddress
 import logging
 import os
+import random
 import re
 import socket
 import ssl
@@ -15,17 +16,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
-logger = logging.getLogger(__name__)
-
-from .storage import Storage
 from .security import SafeUrlResolution, UnsafeUrlError, resolve_safe_http_url
-from .utils import (
-    extract_metadata,
-    html_to_text,
-    normalize_url,
-    same_domain,
-    sleep_with_jitter,
-)
+from .storage import Storage
+from .utils import extract_metadata, html_to_text, normalize_url, same_domain
+
+try:
+    from curl_cffi import CurlOpt as _CurlOpt
+    import curl_cffi.requests as _curl_requests
+
+    _CURL_CFFI_AVAILABLE = True
+except ImportError:  # pragma: no cover - requirements.txt installs curl_cffi
+    _CurlOpt = None  # type: ignore[assignment]
+    _curl_requests = None  # type: ignore[assignment]
+    _CURL_CFFI_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_FILE_EXTS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
@@ -60,6 +65,45 @@ class _PinnedHTTPResponse:
         self.close()
 
 
+class _CurlHTTPResponse:
+    def __init__(self, response) -> None:
+        self._response = response
+        self._chunks = iter(response.iter_content(chunk_size=1024 * 128))
+        self._buffer = bytearray()
+        self.status = int(response.status_code)
+        self.headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
+        self._url = str(response.url)
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            data = bytes(self._buffer) + b"".join(self._chunks)
+            self._buffer.clear()
+            return data
+        while len(self._buffer) < size:
+            try:
+                self._buffer.extend(next(self._chunks))
+            except StopIteration:
+                break
+        data = bytes(self._buffer[:size])
+        del self._buffer[:size]
+        return data
+
+    def geturl(self) -> str:
+        return self._url
+
+    def getcode(self) -> int:
+        return self.status
+
+    def close(self) -> None:
+        self._response.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+
 @dataclass
 class SiteConfig:
     name: str
@@ -81,12 +125,23 @@ class SiteConfig:
 
 
 class Crawler:
-    def __init__(self, storage: Storage, download_dir: str, user_agent: str, stop_check=None) -> None:
+    def __init__(
+        self,
+        storage: Storage,
+        download_dir: str,
+        user_agent: str,
+        stop_check=None,
+        default_delay_seconds: float = 0.5,
+    ) -> None:
         self.storage = storage
         self.download_dir = download_dir
         self.user_agent = user_agent
         self.stop_check = stop_check
+        self.default_delay_seconds = max(float(default_delay_seconds), 0.0)
         self.last_crawl_diagnostic: dict[str, object] = {}
+        self._next_request_at: dict[str, float] = {}
+        self._request_attempts = 0
+        self._curl_sessions: dict[tuple[str, int, str], object] = {}
         self._cleanup_old_temp_files()
 
     def get_last_crawl_diagnostic(self) -> dict[str, object]:
@@ -113,11 +168,22 @@ class Crawler:
         if cleaned > 0:
             logger.info("Cleaned up %d stale temporary files", cleaned)
 
-    def _request(self, url: str, *, timeout: int = 30) -> tuple[bytes, dict[str, str], str]:
+    def _request(
+        self,
+        url: str,
+        *,
+        timeout: int = 30,
+        delay_seconds: float | None = None,
+    ) -> tuple[bytes, dict[str, str], str]:
         current_url = url
         for _hop in range(_MAX_REDIRECT_HOPS):
             resolution = resolve_safe_http_url(current_url)
-            with self._open_pinned_http(current_url, resolution, timeout=timeout) as resp:
+            with self._open_pinned_http(
+                current_url,
+                resolution,
+                timeout=timeout,
+                delay_seconds=delay_seconds,
+            ) as resp:
                 headers = {k.lower(): str(v) for k, v in resp.headers.items()}
                 redirect_target = self._redirect_target(current_url, self._response_code(resp), headers)
                 if redirect_target:
@@ -129,7 +195,13 @@ class Crawler:
 
         raise UnsafeUrlError(f"Too many redirects while fetching {url}")
 
-    def _download_file(self, url: str, target_dir: Path) -> tuple[Path, dict[str, str], str, str, int]:
+    def _download_file(
+        self,
+        url: str,
+        target_dir: Path,
+        *,
+        delay_seconds: float | None = None,
+    ) -> tuple[Path, dict[str, str], str, str, int]:
         target_dir.mkdir(parents=True, exist_ok=True)
         tmp_dir = target_dir / "_tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -141,7 +213,12 @@ class Crawler:
             current_url = url
             for _hop in range(_MAX_REDIRECT_HOPS):
                 resolution = resolve_safe_http_url(current_url)
-                with self._open_pinned_http(current_url, resolution, timeout=60) as resp:
+                with self._open_pinned_http(
+                    current_url,
+                    resolution,
+                    timeout=60,
+                    delay_seconds=delay_seconds,
+                ) as resp:
                     headers = {k.lower(): str(v) for k, v in resp.headers.items()}
                     redirect_target = self._redirect_target(current_url, self._response_code(resp), headers)
                     if redirect_target:
@@ -174,7 +251,126 @@ class Crawler:
         path = urlparse(url).path.lower()
         return any(path.endswith(ext) for ext in exts)
 
-    def _open_pinned_http(self, url: str, resolution: SafeUrlResolution, *, timeout: int):
+    @staticmethod
+    def _origin_key(url: str) -> str:
+        parsed = urlsplit(url)
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        return f"{parsed.scheme.lower()}://{parsed.hostname or ''}:{port}"
+
+    def _pace_request(self, url: str, delay_seconds: float | None) -> None:
+        delay = self.default_delay_seconds if delay_seconds is None else max(float(delay_seconds), 0.0)
+        origin = self._origin_key(url)
+        now = time.monotonic()
+        next_request_at = self._next_request_at.get(origin, now)
+        if next_request_at > now:
+            time.sleep(next_request_at - now)
+            now = time.monotonic()
+        randomized_delay = random.uniform(delay, delay * 1.5) if delay > 0 else 0.0
+        self._next_request_at[origin] = now + randomized_delay
+        self._request_attempts += 1
+
+    @staticmethod
+    def _preferred_addresses(
+        resolution: SafeUrlResolution,
+    ) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
+        return tuple(
+            sorted(
+                resolution.addresses,
+                key=lambda address: isinstance(address, ipaddress.IPv6Address),
+            )
+        )
+
+    @staticmethod
+    def _curl_resolve_entry(host: str, port: int, address: object) -> str:
+        address_text = str(address)
+        if isinstance(ipaddress.ip_address(address_text), ipaddress.IPv6Address):
+            address_text = f"[{address_text}]"
+        return f"{host}:{port}:{address_text}"
+
+    def _curl_session_for(self, host: str, port: int, address: object):
+        address_text = str(address)
+        key = (host, port, address_text)
+        session = self._curl_sessions.get(key)
+        if session is not None:
+            return session
+        if not _CURL_CFFI_AVAILABLE or _curl_requests is None or _CurlOpt is None:
+            raise RuntimeError("curl_cffi is not available")
+        try:
+            ipaddress.ip_address(host)
+            curl_options = {}
+        except ValueError:
+            curl_options = {
+                _CurlOpt.RESOLVE: [self._curl_resolve_entry(host, port, address)],
+            }
+        session = _curl_requests.Session(
+            curl_options=curl_options,
+            impersonate="chrome",
+            default_headers=False,
+            allow_redirects=False,
+            trust_env=False,
+        )
+        self._curl_sessions[key] = session
+        return session
+
+    def _open_pinned_curl(
+        self,
+        url: str,
+        resolution: SafeUrlResolution,
+        *,
+        timeout: int,
+        delay_seconds: float | None,
+    ):
+        parsed = urlsplit(url)
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        last_error: Exception | None = None
+        for address in self._preferred_addresses(resolution):
+            try:
+                session = self._curl_session_for(resolution.host, port, address)
+                self._pace_request(url, delay_seconds)
+                response = session.get(
+                    url,
+                    headers={"User-Agent": self.user_agent},
+                    timeout=timeout,
+                    allow_redirects=False,
+                    stream=True,
+                )
+                return _CurlHTTPResponse(response)
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise UnsafeUrlError(f"No validated address available for {url}")
+
+    def _open_pinned_http(
+        self,
+        url: str,
+        resolution: SafeUrlResolution,
+        *,
+        timeout: int,
+        delay_seconds: float | None = None,
+    ):
+        if _CURL_CFFI_AVAILABLE:
+            return self._open_pinned_curl(
+                url,
+                resolution,
+                timeout=timeout,
+                delay_seconds=delay_seconds,
+            )
+        return self._open_pinned_stdlib(
+            url,
+            resolution,
+            timeout=timeout,
+            delay_seconds=delay_seconds,
+        )
+
+    def _open_pinned_stdlib(
+        self,
+        url: str,
+        resolution: SafeUrlResolution,
+        *,
+        timeout: int,
+        delay_seconds: float | None = None,
+    ):
         parsed = urlsplit(url)
         scheme = parsed.scheme.lower()
         port = parsed.port or (443 if scheme == "https" else 80)
@@ -190,9 +386,10 @@ class Crawler:
 
         last_error: Exception | None = None
         ssl_context = ssl.create_default_context() if scheme == "https" else None
-        for address in resolution.addresses:
+        for address in self._preferred_addresses(resolution):
             conn = http.client.HTTPConnection(resolution.host, port=port, timeout=timeout)
             try:
+                self._pace_request(url, delay_seconds)
                 sock = socket.create_connection((str(address), port), timeout=timeout)
                 if ssl_context is not None:
                     sock = ssl_context.wrap_socket(sock, server_hostname=resolution.host)
@@ -309,10 +506,10 @@ class Crawler:
             return None
         return "\n".join(str(p) for p in parts)
 
-    def _load_sitemap(self, site_url: str) -> list[str]:
+    def _load_sitemap(self, site_url: str, *, delay_seconds: float | None = None) -> list[str]:
         sitemap_url = site_url.rstrip("/") + "/sitemap.xml"
         try:
-            data, _, _ = self._request(sitemap_url)
+            data, _, _ = self._request(sitemap_url, delay_seconds=delay_seconds)
         except Exception:
             logger.debug("No sitemap found at %s", sitemap_url)
             return []
@@ -333,6 +530,7 @@ class Crawler:
     def crawl_site(self, cfg: SiteConfig, progress_callback=None) -> list[dict]:
         request_errors: list[str] = []
         self.last_crawl_diagnostic = {}
+        request_attempts_before = self._request_attempts
 
         # Check stop signal at start
         if self.stop_check and self.stop_check():
@@ -340,7 +538,11 @@ class Crawler:
             self.last_crawl_diagnostic = {
                 "site_name": cfg.name,
                 "site_url": cfg.url,
+                "pages_attempted": 0,
                 "pages_visited": 0,
+                "request_attempts": 0,
+                "file_download_attempts": 0,
+                "dedup_skips": 0,
                 "request_errors": [],
                 "error_text": "",
                 "stopped": True,
@@ -370,7 +572,7 @@ class Crawler:
                 )
         new_items: list[dict] = []
 
-        sitemap_urls = self._load_sitemap(cfg.url)
+        sitemap_urls = self._load_sitemap(cfg.url, delay_seconds=cfg.delay_seconds)
         if sitemap_urls:
             # When allow_url_patterns is configured, only seed URLs that match at
             # least one pattern — otherwise the allow-list is bypassed for sitemaps.
@@ -396,10 +598,13 @@ class Crawler:
             page_queue = deque([(cfg.url, 0)])
 
         seen_pages: set[str] = set()
+        pages_attempted = 0
         pages_fetched = 0
+        file_download_attempts = 0
+        dedup_skips = 0
         stopped = False
 
-        while page_queue and pages_fetched < cfg.max_pages:
+        while page_queue and pages_attempted < cfg.max_pages:
             # Check stop signal in loop
             if self.stop_check and self.stop_check():
                 logger.info("Crawl stopped by user signal.")
@@ -415,12 +620,13 @@ class Crawler:
                 continue
 
             seen_pages.add(url)
+            pages_attempted += 1
             
             if progress_callback:
-                progress_callback(pages_fetched, cfg.max_pages, f"Crawling: {url}")
+                progress_callback(pages_attempted, cfg.max_pages, f"Crawling: {url}")
 
             try:
-                data, headers, final_url = self._request(url)
+                data, headers, final_url = self._request(url, delay_seconds=cfg.delay_seconds)
             except Exception as exc:
                 request_errors.append(f"{url}: {exc}")
                 continue
@@ -436,18 +642,20 @@ class Crawler:
                 if cfg.collect_linked_files is False:
                     continue
                 if cfg.check_database and self.storage.file_exists(final_url):
-                    sleep_with_jitter(cfg.delay_seconds)
+                    dedup_skips += 1
                     continue
                 parsed = urlparse(final_url)
                 domain = parsed.netloc.replace(":", "_")
                 target_dir = Path(self.download_dir) / domain
+                file_download_attempts += 1
                 tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
-                    final_url, target_dir
+                    final_url,
+                    target_dir,
+                    delay_seconds=cfg.delay_seconds,
                 )
                 if self._should_exclude_url(ffinal, exclude, exclude_prefixes):
                     if tmp_path.exists():
                         tmp_path.unlink()
-                    sleep_with_jitter(cfg.delay_seconds)
                     continue
                 item = self._handle_file(
                     ffinal,
@@ -460,7 +668,6 @@ class Crawler:
                 )
                 if item:
                     new_items.append(item)
-                sleep_with_jitter(cfg.delay_seconds)
                 continue
 
             try:
@@ -500,15 +707,20 @@ class Crawler:
                         if not (is_relevant or self._link_matches_keywords(link, link_text, keywords)):
                             continue
                     if cfg.check_database and self.storage.file_exists(link):
+                        dedup_skips += 1
                         continue
                     try:
                         parsed = urlparse(link)
                         domain = parsed.netloc.replace(":", "_")
                         target_dir = Path(self.download_dir) / domain
+                        file_download_attempts += 1
                         tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
-                            link, target_dir
+                            link,
+                            target_dir,
+                            delay_seconds=cfg.delay_seconds,
                         )
-                    except Exception:
+                    except Exception as exc:
+                        request_errors.append(f"{link}: {exc}")
                         continue
                     
                     # Enhanced Exclusion Check:
@@ -548,14 +760,21 @@ class Crawler:
                             # No allow patterns: always queue, rely on exclude filters
                             page_queue.append((link, depth + 1))
 
-            sleep_with_jitter(cfg.delay_seconds)
-
-        logger.info("Crawl completed for %s: %d new files found, %d pages visited", 
-                   cfg.name, len(new_items), pages_fetched)
+        logger.info(
+            "Crawl completed for %s: %d new files found, %d/%d pages visited/attempted",
+            cfg.name,
+            len(new_items),
+            pages_fetched,
+            pages_attempted,
+        )
         self.last_crawl_diagnostic = {
             "site_name": cfg.name,
             "site_url": cfg.url,
+            "pages_attempted": pages_attempted,
             "pages_visited": pages_fetched,
+            "request_attempts": self._request_attempts - request_attempts_before,
+            "file_download_attempts": file_download_attempts,
+            "dedup_skips": dedup_skips,
             "request_errors": request_errors,
             "error_text": "; ".join(request_errors),
             "stopped": stopped,
@@ -871,7 +1090,7 @@ class Crawler:
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
         exclude_prefixes = [p.lower() for p in (cfg.exclude_prefixes or [])]
         try:
-            data, headers, final_url = self._request(url)
+            data, headers, final_url = self._request(url, delay_seconds=cfg.delay_seconds)
         except Exception:
             return []
 
@@ -889,7 +1108,9 @@ class Crawler:
             domain = parsed.netloc.replace(":", "_")
             target_dir = Path(self.download_dir) / domain
             tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
-                final_url, target_dir
+                final_url,
+                target_dir,
+                delay_seconds=cfg.delay_seconds,
             )
             if exclude and self._is_excluded(ffinal, exclude):
                 if tmp_path.exists():
@@ -947,7 +1168,9 @@ class Crawler:
                 domain = parsed.netloc.replace(":", "_")
                 target_dir = Path(self.download_dir) / domain
                 tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
-                    link, target_dir
+                    link,
+                    target_dir,
+                    delay_seconds=cfg.delay_seconds,
                 )
             except Exception:
                 continue
@@ -974,5 +1197,4 @@ class Crawler:
             )
             if item:
                 new_items.append(item)
-        sleep_with_jitter(cfg.delay_seconds)
         return new_items

@@ -381,14 +381,15 @@ class NativeTaskRuntime:
                 return collector.collect(cfg, progress_callback=self._progress_callback(task_id))
 
             if collection_type == "url":
+                defaults = dict(config.get("defaults") or {})
                 crawler = Crawler(
                     storage,
                     download_dir,
-                    str((config.get("defaults") or {}).get("user_agent") or "AI-Actuarial/1.0"),
+                    str(defaults.get("user_agent") or "AI-Actuarial/1.0"),
                     stop_check=lambda: self._stop_requested(task_id),
+                    default_delay_seconds=float(defaults.get("delay_seconds") or 0.5),
                 )
                 collector = URLCollector(storage, crawler)
-                defaults = dict(config.get("defaults") or {})
                 cfg = CollectionConfig(
                     name=str(data.get("name") or "URL Collection"),
                     source_type="url",
@@ -410,6 +411,7 @@ class NativeTaskRuntime:
                     download_dir,
                     str(defaults.get("user_agent") or "AI-Actuarial/1.0"),
                     stop_check=lambda: self._stop_requested(task_id),
+                    default_delay_seconds=float(defaults.get("delay_seconds") or 0.5),
                 )
                 collector = ScheduledCollector(storage, crawler)
                 site_configs = (
@@ -1051,7 +1053,15 @@ class NativeTaskRuntime:
         )
         unique_results = self._dedupe_search_results(results, site_filter=site_filter)
 
-        crawler = Crawler(storage, download_dir, user_agent, stop_check=lambda: self._stop_requested(task_id))
+        crawler = Crawler(
+            storage,
+            download_dir,
+            user_agent,
+            stop_check=lambda: self._stop_requested(task_id),
+            default_delay_seconds=float(
+                search_cfg.get("delay_seconds") or defaults.get("delay_seconds") or 0.5
+            ),
+        )
         errors: list[str] = []
         items_found = 0
         items_downloaded = 0

@@ -75,7 +75,7 @@ class TestAllowUrlPatternsSubpageQueuing(unittest.TestCase):
         """
         fetched: list[str] = []
 
-        def fake_request_method(url: str):
+        def fake_request_method(url: str, **_kwargs):
             fetched.append(url)
             html = pages.get(url, "<html><body></body></html>")
             return html.encode(), {}, url
@@ -161,10 +161,10 @@ class TestAllowUrlPatternsFileDownload(unittest.TestCase):
         """Return list of file URLs that were attempted for download."""
         downloaded: list[str] = []
 
-        def fake_request_method(url: str):
+        def fake_request_method(url: str, **_kwargs):
             return index_html.encode(), {}, url
 
-        def fake_download_file(url: str, target_dir: Path):
+        def fake_download_file(url: str, target_dir: Path, **_kwargs):
             downloaded.append(url)
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, dir=target_dir) as f:
                 f.write(b"%PDF fake")
@@ -269,7 +269,7 @@ class TestAllowUrlPatternsInvalidRegex(unittest.TestCase):
     def _run_with_invalid_pattern(self, allow_url_patterns: list[str]) -> list:
         index_html = _index_page([("https://example.com/research/report.pdf", "Report")])
 
-        def fake_request_method(url: str):
+        def fake_request_method(url: str, **_kwargs):
             return index_html.encode(), {}, url
 
         cfg = _sitecfg(
