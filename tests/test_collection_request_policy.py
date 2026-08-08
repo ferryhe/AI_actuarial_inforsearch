@@ -9,6 +9,7 @@ import yaml
 from ai_actuarial.cli import _site_configs, cmd_update
 from ai_actuarial.collectors.base import CollectionConfig
 from ai_actuarial.collectors.url import URLCollector
+from ai_actuarial.task_runtime import NativeTaskRuntime
 
 
 def test_cli_site_config_preserves_acquisition_tools() -> None:
@@ -88,6 +89,41 @@ def test_ad_hoc_url_uses_crawler_default_delay() -> None:
     assert result.success is True
     site_config = crawler.scan_page_for_files.call_args.args[1]
     assert site_config.delay_seconds == 1.75
+
+
+def test_native_url_collection_preserves_zero_default_delay(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "defaults": {"user_agent": "test", "delay_seconds": 0},
+                "paths": {
+                    "db": str(tmp_path / "index.db"),
+                    "download_dir": str(tmp_path / "files"),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    fake_crawler = MagicMock(default_delay_seconds=0)
+    fake_crawler.scan_page_for_files.return_value = []
+
+    with patch("ai_actuarial.task_runtime.Crawler", return_value=fake_crawler) as crawler_cls:
+        result = NativeTaskRuntime()._run_collection(
+            "task-url-zero-delay",
+            "url",
+            {
+                "name": "Zero Delay URL",
+                "urls": ["https://example.com/report"],
+                "check_database": False,
+            },
+        )
+
+    assert result.success is True
+    assert crawler_cls.call_args.kwargs["default_delay_seconds"] == 0
+    site_config = fake_crawler.scan_page_for_files.call_args.args[1]
+    assert site_config.delay_seconds == 0
 
 
 def test_canonical_soa_profiles_have_one_search_and_thirty_crawl_attempts() -> None:

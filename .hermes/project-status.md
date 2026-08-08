@@ -1,6 +1,6 @@
 # Project Status
 
-- Date: 2026-08-07
+- Date: 2026-08-08
 - Branch: `agent/respectful-crawler-requests`
 - Baseline: `origin/main` at `a455b36` (merged PR `#170`).
 - Scope: Repair the shared request path used by Site Configuration, Web Crawl, Ad-hoc URL, and Web Search after PR `#119`; Agentic Site Monitoring remains out of scope.
@@ -15,7 +15,9 @@
 - Site Configuration, Web Crawl, Ad-hoc URL, Web Search, and the CLI update path now pass their configured delay into the shared request layer.
 - CLI site configuration now preserves and honors `acquisition_tools`, matching the native task runtime.
 - SOA's main profile is search-only. Its two focused crawler profiles are restricted to anchored `soa.org` research/globalassets URL patterns, use a 2-second minimum delay, and share a total 30-page attempt budget (25 + 5).
-- Draft PR `#171` is open from commit `e8a44a8`.
+- PR `#171` is open and ready for owner-directed merge after addressing Copilot's three actionable review comments.
+- Copilot's delay comments were accepted: native URL, scheduled/quick-check, search-result, site-config, and quick-check delay parsing now preserves explicit `delay_seconds: 0` instead of falling back through falsy `or 0.5` expressions.
+- Copilot's Windows SQLite test-cleanup comment was accepted: redirect revalidation tests use an in-memory `Storage` and register `storage.close` with `addCleanup`, so cleanup still runs if an assertion fails.
 
 ## Verification
 
@@ -27,11 +29,16 @@
 - Live, one-request canaries through the new pinned curl transport: SOA AI Topic, AAA, and CAS all returned successful HTML responses.
 - `git diff --check`: passed.
 - Mandatory Codex CLI review: passed with no actionable findings; the reviewer independently reran 28 request-policy, URL-safety, and crawler tests.
-- Post-PR observation: completed after 15 minutes. `python-smoke` passed, the PR is mergeable, and there are no conversation comments, reviews, or review threads.
+- Post-PR observation: Copilot later generated 3 actionable review comments.
+- Post-Copilot focused verification: `17 passed` for `tests/test_collection_request_policy.py`, the two affected `tests/test_task_stop_support.py` cases, and `tests/test_url_safety.py`.
+- Post-Copilot search check: no remaining `delay_seconds ... or ... 0.5` / `default_delay_seconds=float(... or ...)` patterns were found in `ai_actuarial`, `tests`, or `config`.
+- Post-Copilot Ruff check for the touched Python files: passed.
+- Post-Copilot `git diff --check`: passed.
+- Mandatory post-Copilot Codex CLI review gate could not run because the local `codex.exe` entrypoint under `WindowsApps` returns `Access is denied`.
 
 ## Local Notes
 
-- Files in scope: shared crawler transport/pacing, CLI/runtime/collector wiring, SOA site configuration, focused tests, and this status file.
-- No unrelated local changes were present before implementation.
+- Files in scope: shared crawler transport/pacing, CLI/runtime/collector wiring, SOA site configuration, focused tests, Copilot comment fixes, and this status file.
+- No unrelated local changes were present; the pre-existing local modifications in this pass matched Copilot's review comments and were retained after inspection.
 - Sibling repositories were not read or modified.
-- Next action: owner review, then mark PR `#171` ready and merge it.
+- Next action: commit and push the Copilot comment fixes, wait for GitHub checks/review-thread refresh, then merge PR `#171`.

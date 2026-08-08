@@ -387,7 +387,7 @@ class NativeTaskRuntime:
                     download_dir,
                     str(defaults.get("user_agent") or "AI-Actuarial/1.0"),
                     stop_check=lambda: self._stop_requested(task_id),
-                    default_delay_seconds=float(defaults.get("delay_seconds") or 0.5),
+                    default_delay_seconds=self._configured_delay_seconds(defaults.get("delay_seconds")),
                 )
                 collector = URLCollector(storage, crawler)
                 cfg = CollectionConfig(
@@ -411,7 +411,7 @@ class NativeTaskRuntime:
                     download_dir,
                     str(defaults.get("user_agent") or "AI-Actuarial/1.0"),
                     stop_check=lambda: self._stop_requested(task_id),
-                    default_delay_seconds=float(defaults.get("delay_seconds") or 0.5),
+                    default_delay_seconds=self._configured_delay_seconds(defaults.get("delay_seconds")),
                 )
                 collector = ScheduledCollector(storage, crawler)
                 site_configs = (
@@ -998,6 +998,7 @@ class NativeTaskRuntime:
 
         defaults = dict(config.get("defaults") or {})
         search_cfg = dict(config.get("search") or {})
+        delay_seconds = self._configured_delay_seconds(search_cfg.get("delay_seconds"), defaults.get("delay_seconds"))
         user_agent = str(defaults.get("user_agent") or "AI-Actuarial/1.0")
         use_defaults = bool(data.get("use_search_defaults", True))
 
@@ -1058,9 +1059,7 @@ class NativeTaskRuntime:
             download_dir,
             user_agent,
             stop_check=lambda: self._stop_requested(task_id),
-            default_delay_seconds=float(
-                search_cfg.get("delay_seconds") or defaults.get("delay_seconds") or 0.5
-            ),
+            default_delay_seconds=delay_seconds,
         )
         errors: list[str] = []
         items_found = 0
@@ -1078,7 +1077,7 @@ class NativeTaskRuntime:
                     url=result.url,
                     max_pages=1,
                     max_depth=1,
-                    delay_seconds=float(search_cfg.get("delay_seconds") or defaults.get("delay_seconds") or 0.5),
+                    delay_seconds=delay_seconds,
                     keywords=keywords,
                     file_exts=file_exts,
                     exclude_keywords=exclude_keywords,
@@ -1413,7 +1412,7 @@ class NativeTaskRuntime:
                 url=str(row.get("url") or ""),
                 max_pages=self._positive_int(data.get("max_pages"), self._positive_int(row.get("max_pages"), self._positive_int(defaults.get("max_pages"), 200))),
                 max_depth=self._positive_int(data.get("max_depth"), self._positive_int(row.get("max_depth"), self._positive_int(defaults.get("max_depth"), 2))),
-                delay_seconds=float(row.get("delay_seconds") or defaults.get("delay_seconds") or 0.5),
+                delay_seconds=self._configured_delay_seconds(row.get("delay_seconds"), defaults.get("delay_seconds")),
                 keywords=list(row.get("keywords") or defaults.get("keywords") or []),
                 file_exts=list(row.get("file_exts") or defaults.get("file_exts") or []),
                 exclude_keywords=self._dedupe_list(default_exclude_keywords + self._coerce_list(row.get("exclude_keywords"))),
@@ -1446,7 +1445,7 @@ class NativeTaskRuntime:
             url=str(data.get("url") or "").strip(),
             max_pages=self._positive_int(data.get("max_pages"), self._positive_int(defaults.get("max_pages"), 10)),
             max_depth=self._positive_int(data.get("max_depth"), self._positive_int(defaults.get("max_depth"), 1)),
-            delay_seconds=float(data.get("delay_seconds") or defaults.get("delay_seconds") or 0.5),
+            delay_seconds=self._configured_delay_seconds(data.get("delay_seconds"), defaults.get("delay_seconds")),
             keywords=self._coerce_list(data.get("keywords")) or self._coerce_list(defaults.get("keywords")),
             file_exts=self._coerce_list(data.get("file_exts")) or self._coerce_list(defaults.get("file_exts")),
             exclude_keywords=self._dedupe_list(
@@ -1644,6 +1643,15 @@ class NativeTaskRuntime:
             seen.add(key)
             out.append(value.strip())
         return out
+
+    def _configured_delay_seconds(self, *values: Any, default: float = 0.5) -> float:
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            return float(value)
+        return float(default)
 
     def _positive_int(self, value: Any, default: int, *, min_value: int = 1) -> int:
         try:

@@ -98,7 +98,8 @@ class TestEnsureSafeHttpUrl(unittest.TestCase):
 
 class TestCrawlerRedirectRevalidation(unittest.TestCase):
     def _make_crawler(self, tmp_dir: str) -> Crawler:
-        storage = Storage(str(Path(tmp_dir) / "test.db"))
+        storage = Storage(":memory:")
+        self.addCleanup(storage.close)
         return Crawler(storage=storage, download_dir=tmp_dir, user_agent="TestAgent/1.0")
 
     def test_request_pins_validated_dns_for_connection(self) -> None:
@@ -119,7 +120,6 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
             self.assertEqual(b"ok", body)
             self.assertEqual("https://public.example/start", final_url)
             self.assertEqual(["93.184.216.34"], resolved_during_open)
-            crawler.storage.close()
 
     def test_request_rejects_redirect_to_private_ip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -142,7 +142,6 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
                     crawler._request("https://public.example/start")
 
             self.assertEqual(["https://public.example/start"], seen_urls)
-            crawler.storage.close()
 
     def test_request_treats_non_redirect_3xx_without_location_as_final_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -164,7 +163,6 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
 
             self.assertEqual(b"", body)
             self.assertEqual("https://public.example/not-modified", final_url)
-            crawler.storage.close()
 
     def test_download_rejects_redirect_to_private_ip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -189,7 +187,6 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
 
             self.assertEqual(["https://public.example/file.pdf"], seen_urls)
             self.assertFalse(any(target_dir.rglob("*.part")))
-            crawler.storage.close()
 
     def test_pinned_http_preserves_ipv6_literal_brackets_in_host_header(self) -> None:
         class FakeHTTPConnection:
@@ -224,7 +221,6 @@ class TestCrawlerRedirectRevalidation(unittest.TestCase):
             ):
                 with crawler._open_pinned_stdlib(resolution.url, resolution, timeout=30):
                     pass
-            crawler.storage.close()
 
         self.assertEqual("[2001:4860:4860::8888]:8080", FakeHTTPConnection.calls[0]["headers"]["Host"])
 
