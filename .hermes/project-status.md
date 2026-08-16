@@ -1,6 +1,6 @@
 # Project Status
 
-- Date: 2026-08-13
+- Date: 2026-08-16
 - Branch: `record-agentic-pipeline-issues`
 - Baseline: `origin/main` at `10c38ce` (merged PR `#171`).
 - Scope: Record the approved cross-repository plan for governed Agentic acquisition, recoverable processing, classification/KB consistency, ready-data publication, and production migration.
@@ -43,18 +43,19 @@
 
 ## Verification
 
-- GitHub issue search confirmed no pre-existing open AI InfoSearch Issue duplicated this program.
+- GitHub issue search confirmed that no pre-existing open AI InfoSearch Issue covers the same scope as this program.
 - GitHub App creation succeeded for one Epic and nine child Issues across the two repositories.
 - Post-creation search confirmed eight open Issues in `AI_actuarial_inforsearch` (`#172`-`#179`) and two in `web_listening` (`#46`, `#47`).
 - Cross-repository and prerequisite links were added to the Epic and dependent Issue bodies.
 - The server Agent supplied a read-only production audit; no production deployment, restart, migration, configuration change, or data write was authorized or performed.
 - `git diff --check` passed for this status-only change.
+- Copilot's single actionable wording comment on PR `#180` was accepted; the clarification does not change the plan or product behavior.
 - The mandatory Codex CLI review gate could not run because the local `codex.exe` WindowsApps entrypoint returned `Access is denied`.
-- The local `gh` CLI credential is invalid; Issue operations used the connected GitHub App, and PR creation will use the same connector after the branch is pushed.
+- The local `gh` CLI authentication was revalidated on 2026-08-16; the threaded PR review fetch confirmed one unresolved, current Copilot wording comment.
 
 ## Local Notes
 
 - Files in scope: `.hermes/project-status.md` only.
 - No product code or configuration is changed by this branch.
 - The remote `web_listening` repository was changed only by the two explicitly authorized GitHub Issue creations; no local sibling repository was read or modified in this run.
-- Next action: start AI InfoSearch `#173` and `web_listening#47` in parallel. Do not update production application code until `#173` establishes backup/recovery/capacity/release gates. Then implement `web_listening#46`, AI InfoSearch `#175`, `#177`, `#178`, `#174`, and `#179`; finish with production Issue `#176`.
+- Next action: merge PR `#180`, then start AI InfoSearch `#173` and `web_listening#47` in parallel. Do not update production application code until `#173` establishes backup/recovery/capacity/release gates. Then implement `web_listening#46`, AI InfoSearch `#175`, `#177`, `#178`, `#174`, and `#179`; finish with production Issue `#176`.
