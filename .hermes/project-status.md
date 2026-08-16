@@ -1,44 +1,61 @@
 # Project Status
 
-- Date: 2026-08-08
-- Branch: `agent/respectful-crawler-requests`
-- Baseline: `origin/main` at `a455b36` (merged PR `#170`).
-- Scope: Repair the shared request path used by Site Configuration, Web Crawl, Ad-hoc URL, and Web Search after PR `#119`; Agentic Site Monitoring remains out of scope.
+- Date: 2026-08-16
+- Branch: `record-agentic-pipeline-issues`
+- Baseline: `origin/main` at `10c38ce` (merged PR `#171`).
+- Scope: Record the approved cross-repository plan for governed Agentic acquisition, recoverable processing, classification/KB consistency, ready-data publication, and production migration.
 
 ## Current State
 
-- The crawler again uses `curl_cffi` browser-compatible TLS/HTTP2 behavior while retaining the configured, transparent project user agent.
-- Every URL and redirect hop still goes through the SSRF validator. `CURLOPT_RESOLVE` pins the validated public IP and environment proxies are disabled so the request cannot bypass that pin.
-- Redirects remain manual, sessions are reused per validated origin/address, and IPv4 is tried before IPv6 with IPv6 retained as fallback.
-- All actual page, redirect, retry, and file-download requests use per-origin randomized pacing. `delay_seconds` is the minimum and the jittered interval is between 1.0x and 1.5x that value.
-- `max_pages` is now a hard page-attempt limit, including failed/timed-out BFS pages. Crawl diagnostics include page attempts, request attempts, file-download attempts, dedup skips, and request errors.
-- Site Configuration, Web Crawl, Ad-hoc URL, Web Search, and the CLI update path now pass their configured delay into the shared request layer.
-- CLI site configuration now preserves and honors `acquisition_tools`, matching the native task runtime.
-- SOA's main profile is search-only. Its two focused crawler profiles are restricted to anchored `soa.org` research/globalassets URL patterns, use a 2-second minimum delay, and share a total 30-page attempt budget (25 + 5).
-- PR `#171` is open and ready for owner-directed merge after addressing Copilot's three actionable review comments.
-- Copilot's delay comments were accepted: native URL, scheduled/quick-check, search-result, site-config, and quick-check delay parsing now preserves explicit `delay_seconds: 0` instead of falling back through falsy `or 0.5` expressions.
-- Copilot's Windows SQLite test-cleanup comment was accepted: redirect revalidation tests use an in-memory `Storage` and register `storage.close` with `addCleanup`, so cleanup still runs if an assertion fails.
+- PR `#171` is merged into `main`; the local baseline is synchronized with `origin/main`.
+- GitHub Epic `#172` tracks the governed Agentic acquisition and knowledge-update program.
+- AI InfoSearch implementation and operations Issues are open:
+  - `#173`: production backup, recovery, capacity, and release traceability baseline.
+  - `#174`: automatic ready-data build, validation, and atomic publication.
+  - `#175`: acquisition manifest ingestion and source/derived artifact lineage.
+  - `#176`: production migration, canary, rollback, and live validation.
+  - `#177`: bidirectional category-to-KB membership reconciliation.
+  - `#178`: reclassification-only task and taxonomy version audit.
+  - `#179`: durable parent/child execution and recoverable end-to-end pipeline state.
+- `web_listening` implementation Issues are open:
+  - `ferryhe/web_listening#47`: unified SSRF, robots, redirect, and pacing gateway.
+  - `ferryhe/web_listening#46`: governed Agentic exploration, raw HTML/PDF artifacts, and `acquisition-manifest.v1`.
+- The Epic body links all child Issues and records the dependency chain.
+
+## Production Findings
+
+- `aiinforsearch.com` directly deploys this repository from `/opt/ai_actuarial_inforsearch`.
+- The production worktree is at `a73bac6`, 15 commits behind GitHub `main` at the time of the read-only audit.
+- Production uses Docker Compose with healthy FastAPI, React, and Caddy services and a SQLite database in a Docker named volume.
+- The application data volume is approximately 2.8 GB; the root disk was approximately 83% used with about 11 GB free.
+- Only one older SQLite backup was found, and no verified database-plus-files recovery rehearsal was found.
+- Scheduled collection and asynchronous search fallback run in production, but no `full_pipeline` history was found.
+- The current search fallback is not joined to its parent run; raw HTML is not retained; category KB synchronization is additive only; no reclassification-only task exists; ready-data is not automatically published after indexing.
+
+## Compatibility Requirements
+
+- Keep Site Configuration, Tasks, and Knowledge Base as the primary user-facing entry points.
+- Do not require ordinary users to operate `web_listening`, manifests, workers, or raw artifact storage directly.
+- Preserve existing YAML and single-stage task workflows through migration and retain an old-pipeline rollback switch during canary rollout.
+- Show robots evidence, lineage, and stage details in advanced/detail views.
+- Protect manual KB members; require dry-run and explicit confirmation for high-volume automatic removals.
+- Make ready-data automatic publication configurable per KB and fail back to the previous validated version.
 
 ## Verification
 
-- Test-first request-policy suite: the 8 initial assertions failed before implementation; the expanded suite now has 9 passing tests.
-- Focused and integration regression suite: `127 passed` across crawler policy, URL safety, allow patterns, scheduled/URL collection, task runtime, stop support, site configuration APIs, and web-listening materialization.
-- Full test suite: `703 passed`, with 5 unrelated baseline/environment failures. One SQLite migration test reproducibly leaves a failed transaction handle open before deleting its Windows temp DB; four frontend source tests invoke `npm` without the required `.cmd` suffix under Python `subprocess` on Windows.
-- Targeted Ruff checks for the new crawler policy and new tests: passed.
-- CLI checks: `python -m ai_actuarial --help` and `python -m ai_actuarial update --help` passed; `config/sites.yaml` loaded successfully with 32 sites and 3 SOA profiles.
-- Live, one-request canaries through the new pinned curl transport: SOA AI Topic, AAA, and CAS all returned successful HTML responses.
-- `git diff --check`: passed.
-- Mandatory Codex CLI review: passed with no actionable findings; the reviewer independently reran 28 request-policy, URL-safety, and crawler tests.
-- Post-PR observation: Copilot later generated 3 actionable review comments.
-- Post-Copilot focused verification: `17 passed` for `tests/test_collection_request_policy.py`, the two affected `tests/test_task_stop_support.py` cases, and `tests/test_url_safety.py`.
-- Post-Copilot search check: no remaining `delay_seconds ... or ... 0.5` / `default_delay_seconds=float(... or ...)` patterns were found in `ai_actuarial`, `tests`, or `config`.
-- Post-Copilot Ruff check for the touched Python files: passed.
-- Post-Copilot `git diff --check`: passed.
-- Mandatory post-Copilot Codex CLI review gate could not run because the local `codex.exe` entrypoint under `WindowsApps` returns `Access is denied`.
+- GitHub issue search confirmed that no pre-existing open AI InfoSearch Issue covers the same scope as this program.
+- GitHub App creation succeeded for one Epic and nine child Issues across the two repositories.
+- Post-creation search confirmed eight open Issues in `AI_actuarial_inforsearch` (`#172`-`#179`) and two in `web_listening` (`#46`, `#47`).
+- Cross-repository and prerequisite links were added to the Epic and dependent Issue bodies.
+- The server Agent supplied a read-only production audit; no production deployment, restart, migration, configuration change, or data write was authorized or performed.
+- `git diff --check` passed for this status-only change.
+- Copilot's single actionable wording comment on PR `#180` was accepted; the clarification does not change the plan or product behavior.
+- The mandatory Codex CLI review gate could not run because the local `codex.exe` WindowsApps entrypoint returned `Access is denied`.
+- The local `gh` CLI authentication was revalidated on 2026-08-16; the threaded PR review fetch confirmed one unresolved, current Copilot wording comment.
 
 ## Local Notes
 
-- Files in scope: shared crawler transport/pacing, CLI/runtime/collector wiring, SOA site configuration, focused tests, Copilot comment fixes, and this status file.
-- No unrelated local changes were present; the pre-existing local modifications in this pass matched Copilot's review comments and were retained after inspection.
-- Sibling repositories were not read or modified.
-- Next action: commit and push the Copilot comment fixes, wait for GitHub checks/review-thread refresh, then merge PR `#171`.
+- Files in scope: `.hermes/project-status.md` only.
+- No product code or configuration is changed by this branch.
+- The remote `web_listening` repository was changed only by the two explicitly authorized GitHub Issue creations; no local sibling repository was read or modified in this run.
+- Next action: merge PR `#180`, then start AI InfoSearch `#173` and `web_listening#47` in parallel. Do not update production application code until `#173` establishes backup/recovery/capacity/release gates. Then implement `web_listening#46`, AI InfoSearch `#175`, `#177`, `#178`, `#174`, and `#179`; finish with production Issue `#176`.
