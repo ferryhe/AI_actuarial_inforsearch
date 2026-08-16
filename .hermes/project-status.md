@@ -60,7 +60,8 @@
 - Issue `#173` test-first implementation: the initial recovery test failed because the module did not exist; the implemented suite now has 9 passing recovery/CLI/source-contract tests.
 - Focused deployment verification: 16 tests passed across `tests/test_production_recovery.py` and `tests/test_deployment_config_source.py`.
 - Targeted Ruff checks, Python bytecode compilation, Compose YAML parsing, Git Bash syntax checks for both operations scripts, CLI `--help`/JSON smoke, and `git diff --check` passed.
-- PR `#181` is open and mergeable; GitHub `python-smoke` passed, and the 15-minute review-thread check found no Copilot or human review comments.
+- PR `#181` is open and mergeable; GitHub `python-smoke` passed. Copilot generated three actionable comments at the end of the review window; all three were accepted for BOM removal, injected-clock consistency, and a standard-library Fernet-key example.
+- Post-Copilot verification passed: 16 focused tests, targeted Ruff, BOM/shebang assertion, both Git Bash syntax checks, and `git diff --check`.
 
 ## Local Notes
 

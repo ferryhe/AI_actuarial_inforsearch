@@ -272,7 +272,7 @@ def create_backup(
                 included_directories.append(name)
                 directory_stats[name] = copied_stats
 
-        finished = _utc_now()
+        finished = now()
         manifest = {
             "format_version": BACKUP_FORMAT_VERSION,
             "backup_id": published.name,
@@ -308,7 +308,7 @@ def create_backup(
             event_path,
             {
                 **event_base,
-                "finished_at": _iso_utc(_utc_now()),
+                "finished_at": _iso_utc(now()),
                 "status": "failed",
                 "error_type": type(exc).__name__,
                 "error": str(exc),

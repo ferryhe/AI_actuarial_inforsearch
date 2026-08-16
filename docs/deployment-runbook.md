@@ -83,7 +83,7 @@ Use environment variables for deployment secrets and explicit platform overrides
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting API credentials in DB | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting API credentials in DB | `python -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` |
 | `FASTAPI_SESSION_SECRET` | Secret for FastAPI browser sessions | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 
 ### Provider Credentials
@@ -300,7 +300,7 @@ container and call only GET smoke endpoints:
 
 ```bash
 IMAGE=ai_actuarial_inforsearch-api:latest
-RESTORE_SMOKE_KEY=$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
+RESTORE_SMOKE_KEY=$(python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')
 docker run --rm -d --name ai-restore-smoke \
   -e FASTAPI_ENV=development \
   -e FASTAPI_SESSION_SECRET=restore-smoke-only \

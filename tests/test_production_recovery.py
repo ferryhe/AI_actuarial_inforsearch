@@ -49,7 +49,9 @@ def test_online_database_backup_is_repeatable_and_records_success(tmp_path: Path
     clock = iter(
         (
             datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 16, 12, 0, 10, tzinfo=timezone.utc),
             datetime(2026, 8, 16, 12, 1, tzinfo=timezone.utc),
+            datetime(2026, 8, 16, 12, 1, 10, tzinfo=timezone.utc),
         )
     )
 
@@ -71,6 +73,7 @@ def test_online_database_backup_is_repeatable_and_records_success(tmp_path: Path
     assert production_recovery.verify_backup(second)["status"] == "ok"
     manifest = json.loads((first / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "success"
+    assert manifest["finished_at"] == "2026-08-16T12:00:10Z"
     assert manifest["database"]["quick_check"] == "ok"
     assert manifest["database"]["schema_user_version"] == 7
     assert manifest["included_data_directories"] == []
@@ -215,7 +218,8 @@ def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> No
     backup_wrapper = (ROOT / "scripts" / "production_backup.sh").read_text(encoding="utf-8")
     service = (ROOT / "ops" / "systemd" / "aiinforsearch-backup.service").read_text(encoding="utf-8")
     timer = (ROOT / "ops" / "systemd" / "aiinforsearch-backup.timer").read_text(encoding="utf-8")
-    deploy = (ROOT / "scripts" / "deploy_update.sh").read_text(encoding="utf-8")
+    deploy_path = ROOT / "scripts" / "deploy_update.sh"
+    deploy = deploy_path.read_text(encoding="utf-8")
 
     assert "docker volume inspect" in backup_wrapper
     assert "production_recovery.py" in backup_wrapper
@@ -224,12 +228,17 @@ def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> No
     assert "OnCalendar=" in timer
     assert "Persistent=true" in timer
 
+    assert deploy_path.read_bytes().startswith(b"#!/usr/bin/env bash")
     assert "git status --porcelain" in deploy
     assert "capacity-check" in deploy
     assert "--include-data" in deploy
     assert "--quiesced" in deploy
     assert "BUILD_GIT_SHA" in deploy
     assert "release-record" in deploy
+
+    runbook = (ROOT / "docs" / "deployment-runbook.md").read_text(encoding="utf-8")
+    assert "base64.urlsafe_b64encode(secrets.token_bytes(32))" in runbook
+    assert "from cryptography.fernet import Fernet" not in runbook
 
 
 def test_production_recovery_cli_help_and_json_output(tmp_path: Path) -> None:
