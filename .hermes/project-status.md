@@ -60,6 +60,7 @@
 - Issue `#173` test-first implementation: the initial recovery test failed because the module did not exist; the implemented suite now has 9 passing recovery/CLI/source-contract tests.
 - Focused deployment verification: 16 tests passed across `tests/test_production_recovery.py` and `tests/test_deployment_config_source.py`.
 - Targeted Ruff checks, Python bytecode compilation, Compose YAML parsing, Git Bash syntax checks for both operations scripts, CLI `--help`/JSON smoke, and `git diff --check` passed.
+- PR `#181` is open and mergeable; GitHub `python-smoke` passed, and the 15-minute review-thread check found no Copilot or human review comments.
 
 ## Local Notes
 
@@ -67,4 +68,4 @@
 - No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
 - Sibling repositories remain off-limits and were not read or modified.
 - Issue `#173` remains open after this repository PR: production still needs separate-storage capacity, timer installation, one verified full snapshot, an isolated API restore rehearsal, and recorded evidence before the gate is complete.
-- Next action: finish local review and create the Issue `#173` PR. After it merges, send the server Agent a read-only/preflight-first command; do not use `deploy_update.sh` on the current 83%-used root disk or while `.hermes/project-status.md` remains modified.
+- Next action: review and merge PR `#181`. After it merges, send the server Agent a read-only/preflight-first command; do not use `deploy_update.sh` on the current 83%-used root disk or while `.hermes/project-status.md` remains modified.
