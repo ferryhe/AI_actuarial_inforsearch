@@ -8,6 +8,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BUILD_GIT_SHA: ${BUILD_GIT_SHA:-unknown}
+        BUILD_GIT_DIRTY: ${BUILD_GIT_DIRTY:-unknown}
+        BUILD_UTC: ${BUILD_UTC:-unknown}
+        BUILD_SOURCE_URL: ${BUILD_SOURCE_URL:-https://github.com/ferryhe/AI_actuarial_inforsearch}
     container_name: ai-api
     restart: unless-stopped
     expose:

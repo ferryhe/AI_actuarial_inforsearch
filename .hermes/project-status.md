@@ -1,13 +1,18 @@
 # Project Status
 
 - Date: 2026-08-16
-- Branch: `record-agentic-pipeline-issues`
-- Baseline: `origin/main` at `10c38ce` (merged PR `#171`).
-- Scope: Record the approved cross-repository plan for governed Agentic acquisition, recoverable processing, classification/KB consistency, ready-data publication, and production migration.
+- Branch: `ops/issue-173-production-recovery-baseline`
+- Baseline: `origin/main` at `7eb7c62` (merged PR `#180`).
+- Scope: Implement the repository-side backup, isolated restore, capacity, and release-traceability baseline for Issue `#173`; do not change production.
 
 ## Current State
 
-- PR `#171` is merged into `main`; the local baseline is synchronized with `origin/main`.
+- PR `#180` is merged into `main`; the Issue plan and production audit are recorded.
+- Issue `#173` implementation is active on `ops/issue-173-production-recovery-baseline`.
+- `scripts/production_recovery.py` now provides repeatable online SQLite backups, quiesced database-and-artifact snapshots, manifest/checksum verification, isolated restore smoke, a disk-capacity gate, and image/config/schema release records.
+- `scripts/production_backup.sh` and systemd unit templates provide a reviewable daily online backup task without installing anything on production.
+- `scripts/deploy_update.sh` now refuses dirty worktrees and root-disk use at or above 80%, requires a quiesced full snapshot, builds the API with OCI revision labels, and records the resulting release metadata.
+- The deployment runbook now resolves the real Docker named-volume mountpoint and no longer documents repository-local `data/index.db` copying as the production backup/restore method.
 - GitHub Epic `#172` tracks the governed Agentic acquisition and knowledge-update program.
 - AI InfoSearch implementation and operations Issues are open:
   - `#173`: production backup, recovery, capacity, and release traceability baseline.
@@ -50,12 +55,16 @@
 - The server Agent supplied a read-only production audit; no production deployment, restart, migration, configuration change, or data write was authorized or performed.
 - `git diff --check` passed for this status-only change.
 - Copilot's single actionable wording comment on PR `#180` was accepted; the clarification does not change the plan or product behavior.
-- The mandatory Codex CLI review gate could not run because the local `codex.exe` WindowsApps entrypoint returned `Access is denied`.
-- The local `gh` CLI authentication was revalidated on 2026-08-16; the threaded PR review fetch confirmed one unresolved, current Copilot wording comment.
+- The mandatory Codex CLI review gate was retried for Issue `#173` and remains blocked because the local `codex.exe` WindowsApps entrypoint returns `Access is denied`.
+- The local `gh` CLI authentication was revalidated on 2026-08-16; after the fix, Copilot's original PR `#180` thread became outdated and the PR merged with passing CI.
+- Issue `#173` test-first implementation: the initial recovery test failed because the module did not exist; the implemented suite now has 9 passing recovery/CLI/source-contract tests.
+- Focused deployment verification: 16 tests passed across `tests/test_production_recovery.py` and `tests/test_deployment_config_source.py`.
+- Targeted Ruff checks, Python bytecode compilation, Compose YAML parsing, Git Bash syntax checks for both operations scripts, CLI `--help`/JSON smoke, and `git diff --check` passed.
 
 ## Local Notes
 
-- Files in scope: `.hermes/project-status.md` only.
-- No product code or configuration is changed by this branch.
-- The remote `web_listening` repository was changed only by the two explicitly authorized GitHub Issue creations; no local sibling repository was read or modified in this run.
-- Next action: merge PR `#180`, then start AI InfoSearch `#173` and `web_listening#47` in parallel. Do not update production application code until `#173` establishes backup/recovery/capacity/release gates. Then implement `web_listening#46`, AI InfoSearch `#175`, `#177`, `#178`, `#174`, and `#179`; finish with production Issue `#176`.
+- Files in scope: `Dockerfile`, `docker-compose.yml`, `.hermes/project-status.md`, `docs/deployment-runbook.md`, `scripts/deploy_update.sh`, `scripts/production_backup.sh`, `scripts/production_recovery.py`, `ops/systemd/*`, and `tests/test_production_recovery.py`.
+- No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
+- Sibling repositories remain off-limits and were not read or modified.
+- Issue `#173` remains open after this repository PR: production still needs separate-storage capacity, timer installation, one verified full snapshot, an isolated API restore rehearsal, and recorded evidence before the gate is complete.
+- Next action: finish local review and create the Issue `#173` PR. After it merges, send the server Agent a read-only/preflight-first command; do not use `deploy_update.sh` on the current 83%-used root disk or while `.hermes/project-status.md` remains modified.

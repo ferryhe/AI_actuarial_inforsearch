@@ -1,5 +1,15 @@
 FROM python:3.11-slim
 
+ARG BUILD_GIT_SHA=unknown
+ARG BUILD_GIT_DIRTY=unknown
+ARG BUILD_UTC=unknown
+ARG BUILD_SOURCE_URL=https://github.com/ferryhe/AI_actuarial_inforsearch
+
+LABEL org.opencontainers.image.revision="${BUILD_GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_UTC}" \
+      org.opencontainers.image.source="${BUILD_SOURCE_URL}" \
+      com.aiinforsearch.git-dirty="${BUILD_GIT_DIRTY}"
+
 WORKDIR /app
 
 # Install system dependencies for PDF conversion and OpenDataLoader.
