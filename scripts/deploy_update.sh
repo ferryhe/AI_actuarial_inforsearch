@@ -10,11 +10,18 @@ APP_SERVICE_NAME="${APP_SERVICE_NAME:-api}"
 CADDY_CONTAINER="${CADDY_CONTAINER:-ai-caddy}"
 RELOAD_CADDY="${RELOAD_CADDY:-false}"
 DATA_VOLUME_NAME="${DATA_VOLUME_NAME:-ai_actuarial_inforsearch_ai-data}"
-BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/aiinforsearch}"
+BACKUP_ROOT="${BACKUP_ROOT:?Set BACKUP_ROOT to a pre-created approved backup filesystem}"
+BACKUP_LOCK_FILE="${BACKUP_LOCK_FILE:-/run/aiinforsearch-backup.lock}"
 RELEASE_DIR="${RELEASE_DIR:-/var/lib/aiinforsearch/releases}"
 CAPACITY_THRESHOLD="${CAPACITY_THRESHOLD:-80}"
 API_IMAGE="${API_IMAGE:-ai_actuarial_inforsearch-api:latest}"
 BUILD_SOURCE_URL="${BUILD_SOURCE_URL:-https://github.com/ferryhe/AI_actuarial_inforsearch}"
+
+exec 9>"$BACKUP_LOCK_FILE"
+if ! flock -n 9; then
+  echo "Another AI InfoSearch backup or deployment snapshot is already running."
+  exit 1
+fi
 
 cd "$REPO_DIR"
 
@@ -47,6 +54,18 @@ python3 scripts/production_recovery.py capacity-check \
 
 echo "[3/7] Create a quiesced database-and-files recovery point"
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME_NAME" --format '{{ .Mountpoint }}')
+if [[ ! -d "$BACKUP_ROOT" ]]; then
+  echo "Approved backup root does not exist: $BACKUP_ROOT"
+  exit 1
+fi
+if [[ ! -w "$BACKUP_ROOT" ]]; then
+  echo "Approved backup root is not writable: $BACKUP_ROOT"
+  exit 1
+fi
+if [[ "$(stat -c %d "$DATA_DIR")" == "$(stat -c %d "$BACKUP_ROOT")" ]]; then
+  echo "Backup root must be on a different filesystem from the production data volume."
+  exit 1
+fi
 api_container=$("${compose[@]}" ps -q "$APP_SERVICE_NAME")
 api_was_running=false
 if [[ -n "$api_container" ]] && [[ "$(docker inspect --format '{{ .State.Running }}' "$api_container")" == "true" ]]; then

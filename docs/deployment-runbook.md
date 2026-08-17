@@ -61,13 +61,14 @@ docker compose exec api sh
 # Resolve the real production data path. Do not use the repository's data/ path.
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
+BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
 
 # Online SQLite + configuration backup. Output is JSON and the database copy is
 # created with sqlite3's backup API, followed by PRAGMA quick_check.
 sudo python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
   --config config/sites.yaml \
-  --backup-root /var/backups/aiinforsearch
+  --backup-root "$BACKUP_ROOT"
 ```
 
 The production SQLite database is `/app/data/index.db` inside `ai-api` and
@@ -226,8 +227,10 @@ then install them during an approved operations change:
 
 ```bash
 sudo install -d -m 0750 /etc/aiinforsearch
-# Point this at a separately mounted backup filesystem.
-echo 'BACKUP_ROOT=/mnt/aiinforsearch-backups' | sudo tee /etc/aiinforsearch/backup.conf
+# The mount must already exist and be distinct from the production volume.
+findmnt -M /mnt/aiinforsearch-backup
+sudo install -d -m 0700 /mnt/aiinforsearch-backup/aiinforsearch
+echo 'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch' | sudo tee /etc/aiinforsearch/backup.conf
 sudo chmod 0600 /etc/aiinforsearch/backup.conf
 sudo install -m 0644 ops/systemd/aiinforsearch-backup.service /etc/systemd/system/
 sudo install -m 0644 ops/systemd/aiinforsearch-backup.timer /etc/systemd/system/
@@ -238,11 +241,15 @@ sudo systemctl status aiinforsearch-backup.service --no-pager
 ```
 
 The scheduled job is database-plus-configuration only, so it does not stop the
-API. Store `/var/backups/aiinforsearch` on separate storage before enabling the
-timer. Retain at least 14 daily verified database backups and two quiesced full
+API. The service fails closed if `/etc/aiinforsearch/backup.conf` is absent, if
+the configured directory is missing, or if it is on the production data
+filesystem. The wrapper also uses a shared non-blocking lock so a daily backup
+cannot overlap a deployment snapshot. Retain at least 14 daily verified database backups and two quiesced full
 snapshots; prune only after an isolated restore has passed and an off-host copy
 is confirmed. Retention deletion is intentionally not automated by this first
-baseline.
+baseline. Do not configure a FUSE/object-storage mount such as COSFS until its
+write, rename, interruption, and read-back checksum semantics have been
+qualified in a disposable prefix.
 
 ### Capacity gate
 
@@ -260,13 +267,14 @@ to separate storage first.
 ```bash
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
+BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.override.yml"
 
 $COMPOSE stop api
 sudo python3 scripts/production_recovery.py backup \
   --data-dir "$DATA_DIR" \
   --config config/sites.yaml \
-  --backup-root /var/backups/aiinforsearch \
+  --backup-root "$BACKUP_ROOT" \
   --include-data \
   --quiesced
 $COMPOSE start api
@@ -282,8 +290,8 @@ reads or copies it.
 ### Verify and rehearse a restore
 
 ```bash
-BACKUP_DIR=/var/backups/aiinforsearch/backup-<UTC timestamp>
-RESTORE_DIR=/var/tmp/aiinforsearch-restore-<UTC timestamp>
+BACKUP_DIR=/mnt/aiinforsearch-backup/aiinforsearch/backup-<UTC timestamp>
+RESTORE_DIR=/mnt/aiinforsearch-backup/restore-smoke-<UTC timestamp>
 
 python3 scripts/production_recovery.py verify "$BACKUP_DIR"
 python3 scripts/production_recovery.py restore-smoke "$BACKUP_DIR" \

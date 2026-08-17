@@ -224,13 +224,25 @@ def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> No
     assert "docker volume inspect" in backup_wrapper
     assert "production_recovery.py" in backup_wrapper
     assert "--include-data" not in backup_wrapper
+    assert 'BACKUP_ROOT="${BACKUP_ROOT:?' in backup_wrapper
+    assert "/var/backups/aiinforsearch" not in backup_wrapper
+    assert 'stat -c %d "$DATA_DIR"' in backup_wrapper
+    assert 'stat -c %d "$BACKUP_ROOT"' in backup_wrapper
+    assert 'flock -n 9' in backup_wrapper
     assert "ExecStart=/usr/bin/bash /opt/ai_actuarial_inforsearch/scripts/production_backup.sh" in service
+    assert "EnvironmentFile=/etc/aiinforsearch/backup.conf" in service
+    assert "EnvironmentFile=-" not in service
     assert "OnCalendar=" in timer
     assert "Persistent=true" in timer
 
     assert deploy_path.read_bytes().startswith(b"#!/usr/bin/env bash")
     assert "git status --porcelain" in deploy
     assert "capacity-check" in deploy
+    assert 'BACKUP_ROOT="${BACKUP_ROOT:?' in deploy
+    assert "/var/backups/aiinforsearch" not in deploy
+    assert 'stat -c %d "$DATA_DIR"' in deploy
+    assert 'stat -c %d "$BACKUP_ROOT"' in deploy
+    assert 'flock -n 9' in deploy
     assert "--include-data" in deploy
     assert "--quiesced" in deploy
     assert "BUILD_GIT_SHA" in deploy
