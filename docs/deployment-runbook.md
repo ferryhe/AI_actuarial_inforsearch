@@ -58,12 +58,23 @@ docker compose exec api sh
 ### Database Operations
 
 ```bash
-# Backup the SQLite database
-cp data/index.db data/index.db.backup.$(date +%Y%m%d_%H%M%S)
+# Resolve the real production data path. Do not use the repository's data/ path.
+DATA_VOLUME=ai_actuarial_inforsearch_ai-data
+DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
+BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
 
-# Restore from backup
-cp data/index.db.backup.20260101_120000 data/index.db
+# Online SQLite + configuration backup. Output is JSON and the database copy is
+# created with sqlite3's backup API, followed by PRAGMA quick_check.
+sudo python3 scripts/production_recovery.py backup \
+  --data-dir "$DATA_DIR" \
+  --config config/sites.yaml \
+  --backup-root "$BACKUP_ROOT"
 ```
+
+The production SQLite database is `/app/data/index.db` inside `ai-api` and
+`/var/lib/docker/volumes/ai_actuarial_inforsearch_ai-data/_data/index.db` with
+the current Compose project name. Always resolve the mountpoint with
+`docker volume inspect`; never assume a repository-local host `data/` directory.
 
 ## Environment Variables
 
@@ -73,7 +84,7 @@ Use environment variables for deployment secrets and explicit platform overrides
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting API credentials in DB | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting API credentials in DB | `python -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"` |
 | `FASTAPI_SESSION_SECRET` | Secret for FastAPI browser sessions | `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
 
 ### Provider Credentials
@@ -194,38 +205,164 @@ ss -tlnp | grep 5000
 
 ## Backup & Restore
 
-### Files to Back Up
+### Backup scopes
 
-1. **Database**: `data/index.db`
-2. **Configuration**: `config/sites.yaml`
-3. **Environment**: `.env` (secrets only — store securely, never in version control)
-4. **Uploaded files**: `data/files/` (if using file storage)
+The recovery tool has two scopes:
 
-### Backup Script
+- Default: online SQLite backup plus `config/sites.yaml`. This is suitable for a
+  scheduled daily job and does not copy `.env` or reveal credentials.
+- `--include-data --quiesced`: SQLite plus `files/`, `rag/`, and
+  `agentic_ready_data/`. Stop application writers first so the database and file
+  artifacts share one recovery point.
+
+Each run appends a success or failure record to `backup-events.jsonl`. A
+successful snapshot is published only after its database passes
+`PRAGMA quick_check`; its manifest records checksums, WAL checkpoint results,
+directory sizes, and `PRAGMA user_version`.
+
+### Daily verified database backup
+
+The repository includes a systemd service and timer template. Review the paths,
+then install them during an approved operations change:
 
 ```bash
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="./backups/$DATE"
-mkdir -p "$BACKUP_DIR"
-cp data/index.db "$BACKUP_DIR/"
-cp config/sites.yaml "$BACKUP_DIR/"
-echo "Backup saved to $BACKUP_DIR"
+sudo install -d -m 0750 /etc/aiinforsearch
+# The mount must already exist and be distinct from the production volume.
+findmnt -M /mnt/aiinforsearch-backup
+sudo install -d -m 0700 /mnt/aiinforsearch-backup/aiinforsearch
+echo 'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch' | sudo tee /etc/aiinforsearch/backup.conf
+sudo chmod 0600 /etc/aiinforsearch/backup.conf
+sudo install -m 0644 ops/systemd/aiinforsearch-backup.service /etc/systemd/system/
+sudo install -m 0644 ops/systemd/aiinforsearch-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aiinforsearch-backup.timer
+sudo systemctl start aiinforsearch-backup.service
+sudo systemctl status aiinforsearch-backup.service --no-pager
 ```
 
-### Restore
+The scheduled job is database-plus-configuration only, so it does not stop the
+API. The service fails closed if `/etc/aiinforsearch/backup.conf` is absent, if
+the configured directory is missing, or if it is on the production data
+filesystem. The wrapper also uses a shared non-blocking lock so a daily backup
+cannot overlap a deployment snapshot. Retain at least 14 daily verified database backups and two quiesced full
+snapshots; prune only after an isolated restore has passed and an off-host copy
+is confirmed. Retention deletion is intentionally not automated by this first
+baseline. Do not configure a FUSE/object-storage mount such as COSFS until its
+write, rename, interruption, and read-back checksum semantics have been
+qualified in a disposable prefix.
+
+### Capacity gate
 
 ```bash
-# Stop services
-docker compose down
-
-# Replace files
-cp backups/20260101_120000/index.db data/
-cp backups/20260101_120000/sites.yaml config/
-
-# Restart
-docker compose up -d
+python3 scripts/production_recovery.py capacity-check --path / --threshold 80
 ```
+
+Exit code `3` means the threshold has been reached. At or above 80%, do not run
+full artifact retention, reclassification, full indexing, or a deployment that
+needs a same-disk snapshot. Expand the disk or move immutable artifacts/backups
+to separate storage first.
+
+### Quiesced database-and-files snapshot
+
+```bash
+DATA_VOLUME=ai_actuarial_inforsearch_ai-data
+DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
+BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.override.yml"
+
+$COMPOSE stop api
+sudo python3 scripts/production_recovery.py backup \
+  --data-dir "$DATA_DIR" \
+  --config config/sites.yaml \
+  --backup-root "$BACKUP_ROOT" \
+  --include-data \
+  --quiesced
+$COMPOSE start api
+```
+
+If backup creation fails after the API is stopped, restart the unchanged API
+before investigating. A maintenance-window wrapper should use a shell `trap` to
+guarantee that restart; do not paste these commands into unattended automation.
+
+Back up `.env` separately in the approved secret store. The recovery tool never
+reads or copies it.
+
+### Verify and rehearse a restore
+
+```bash
+BACKUP_DIR=/mnt/aiinforsearch-backup/aiinforsearch/backup-<UTC timestamp>
+RESTORE_DIR=/mnt/aiinforsearch-backup/restore-smoke-<UTC timestamp>
+
+python3 scripts/production_recovery.py verify "$BACKUP_DIR"
+python3 scripts/production_recovery.py restore-smoke "$BACKUP_DIR" \
+  --restore-dir "$RESTORE_DIR"
+```
+
+`restore-smoke` refuses a non-empty target. It verifies checksums, opens the
+restored SQLite database read-only, runs `PRAGMA quick_check`, reports file/KB/
+ready-manifest counts, and checks that database file paths exist in the isolated
+copy. It never replaces the live named volume.
+
+After that check, an operator may start the restored copy in an unexposed
+container and call only GET smoke endpoints:
+
+```bash
+IMAGE=ai_actuarial_inforsearch-api:latest
+RESTORE_SMOKE_KEY=$(python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')
+docker run --rm -d --name ai-restore-smoke \
+  -e FASTAPI_ENV=development \
+  -e FASTAPI_SESSION_SECRET=restore-smoke-only \
+  -e TOKEN_ENCRYPTION_KEY="$RESTORE_SMOKE_KEY" \
+  -v "$RESTORE_DIR/data:/app/data:rw" \
+  -v "$RESTORE_DIR/config/sites.yaml:/app/config/sites.yaml:ro" \
+  "$IMAGE"
+docker exec ai-restore-smoke curl -fsS http://127.0.0.1:5000/api/health
+docker exec ai-restore-smoke curl -fsS http://127.0.0.1:5000/api/rag/knowledge-bases
+docker stop ai-restore-smoke
+```
+
+The smoke container has no published port and operates only on the isolated
+restore. Record its image digest and results in the recovery rehearsal log.
+
+### Release traceability
+
+Builds must supply the Git SHA, dirty flag, UTC timestamp, and source URL:
+
+```bash
+export BUILD_GIT_SHA=$(git rev-parse HEAD)
+export BUILD_GIT_DIRTY=false
+export BUILD_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+export BUILD_SOURCE_URL=https://github.com/ferryhe/AI_actuarial_inforsearch
+docker compose build api
+```
+
+After the image is built, write a release record containing its digest, safe OCI
+labels, configuration checksum, and SQLite `PRAGMA user_version`:
+
+```bash
+DATA_VOLUME=ai_actuarial_inforsearch_ai-data
+DATA_DIR=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}')
+python3 scripts/production_recovery.py release-record \
+  --image ai_actuarial_inforsearch-api:latest \
+  --config config/sites.yaml \
+  --db "$DATA_DIR/index.db" \
+  --output /var/lib/aiinforsearch/releases/"$BUILD_GIT_SHA".json
+```
+
+`PRAGMA user_version` is the current explicit schema-version field. It is still
+`0` on legacy databases until a reviewed migration runner assigns a version.
+Any future schema-changing deployment must therefore include an explicit,
+idempotent migration step after the backup and before application startup; do
+not treat the application's historical startup-time `CREATE/ALTER` behavior as
+a sufficient production migration plan.
+
+### Live restore and rollback
+
+Replacing the live named volume is a separate, destructive production action.
+It requires explicit authorization, a maintenance window, a verified isolated
+restore, and the rollback checklist from the release Issue. Do not restore by
+copying files into a running container or by using `docker compose down -v`.
+
 
 ## API Documentation
 
@@ -248,16 +385,13 @@ curl http://localhost:5000/api/health/detailed
 ## Updating the Service
 
 ```bash
-# Pull latest code
-git pull origin main
-
-# Rebuild Docker image
-docker compose build
-
-# Restart
-docker compose up -d
-
-# Note: Database schema migrations are applied automatically on startup.
-# There is no separate `db migrate` command; the application handles schema
-# upgrades internally via the db_backend module when it starts.
+# The guarded updater refuses a dirty worktree or root-disk use >=80%, creates a
+# quiesced full snapshot, fast-forwards main, builds with OCI revision labels,
+# restarts the API, and writes a release record.
+scripts/deploy_update.sh
 ```
+
+The updater intentionally refuses the known production
+`.hermes/project-status.md` modification. Preserve it outside the checkout and
+review it before retrying; do not reset, overwrite, or silently stash it. The
+script also requires a successful full snapshot before changing the running API.

@@ -1,13 +1,18 @@
 # Project Status
 
-- Date: 2026-08-16
-- Branch: `record-agentic-pipeline-issues`
-- Baseline: `origin/main` at `10c38ce` (merged PR `#171`).
-- Scope: Record the approved cross-repository plan for governed Agentic acquisition, recoverable processing, classification/KB consistency, ready-data publication, and production migration.
+- Date: 2026-08-17
+- Branch: `ops/issue-173-production-recovery-baseline`
+- Baseline: `origin/main` at `7eb7c62` (merged PR `#180`).
+- Scope: Implement the repository-side backup, isolated restore, capacity, and release-traceability baseline for Issue `#173`; do not change production.
 
 ## Current State
 
-- PR `#171` is merged into `main`; the local baseline is synchronized with `origin/main`.
+- PR `#180` is merged into `main`; the Issue plan and production audit are recorded.
+- Issue `#173` implementation is active on `ops/issue-173-production-recovery-baseline`.
+- `scripts/production_recovery.py` now provides repeatable online SQLite backups, quiesced database-and-artifact snapshots, manifest/checksum verification, isolated restore smoke, a disk-capacity gate, and image/config/schema release records.
+- `scripts/production_backup.sh` and systemd unit templates provide a reviewable daily online backup task without installing anything on production. The wrapper now requires an explicit, pre-created backup root on a filesystem separate from production data and shares a non-blocking lock with deployment snapshots.
+- `scripts/deploy_update.sh` now refuses dirty worktrees and root-disk use at or above 80%, requires a quiesced full snapshot, builds the API with OCI revision labels, and records the resulting release metadata.
+- The deployment runbook now resolves the real Docker named-volume mountpoint and no longer documents repository-local `data/index.db` copying as the production backup/restore method.
 - GitHub Epic `#172` tracks the governed Agentic acquisition and knowledge-update program.
 - AI InfoSearch implementation and operations Issues are open:
   - `#173`: production backup, recovery, capacity, and release traceability baseline.
@@ -28,6 +33,8 @@
 - The production worktree is at `a73bac6`, 15 commits behind GitHub `main` at the time of the read-only audit.
 - Production uses Docker Compose with healthy FastAPI, React, and Caddy services and a SQLite database in a Docker named volume.
 - The application data volume is approximately 2.8 GB; the root disk was approximately 83% used with about 11 GB free.
+- The Issue `#173` server preflight confirmed that `/var/backups` is on the same root ext4 filesystem as production data. The COSFS mount at `/lhcos-data` is only a candidate until disposable-prefix write, rename, interruption, and checksum read-back tests pass.
+- The current full-snapshot contract is approximately 2.19 GiB; the proposed retention set plus one isolated restore peaks around 8.23 GiB before safety margin. The server Agent recommends a 20–30 GiB independent ext4/xfs backup volume for the near-term baseline.
 - Only one older SQLite backup was found, and no verified database-plus-files recovery rehearsal was found.
 - Scheduled collection and asynchronous search fallback run in production, but no `full_pipeline` history was found.
 - The current search fallback is not joined to its parent run; raw HTML is not retained; category KB synchronization is additive only; no reclassification-only task exists; ready-data is not automatically published after indexing.
@@ -50,12 +57,21 @@
 - The server Agent supplied a read-only production audit; no production deployment, restart, migration, configuration change, or data write was authorized or performed.
 - `git diff --check` passed for this status-only change.
 - Copilot's single actionable wording comment on PR `#180` was accepted; the clarification does not change the plan or product behavior.
-- The mandatory Codex CLI review gate could not run because the local `codex.exe` WindowsApps entrypoint returned `Access is denied`.
-- The local `gh` CLI authentication was revalidated on 2026-08-16; the threaded PR review fetch confirmed one unresolved, current Copilot wording comment.
+- The mandatory Codex CLI review gate was retried for Issue `#173` and remains blocked because the local `codex.exe` WindowsApps entrypoint returns `Access is denied`.
+- The local `gh` CLI authentication was revalidated on 2026-08-16; after the fix, Copilot's original PR `#180` thread became outdated and the PR merged with passing CI.
+- Issue `#173` test-first implementation: the initial recovery test failed because the module did not exist; the implemented suite now has 9 passing recovery/CLI/source-contract tests.
+- Focused deployment verification: 16 tests passed across `tests/test_production_recovery.py` and `tests/test_deployment_config_source.py`.
+- Targeted Ruff checks, Python bytecode compilation, Compose YAML parsing, Git Bash syntax checks for both operations scripts, CLI `--help`/JSON smoke, and `git diff --check` passed.
+- PR `#181` is open and mergeable; GitHub `python-smoke` passed. Copilot generated three actionable comments at the end of the review window; all three were accepted for BOM removal, injected-clock consistency, and a standard-library Fernet-key example.
+- Post-Copilot verification passed: 16 focused tests, targeted Ruff, BOM/shebang assertion, both Git Bash syntax checks, and `git diff --check`.
+- The production preflight confirmed Python 3.11, SQLite 3.50, Docker/Compose, systemd 255, and bash 5.2 satisfy the PR runtime contract; it also confirmed no unit, timer, cron, Hermes, or running-backup conflict.
+- A new fail-closed backup-location/locking contract test first failed against the unsafe default and then passed after the wrappers, unit, and runbook were tightened.
+- Post-preflight hardening verification passed: 16 focused tests, targeted Ruff, both Git Bash syntax checks, CLI help, and `git diff --check`. The mandatory Codex CLI review was retried after these changes and remains blocked by the same WindowsApps `codex.exe` `Access is denied` error.
 
 ## Local Notes
 
-- Files in scope: `.hermes/project-status.md` only.
-- No product code or configuration is changed by this branch.
-- The remote `web_listening` repository was changed only by the two explicitly authorized GitHub Issue creations; no local sibling repository was read or modified in this run.
-- Next action: merge PR `#180`, then start AI InfoSearch `#173` and `web_listening#47` in parallel. Do not update production application code until `#173` establishes backup/recovery/capacity/release gates. Then implement `web_listening#46`, AI InfoSearch `#175`, `#177`, `#178`, `#174`, and `#179`; finish with production Issue `#176`.
+- Files in scope: `Dockerfile`, `docker-compose.yml`, `.hermes/project-status.md`, `docs/deployment-runbook.md`, `scripts/deploy_update.sh`, `scripts/production_backup.sh`, `scripts/production_recovery.py`, `ops/systemd/*`, and `tests/test_production_recovery.py`.
+- No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
+- Sibling repositories remain off-limits and were not read or modified.
+- Issue `#173` remains open after this repository PR: production still needs separate-storage capacity, timer installation, one verified full snapshot, an isolated API restore rehearsal, and recorded evidence before the gate is complete.
+- Next action: finish local/remote validation and merge PR `#181` if green. Do not deploy or enable the timer until an independent backup filesystem is provisioned or the COSFS probe is explicitly authorized and passes; do not use `deploy_update.sh` while the root disk remains at 83% or `.hermes/project-status.md` remains modified.
