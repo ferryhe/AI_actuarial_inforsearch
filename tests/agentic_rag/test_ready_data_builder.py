@@ -7,7 +7,6 @@ import os
 import sqlite3
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -100,6 +99,8 @@ def test_build_l0_basic(test_db_path, tmp_path):
     assert manifest["doc_count"] == 1
     assert manifest["section_count"] == 2
     assert manifest["profile"] == "general"
+    assert manifest["source_version_kind"] == "catalog_chunks_snapshot"
+    assert manifest["source_version_id"].startswith("rdsnap_")
 
     # Check doc_catalog.jsonl
     catalog_path = tmp_path / "doc_catalog.jsonl"
@@ -146,6 +147,73 @@ def test_build_l0_basic(test_db_path, tmp_path):
         "sections.jsonl",
         "ready_data_manifest.json",
     ]
+    assert m["source_version_kind"] == manifest["source_version_kind"]
+    assert m["source_version_id"] == manifest["source_version_id"]
+
+
+def test_build_l0_source_version_is_stable_and_tracks_consumed_inputs(test_db_path, tmp_path):
+    first = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path / "first"),
+        profile="general",
+    )
+    same = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path / "same"),
+        profile="general",
+    )
+    assert same["source_version_id"] == first["source_version_id"]
+
+    conn = sqlite3.connect(test_db_path)
+    conn.execute(
+        "UPDATE global_chunks SET content = ? WHERE chunk_id = ?",
+        ("Changed source chunk", "c1"),
+    )
+    conn.commit()
+    conn.close()
+    changed = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path / "changed"),
+        profile="general",
+    )
+    assert changed["source_version_id"] != first["source_version_id"]
+
+
+def test_build_l0_closes_database_connection_when_build_fails(test_db_path, monkeypatch):
+    real_connect = sqlite3.connect
+    tracked: list[object] = []
+
+    class TrackingConnection:
+        def __init__(self, path: str):
+            self.inner = real_connect(path)
+            self.closed = False
+
+        @property
+        def row_factory(self):
+            return self.inner.row_factory
+
+        @row_factory.setter
+        def row_factory(self, value):
+            self.inner.row_factory = value
+
+        def close(self):
+            self.closed = True
+            self.inner.close()
+
+        def __getattr__(self, name: str):
+            return getattr(self.inner, name)
+
+    def tracked_connect(path: str):
+        connection = TrackingConnection(path)
+        tracked.append(connection)
+        return connection
+
+    monkeypatch.setattr(builder.sqlite3, "connect", tracked_connect)
+    with pytest.raises(ValueError, match="Unknown profile"):
+        builder.build_l0(db_path=test_db_path, profile="unknown")
+
+    assert len(tracked) == 1
+    assert tracked[0].closed is True
 
 
 def test_build_regulation_profile_emits_l1_alias_and_relation_artifacts(test_db_path, tmp_path):

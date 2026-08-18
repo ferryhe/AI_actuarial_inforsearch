@@ -280,6 +280,50 @@ def test_fastapi_agentic_rag_title_search_resolves_registry_ready_manifest(tmp_p
     assert body["results"][0]["title"] == "Reserve Method Note"
 
 
+def test_fastapi_agentic_rag_title_search_resolves_atomically_published_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, db_path = _build_client(tmp_path, monkeypatch)
+    ready_dir = tmp_path / "agentic_ready_data" / "staging" / "published"
+    _write_ready_data(ready_dir)
+    storage = Storage(str(db_path))
+    try:
+        manager = KnowledgeBaseManager(storage)
+        manager.create_kb(kb_id="kb-published", name="Published KB", kb_mode="manual")
+        publication = storage.record_agentic_ready_publication(
+            kb_id="kb-published",
+            index_version_id=None,
+            source_version_kind="kb_snapshot",
+            source_version_id="kbsrc_test",
+            profile="general",
+            profile_version="1",
+            status="validated",
+            output_dir=str(ready_dir),
+            artifact_files=["doc_catalog.jsonl", "doc_summaries.jsonl", "sections.jsonl"],
+            doc_count=2,
+            section_count=1,
+            built_at="2026-06-14T00:00:00+00:00",
+            artifact_digest="published-digest",
+            source_db=str(db_path),
+        )
+        storage.publish_agentic_ready_publication(
+            str(publication["publication_id"]),
+            expected_active_publication_id=None,
+        )
+    finally:
+        storage.close()
+
+    response = client.post(
+        "/api/agentic-rag/search/titles",
+        json={"query": "reserve method", "limit": 3, "kb_id": "kb-published"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["output_dir"] == str(ready_dir)
+    assert response.json()["results"][0]["title"] == "Reserve Method Note"
+
+
 def test_fastapi_agentic_rag_section_search_uses_explicit_output_dir(tmp_path: Path, monkeypatch) -> None:
     client, _db_path = _build_client(tmp_path, monkeypatch)
     ready_dir = tmp_path / "agentic_ready_data" / "explicit"
