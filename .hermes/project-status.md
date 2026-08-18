@@ -4,7 +4,7 @@
 - Branch: `codex/issue-174-ready-data-retention-gc`
 - Baseline: `origin/main` at merge commit `9320efe` (merged PR `#182`).
 - Scope: Design and implement the local, default-off bounded retention/GC contract for non-serving ready-data publication attempts in Issue `#174`; do not change production, UI, full-pipeline, `#175`, or `#179`.
-- Managed PR heartbeat: PR `#183` is open and ready for review from `codex/issue-174-ready-data-retention-gc` into `main`. The initial head is `4359aee`; the remote feedback window started at `2026-08-18T22:37:50Z`, and `python-smoke` is running.
+- Managed PR heartbeat: PR `#183` is open, ready for review, and mergeable. The implementation head is `7d6debb`; `python-smoke` passed, and the full post-fix remote feedback window completed at `2026-08-18T23:02:48Z` with no additional reviews or ordinary comments.
 
 ## Active State
 
@@ -100,6 +100,7 @@
 - The mandatory pre-PR Codex CLI review was attempted on the final diff. The installed entry point `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe` failed to start with `Access is denied`; this is the same local tooling blocker recorded for earlier PRs, so publication continues under the repository's documented fallback.
 - PR `#183` was created as a ready-for-review Issue `#174` follow-up and deliberately does not close the Issue. It contains only the bounded retention/GC backend, storage, status, and focused test changes; automatic GC remains disabled.
 - Copilot reviewed all six PR files and produced one actionable compatibility comment: `duplicate_gc_deferred` must continue to mean that a retained duplicate was not immediately deleted, while the new `duplicate_gc_marked` field separately reports whether durable GC classification succeeded. The comment was accepted test-first; the guard-loss regression now proves the candidate remains retryable with `duplicate_gc_deferred=true` and `duplicate_gc_marked=false`. Follow-up validation passed `97 passed, 5 skipped`, targeted Ruff, Python compilation, `git diff --check`, and a narrow independent quality review.
+- The accepted Copilot thread is fully addressed by commit `7d6debb` but remains marked unresolved on GitHub because no authorization was given to reply to or resolve review threads. Thread-aware final reads found no other inline threads and no conversation comments.
 
 ## Local Notes
 
@@ -107,5 +108,5 @@
 - No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
 - Sibling repositories remain off-limits and were not read or modified.
 - Issue `#173` remains open: the independent backup disk, verified online backup, quiesced full snapshot, and file-level isolated restore are complete. Remaining work is to classify the isolated KB HTTP 500, pass the KB restore smoke, recheck the root-disk/deployment capacity gate, and only then install/enable the daily backup timer with recorded evidence.
-- Next action: complete PR `#183`'s remote checks/Copilot/comment window, apply only confirmed-safe in-scope findings, and report the final ready-for-review state. Separately, wait for explicit approval of the Issue `#173` diagnostic request before inspecting the isolated KB HTTP 500.
+- Next action: PR `#183` is ready for human merge review; keep Issue `#174` open for automatic stale/build, full-pipeline integration, and page-status follow-ups. Separately, wait for explicit approval of the Issue `#173` diagnostic request before inspecting the isolated KB HTTP 500.
 - Issue ordering decision: continue the local `#174` PR1 state-machine fix now because `#173` blocks production activation, not local feature development. Keep `#173` paused pending explicit least-privilege diagnostic approval, and keep Epic `#172` open until its child chain is actually complete.
