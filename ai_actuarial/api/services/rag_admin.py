@@ -1616,7 +1616,7 @@ def build_agentic_ready_manifest(
                         publication_state["idempotent"] = True
                         publication_state["cas_won"] = True
                         publication_state["duplicate_retained"] = True
-                        publication_state["duplicate_gc_deferred"] = duplicate_gc_marked
+                        publication_state["duplicate_gc_deferred"] = True
                         publication_state["duplicate_gc_marked"] = duplicate_gc_marked
                         publication_state["duplicate_retained_reason"] = (
                             "governed garbage collection is deferred before automatic publication"

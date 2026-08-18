@@ -668,6 +668,58 @@ def test_fastapi_rag_admin_idempotent_ready_build_retains_validated_duplicate(
     )
 
 
+def test_fastapi_rag_admin_duplicate_keeps_deferred_compatibility_when_gc_mark_loses_guard(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-dedupe-gc-guard-loss",
+            "name": "Dedupe GC Guard Loss KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    first = client.post(
+        "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first.status_code == 200, first.text
+
+    monkeypatch.setattr(
+        Storage,
+        "mark_agentic_ready_publication_redundant_duplicate",
+        lambda _storage, _publication_id, *, expected_active_publication_id: False,
+    )
+    duplicate = client.post(
+        "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
+        json={},
+    )
+
+    assert duplicate.status_code == 200, duplicate.text
+    body = duplicate.json()
+    candidate = body["candidate_publication"]
+    state = body["publication_state"]
+    assert candidate["status"] == "validated"
+    assert Path(candidate["output_dir"]).is_dir()
+    assert state["duplicate_retained"] is True
+    assert state["duplicate_gc_deferred"] is True
+    assert state["duplicate_gc_marked"] is False
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        recorded_candidate = storage.get_agentic_ready_publication(
+            candidate["publication_id"]
+        )
+        assert recorded_candidate is not None
+        assert recorded_candidate["retention_class"] == ""
+        assert recorded_candidate["gc_state"] == ""
+    finally:
+        storage.close()
+
+
 def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
     tmp_path: Path,
     monkeypatch,
