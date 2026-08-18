@@ -4,7 +4,7 @@
 - Branch: `codex/issue-174-ready-data-retention-gc`
 - Baseline: `origin/main` at merge commit `9320efe` (merged PR `#182`).
 - Scope: Design and implement the local, default-off bounded retention/GC contract for non-serving ready-data publication attempts in Issue `#174`; do not change production, UI, full-pipeline, `#175`, or `#179`.
-- Managed PR heartbeat: Issue `#174` retention/GC implementation and independent specification plus quality/security reviews are complete. Final local verification is green; the branch is entering the mandatory Codex CLI review and publication gates.
+- Managed PR heartbeat: PR `#183` is open and ready for review from `codex/issue-174-ready-data-retention-gc` into `main`. The initial head is `4359aee`; the remote feedback window started at `2026-08-18T22:37:50Z`, and `python-smoke` is running.
 
 ## Active State
 
@@ -98,6 +98,7 @@
 - Issue `#174` retention/GC TDD and review gates: the final root focused suite passed `133 passed, 5 skipped`; the dedicated GC suite passed `40 passed, 1 skipped`; broader ready-data/API validation passed `129 passed, 5 skipped`. Skips are real Windows link/reparse capability sentinels intended for Linux CI. Targeted Ruff, Python compilation, and `git diff --check` passed. Independent final specification and quality/security reviews are both CLEAN.
 - A broad repository run before the final narrow path-reservation patch completed `783 passed, 5 skipped, 5 failed`; the five failures reproduce independently as unrelated Windows environment issues: one SQLite temp-file cleanup `WinError 32` and four tests invoking bare `npm` while only `npm.cmd` is available. The final narrow changes are covered by the focused and broader green suites.
 - The mandatory pre-PR Codex CLI review was attempted on the final diff. The installed entry point `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe` failed to start with `Access is denied`; this is the same local tooling blocker recorded for earlier PRs, so publication continues under the repository's documented fallback.
+- PR `#183` was created as a ready-for-review Issue `#174` follow-up and deliberately does not close the Issue. It contains only the bounded retention/GC backend, storage, status, and focused test changes; automatic GC remains disabled.
 
 ## Local Notes
 
@@ -105,5 +106,5 @@
 - No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
 - Sibling repositories remain off-limits and were not read or modified.
 - Issue `#173` remains open: the independent backup disk, verified online backup, quiesced full snapshot, and file-level isolated restore are complete. Remaining work is to classify the isolated KB HTTP 500, pass the KB restore smoke, recheck the root-disk/deployment capacity gate, and only then install/enable the daily backup timer with recorded evidence.
-- Next action: run the mandatory Codex CLI review gate, stage only the scoped files while excluding `graphify-out/` and the router metadata, then commit, push, create the Issue `#174` follow-up PR, and complete the remote checks/Copilot/comment window. Separately, wait for explicit approval of the Issue `#173` diagnostic request before inspecting the isolated KB HTTP 500.
+- Next action: complete PR `#183`'s remote checks/Copilot/comment window, apply only confirmed-safe in-scope findings, and report the final ready-for-review state. Separately, wait for explicit approval of the Issue `#173` diagnostic request before inspecting the isolated KB HTTP 500.
 - Issue ordering decision: continue the local `#174` PR1 state-machine fix now because `#173` blocks production activation, not local feature development. Keep `#173` paused pending explicit least-privilege diagnostic approval, and keep Epic `#172` open until its child chain is actually complete.
