@@ -377,7 +377,7 @@ def test_validated_retry_preserves_failed_attempt_and_uses_new_publication_id(
             storage,
             index_version_id="idx-retry",
             artifact_digest="digest-retry",
-            output_dir=str(tmp_path / "staging" / "retry"),
+            output_dir=str(tmp_path / "staging" / "retry-validated"),
             status="validated",
         )
         assert validated["publication_id"] != failed["publication_id"]

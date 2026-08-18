@@ -6,6 +6,7 @@ import os
 import shutil
 import stat
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,6 +18,10 @@ from ai_actuarial.storage import Storage, _split_visible_categories
 
 
 MAX_CATEGORY_STATS_CATEGORIES = 100
+READY_DATA_GC_POLICY_VERSION = "ready-data-retention-gc.v1"
+READY_DATA_GC_MINIMUM_AGE_DAYS = 14
+READY_DATA_GC_KEEP_LATEST = 2
+READY_DATA_GC_CLAIM_LEASE_SECONDS = 300
 
 
 class RagAdminError(Exception):
@@ -1599,21 +1604,35 @@ def build_agentic_ready_manifest(
                         and active_validation
                         and active_validation["valid"]
                     ):
+                        duplicate_gc_marked = (
+                            storage.mark_agentic_ready_publication_redundant_duplicate(
+                                recorded_publication_id,
+                                expected_active_publication_id=str(
+                                    active_publication["publication_id"]
+                                ),
+                            )
+                        )
                         publication_state = current_publication_state
                         publication_state["idempotent"] = True
                         publication_state["cas_won"] = True
                         publication_state["duplicate_retained"] = True
-                        publication_state["duplicate_gc_deferred"] = True
+                        publication_state["duplicate_gc_deferred"] = duplicate_gc_marked
+                        publication_state["duplicate_gc_marked"] = duplicate_gc_marked
                         publication_state["duplicate_retained_reason"] = (
-                            "filesystem validation is not atomic with slot confirmation; "
-                            "garbage collection is deferred before automatic publication"
+                            "governed garbage collection is deferred before automatic publication"
+                            if duplicate_gc_marked
+                            else "slot state changed before the duplicate could be classified; "
+                            "candidate remains retryable"
                         )
                         # Automatic deletion cannot be made atomic with filesystem
                         # validation. Keep the candidate until a future governed GC pass.
                         _append_validation_warning(
                             validation,
-                            "validated duplicate retained; garbage collection is deferred "
-                            "before automatic publication",
+                            "validated duplicate retained; governed garbage collection is deferred "
+                            "before automatic publication"
+                            if duplicate_gc_marked
+                            else "validated duplicate retained as retryable because its garbage-collection "
+                            "classification lost the slot guard",
                         )
 
                 if not publication_state:
@@ -1705,6 +1724,458 @@ def build_agentic_ready_manifest(
             "publication_state": publication_state,
             "validation": validation,
         }
+    finally:
+        storage.close()
+
+
+def _parse_ready_data_gc_cutoff(value: str | None) -> tuple[datetime, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        cutoff = datetime.now(timezone.utc)
+    else:
+        try:
+            cutoff = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("ready-data GC cutoff must be an ISO-8601 timestamp") from exc
+        if cutoff.tzinfo is None:
+            raise ValueError("ready-data GC cutoff must include a timezone")
+        cutoff = cutoff.astimezone(timezone.utc)
+    return cutoff, cutoff.isoformat()
+
+
+def _ready_data_gc_tree_is_safe(path: Path) -> None:
+    if _is_link_or_reparse(path):
+        raise ValueError("ready_data GC path is a link or reparse point")
+    if not path.is_dir():
+        raise ValueError("ready_data GC path is not a directory")
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    for directory, dirnames, filenames in os.walk(
+        path,
+        topdown=True,
+        onerror=raise_walk_error,
+        followlinks=False,
+    ):
+        directory_path = Path(directory)
+        if _is_link_or_reparse(directory_path):
+            raise ValueError("ready_data GC tree contains a link or reparse point")
+        for name in [*dirnames, *filenames]:
+            entry = directory_path / name
+            if _is_link_or_reparse(entry):
+                raise ValueError("ready_data GC tree contains a link or reparse point")
+
+
+def _ready_data_gc_paths(
+    *,
+    publication_id: str,
+    output_dir: str,
+    recorded_quarantine_dir: str,
+    allowed_output_root: str,
+) -> tuple[Path, Path]:
+    allowed_root = Path(os.path.abspath(allowed_output_root))
+    if _is_link_or_reparse(allowed_root) or not allowed_root.is_dir():
+        raise ValueError("allowed ready_data root is missing, linked, or a reparse point")
+    output_path = Path(os.path.abspath(output_dir))
+    try:
+        relative_output = output_path.relative_to(allowed_root)
+    except ValueError as exc:
+        raise ValueError("ready_data GC output escaped the allowed root") from exc
+    if output_path.name.startswith("build-") is False or output_path.parent.name != "staging":
+        raise ValueError("ready_data GC only accepts staging build attempts")
+    if _is_link_or_reparse(output_path):
+        raise ValueError("ready_data GC attempt is a link or reparse point")
+
+    cursor = allowed_root
+    for part in relative_output.parts[:-1]:
+        cursor /= part
+        if _is_link_or_reparse(cursor):
+            raise ValueError("ready_data GC ancestor is a link or reparse point")
+        if not cursor.is_dir():
+            raise ValueError("ready_data GC staging ancestor is missing")
+    resolved_root = allowed_root.resolve(strict=True)
+    resolved_parent = output_path.parent.resolve(strict=True)
+    try:
+        resolved_parent.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError("ready_data GC staging root escaped the allowed root") from exc
+
+    quarantine_name = f".gc-quarantine-{publication_id}"
+    quarantine_path = output_path.parent / quarantine_name
+    if quarantine_path.parent != output_path.parent or quarantine_path.name != quarantine_name:
+        raise ValueError("ready_data GC publication ID produced an unsafe quarantine path")
+    if _is_link_or_reparse(quarantine_path):
+        raise ValueError("ready_data GC quarantine is a link or reparse point")
+    if recorded_quarantine_dir:
+        recorded_path = Path(os.path.abspath(recorded_quarantine_dir))
+        if os.path.normcase(str(recorded_path)) != os.path.normcase(str(quarantine_path)):
+            raise ValueError("recorded ready_data GC quarantine path does not match policy")
+    if output_path.exists() and quarantine_path.exists():
+        raise ValueError("both ready_data attempt and quarantine paths exist")
+    if output_path.exists():
+        _ready_data_gc_tree_is_safe(output_path)
+        if output_path.resolve(strict=True).parent != resolved_parent:
+            raise ValueError("ready_data GC attempt escaped its staging root")
+    if quarantine_path.exists():
+        _ready_data_gc_tree_is_safe(quarantine_path)
+        if quarantine_path.resolve(strict=True).parent != resolved_parent:
+            raise ValueError("ready_data GC quarantine escaped its staging root")
+    return output_path, quarantine_path
+
+
+def _ready_data_gc_item(publication: Mapping[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        "publication_id": str(publication["publication_id"]),
+        "kb_id": str(publication["kb_id"]),
+        "profile": str(publication["profile"]),
+        "status": str(publication["status"]),
+        "retention_class": str(publication.get("retention_class") or ""),
+        "gc_state": str(publication.get("gc_state") or ""),
+        "marked_at": publication.get("gc_marked_at"),
+        "output_dir": str(publication.get("output_dir") or ""),
+        "quarantine_dir": str(publication.get("gc_quarantine_dir") or ""),
+        "claim_token": str(publication.get("gc_claim_token") or ""),
+        "lease_expires_at": publication.get("gc_lease_expires_at"),
+        "reason": reason,
+    }
+
+
+def _ready_data_gc_fingerprint_payload(
+    *,
+    publications: list[dict[str, Any]],
+    slots: list[dict[str, Any]],
+    retained: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    cutoff_at: str,
+    policy_version: str,
+) -> dict[str, Any]:
+    return {
+        "policy": {
+            "version": policy_version,
+            "minimum_age_days": READY_DATA_GC_MINIMUM_AGE_DAYS,
+            "keep_latest": READY_DATA_GC_KEEP_LATEST,
+            "claim_lease_seconds": READY_DATA_GC_CLAIM_LEASE_SECONDS,
+        },
+        "cutoff_at": cutoff_at,
+        "publications": [
+            {
+                "publication_id": item["publication_id"],
+                "kb_id": item["kb_id"],
+                "profile": item["profile"],
+                "status": item["status"],
+                "source_version_kind": item["source_version_kind"],
+                "output_dir": item["output_dir"],
+                "retention_class": item["retention_class"],
+                "gc_state": item["gc_state"],
+                "gc_marked_at": item["gc_marked_at"],
+                "gc_quarantine_dir": item["gc_quarantine_dir"],
+                "gc_claim_token": item["gc_claim_token"],
+                "gc_lease_expires_at": item["gc_lease_expires_at"],
+                "gc_updated_at": item["gc_updated_at"],
+            }
+            for item in publications
+        ],
+        "slots": slots,
+        "plan_membership": {
+            "retained": retained,
+            "candidates": candidates,
+            "skipped": skipped,
+        },
+    }
+
+
+def _build_ready_data_publication_gc_plan(
+    storage: Storage,
+    *,
+    cutoff_at: str | None,
+    policy_version: str,
+) -> dict[str, Any]:
+    cutoff, canonical_cutoff = _parse_ready_data_gc_cutoff(cutoff_at)
+    minimum_marked_at = cutoff - timedelta(days=READY_DATA_GC_MINIMUM_AGE_DAYS)
+    publications = storage.list_agentic_ready_publications_for_gc()
+    slots = storage.list_agentic_ready_slots_for_gc()
+    active_ids = {str(item["active_publication_id"]) for item in slots if item["active_publication_id"]}
+    previous_ids = {
+        str(item["previous_publication_id"]) for item in slots if item["previous_publication_id"]
+    }
+    serving_path_keys: set[str] = set()
+    for publication in publications:
+        if str(publication["publication_id"]) in active_ids | previous_ids:
+            serving_path_keys.update(
+                Storage._agentic_ready_path_keys(str(publication["output_dir"]))
+            )
+    for row in storage._conn.execute(
+        "SELECT output_dir FROM agentic_ready_manifests WHERE output_dir <> ''"
+    ).fetchall():
+        serving_path_keys.update(Storage._agentic_ready_path_keys(str(row[0])))
+
+    marked_times: dict[str, datetime] = {}
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for publication in publications:
+        if (
+            publication["retention_class"] != "redundant_duplicate"
+            or publication["gc_state"] not in {"eligible", "claimed", "delete_failed"}
+        ):
+            continue
+        parsed = Storage._parse_iso_to_utc(publication["gc_marked_at"])
+        if parsed is None:
+            continue
+        publication_id = str(publication["publication_id"])
+        marked_times[publication_id] = parsed
+        grouped.setdefault(
+            (str(publication["kb_id"]), str(publication["profile"])), []
+        ).append(publication)
+    newest_ids: set[str] = set()
+    for attempts in grouped.values():
+        attempts.sort(
+            key=lambda item: (
+                marked_times[str(item["publication_id"])],
+                str(item["publication_id"]),
+            ),
+            reverse=True,
+        )
+        newest_ids.update(
+            str(item["publication_id"]) for item in attempts[:READY_DATA_GC_KEEP_LATEST]
+        )
+
+    retained: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for publication in publications:
+        publication_id = str(publication["publication_id"])
+        if publication_id in active_ids:
+            retained.append(_ready_data_gc_item(publication, reason="active_slot"))
+            continue
+        if publication_id in previous_ids:
+            retained.append(_ready_data_gc_item(publication, reason="previous_slot"))
+            continue
+        if str(publication["source_version_kind"]).startswith("legacy"):
+            retained.append(_ready_data_gc_item(publication, reason="legacy_publication"))
+            continue
+        if not publication["retention_class"]:
+            reason = (
+                "retryable_validated_candidate"
+                if publication["status"] == "validated"
+                else "unknown_historical_attempt"
+            )
+            retained.append(_ready_data_gc_item(publication, reason=reason))
+            continue
+        if publication["retention_class"] != "redundant_duplicate":
+            retained.append(_ready_data_gc_item(publication, reason="unknown_retention_class"))
+            continue
+        if publication["gc_state"] == "deleted":
+            retained.append(_ready_data_gc_item(publication, reason="gc_tombstone"))
+            continue
+        if publication["status"] != "validated" or publication["gc_state"] not in {
+            "eligible",
+            "claimed",
+            "delete_failed",
+        }:
+            skipped.append(_ready_data_gc_item(publication, reason="invalid_gc_state"))
+            continue
+        publication_path_keys = Storage._agentic_ready_path_keys(
+            str(publication["output_dir"])
+        )
+        if Storage._agentic_ready_path_key_sets_overlap(
+            serving_path_keys,
+            publication_path_keys,
+        ):
+            retained.append(_ready_data_gc_item(publication, reason="serving_output_path"))
+            continue
+        if storage._agentic_ready_paths_conflict(
+            publication_id,
+            str(publication["output_dir"]),
+        ):
+            retained.append(_ready_data_gc_item(publication, reason="reserved_output_path"))
+            continue
+        marked_at = marked_times.get(publication_id)
+        if marked_at is None:
+            skipped.append(_ready_data_gc_item(publication, reason="invalid_marked_at"))
+            continue
+        recovering = publication["gc_state"] in {"claimed", "delete_failed"}
+        if publication["gc_state"] == "claimed":
+            lease_expires_at = Storage._parse_iso_to_utc(
+                publication["gc_lease_expires_at"]
+            )
+            if lease_expires_at is None:
+                skipped.append(_ready_data_gc_item(publication, reason="invalid_claim_lease"))
+                continue
+            if lease_expires_at > cutoff:
+                skipped.append(_ready_data_gc_item(publication, reason="claim_in_progress"))
+                continue
+        if not recovering and publication_id in newest_ids:
+            retained.append(_ready_data_gc_item(publication, reason="newest_two"))
+            continue
+        if not recovering and marked_at > minimum_marked_at:
+            retained.append(_ready_data_gc_item(publication, reason="minimum_age_not_met"))
+            continue
+        try:
+            output_path, quarantine_path = _ready_data_gc_paths(
+                publication_id=publication_id,
+                output_dir=str(publication["output_dir"]),
+                recorded_quarantine_dir=str(publication["gc_quarantine_dir"]),
+                allowed_output_root=str(
+                    Path(storage.db_path).resolve().parent / "agentic_ready_data"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            item = _ready_data_gc_item(publication, reason="unsafe_path")
+            item["detail"] = str(exc)
+            skipped.append(item)
+            continue
+        if storage._agentic_ready_paths_conflict(
+            publication_id,
+            str(output_path),
+            str(quarantine_path),
+        ):
+            retained.append(_ready_data_gc_item(publication, reason="reserved_output_path"))
+            continue
+        item = _ready_data_gc_item(publication, reason="retention_boundary_exceeded")
+        item["output_dir"] = str(output_path)
+        item["quarantine_dir"] = str(quarantine_path)
+        candidates.append(item)
+
+    for bucket in (retained, candidates, skipped):
+        bucket.sort(key=lambda item: (item["kb_id"], item["profile"], item["publication_id"]))
+    fingerprint_payload = _ready_data_gc_fingerprint_payload(
+        publications=publications,
+        slots=slots,
+        retained=retained,
+        candidates=candidates,
+        skipped=skipped,
+        cutoff_at=canonical_cutoff,
+        policy_version=policy_version,
+    )
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            fingerprint_payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "mode": "dry_run",
+        "policy": fingerprint_payload["policy"],
+        "cutoff_at": canonical_cutoff,
+        "plan_fingerprint": fingerprint,
+        "retained": retained,
+        "candidates": candidates,
+        "deleted": [],
+        "skipped": skipped,
+        "failures": [],
+    }
+
+
+def plan_ready_data_publication_gc(
+    *,
+    db_path: str,
+    cutoff_at: str | None = None,
+) -> dict[str, Any]:
+    """Return a deterministic, zero-mutation ready-data retention plan."""
+    storage = Storage.open_read_only(db_path)
+    try:
+        plan = _build_ready_data_publication_gc_plan(
+            storage,
+            cutoff_at=cutoff_at,
+            policy_version=READY_DATA_GC_POLICY_VERSION,
+        )
+        storage.assert_read_only_snapshot_unchanged()
+        return plan
+    finally:
+        storage.close()
+
+
+def execute_ready_data_publication_gc(
+    *,
+    db_path: str,
+    cutoff_at: str,
+    plan_fingerprint: str,
+    policy_version: str = READY_DATA_GC_POLICY_VERSION,
+) -> dict[str, Any]:
+    """Explicitly execute one exact dry-run plan with per-attempt CAS claims."""
+    if policy_version != READY_DATA_GC_POLICY_VERSION:
+        raise ValueError("ready-data GC policy version does not match the running code")
+    if not str(plan_fingerprint or "").strip():
+        raise ValueError("ready-data GC plan fingerprint is required")
+    storage = Storage(db_path)
+    try:
+        with storage.transaction(immediate=True):
+            current_plan = _build_ready_data_publication_gc_plan(
+                storage,
+                cutoff_at=cutoff_at,
+                policy_version=policy_version,
+            )
+            if current_plan["plan_fingerprint"] != plan_fingerprint:
+                raise ValueError("ready-data GC plan fingerprint no longer matches current state")
+            result = {
+                **current_plan,
+                "mode": "execute",
+                "deleted": [],
+                "skipped": list(current_plan["skipped"]),
+                "failures": [],
+            }
+            for candidate in current_plan["candidates"]:
+                publication_id = str(candidate["publication_id"])
+                claim = storage.claim_agentic_ready_publication_gc(
+                    publication_id,
+                    expected_gc_state=str(candidate["gc_state"]),
+                    expected_marked_at=str(candidate["marked_at"]),
+                    quarantine_dir=str(candidate["quarantine_dir"]),
+                    cutoff_at=str(current_plan["cutoff_at"]),
+                    minimum_age_days=READY_DATA_GC_MINIMUM_AGE_DAYS,
+                    keep_latest=READY_DATA_GC_KEEP_LATEST,
+                    claim_lease_seconds=READY_DATA_GC_CLAIM_LEASE_SECONDS,
+                    expected_claim_token=str(candidate["claim_token"]),
+                )
+                if claim is None:
+                    item = dict(candidate)
+                    item["reason"] = "claim_lost"
+                    result["skipped"].append(item)
+                    continue
+                claim_token = str(claim["gc_claim_token"])
+                try:
+                    output_path, quarantine_path = _ready_data_gc_paths(
+                        publication_id=publication_id,
+                        output_dir=str(claim["output_dir"]),
+                        recorded_quarantine_dir=str(claim["gc_quarantine_dir"]),
+                        allowed_output_root=str(
+                            Path(db_path).resolve().parent / "agentic_ready_data"
+                        ),
+                    )
+                    if output_path.exists():
+                        _ready_data_gc_tree_is_safe(output_path)
+                        os.replace(output_path, quarantine_path)
+                    if quarantine_path.exists():
+                        _ready_data_gc_tree_is_safe(quarantine_path)
+                        shutil.rmtree(quarantine_path)
+                    finalized = storage.finish_agentic_ready_publication_gc(
+                        publication_id,
+                        claim_token=claim_token,
+                        deleted=True,
+                    )
+                    if not finalized or finalized["gc_state"] != "deleted":
+                        raise RuntimeError("ready-data GC tombstone finalization lost its claim")
+                    item = dict(candidate)
+                    item["reason"] = "deleted"
+                    result["deleted"].append(item)
+                except Exception as exc:  # noqa: BLE001
+                    storage.finish_agentic_ready_publication_gc(
+                        publication_id,
+                        claim_token=claim_token,
+                        deleted=False,
+                        error_message=str(exc),
+                    )
+                    item = dict(candidate)
+                    item["reason"] = "delete_failed"
+                    item["detail"] = str(exc)
+                    result["failures"].append(item)
+            for bucket_name in ("deleted", "skipped", "failures"):
+                result[bucket_name].sort(
+                    key=lambda item: (item["kb_id"], item["profile"], item["publication_id"])
+                )
+            return result
     finally:
         storage.close()
 
