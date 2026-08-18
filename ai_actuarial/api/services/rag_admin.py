@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import shutil
+import stat
+import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -370,6 +375,368 @@ def _resolve_agentic_output_dir(
     except ValueError as exc:
         raise RagAdminError("output_dir must stay under the database agentic_ready_data directory", status_code=400) from exc
     return str(resolved)
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(path_stat.st_mode):
+        return True
+    file_attributes = getattr(path_stat, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(file_attributes & reparse_flag)
+
+
+def _agentic_staging_output_dir(base_output_dir: str, *, allowed_output_root: str) -> tuple[str, str]:
+    allowed_root = Path(allowed_output_root).resolve()
+    base = Path(base_output_dir).resolve()
+    try:
+        base.relative_to(allowed_root)
+    except ValueError as exc:
+        raise RagAdminError("ready_data output must stay under the allowed data root", status_code=400) from exc
+    staging_path = base / "staging"
+    if _is_link_or_reparse(staging_path):
+        raise RagAdminError("ready_data staging root cannot be a link or reparse point", status_code=400)
+    staging_path.mkdir(parents=True, exist_ok=True)
+    if _is_link_or_reparse(staging_path):
+        raise RagAdminError("ready_data staging root cannot be a link or reparse point", status_code=400)
+    staging_root = staging_path.resolve(strict=True)
+    try:
+        staging_root.relative_to(allowed_root)
+    except ValueError as exc:
+        raise RagAdminError("ready_data staging root escaped the allowed data root", status_code=400) from exc
+    candidate = staging_root / f"build-{uuid.uuid4().hex}"
+    if candidate.parent != staging_root or _is_link_or_reparse(candidate):
+        raise RagAdminError("invalid ready_data staging candidate", status_code=400)
+    return str(candidate), str(staging_root)
+
+
+def _ready_data_artifact_digest(output_dir: str, artifact_files: list[str]) -> str:
+    """Hash ready-data content while excluding location/time-only manifest fields."""
+    root_path = Path(os.path.abspath(output_dir))
+    if _is_link_or_reparse(root_path):
+        raise ValueError("ready_data output is a link or reparse point")
+    root = root_path.resolve(strict=True)
+    digest = hashlib.sha256()
+    for artifact in sorted(set(artifact_files)):
+        artifact_path = root / artifact
+        if _is_link_or_reparse(artifact_path):
+            raise ValueError(f"ready_data artifact is a link or reparse point: {artifact}")
+        artifact_path = artifact_path.resolve(strict=True)
+        try:
+            artifact_path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"artifact path escapes output_dir: {artifact}") from exc
+        content = artifact_path.read_bytes()
+        if artifact_path.name == "ready_data_manifest.json":
+            manifest = json.loads(content.decode("utf-8"))
+            if isinstance(manifest, dict):
+                manifest = dict(manifest)
+                manifest.pop("built_at", None)
+                manifest.pop("output_dir", None)
+                manifest.pop("source_db", None)
+                content = json.dumps(
+                    manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+        digest.update(artifact.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _same_ready_publication_identity(
+    first: Mapping[str, Any],
+    second: Mapping[str, Any],
+) -> bool:
+    return all(
+        str(first.get(key) or "") == str(second.get(key) or "")
+        for key in (
+            "kb_id",
+            "source_version_kind",
+            "source_version_id",
+            "profile",
+            "artifact_digest",
+        )
+    )
+
+
+def _validate_recorded_ready_publication(
+    publication: Mapping[str, Any],
+    *,
+    validator,
+    allowed_output_root: str,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    output_dir = str(publication.get("output_dir") or "")
+    if not output_dir:
+        return {"valid": False, "errors": ["publication output_dir is empty"], "warnings": []}
+    try:
+        allowed_path = Path(os.path.abspath(allowed_output_root))
+        if _is_link_or_reparse(allowed_path):
+            raise ValueError("allowed ready_data root is a link or reparse point")
+        allowed_root = allowed_path.resolve(strict=True)
+        output_path = Path(os.path.abspath(output_dir))
+        try:
+            relative_output = output_path.relative_to(allowed_path)
+        except ValueError as exc:
+            raise ValueError("publication output escaped the allowed ready_data root") from exc
+        current = allowed_path
+        for part in relative_output.parts:
+            current = current / part
+            if _is_link_or_reparse(current):
+                raise ValueError("publication output contains a link or reparse point")
+        output_root = output_path.resolve(strict=True)
+        output_root.relative_to(allowed_root)
+        if not output_root.is_dir():
+            raise ValueError("publication output is not a directory")
+
+        artifact_files = list(publication.get("artifact_files") or [])
+        if "ready_data_manifest.json" not in artifact_files:
+            raise ValueError("publication artifact list does not include ready_data_manifest.json")
+        validation = validator(str(output_root))
+        errors.extend(str(item) for item in validation.get("errors") or [])
+        warnings.extend(str(item) for item in validation.get("warnings") or [])
+        if validation.get("valid"):
+            actual_digest = _ready_data_artifact_digest(str(output_root), artifact_files)
+            if actual_digest != str(publication.get("artifact_digest") or ""):
+                errors.append("publication artifact digest does not match recorded digest")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(str(exc))
+    return {"valid": not errors, "errors": errors, "warnings": warnings}
+
+
+def _verified_staging_candidate(
+    *,
+    output_dir: str,
+    staging_root: str,
+    allowed_output_root: str,
+) -> tuple[Path, Path] | None:
+    allowed_root = Path(allowed_output_root).resolve()
+    root_path = Path(os.path.abspath(staging_root))
+    if _is_link_or_reparse(root_path):
+        raise ValueError("staging root is a link or reparse point")
+    root = root_path.resolve(strict=True)
+    try:
+        root.relative_to(allowed_root)
+    except ValueError as exc:
+        raise ValueError("staging root escaped the allowed output root") from exc
+
+    candidate_path = Path(os.path.abspath(output_dir))
+    if candidate_path.parent != root_path:
+        raise ValueError("staging candidate is not a direct child of the verified staging root")
+    if _is_link_or_reparse(candidate_path):
+        raise ValueError("staging candidate is a link or reparse point")
+    if not candidate_path.exists():
+        return None
+    candidate = candidate_path.resolve(strict=True)
+    if candidate.parent != root:
+        raise ValueError("staging candidate escaped the verified staging root")
+    return candidate, root
+
+
+def _require_generated_staging_candidate(
+    *,
+    returned_output_dir: str,
+    expected_output_dir: str,
+    staging_root: str,
+    allowed_output_root: str,
+) -> Path:
+    returned_path = Path(os.path.abspath(returned_output_dir))
+    expected_path = Path(os.path.abspath(expected_output_dir))
+    if os.path.normcase(str(returned_path)) != os.path.normcase(str(expected_path)):
+        raise ValueError("ready_data builder returned an unexpected staging output path")
+    verified = _verified_staging_candidate(
+        output_dir=str(returned_path),
+        staging_root=staging_root,
+        allowed_output_root=allowed_output_root,
+    )
+    if verified is None:
+        raise ValueError("ready_data staging candidate does not exist")
+    candidate, _root = verified
+    if candidate != expected_path.resolve(strict=True):
+        raise ValueError("ready_data staging candidate no longer matches the generated path")
+    return candidate
+
+
+def _staging_tree_digest(
+    output_dir: str,
+    *,
+    staging_root: str,
+    allowed_output_root: str,
+) -> tuple[str, list[str]]:
+    verified = _verified_staging_candidate(
+        output_dir=output_dir,
+        staging_root=staging_root,
+        allowed_output_root=allowed_output_root,
+    )
+    artifact_files: list[str] = []
+    digest = hashlib.sha256()
+    if verified is None:
+        return digest.hexdigest(), artifact_files
+    root, _staging_root = verified
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        if _is_link_or_reparse(path):
+            raise ValueError(f"staging artifact is a link or reparse point: {path.name}")
+        relative = path.relative_to(root).as_posix()
+        artifact_files.append(relative)
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest(), artifact_files
+
+
+def _remove_unreferenced_staging_dir(
+    storage: Storage,
+    *,
+    output_dir: str,
+    staging_root: str,
+    allowed_output_root: str,
+) -> bool:
+    verified = _verified_staging_candidate(
+        output_dir=output_dir,
+        staging_root=staging_root,
+        allowed_output_root=allowed_output_root,
+    )
+    if verified is None:
+        return False
+    candidate, root = verified
+    if candidate == root or not candidate.is_dir():
+        return False
+    referenced_paths = {
+        Path(str(row[0])).resolve()
+        for row in storage._conn.execute(
+            "SELECT output_dir FROM agentic_ready_publications WHERE output_dir <> ''"
+        ).fetchall()
+        if row[0]
+    }
+    referenced_paths.update(
+        Path(str(row[0])).resolve()
+        for row in storage._conn.execute(
+            "SELECT output_dir FROM agentic_ready_manifests WHERE output_dir <> ''"
+        ).fetchall()
+        if row[0]
+    )
+    if candidate in referenced_paths:
+        return False
+    if _is_link_or_reparse(root) or _is_link_or_reparse(candidate):
+        raise ValueError("staging path became a link or reparse point before cleanup")
+    if candidate.parent != root:
+        raise ValueError("staging candidate is no longer under the verified staging root")
+    shutil.rmtree(candidate)
+    return True
+
+
+def _append_validation_warning(validation: dict[str, Any], warning: str) -> None:
+    warnings = validation.setdefault("warnings", [])
+    if warning not in warnings:
+        warnings.append(warning)
+
+
+def _best_effort_staging_cleanup(
+    storage: Storage,
+    *,
+    output_dir: str,
+    staging_root: str,
+    allowed_output_root: str,
+) -> str | None:
+    try:
+        _remove_unreferenced_staging_dir(
+            storage,
+            output_dir=output_dir,
+            staging_root=staging_root,
+            allowed_output_root=allowed_output_root,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"staging cleanup failed: {exc}"
+    return None
+
+
+def _bootstrap_legacy_ready_publication(
+    storage: Storage,
+    *,
+    kb_id: str,
+    profile: str,
+    validator,
+) -> None:
+    state = storage.get_agentic_ready_publication_state(kb_id=kb_id, profile=profile)
+    if state["active_publication_id"]:
+        return
+    legacy = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=profile)
+    if not legacy or legacy.get("status") != "ready" or legacy.get("publication_id"):
+        return
+    output_dir = str(legacy.get("output_dir") or "")
+    validation = validator(output_dir)
+    if not validation.get("valid"):
+        error_message = "; ".join(str(item) for item in validation.get("errors") or [])
+        raise ValueError(f"legacy ready_data validation failed: {error_message or 'unknown error'}")
+    artifact_files = list(legacy.get("artifact_files") or [])
+    artifact_digest = _ready_data_artifact_digest(output_dir, artifact_files)
+    publication = storage.record_agentic_ready_publication(
+        kb_id=kb_id,
+        index_version_id=None,
+        source_version_kind="legacy_ready_data",
+        source_version_id=f"artifact:{artifact_digest}",
+        profile=profile,
+        profile_version=str(legacy.get("profile_version") or "1"),
+        status="validated",
+        output_dir=output_dir,
+        artifact_files=artifact_files,
+        doc_count=int(legacy.get("doc_count") or 0),
+        section_count=int(legacy.get("section_count") or 0),
+        built_at=legacy.get("built_at"),
+        artifact_digest=artifact_digest,
+        source_db=str(legacy.get("source_db") or storage.db_path),
+        schema_versions=dict(legacy.get("schema_versions") or {}),
+    )
+    storage.publish_agentic_ready_publication(
+        str(publication["publication_id"]),
+        expected_active_publication_id=None,
+    )
+
+
+def _rollback_agentic_ready_publication(
+    storage: Storage,
+    *,
+    kb_id: str,
+    profile: str,
+    validator,
+    allowed_output_root: str,
+) -> dict[str, Any]:
+    """Validate the previous artifact immediately before the guarded slot swap."""
+    state = storage.get_agentic_ready_publication_state(
+        kb_id=kb_id,
+        profile=profile,
+    )
+    active_id = state["active_publication_id"]
+    previous_id = state["previous_publication_id"]
+    previous = state.get("previous_publication")
+    if not active_id or not previous_id or not previous:
+        raise ValueError("no previous validated ready-data publication is available")
+    validation = _validate_recorded_ready_publication(
+        previous,
+        validator=validator,
+        allowed_output_root=allowed_output_root,
+    )
+    if not validation["valid"]:
+        error_message = "; ".join(validation["errors"])
+        raise ValueError(
+            f"previous ready_data validation failed: {error_message or 'unknown error'}"
+        )
+    return storage.rollback_agentic_ready_publication(
+        kb_id=kb_id,
+        profile=profile,
+        expected_active_publication_id=str(active_id),
+        expected_previous_publication_id=str(previous_id),
+        validated_previous_publication_id=str(previous_id),
+    )
 
 
 def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]:
@@ -1068,70 +1435,278 @@ def build_agentic_ready_manifest(
             profile_version=profile_def.version,
             requested_output_dir=payload.get("output_dir"),
         )
-        storage.upsert_agentic_ready_manifest(
-            kb_id=kid,
-            profile=profile,
-            profile_version=profile_def.version,
-            status="building",
-            output_dir=output_dir,
+        allowed_output_root = str((Path(db_path).resolve().parent / "agentic_ready_data").resolve())
+        staging_output_dir, staging_root = _agentic_staging_output_dir(
+            output_dir,
+            allowed_output_root=allowed_output_root,
         )
+        builder_manifest: dict[str, Any] = {}
+        candidate_output_dir = staging_output_dir
+        artifact_files: list[str] = []
+        artifact_digest = ""
+        source_version_kind = "failed_build_attempt"
+        source_version_id = f"attempt:{Path(staging_output_dir).name}"
+        candidate_publication: dict[str, Any] = {}
+        publication_state: dict[str, Any] = {}
+        validated_attempt_recorded = False
         try:
             builder_manifest = ready_data_builder.build_l0(
                 db_path=db_path,
-                output_dir=output_dir,
+                output_dir=staging_output_dir,
                 profile=profile,
                 kb_id=kid,
             )
-            validation = ready_data_builder.validate(str(builder_manifest.get("output_dir") or output_dir or ""))
+            returned_output_dir = str(builder_manifest.get("output_dir") or staging_output_dir)
+            _require_generated_staging_candidate(
+                returned_output_dir=returned_output_dir,
+                expected_output_dir=staging_output_dir,
+                staging_root=staging_root,
+                allowed_output_root=allowed_output_root,
+            )
+            candidate_output_dir = returned_output_dir
+            source_version_kind = str(builder_manifest.get("source_version_kind") or "")
+            source_version_id = str(builder_manifest.get("source_version_id") or "")
+            if not source_version_kind or not source_version_id:
+                raise ValueError("ready_data builder did not report its source snapshot version")
+            validation = ready_data_builder.validate(candidate_output_dir)
+            artifact_files = list(builder_manifest.get("artifact_files") or [])
+            artifact_digest = _ready_data_artifact_digest(candidate_output_dir, artifact_files)
             if not validation.get("valid"):
                 error_message = "; ".join(str(item) for item in validation.get("errors") or [])
-                storage.upsert_agentic_ready_manifest(
+                candidate_publication = storage.record_agentic_ready_publication(
                     kb_id=kid,
+                    index_version_id=None,
+                    source_version_kind=source_version_kind,
+                    source_version_id=source_version_id,
                     profile=profile,
                     profile_version=str(builder_manifest.get("profile_version") or profile_def.version),
                     status="failed",
-                    output_dir=str(builder_manifest.get("output_dir") or output_dir or ""),
-                    artifact_files=list(builder_manifest.get("artifact_files") or []),
+                    output_dir="",
+                    artifact_files=artifact_files,
                     doc_count=int(builder_manifest.get("doc_count") or 0),
                     section_count=int(builder_manifest.get("section_count") or 0),
                     built_at=builder_manifest.get("built_at"),
+                    artifact_digest=artifact_digest,
                     source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
                     error_message=error_message or "ready_data validation failed",
                 )
+                cleanup_warning = _best_effort_staging_cleanup(
+                    storage,
+                    output_dir=candidate_output_dir,
+                    staging_root=staging_root,
+                    allowed_output_root=allowed_output_root,
+                )
+                if cleanup_warning:
+                    _append_validation_warning(validation, cleanup_warning)
             else:
-                storage.upsert_agentic_ready_manifest(
+                _bootstrap_legacy_ready_publication(
+                    storage,
                     kb_id=kid,
                     profile=profile,
+                    validator=ready_data_builder.validate,
+                )
+                _require_generated_staging_candidate(
+                    returned_output_dir=candidate_output_dir,
+                    expected_output_dir=staging_output_dir,
+                    staging_root=staging_root,
+                    allowed_output_root=allowed_output_root,
+                )
+                candidate_publication = storage.record_agentic_ready_publication(
+                    kb_id=kid,
+                    index_version_id=None,
+                    source_version_kind=source_version_kind,
+                    source_version_id=source_version_id,
+                    profile=profile,
                     profile_version=str(builder_manifest.get("profile_version") or profile_def.version),
-                    status="ready",
-                    output_dir=str(builder_manifest.get("output_dir") or output_dir or ""),
-                    artifact_files=list(builder_manifest.get("artifact_files") or []),
+                    status="validated",
+                    output_dir=candidate_output_dir,
+                    artifact_files=artifact_files,
                     doc_count=int(builder_manifest.get("doc_count") or 0),
                     section_count=int(builder_manifest.get("section_count") or 0),
                     built_at=builder_manifest.get("built_at"),
+                    artifact_digest=artifact_digest,
                     source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
                     error_message="",
                 )
+                validated_attempt_recorded = True
+                recorded_publication_id = str(candidate_publication["publication_id"])
+                current_publication_state = storage.get_agentic_ready_publication_state(
+                    kb_id=kid,
+                    profile=profile,
+                )
+                _require_generated_staging_candidate(
+                    returned_output_dir=str(candidate_publication["output_dir"]),
+                    expected_output_dir=staging_output_dir,
+                    staging_root=staging_root,
+                    allowed_output_root=allowed_output_root,
+                )
+                active_publication = current_publication_state.get("active_publication")
+                if active_publication:
+                    active_validation = _validate_recorded_ready_publication(
+                        active_publication,
+                        validator=ready_data_builder.validate,
+                        allowed_output_root=allowed_output_root,
+                    )
+                else:
+                    active_validation = None
+
+                if active_publication and active_validation and active_validation["valid"]:
+                    expected_active_id = str(active_publication["publication_id"])
+                    guarded_state = storage.get_agentic_ready_publication_state(
+                        kb_id=kid,
+                        profile=profile,
+                    )
+                    guarded_active = guarded_state.get("active_publication")
+                    if (
+                        guarded_state["active_publication_id"] == expected_active_id
+                        and guarded_active
+                    ):
+                        guarded_validation = _validate_recorded_ready_publication(
+                            guarded_active,
+                            validator=ready_data_builder.validate,
+                            allowed_output_root=allowed_output_root,
+                        )
+                        confirmed_state = storage.get_agentic_ready_publication_state(
+                            kb_id=kid,
+                            profile=profile,
+                        )
+                        if confirmed_state["active_publication_id"] == expected_active_id:
+                            current_publication_state = confirmed_state
+                            active_publication = guarded_active
+                            active_validation = guarded_validation
+                        else:
+                            publication_state = confirmed_state
+                    else:
+                        publication_state = guarded_state
+
+                    if publication_state and not publication_state.get("idempotent"):
+                        publication_state["idempotent"] = False
+                        publication_state["cas_won"] = False
+                        publication_state["cas_lost"] = True
+
+                if not publication_state:
+                    same_active_identity = bool(
+                        active_publication
+                        and _same_ready_publication_identity(
+                            active_publication,
+                            candidate_publication,
+                        )
+                    )
+                    if (
+                        same_active_identity
+                        and active_validation
+                        and active_validation["valid"]
+                    ):
+                        publication_state = current_publication_state
+                        publication_state["idempotent"] = True
+                        publication_state["cas_won"] = True
+                        publication_state["duplicate_retained"] = True
+                        publication_state["duplicate_gc_deferred"] = True
+                        publication_state["duplicate_retained_reason"] = (
+                            "filesystem validation is not atomic with slot confirmation; "
+                            "garbage collection is deferred before automatic publication"
+                        )
+                        # Automatic deletion cannot be made atomic with filesystem
+                        # validation. Keep the candidate until a future governed GC pass.
+                        _append_validation_warning(
+                            validation,
+                            "validated duplicate retained; garbage collection is deferred "
+                            "before automatic publication",
+                        )
+
+                if not publication_state:
+                    corrupt_active = bool(active_validation and not active_validation["valid"])
+                    corrupt_error = ""
+                    if corrupt_active:
+                        corrupt_error = "; ".join(active_validation["errors"])
+                    publication_state = storage.publish_agentic_ready_publication(
+                        recorded_publication_id,
+                        expected_active_publication_id=current_publication_state[
+                            "active_publication_id"
+                        ],
+                        preserve_expected_active_as_previous=not corrupt_active,
+                        invalidated_expected_active_error=corrupt_error,
+                    )
+                    if corrupt_active:
+                        if publication_state["cas_won"]:
+                            _append_validation_warning(
+                                validation,
+                                f"replaced invalid active ready_data: {corrupt_error}",
+                            )
+                        else:
+                            publication_state["cas_lost"] = True
+                            _append_validation_warning(
+                                validation,
+                                "detected invalid active ready_data but replacement "
+                                f"lost publication CAS: {corrupt_error}",
+                            )
+                    candidate_publication = (
+                        storage.get_agentic_ready_publication(recorded_publication_id)
+                        or candidate_publication
+                    )
         except Exception as exc:  # noqa: BLE001
             validation = {"valid": False, "errors": [str(exc)], "warnings": []}
-            storage.upsert_agentic_ready_manifest(
+            if validated_attempt_recorded:
+                candidate_publication = (
+                    storage.get_agentic_ready_publication(
+                        str(candidate_publication["publication_id"])
+                    )
+                    or candidate_publication
+                )
+            else:
+                if not artifact_digest:
+                    try:
+                        artifact_digest, artifact_files = _staging_tree_digest(
+                            candidate_output_dir,
+                            staging_root=staging_root,
+                            allowed_output_root=allowed_output_root,
+                        )
+                    except Exception as digest_exc:  # noqa: BLE001
+                        artifact_digest = hashlib.sha256(b"").hexdigest()
+                        artifact_files = []
+                        _append_validation_warning(validation, f"staging digest failed: {digest_exc}")
+                candidate_publication = storage.record_agentic_ready_publication(
+                    kb_id=kid,
+                    index_version_id=None,
+                    source_version_kind=source_version_kind,
+                    source_version_id=source_version_id,
+                    profile=profile,
+                    profile_version=profile_def.version,
+                    status="failed",
+                    output_dir="",
+                    artifact_files=artifact_files,
+                    doc_count=int(builder_manifest.get("doc_count") or 0),
+                    section_count=int(builder_manifest.get("section_count") or 0),
+                    built_at=builder_manifest.get("built_at"),
+                    artifact_digest=artifact_digest,
+                    source_db=str(builder_manifest.get("source_db") or db_path),
+                    schema_versions=dict(builder_manifest.get("schema_versions") or {}),
+                    error_message=str(exc),
+                )
+                cleanup_warning = _best_effort_staging_cleanup(
+                    storage,
+                    output_dir=candidate_output_dir,
+                    staging_root=staging_root,
+                    allowed_output_root=allowed_output_root,
+                )
+                if cleanup_warning:
+                    _append_validation_warning(validation, cleanup_warning)
+        if not publication_state:
+            publication_state = storage.get_agentic_ready_publication_state(
                 kb_id=kid,
                 profile=profile,
-                profile_version=profile_def.version,
-                status="failed",
-                output_dir=output_dir or "",
-                error_message=str(exc),
             )
         return {
             "kb_id": kid,
             "manifest": _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile),
+            "candidate_publication": candidate_publication,
+            "publication_state": publication_state,
             "validation": validation,
         }
     finally:
         storage.close()
-
 
 
 def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], headers: Mapping[str, str], auth: Any | None = None) -> dict[str, Any]:

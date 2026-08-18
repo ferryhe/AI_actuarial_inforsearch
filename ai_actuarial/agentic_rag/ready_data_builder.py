@@ -13,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -400,8 +401,92 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 
 # ── Builder ───────────────────────────────────────────────────────────────────
 
-def build_l0(
-    db_path: str | None = None,
+
+def _load_builder_source_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    kb_id: str | None,
+) -> tuple[list[sqlite3.Row], list[sqlite3.Row], str]:
+    """Read the exact builder inputs from one consistent SQLite snapshot."""
+    conn.execute("BEGIN")
+    try:
+        kb_join = ""
+        where_params: list[Any] = []
+        if kb_id:
+            kb_join = "JOIN rag_kb_files kf ON kf.file_url = c.file_url AND kf.kb_id = ?"
+            where_params.append(kb_id)
+        catalog_columns = _table_columns(conn, "catalog_items")
+        markdown_select = "c.markdown_content" if "markdown_content" in catalog_columns else "NULL"
+        rag_chunk_count_select = "c.rag_chunk_count" if "rag_chunk_count" in catalog_columns else "0"
+        catalog_rows = conn.execute(
+            f"""SELECT c.file_url, f.title, c.category, c.summary, c.keywords,
+                       {rag_chunk_count_select} AS rag_chunk_count,
+                       {markdown_select} AS markdown_content,
+                       f.source_site, f.published_time
+                FROM catalog_items c
+                {kb_join}
+                LEFT JOIN files f ON c.file_url = f.url
+                WHERE c.status = 'ok'
+                ORDER BY c.category, c.file_url""",
+            where_params,
+        ).fetchall()
+
+        file_urls = [row["file_url"] for row in catalog_rows]
+        placeholders = ",".join("?" for _ in file_urls)
+        chunk_rows: list[sqlite3.Row] = []
+        if file_urls:
+            use_bound_chunk_sets = bool(
+                kb_id
+                and _table_exists(conn, "kb_chunk_bindings")
+                and conn.execute(
+                    "SELECT 1 FROM kb_chunk_bindings WHERE kb_id = ? LIMIT 1",
+                    (kb_id,),
+                ).fetchone()
+            )
+            if use_bound_chunk_sets:
+                chunk_rows = conn.execute(
+                    f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
+                               fcs.file_url
+                        FROM global_chunks g
+                        JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
+                        JOIN kb_chunk_bindings b
+                          ON b.chunk_set_id = fcs.chunk_set_id
+                         AND b.file_url = fcs.file_url
+                         AND b.kb_id = ?
+                        WHERE fcs.file_url IN ({placeholders})
+                        ORDER BY fcs.file_url, g.chunk_index""",
+                    [kb_id, *file_urls],
+                ).fetchall()
+            else:
+                chunk_rows = conn.execute(
+                    f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
+                               fcs.file_url
+                        FROM global_chunks g
+                        JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
+                        WHERE fcs.file_url IN ({placeholders})
+                        ORDER BY fcs.file_url, g.chunk_index""",
+                    file_urls,
+                ).fetchall()
+
+        source_payload = json.dumps(
+            {
+                "catalog_rows": [dict(row) for row in catalog_rows],
+                "chunk_rows": [dict(row) for row in chunk_rows],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        source_version_id = f"rdsnap_{hashlib.sha256(source_payload).hexdigest()}"
+        return catalog_rows, chunk_rows, source_version_id
+    finally:
+        conn.rollback()
+
+
+def _build_l0_with_connection(
+    conn: sqlite3.Connection,
+    *,
+    db_path: str,
     output_dir: str | None = None,
     profile: str = "general",
     kb_id: str | None = None,
@@ -417,10 +502,6 @@ def build_l0(
     Returns:
         Manifest dict with built_at, doc_count, section_count, artifact_files.
     """
-    db_path = db_path or get_db_path()
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-
     if profile not in PROFILES:
         raise ValueError(
             f"Unknown profile {profile!r}. Use one of: {', '.join(PROFILES)}"
@@ -438,64 +519,10 @@ def build_l0(
     now_utc = datetime.now(timezone.utc).isoformat()
 
     # ── 1. Build doc_catalog.jsonl ────────────────────────────────────────
-    kb_join = ""
-    where_params: list[Any] = []
-    if kb_id:
-        kb_join = "JOIN rag_kb_files kf ON kf.file_url = c.file_url AND kf.kb_id = ?"
-        where_params.append(kb_id)
-    catalog_columns = _table_columns(conn, "catalog_items")
-    markdown_select = "c.markdown_content" if "markdown_content" in catalog_columns else "NULL"
-    rag_chunk_count_select = "c.rag_chunk_count" if "rag_chunk_count" in catalog_columns else "0"
-    catalog_rows = conn.execute(
-        f"""SELECT c.file_url, f.title, c.category, c.summary, c.keywords,
-                   {rag_chunk_count_select} AS rag_chunk_count,
-                   {markdown_select} AS markdown_content,
-                   f.source_site, f.published_time
-            FROM catalog_items c
-            {kb_join}
-            LEFT JOIN files f ON c.file_url = f.url
-            WHERE c.status = 'ok'
-            ORDER BY c.category, c.file_url""",
-        where_params,
-    ).fetchall()
-
-    # Collect per-doc chunks for heading extraction
-    file_urls = [r["file_url"] for r in catalog_rows]
-    placeholders = ",".join("?" for _ in file_urls)
-    chunk_rows = []
-    if file_urls:
-        use_bound_chunk_sets = bool(
-            kb_id
-            and _table_exists(conn, "kb_chunk_bindings")
-            and conn.execute(
-                "SELECT 1 FROM kb_chunk_bindings WHERE kb_id = ? LIMIT 1",
-                (kb_id,),
-            ).fetchone()
-        )
-        if use_bound_chunk_sets:
-            chunk_rows = conn.execute(
-                f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
-                           fcs.file_url
-                    FROM global_chunks g
-                    JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
-                    JOIN kb_chunk_bindings b
-                      ON b.chunk_set_id = fcs.chunk_set_id
-                     AND b.file_url = fcs.file_url
-                     AND b.kb_id = ?
-                    WHERE fcs.file_url IN ({placeholders})
-                    ORDER BY fcs.file_url, g.chunk_index""",
-                [kb_id, *file_urls],
-            ).fetchall()
-        else:
-            chunk_rows = conn.execute(
-                f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
-                           fcs.file_url
-                    FROM global_chunks g
-                    JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
-                    WHERE fcs.file_url IN ({placeholders})
-                    ORDER BY fcs.file_url, g.chunk_index""",
-                file_urls,
-            ).fetchall()
+    catalog_rows, chunk_rows, source_version_id = _load_builder_source_snapshot(
+        conn,
+        kb_id=kb_id,
+    )
 
     # Group chunks by file_url
     chunks_by_file: dict[str, list[dict]] = {}
@@ -806,6 +833,8 @@ def build_l0(
         "kb_id": kb_id or "",
         "scope": "knowledge_base" if kb_id else "global",
         "source_db": db_path,
+        "source_version_kind": "catalog_chunks_snapshot",
+        "source_version_id": source_version_id,
         "output_dir": output_dir,
         "doc_count": doc_count,
         "section_count": section_count,
@@ -829,7 +858,6 @@ def build_l0(
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    conn.close()
     logger.info(
         "%s ready_data built: %d docs, %d sections → %s",
         profile,
@@ -838,6 +866,28 @@ def build_l0(
         output_dir,
     )
     return manifest
+
+
+def build_l0(
+    db_path: str | None = None,
+    output_dir: str | None = None,
+    profile: str = "general",
+    kb_id: str | None = None,
+) -> dict:
+    """Build ready_data while guaranteeing the SQLite connection is closed."""
+    resolved_db_path = db_path or get_db_path()
+    conn = sqlite3.connect(resolved_db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return _build_l0_with_connection(
+            conn,
+            db_path=resolved_db_path,
+            output_dir=output_dir,
+            profile=profile,
+            kb_id=kb_id,
+        )
+    finally:
+        conn.close()
 
 
 def _safe_jsonl_load(file_path: str) -> tuple[list[dict], list[str]]:

@@ -48,6 +48,8 @@ class Storage:
             "kb_index_versions",
             "kb_index_items",
             "agentic_ready_manifests",
+            "agentic_ready_publications",
+            "agentic_ready_slots",
             "weekly_update_summaries",
             "rag_knowledge_bases",
             "users",
@@ -505,6 +507,50 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS agentic_ready_publications (
+                publication_id TEXT PRIMARY KEY,
+                kb_id TEXT NOT NULL,
+                index_version_id TEXT,
+                source_version_kind TEXT NOT NULL,
+                source_version_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                profile_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                output_dir TEXT NOT NULL,
+                artifact_files_json TEXT NOT NULL DEFAULT '[]',
+                doc_count INTEGER NOT NULL DEFAULT 0,
+                section_count INTEGER NOT NULL DEFAULT 0,
+                built_at TEXT,
+                artifact_digest TEXT NOT NULL,
+                source_db TEXT,
+                schema_versions_json TEXT NOT NULL DEFAULT '{}',
+                error_message TEXT,
+                validated_at TEXT,
+                published_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agentic_ready_slots (
+                kb_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                active_publication_id TEXT,
+                previous_publication_id TEXT,
+                automatic_publish_enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(kb_id, profile),
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE,
+                FOREIGN KEY(active_publication_id) REFERENCES agentic_ready_publications(publication_id),
+                FOREIGN KEY(previous_publication_id) REFERENCES agentic_ready_publications(publication_id)
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS weekly_update_summaries (
                 id TEXT PRIMARY KEY,
                 period_start TEXT NOT NULL,
@@ -560,6 +606,22 @@ class Storage:
             ON agentic_ready_manifests(kb_id, profile)
             """
         )
+        self._migrate_agentic_ready_publication_attempt_schema()
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_agentic_ready_publications_kb_profile
+            ON agentic_ready_publications(kb_id, profile, created_at DESC)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_agentic_ready_publications_identity
+            ON agentic_ready_publications(
+                kb_id, source_version_kind, source_version_id, profile,
+                artifact_digest, created_at DESC
+            )
+            """
+        )
         self._conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_weekly_update_summaries_period
@@ -607,8 +669,127 @@ class Storage:
                 "target_profile_id": "TEXT",
             },
         )
+        self._ensure_columns(
+            "agentic_ready_manifests",
+            {
+                "publication_id": "TEXT",
+                "index_version_id": "TEXT",
+                "source_version_kind": "TEXT",
+                "source_version_id": "TEXT",
+                "artifact_digest": "TEXT",
+            },
+        )
         self._ensure_rag_kb_embedding_columns()
         self._conn.commit()
+
+    def _migrate_agentic_ready_publication_attempt_schema(self) -> None:
+        """Remove the draft logical-identity UNIQUE constraint without losing slots."""
+        identity_columns = {
+            "kb_id",
+            "source_version_kind",
+            "source_version_id",
+            "profile",
+            "artifact_digest",
+        }
+        has_identity_unique = False
+        for row in self._conn.execute(
+            "PRAGMA index_list(agentic_ready_publications)"
+        ).fetchall():
+            if not bool(row[2]):
+                continue
+            columns = {
+                str(item[2])
+                for item in self._conn.execute(
+                    f"PRAGMA index_info({json.dumps(str(row[1]))})"
+                ).fetchall()
+            }
+            if columns == identity_columns:
+                has_identity_unique = True
+                break
+        if not has_identity_unique:
+            return
+
+        replacement = "agentic_ready_publications_attempts_new"
+        self._conn.commit()
+        foreign_keys_enabled = bool(
+            self._conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        )
+        self._conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(f"DROP TABLE IF EXISTS {replacement}")
+            self._conn.execute(
+                f"""
+                CREATE TABLE {replacement} (
+                    publication_id TEXT PRIMARY KEY,
+                    kb_id TEXT NOT NULL,
+                    index_version_id TEXT,
+                    source_version_kind TEXT NOT NULL,
+                    source_version_id TEXT NOT NULL,
+                    profile TEXT NOT NULL,
+                    profile_version TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    output_dir TEXT NOT NULL,
+                    artifact_files_json TEXT NOT NULL DEFAULT '[]',
+                    doc_count INTEGER NOT NULL DEFAULT 0,
+                    section_count INTEGER NOT NULL DEFAULT 0,
+                    built_at TEXT,
+                    artifact_digest TEXT NOT NULL,
+                    source_db TEXT,
+                    schema_versions_json TEXT NOT NULL DEFAULT '{{}}',
+                    error_message TEXT,
+                    validated_at TEXT,
+                    published_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+                )
+                """
+            )
+            columns = (
+                "publication_id, kb_id, index_version_id, source_version_kind, "
+                "source_version_id, profile, profile_version, status, output_dir, "
+                "artifact_files_json, doc_count, section_count, built_at, "
+                "artifact_digest, source_db, schema_versions_json, error_message, "
+                "validated_at, published_at, created_at, updated_at"
+            )
+            self._conn.execute(
+                f"INSERT INTO {replacement} ({columns}) "
+                f"SELECT {columns} FROM agentic_ready_publications"
+            )
+            self._conn.execute("DROP TABLE agentic_ready_publications")
+            self._conn.execute(
+                f"ALTER TABLE {replacement} RENAME TO agentic_ready_publications"
+            )
+            violations = []
+            for table in (
+                "agentic_ready_publications",
+                "agentic_ready_slots",
+            ):
+                violations.extend(
+                    self._conn.execute(
+                        f"PRAGMA foreign_key_check({table})"
+                    ).fetchall()
+                )
+            if violations:
+                raise RuntimeError(
+                    "ready-data publication attempt migration broke foreign-key references"
+                )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        finally:
+            self._conn.execute(
+                f"PRAGMA foreign_keys={'ON' if foreign_keys_enabled else 'OFF'}"
+            )
+            restored = bool(
+                self._conn.execute("PRAGMA foreign_keys").fetchone()[0]
+            )
+            if restored != foreign_keys_enabled:
+                raise RuntimeError(
+                    "ready-data publication migration could not restore foreign-key mode"
+                )
 
     def _ensure_columns(self, table: str, columns: dict[str, str]) -> None:
         if table not in self._SCHEMA_TABLES:
@@ -3007,6 +3188,11 @@ class Storage:
         source_db: str = "",
         schema_versions: dict[str, Any] | None = None,
         error_message: str = "",
+        publication_id: str = "",
+        index_version_id: str | None = None,
+        source_version_kind: str = "",
+        source_version_id: str = "",
+        artifact_digest: str = "",
     ) -> dict[str, Any]:
         """Create or replace the latest Agentic ready-data manifest registry row."""
         normalized_profile = str(profile or "general").strip().lower() or "general"
@@ -3030,9 +3216,11 @@ class Storage:
             INSERT INTO agentic_ready_manifests (
                 manifest_id, kb_id, profile, profile_version, status, output_dir,
                 artifact_files_json, doc_count, section_count, built_at, source_db,
-                schema_versions_json, error_message, created_at, updated_at
+                schema_versions_json, error_message, created_at, updated_at,
+                publication_id, index_version_id, source_version_kind,
+                source_version_id, artifact_digest
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(kb_id, profile) DO UPDATE SET
                 profile_version = excluded.profile_version,
                 status = excluded.status,
@@ -3044,6 +3232,11 @@ class Storage:
                 source_db = excluded.source_db,
                 schema_versions_json = excluded.schema_versions_json,
                 error_message = excluded.error_message,
+                publication_id = excluded.publication_id,
+                index_version_id = excluded.index_version_id,
+                source_version_kind = excluded.source_version_kind,
+                source_version_id = excluded.source_version_id,
+                artifact_digest = excluded.artifact_digest,
                 updated_at = excluded.updated_at
             """,
             (
@@ -3062,6 +3255,11 @@ class Storage:
                 error_message,
                 created_at,
                 now,
+                publication_id,
+                index_version_id,
+                source_version_kind,
+                source_version_id,
+                artifact_digest,
             ),
         )
         self._maybe_commit()
@@ -3073,7 +3271,9 @@ class Storage:
             """
             SELECT manifest_id, kb_id, profile, profile_version, status, output_dir,
                    artifact_files_json, doc_count, section_count, built_at, source_db,
-                   schema_versions_json, error_message, created_at, updated_at
+                   schema_versions_json, error_message, created_at, updated_at,
+                   publication_id, index_version_id, source_version_kind,
+                   source_version_id, artifact_digest
             FROM agentic_ready_manifests
             WHERE kb_id = ? AND profile = ?
             LIMIT 1
@@ -3089,7 +3289,9 @@ class Storage:
             """
             SELECT manifest_id, kb_id, profile, profile_version, status, output_dir,
                    artifact_files_json, doc_count, section_count, built_at, source_db,
-                   schema_versions_json, error_message, created_at, updated_at
+                   schema_versions_json, error_message, created_at, updated_at,
+                   publication_id, index_version_id, source_version_kind,
+                   source_version_id, artifact_digest
             FROM agentic_ready_manifests
             WHERE kb_id = ?
             ORDER BY updated_at DESC
@@ -3123,7 +3325,418 @@ class Storage:
             "error_message": row[12] or "",
             "created_at": row[13],
             "updated_at": row[14],
+            "publication_id": row[15] or "",
+            "index_version_id": row[16],
+            "source_version_kind": row[17] or "",
+            "source_version_id": row[18] or "",
+            "artifact_digest": row[19] or "",
         }
+
+    def record_agentic_ready_publication(
+        self,
+        *,
+        kb_id: str,
+        index_version_id: str | None,
+        source_version_kind: str,
+        source_version_id: str,
+        profile: str,
+        profile_version: str,
+        status: str,
+        output_dir: str,
+        artifact_digest: str,
+        artifact_files: list[str] | None = None,
+        doc_count: int = 0,
+        section_count: int = 0,
+        built_at: str | None = None,
+        source_db: str = "",
+        schema_versions: dict[str, Any] | None = None,
+        error_message: str = "",
+    ) -> dict[str, Any]:
+        """Persist one independent validated or failed ready-data build attempt."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        normalized_status = str(status or "failed").strip().lower() or "failed"
+        if normalized_status not in {"failed", "validated"}:
+            raise ValueError("publication status must be 'failed' or 'validated'")
+        normalized_index_version_id = str(index_version_id).strip() if index_version_id else None
+        normalized_source_kind = str(source_version_kind or "").strip().lower()
+        normalized_source_id = str(source_version_id or "").strip()
+        if not normalized_source_kind or not normalized_source_id:
+            raise ValueError("source_version_kind and source_version_id are required")
+        normalized_digest = str(artifact_digest or "").strip()
+        if not normalized_digest:
+            raise ValueError("artifact_digest is required")
+
+        now = self._utcnow_iso()
+        publication_id = f"arp_{uuid.uuid4().hex}"
+        self._conn.execute(
+            """
+            INSERT INTO agentic_ready_publications (
+                publication_id, kb_id, index_version_id, source_version_kind,
+                source_version_id, profile, profile_version, status, output_dir,
+                artifact_files_json, doc_count, section_count, built_at,
+                artifact_digest, source_db, schema_versions_json,
+                error_message, validated_at, published_at, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                publication_id,
+                kb_id,
+                normalized_index_version_id,
+                normalized_source_kind,
+                normalized_source_id,
+                normalized_profile,
+                str(profile_version or "1"),
+                normalized_status,
+                str(output_dir or ""),
+                json.dumps(artifact_files or [], ensure_ascii=False),
+                int(doc_count or 0),
+                int(section_count or 0),
+                built_at,
+                normalized_digest,
+                source_db,
+                json.dumps(schema_versions or {}, ensure_ascii=False, sort_keys=True),
+                error_message,
+                now if normalized_status == "validated" else None,
+                now,
+                now,
+            ),
+        )
+        self._maybe_commit()
+        return self.get_agentic_ready_publication(publication_id) or {}
+
+    def discard_agentic_ready_publication(
+        self,
+        publication_id: str,
+        *,
+        expected_active_publication_id: str,
+    ) -> bool:
+        """Remove an unserved validated duplicate before its staging directory is cleaned."""
+        with self.transaction():
+            result = self._conn.execute(
+                """
+                DELETE FROM agentic_ready_publications
+                WHERE publication_id = ?
+                  AND status = 'validated'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM agentic_ready_slots
+                      WHERE active_publication_id = ? OR previous_publication_id = ?
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM agentic_ready_slots
+                      WHERE kb_id = agentic_ready_publications.kb_id
+                        AND profile = agentic_ready_publications.profile
+                        AND active_publication_id = ?
+                  )
+                """,
+                (
+                    publication_id,
+                    publication_id,
+                    publication_id,
+                    expected_active_publication_id,
+                ),
+            )
+        return result.rowcount == 1
+
+    def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT publication_id, kb_id, index_version_id, profile, profile_version,
+                   source_version_kind, source_version_id, status, output_dir,
+                   artifact_files_json, doc_count, section_count, built_at,
+                   artifact_digest, source_db, schema_versions_json, error_message,
+                   validated_at, published_at, created_at, updated_at
+            FROM agentic_ready_publications
+            WHERE publication_id = ?
+            LIMIT 1
+            """,
+            (publication_id,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            artifact_files = json.loads(row[9] or "[]")
+        except Exception:
+            artifact_files = []
+        try:
+            schema_versions = json.loads(row[15] or "{}")
+        except Exception:
+            schema_versions = {}
+        return {
+            "publication_id": row[0],
+            "kb_id": row[1],
+            "index_version_id": row[2],
+            "source_version_kind": row[5],
+            "source_version_id": row[6],
+            "profile": row[3],
+            "profile_version": row[4],
+            "status": row[7],
+            "output_dir": row[8] or "",
+            "artifact_files": artifact_files if isinstance(artifact_files, list) else [],
+            "doc_count": row[10] or 0,
+            "section_count": row[11] or 0,
+            "built_at": row[12],
+            "artifact_digest": row[13] or "",
+            "source_db": row[14] or "",
+            "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
+            "error_message": row[16] or "",
+            "validated_at": row[17],
+            "published_at": row[18],
+            "created_at": row[19],
+            "updated_at": row[20],
+        }
+
+    def get_agentic_ready_publication_state(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+    ) -> dict[str, Any]:
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = self._conn.execute(
+            """
+            SELECT active_publication_id, previous_publication_id,
+                   automatic_publish_enabled, updated_at
+            FROM agentic_ready_slots
+            WHERE kb_id = ? AND profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        active_id = str(row[0]) if row and row[0] else None
+        previous_id = str(row[1]) if row and row[1] else None
+        return {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "active_publication_id": active_id,
+            "previous_publication_id": previous_id,
+            "automatic_publish_enabled": bool(row[2]) if row else False,
+            "updated_at": row[3] if row else None,
+            "active_publication": self.get_agentic_ready_publication(active_id) if active_id else None,
+            "previous_publication": self.get_agentic_ready_publication(previous_id) if previous_id else None,
+        }
+
+    def _publish_agentic_ready_manifest_row(self, publication: dict[str, Any]) -> None:
+        self.upsert_agentic_ready_manifest(
+            kb_id=str(publication["kb_id"]),
+            profile=str(publication["profile"]),
+            profile_version=str(publication["profile_version"]),
+            status="ready",
+            output_dir=str(publication["output_dir"]),
+            artifact_files=list(publication["artifact_files"]),
+            doc_count=int(publication["doc_count"]),
+            section_count=int(publication["section_count"]),
+            built_at=publication.get("built_at"),
+            source_db=str(publication["source_db"]),
+            schema_versions=dict(publication["schema_versions"]),
+            error_message="",
+            publication_id=str(publication["publication_id"]),
+            index_version_id=publication["index_version_id"],
+            source_version_kind=str(publication["source_version_kind"]),
+            source_version_id=str(publication["source_version_id"]),
+            artifact_digest=str(publication["artifact_digest"]),
+        )
+
+    def publish_agentic_ready_publication(
+        self,
+        publication_id: str,
+        *,
+        expected_active_publication_id: str | None,
+        preserve_expected_active_as_previous: bool = True,
+        invalidated_expected_active_error: str = "",
+    ) -> dict[str, Any]:
+        """CAS-promote a validated attempt and optionally retain its predecessor."""
+        now = self._utcnow_iso()
+        with self.transaction():
+            candidate_lock = self._conn.execute(
+                """
+                UPDATE agentic_ready_publications
+                SET updated_at = updated_at
+                WHERE publication_id = ?
+                """,
+                (publication_id,),
+            )
+            if candidate_lock.rowcount != 1:
+                raise ValueError("ready-data publication not found")
+            publication = self.get_agentic_ready_publication(publication_id)
+            if not publication:
+                raise ValueError("ready-data publication not found")
+            kb_id = str(publication["kb_id"])
+            profile = str(publication["profile"])
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_slots (
+                    kb_id, profile, active_publication_id, previous_publication_id,
+                    automatic_publish_enabled, updated_at
+                )
+                VALUES (?, ?, NULL, NULL, 0, ?)
+                ON CONFLICT(kb_id, profile) DO NOTHING
+                """,
+                (kb_id, profile, now),
+            )
+            current = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=profile)
+            if current["active_publication_id"] == publication_id:
+                current["idempotent"] = True
+                current["cas_won"] = True
+                return current
+
+            if publication["status"] != "validated":
+                raise ValueError("only validated ready-data publications can be published")
+
+            if current["active_publication_id"] != expected_active_publication_id:
+                current["idempotent"] = False
+                current["cas_won"] = False
+                return current
+
+            previous_active_id = expected_active_publication_id
+            old_previous_id = current["previous_publication_id"]
+            next_previous_id = (
+                previous_active_id if preserve_expected_active_as_previous else None
+            )
+            slot_update = self._conn.execute(
+                """
+                UPDATE agentic_ready_slots
+                SET active_publication_id = ?, previous_publication_id = ?, updated_at = ?
+                WHERE kb_id = ? AND profile = ? AND active_publication_id IS ?
+                """,
+                (
+                    publication_id,
+                    next_previous_id,
+                    now,
+                    kb_id,
+                    profile,
+                    expected_active_publication_id,
+                ),
+            )
+            if slot_update.rowcount != 1:
+                current = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=profile)
+                current["idempotent"] = False
+                current["cas_won"] = False
+                return current
+
+            if old_previous_id and old_previous_id not in {previous_active_id, publication_id}:
+                self._conn.execute(
+                    "UPDATE agentic_ready_publications SET status = 'validated', updated_at = ? WHERE publication_id = ?",
+                    (now, old_previous_id),
+                )
+            if previous_active_id:
+                if preserve_expected_active_as_previous:
+                    self._conn.execute(
+                        "UPDATE agentic_ready_publications SET status = 'previous', updated_at = ? WHERE publication_id = ?",
+                        (now, previous_active_id),
+                    )
+                else:
+                    self._conn.execute(
+                        """
+                        UPDATE agentic_ready_publications
+                        SET status = 'failed', error_message = ?, updated_at = ?
+                        WHERE publication_id = ?
+                        """,
+                        (
+                            invalidated_expected_active_error
+                            or "active ready_data failed publication validation",
+                            now,
+                            previous_active_id,
+                        ),
+                    )
+            self._conn.execute(
+                """
+                UPDATE agentic_ready_publications
+                SET status = 'active', published_at = ?, updated_at = ?
+                WHERE publication_id = ?
+                """,
+                (now, now, publication_id),
+            )
+            self._publish_agentic_ready_manifest_row(publication)
+
+        state = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=profile)
+        state["idempotent"] = False
+        state["cas_won"] = True
+        return state
+
+    def rollback_agentic_ready_publication(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+        expected_active_publication_id: str,
+        expected_previous_publication_id: str,
+        validated_previous_publication_id: str,
+    ) -> dict[str, Any]:
+        """CAS-swap slots after the caller explicitly validates the previous artifact."""
+        if (
+            not validated_previous_publication_id
+            or validated_previous_publication_id != expected_previous_publication_id
+        ):
+            raise ValueError("previous ready-data publication was not explicitly validated")
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        now = self._utcnow_iso()
+        with self.transaction():
+            self._conn.execute(
+                """
+                UPDATE agentic_ready_slots
+                SET updated_at = updated_at
+                WHERE kb_id = ? AND profile = ?
+                """,
+                (kb_id, normalized_profile),
+            )
+            current = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=normalized_profile)
+            active_id = current["active_publication_id"]
+            previous_id = current["previous_publication_id"]
+            if not active_id or not previous_id:
+                raise ValueError("no previous validated ready-data publication is available")
+            if (
+                active_id != expected_active_publication_id
+                or previous_id != expected_previous_publication_id
+            ):
+                current["rolled_back"] = False
+                current["cas_won"] = False
+                return current
+            previous = self.get_agentic_ready_publication(str(previous_id))
+            if not previous or previous["status"] != "previous":
+                raise ValueError("previous ready-data publication is not validated")
+            slot_update = self._conn.execute(
+                """
+                UPDATE agentic_ready_slots
+                SET active_publication_id = ?, previous_publication_id = ?, updated_at = ?
+                WHERE kb_id = ? AND profile = ?
+                  AND active_publication_id = ?
+                  AND previous_publication_id = ?
+                """,
+                (
+                    previous_id,
+                    active_id,
+                    now,
+                    kb_id,
+                    normalized_profile,
+                    expected_active_publication_id,
+                    expected_previous_publication_id,
+                ),
+            )
+            if slot_update.rowcount != 1:
+                current = self.get_agentic_ready_publication_state(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                )
+                current["rolled_back"] = False
+                current["cas_won"] = False
+                return current
+            self._conn.execute(
+                "UPDATE agentic_ready_publications SET status = 'previous', updated_at = ? WHERE publication_id = ?",
+                (now, active_id),
+            )
+            self._conn.execute(
+                "UPDATE agentic_ready_publications SET status = 'active', published_at = ?, updated_at = ? WHERE publication_id = ?",
+                (now, now, previous_id),
+            )
+            self._publish_agentic_ready_manifest_row(previous)
+
+        state = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=normalized_profile)
+        state["rolled_back"] = True
+        state["cas_won"] = True
+        return state
 
     def create_kb_index_version(
         self,
