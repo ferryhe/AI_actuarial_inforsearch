@@ -2946,28 +2946,34 @@ class Storage:
         bound_by: str = "system_follow_latest",
     ) -> dict[str, Any]:
         """Move follow_latest bindings to the newest chunk_set for same file/profile."""
+        matching_rows_sql = """
+            SELECT kb_id, file_url, chunk_set_id
+            FROM kb_chunk_bindings
+            WHERE file_url = ?
+              AND binding_mode = 'follow_latest'
+              AND COALESCE(target_profile_id, '') = ?
+              AND chunk_set_id != ?
+        """
+        matching_params = (file_url, profile_id, chunk_set_id)
+        noop_response = {
+            "file_url": file_url,
+            "profile_id": profile_id,
+            "chunk_set_id": chunk_set_id,
+            "synced_bindings": 0,
+            "affected_kb_ids": [],
+        }
+        if not self._conn.execute(
+            f"{matching_rows_sql} LIMIT 1",
+            matching_params,
+        ).fetchone():
+            return noop_response
+
         affected_kb_ids: set[str] = set()
         synced = 0
         with self.transaction(immediate=True):
-            rows = self._conn.execute(
-                """
-                SELECT kb_id, file_url, chunk_set_id
-                FROM kb_chunk_bindings
-                WHERE file_url = ?
-                  AND binding_mode = 'follow_latest'
-                  AND COALESCE(target_profile_id, '') = ?
-                  AND chunk_set_id != ?
-                """,
-                (file_url, profile_id, chunk_set_id),
-            ).fetchall()
+            rows = self._conn.execute(matching_rows_sql, matching_params).fetchall()
             if not rows:
-                return {
-                    "file_url": file_url,
-                    "profile_id": profile_id,
-                    "chunk_set_id": chunk_set_id,
-                    "synced_bindings": 0,
-                    "affected_kb_ids": [],
-                }
+                return noop_response
 
             target = self._conn.execute(
                 """

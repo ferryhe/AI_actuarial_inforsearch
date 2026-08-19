@@ -675,9 +675,14 @@ def test_follow_latest_without_matching_rows_is_a_complete_noop(tmp_path: Path) 
 
 def test_follow_latest_without_matching_rows_does_not_validate_missing_target(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     storage = Storage(str(tmp_path / "follow-noop-missing-target.db"))
     try:
+        def fail_if_transaction_starts(*, immediate: bool = False):
+            raise AssertionError(f"unexpected transaction: immediate={immediate}")
+
+        monkeypatch.setattr(storage, "transaction", fail_if_transaction_starts)
         result = storage.sync_follow_latest_bindings_for_chunk_set(
             file_url="https://example.com/no-follow-binding.pdf",
             profile_id="missing-profile",
