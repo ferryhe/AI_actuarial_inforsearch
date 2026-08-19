@@ -1,12 +1,23 @@
 # Project Status
 
-- Date: 2026-08-18
-- Branch: `codex/issue-174-ready-data-source-state`
-- Baseline: `origin/main` at merge commit `6741cbb9bc3b0a8e3e419f963e7f0d8552d02ad5` (merged PR `#183`).
-- Scope: Implement the Issue `#174` ready-data source-state foundation: durable generations and authoritative source identity, soft/hard serving policy, default-off automation flags, legacy-safe read models, and reserved `superseded_generation` lifecycle; do not add an executor, automatic GC, UI, full-pipeline, production work, or `#175`/`#176`/`#179` behavior.
-- Managed PR heartbeat: PR `#184` is open and ready for review at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/184`. Its confirmed code head includes feedback fix `2055a0b`, is mergeable, and `python-smoke` passed. Four local review cycles and the narrow feedback re-review ended with independent specification and quality/security reviews CLEAN. Copilot's two actionable comments were accepted narrowly: publication-column capability detection is cached per `Storage` instance while retaining immutable read-only legacy fallback, and the source-event transaction docstring now describes both top-level atomic execution and nested savepoints. Both threads were replied to and resolved; the full post-push observation window found no further review or check blocker.
+- Date: 2026-08-19
+- Branch: `codex/issue-174-ready-data-membership-wiring`
+- Baseline: `origin/main` at `1c742dedfac62f305d492494d978a4273f27fadd` (merged PR `#184`).
+- Scope: Wire only actual Knowledge Base membership additions/removals to ready-data source state in the same SQLite transaction. Chunk binding, Catalog/file metadata, index/embedding commits, automatic executor/build/publish/GC, smoke query, UI, full-pipeline, deployment, production, and sibling repositories remain excluded.
+- Managed PR heartbeat: implementation and local gates are complete; commit, push, and a Ready for review PR using `Refs #174` are pending. Issue `#174` was reopened and its remaining scope was clarified at `https://github.com/ferryhe/AI_actuarial_inforsearch/issues/174#issuecomment-5342737685`.
 
 ## Active State
+
+- `KnowledgeBaseManager.add_files_to_kb()` and `remove_files_from_kb()` now co-locate membership writes, KB count/stat updates, and ready-data source generation/reason updates inside one `BEGIN IMMEDIATE` transaction. Actual adds emit `membership_added`/soft stale; actual removals emit `membership_removed`/hard stale; no-op calls do not advance generation.
+- A narrow `Storage.mark_agentic_ready_source_event_for_kb()` helper enumerates normalized, deduplicated profiles from source state, slots, manifests, publications, and configured KB profile, falling back to `general`; each affected profile advances at most once per batch and other KBs are untouched.
+- Source marking changes neither active/previous publication pointers nor serving manifests. Existing manual builds retain their synchronous behavior, and automatic build, publish, and GC remain default-off. No thread, task, builder, or external executor is launched before commit.
+- TDD evidence: the initial membership suite was RED with 6 failures out of 9 tests. The final strengthened membership contract has 8 passing tests, and the related KB/RAG admin/source-state/publication/GC/manual-build regression set finished with `210 passed, 5 skipped`; the skips are existing Windows link/reparse capability sentinels.
+- Targeted Ruff, `python -m compileall -q ai_actuarial tests`, and `git diff --check` passed. Independent specification and quality/security reviews, including narrow follow-up reviews of strengthened rollback/no-op/pointer/manifest coverage, were CLEAN.
+- The mandatory local Codex CLI review could not start because Windows returned `Access is denied` for `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe`. It was not retried through an unknown or alternate entrypoint.
+- The pre-existing line-ending-only state of `ai_actuarial/api/routers/rag_admin.py` remains content-diff zero and must not be committed. Untracked `graphify-out/` remains protected and untouched.
+- Issue `#173` received no new server diagnostic authorization; no server Agent, deployment, or production command was used. Sibling repositories remain off-limits and were not accessed.
+
+## Prior Context (through PR #184)
 
 - PR `#181` is merged. Production now has an independent 40 GiB ext4 backup disk mounted at `/data`.
 - A verified online SQLite backup and a verified quiesced database-and-data snapshot were created on the independent disk.
