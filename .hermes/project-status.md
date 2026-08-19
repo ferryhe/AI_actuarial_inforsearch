@@ -5,7 +5,7 @@
 - Workspace: `C:\Project\AI_actuarial_inforsearch`
 - Active branch: `codex/issue-174-ready-data-metadata-events`
 - Baseline: `origin/main` at `1b0e6d9fbfc9afa3c9fa2e2dd173d50b7c465335` (merged PR `#189`)
-- Worktree state: metadata-event implementation and verification complete; delivery commit/PR pending
+- Delivery: commit `7247088a42f302b829f5ff6dd24a48ced3d1dcb9`, Ready-for-review PR `#190`
 - Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
 - Execution rule: work on one bounded deliverable at a time. Do not start the next PR or a server action until the current deliverable reaches its terminal handoff.
 
@@ -84,6 +84,7 @@ Do these sequentially, one PR at a time:
   - `db_backend.py`, `StorageV2`, and `storage_factory.py` are exercised only by compatibility/example/tests in this repository and are not used by the current SQLite ready-data/API/task production chain.
   - `clear_local_path()` updates only the non-builder `local_path` audit/storage field after explicit deletion; deletion itself is marked transactionally first.
 - Independent specification review and quality/security review completed with no remaining in-scope findings. The mandatory Codex CLI review could not start because packaged WindowsApps `codex.exe` returned `Access is denied`; no alternate entrypoint was attempted.
+- PR `#190` is Ready, mergeable, and uses `Refs #174`. After the required observation window, `python-smoke` passed; Copilot reviewed all 7 changed files and generated no comments; ordinary comments, inline comments, and review threads were all empty.
 
 ## Program Dependency Order
 
@@ -123,10 +124,10 @@ After `#174` closes, re-read all live Issue states before selecting the next ite
 
 ## Immediate Next Action
 
-Commit and publish only the active metadata-events changes on `codex/issue-174-ready-data-metadata-events`, create a Ready-for-review PR with `Refs #174`, then observe CI and review feedback for the required window. No server Agent and no deployment are needed. After this PR is merged, refresh `main`, reconcile GitHub status, and create a fresh branch for the index-commit re-evaluation task.
+PR `#190` is ready for maintainer review/merge; no in-scope follow-up fix is pending. No server Agent and no deployment are needed. After this PR is merged, refresh `main`, reconcile GitHub status, and create a fresh branch for the index-commit re-evaluation task.
 
-## Current Uncommitted/Untracked State
+## Current Worktree State
 
-- Intended active-delivery changes: `.hermes/project-status.md`, `ai_actuarial/storage.py`, `ai_actuarial/api/services/files_write.py`, `ai_actuarial/catalog_incremental.py`, `ai_actuarial/collectors/web_page.py`, `ai_actuarial/rag/indexing.py`, and `tests/test_ready_data_metadata_events.py`.
+- The active-delivery changes are committed and pushed on `codex/issue-174-ready-data-metadata-events`; this status update is the only intended follow-up change.
 - `ai_actuarial/api/routers/rag_admin.py`: pre-existing line-ending metadata only; content diff zero; do not include.
 - `graphify-out/`: pre-existing untracked analysis output; do not include or clean.
