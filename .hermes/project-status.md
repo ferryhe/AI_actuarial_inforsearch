@@ -5,7 +5,7 @@
 - Workspace: `C:\Project\AI_actuarial_inforsearch`
 - Active branch: `codex/issue-174-ready-data-index-reevaluation`
 - Baseline: `origin/main` at `1f4f4598040974bb3d3e1740643a6d909514f240` (merged PR `#190`)
-- Delivery: commit `872695c`, Ready-for-review PR `#191`
+- Delivery: implementation commit `872695c`, review-fix commit `29ecd88`, Ready-for-review PR `#191`
 - Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
 - Execution rule: work on one bounded deliverable at a time. Do not start the next PR or a server action until the current deliverable reaches its terminal handoff.
 
@@ -70,7 +70,7 @@ Do these sequentially, one PR at a time:
 - Knowledge-base deletion clears ready-index lifecycle state and index rows transactionally; nested deletion is rejected before database or filesystem mutation so an outer rollback cannot restore a KB whose files were removed. Legacy/minimal schemas retain a safe capability-based migration path.
 - Manual build, build-only, optional auto-publish, default-off automation, and default-off GC behavior remain unchanged. No excluded UI, smoke, provenance, full-pipeline, retry/GC, deployment, server, or sibling-repository work was added.
 - Four rounds of independent specification and quality/security review completed with no remaining actionable findings. The mandatory Codex CLI review could not start because packaged WindowsApps `codex.exe` returned `Access is denied`; no alternate entrypoint was attempted.
-- PR `#191` is Ready-for-review, uses `Refs #174`, and awaits the required checks/review observation window. It must not be auto-merged.
+- PR `#191` is Ready-for-review and uses `Refs #174`. After the required post-fix observation window, `python-smoke` passed; Copilot's one test-helper maintenance comment was fixed in `29ecd88` and its only review thread is resolved; ordinary comments and additional reviews/threads are empty. The PR is Clean/Mergeable and must not be auto-merged.
 
 ## Program Dependency Order
 
@@ -103,15 +103,16 @@ After `#174` closes, re-read all live Issue states before selecting the next ite
 - Known unrelated Windows failures: one SQLite temporary-file cleanup lock and four tests invoking bare `npm` where this host exposes `npm.cmd`.
 - Windows symlink/reparse capability tests may skip locally and must run in Linux CI.
 - Current index re-evaluation plus ready-data automation/source-state, mutation events, publication/GC, task runtime, and RAG-admin regression: `320 passed, 5 skipped`.
+- Post-review focused re-run: index re-evaluation specialty `34 passed`; touched-test Ruff, compileall, and diff checks passed.
 - Current full repository run: `966 passed, 5 skipped, 5 known Windows-environment failures` (the same one temporary SQLite lock plus four bare-`npm` failures).
 - Ruff passes for all touched Python files. Repository-wide Ruff still reports 68 pre-existing findings outside this change. `python -m compileall -q ai_actuarial tests` and `git diff --check` pass.
 
 ## Immediate Next Action
 
-Observe PR `#191` checks and reviewer/Copilot feedback for the required window; fix only confirmed-safe in-scope findings. No server Agent, deployment, merge, or excluded follow-up is authorized.
+PR `#191` is ready for maintainer review/merge; no in-scope follow-up fix is pending. No server Agent, deployment, automatic merge, or excluded follow-up is authorized.
 
 ## Current Worktree State
 
-- The active index re-evaluation implementation is committed and pushed on `codex/issue-174-ready-data-index-reevaluation`; this status update is the only intended follow-up change.
+- The active index re-evaluation implementation and accepted review fix are committed and pushed on `codex/issue-174-ready-data-index-reevaluation`; this final status update is the only intended follow-up change.
 - `ai_actuarial/api/routers/rag_admin.py`: pre-existing line-ending metadata only; content diff zero; do not include.
 - `graphify-out/`: pre-existing untracked analysis output; do not include or clean.
