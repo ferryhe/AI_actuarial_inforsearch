@@ -2836,31 +2836,54 @@ class Storage:
         """Return KBs whose exact builder input includes one chunk set."""
         if not self._table_exists("rag_knowledge_bases") or not self._table_exists("rag_kb_files"):
             return ()
-        candidate_rows = self._conn.execute(
+        rows = self._conn.execute(
             """
-            SELECT DISTINCT kb.kb_id, fcs.file_url
-            FROM file_chunk_sets fcs
-            JOIN files f ON f.url = fcs.file_url
+            SELECT DISTINCT kb.kb_id
+            FROM file_chunk_sets target
+            JOIN files f ON f.url = target.file_url
             JOIN catalog_items c
-              ON c.file_url = fcs.file_url
+              ON c.file_url = target.file_url
              AND c.status = 'ok'
-            JOIN rag_kb_files kf ON kf.file_url = fcs.file_url
+            JOIN rag_kb_files kf ON kf.file_url = target.file_url
             JOIN rag_knowledge_bases kb ON kb.kb_id = kf.kb_id
-            WHERE fcs.chunk_set_id = ?
+            WHERE target.chunk_set_id = ?
+              AND (
+                EXISTS (
+                    SELECT 1
+                    FROM kb_chunk_bindings selected
+                    JOIN rag_kb_files selected_kf
+                      ON selected_kf.kb_id = selected.kb_id
+                     AND selected_kf.file_url = selected.file_url
+                    JOIN catalog_items selected_c
+                      ON selected_c.file_url = selected.file_url
+                     AND selected_c.status = 'ok'
+                    JOIN file_chunk_sets selected_fcs
+                      ON selected_fcs.chunk_set_id = selected.chunk_set_id
+                     AND selected_fcs.file_url = selected.file_url
+                    WHERE selected.kb_id = kb.kb_id
+                      AND selected.file_url = target.file_url
+                      AND selected.chunk_set_id = target.chunk_set_id
+                )
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM kb_chunk_bindings bound
+                    JOIN rag_kb_files bound_kf
+                      ON bound_kf.kb_id = bound.kb_id
+                     AND bound_kf.file_url = bound.file_url
+                    JOIN catalog_items bound_c
+                      ON bound_c.file_url = bound.file_url
+                     AND bound_c.status = 'ok'
+                    JOIN file_chunk_sets bound_fcs
+                      ON bound_fcs.chunk_set_id = bound.chunk_set_id
+                     AND bound_fcs.file_url = bound.file_url
+                    WHERE bound.kb_id = kb.kb_id
+                )
+              )
             ORDER BY kb.kb_id
             """,
             (chunk_set_id,),
         ).fetchall()
-        affected_kb_ids: list[str] = []
-        for row in candidate_rows:
-            kb_id = str(row[0] or "")
-            file_url = str(row[1] or "")
-            if not kb_id or not file_url:
-                continue
-            bound_selection = self._ready_data_bound_chunk_selection(kb_id)
-            if not bound_selection or (file_url, chunk_set_id) in bound_selection:
-                affected_kb_ids.append(kb_id)
-        return tuple(affected_kb_ids)
+        return tuple(str(row[0]) for row in rows if row[0])
 
     def list_file_chunk_sets(self, file_url: str) -> list[dict[str, Any]]:
         cur = self._conn.execute(

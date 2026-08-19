@@ -502,6 +502,39 @@ def test_bound_mode_ignores_an_unselected_chunk_set(tmp_path: Path) -> None:
         storage.close()
 
 
+def test_affected_kb_lookup_does_not_materialize_each_full_bound_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = Storage(str(tmp_path / "set-based-affected-kbs.db"))
+    try:
+        kb_id, _file_url, chunk_set_id = _seed_bound_context(
+            storage,
+            tmp_path,
+            name="set-based-affected-kbs",
+            initial_chunks=[_chunk("Before")],
+        )
+
+        def fail_materialization(*_args: object, **_kwargs: object) -> frozenset[tuple[str, str]]:
+            pytest.fail("affected-KB lookup must not materialize every KB's full selection")
+
+        monkeypatch.setattr(
+            storage,
+            "_ready_data_bound_chunk_selection",
+            fail_materialization,
+        )
+
+        storage.replace_global_chunks(
+            chunk_set_id=chunk_set_id,
+            chunks=[_chunk("After")],
+            overwrite=True,
+        )
+
+        assert _state(storage, kb_id)["pending_reasons"] == ["chunk_content_updated"]
+    finally:
+        storage.close()
+
+
 def test_multiple_affected_kbs_each_advance_once(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "multiple-kbs.db"))
     try:
