@@ -1,149 +1,132 @@
-# Project Status
+# Project Status — Canonical Handoff
 
-- Date: 2026-08-19
-- Branch: `codex/issue-174-ready-data-automatic-executor`
-- Baseline: `origin/main` at `adf8c9ec28059fdd001d1bfc839f5a4c214eb54f` (merged PR `#188`).
-- Scope: Implement only the Issue `#174` default-off, SQLite-driven ready-data automatic build/optional publication executor, its narrow permission-protected configuration API, scheduler wakeup, and regression tests. Catalog/file/index/embedding event expansion, full-pipeline/#179, UI, production/deployment, automatic GC, retention-policy changes, and sibling repositories remain excluded.
-- Managed PR heartbeat: PR `#189` is open, Ready for review, and mergeable at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/189` using `Refs #174`. After the full approximately 15-minute observation window, the latest-head `python-smoke` check passed and there are no ordinary conversation comments or additional reviews. Copilot reviewed all eight files and identified one valid scheduler-cadence issue; the regression was reproduced test-first and fixed in `ce9f35d`, so an injected sub-60-second polling interval is honored while the production default remains 60 seconds. The original thread remains visibly unresolved because no reply/resolve authorization was inferred, but its technical finding is fully addressed.
+- Updated: 2026-08-19 (America/New_York)
+- Repository: `ferryhe/AI_actuarial_inforsearch`
+- Workspace: `C:\Project\AI_actuarial_inforsearch`
+- Active branch: `codex/issue-174-ready-data-metadata-events`
+- Baseline: `origin/main` at `1b0e6d9fbfc9afa3c9fa2e2dd173d50b7c465335` (merged PR `#189`)
+- Worktree state: metadata-event implementation and verification complete; delivery commit/PR pending
+- Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
+- Execution rule: work on one bounded deliverable at a time. Do not start the next PR or a server action until the current deliverable reaches its terminal handoff.
 
-## Active State
+## Hard Boundaries
 
-- Ready-data automatic execution is default-off per `(kb_id, profile)`. The new configuration endpoint accepts only `false/false`, `true/false`, or `true/true`, requires `config.write`, rejects `false/true`, and keeps claim tokens out of API/status payloads.
-- `run_ready_data_automation_once(db_path=...)` claims at most one latest pending generation. SQLite stores the required automation state, generation, claim token, lease/heartbeat timestamps, publication attempt, success time, and readable error; a durable global lease enforces initial concurrency one while the scheduler's process-local lock remains only a non-blocking optimization.
-- Automatic builds reuse the internal ready-data build/validation core directly without HTTP callbacks or forged authorization. Manual API authorization, response shape, and build-then-publish behavior remain unchanged. Build-only mode retains a validated candidate without touching active/previous; enabling publication later revalidates and publishes that same candidate.
-- Generation, claim ownership, automation flags, artifact validity, and expected-active CAS are rechecked before automatic publication. The publish, captured-generation source settlement, and automation completion are committed atomically. Superseded, disabled, build/validation/publication, lost-claim, and CAS paths leave serving slots intact; ordinary failures are not retried for the same generation, while newer generations and expired crash claims remain eligible.
-- The existing runtime now registers a 60-second wakeup and launches the potentially long one-shot build on a daemon worker, so ordinary scheduled jobs are not blocked. Database state remains authoritative across service restarts. Automatic GC stays disabled and is never invoked.
-- TDD evidence: the first focused run was RED at collection because the automation service did not exist. After Copilot feedback, the new cadence regression was RED with the injected 7-second interval still sleeping 60 seconds. The final automation suite passes `23 passed`; it covers all 18 requested behavior groups, including two eligible KBs proving global concurrency one, claim theft, injected-clock crash recovery, soft/hard stale behavior, API isolation, scheduler cadence, and the real internal build-core integration.
-- Final related ready-data/source/publication/GC regression passes `111 passed, 2 skipped`; the broader ready-data, binding, membership, RAG admin, Agentic/chat fallback, task-runtime, and API suite passes `305 passed, 5 skipped`. Targeted Ruff, `python -m compileall -q ai_actuarial tests`, and staged `git diff --check` pass.
-- The reasonable full-repository run completed `905 passed, 5 skipped, 5 failed`. The five failures match the known unrelated Windows baseline: one temporary SQLite cleanup `WinError 32` and four React-source tests invoking bare `npm` when this host exposes `npm.cmd`.
-- Structured specification and quality/security self-audits are clean after fixes for legacy bootstrap side effects, claim-token redaction, atomic build-only fencing, superseded awaiting candidates, and the global-concurrency fixture. The mandatory independent Codex CLI review could not start because Windows returned `Access is denied` for `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe` when invoked as `codex review --base origin/main`; no unknown alternate entrypoint was attempted. Remote Copilot independently reviewed all changed files, and its only actionable finding was accepted and revalidated as described above.
-- The pre-existing line-ending-only state of `ai_actuarial/api/routers/rag_admin.py` remains content-diff zero and excluded from staging. Existing untracked `graphify-out/` remains protected and excluded from staging, cleanup, and the PR. No sibling repository, production system, or server Agent was accessed.
+- This repository is the only writable workspace unless a later task explicitly names another repository.
+- Sibling repositories and their live Issue state were not inspected in this handoff.
+- No production, deployment, restart, migration, server-Agent command, or automatic GC is authorized by this status file.
+- Preserve `ai_actuarial/api/routers/rag_admin.py`: it has a known line-ending-only worktree state and a content diff of zero.
+- Preserve `graphify-out/`: it is an existing untracked analysis artifact; do not stage, commit, or clean it. Graphify may update its own internal query memory when that required skill is used.
 
-## Previous PR #188 State
+## Live Issue Board
 
-- `Storage.replace_global_chunks()` now canonicalizes the final persisted chunk rows, including SQLite `TEXT` affinity for scalar section hierarchy values and last-write-wins duplicate indexes, then compares those rows under one `BEGIN IMMEDIATE` transaction. Identical overwrites, input-order differences, derived/audit-field differences, empty-to-empty writes, and `overwrite=False` with existing rows are complete no-ops: no row rewrite, chunk-set timestamp change, or source generation advance.
-- A real non-empty builder-visible change emits one soft-stale `chunk_content_updated` event per affected KB/profile. Replacing a non-empty selected set with an empty set emits hard-stale `source_invalidated`; the old active publication remains selected for soft changes and is explicitly reported stale/servable, while hard invalidation remains fail-closed. Active/previous pointers, manifests, and default-off automation settings are untouched.
-- Affected KB detection requires an existing KB, live membership, Catalog `status='ok'`, and a chunk set belonging to that file. Valid bound selection wins over fallback selection, so an unselected set is ignored; without any valid binding, the builder fallback set is included. Orphan KBs, non-members, Catalog errors, and non-input bindings emit no events. Chunk mutation, metadata update, and every profile-generation marker share one transaction, so any marker failure rolls all of them back.
-- TDD evidence: the initial targeted collection was RED with `13 failed, 7 passed`. The two independent reviewers then identified a SQLite `TEXT`-affinity canonicalization gap; its regression test failed first and passed after the fix. Copilot's full-selection-materialization regression also failed first and passed after the set-based query fix. The final content/binding/membership/builder/source-state/API/task/publication/GC suite passes `242 passed, 5 skipped`; skips are existing Windows link/reparse capability sentinels and the three SWIG deprecation warnings are pre-existing.
-- A full repository run completed `882 passed, 5 skipped, 5 failed`. All five failures reproduce as known unrelated Windows environment limitations already recorded in this file: one temporary SQLite cleanup `WinError 32` and four React-source tests invoking bare `npm` when only `npm.cmd` exists. The final narrow SQLite-affinity fix is covered by the green focused suite.
-- Targeted Ruff, `python -m compileall -q ai_actuarial tests`, staged/untracked whitespace checks, and `git diff --check` pass. Independent specification and quality/security re-reviews are both CLEAN after the canonicalization and Copilot follow-up fixes.
-- The mandatory local Codex CLI review could not start because Windows returned `Access is denied` for `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe` when invoked with `review --base origin/main`. It was retried after the Copilot fix with the same exact blocker and was not routed through an unknown or alternate entrypoint.
-- The pre-existing line-ending-only state of `ai_actuarial/api/routers/rag_admin.py` remains content-diff zero and must not be committed. Untracked `graphify-out/` remains protected and excluded from staging, cleanup, and the PR.
-- Issue `#173` received no new server diagnostic authorization; no server Agent, deployment, or production command was used. Sibling repositories remain off-limits and were not accessed.
+| Issue | State | Current meaning | Close condition / next dependency |
+|---|---|---|---|
+| `#172` Epic | Open | Governs the complete acquisition-to-ready-data program. | Close last, after all child Issues and external prerequisites are complete and production acceptance is recorded. |
+| `#173` OPS baseline | Open | PR `#181` is merged. Online backup, quiesced snapshot, file-level isolated restore, and API health smoke passed. The isolated KB list endpoint returned HTTP 500. | Requires explicitly authorized least-privilege diagnosis, root-cause classification, KB restore smoke, capacity gate recheck, then timer installation/evidence. |
+| `#174` ready-data | Open/Reopened | Core publication, GC, source state, mutation wiring, chunk events, and default-off automatic executor are merged through PR `#189`. | Finish the four owned follow-ups below, record `#179`/`#176` boundaries, then close. |
+| `#175` manifest/lineage | Open | Not implemented in this repository program yet. | Requires the declared `acquisition-manifest.v1` producer contract; re-triage external readiness before starting. |
+| `#176` production rollout | Open | Final server-Agent phase. | Blocked by `#173`, `#174`, `#175`, `#177`, `#178`, `#179`, external prerequisites, and pre-production validation. |
+| `#177` KB reconciliation | Open | Bidirectional rule membership, manual-member protection, dry-run and audit remain. | Implement before `#178`; its stable stage interface is needed by the final pipeline. |
+| `#178` reclassification | Open | Dedicated taxonomy-versioned reclassification task remains. | Blocked by `#177`; must reuse reconciliation and then drive index/ready-data consistency. |
+| `#179` durable pipeline | Open | Durable parent/child stages, resume, lease, watermark and Tasks-stage reporting remain. | Depends on stable `#175`, `#177`, and `#174` stage contracts; production cutover belongs to `#176`. |
 
-## Prior Context (through PR #186)
+Live GitHub status was reconciled on 2026-08-19. All Issues `#172`–`#179` are currently Open; `#174` has state reason `reopened`.
 
-- PR `#186` was manually merged into `main` as `99c43d00797bfde55bb9923b98a65bc3b794e081`. It removes bindings transactionally with actual membership removal and makes builder/legacy source-status ignore historical orphan and non-input bindings. Issue `#174` remains open/reopened.
+## Issue #174 — Completed
 
-- PR `#185` was manually merged into `main` as `57da07cea21868cfb3a3253a3ff308a2d7e6bcc6`. Its same-transaction KB membership source-state wiring remains the baseline for this narrow orphan-binding guard; Issue `#174` remains open/reopened.
+- PR `#182` / merge `9320efe`: independent publication attempts, staging validation, expected-active CAS, active/previous slots, safe retry and rollback primitives.
+- PR `#183` / merge `6741cbb`: fail-closed bounded duplicate retention/GC; automatic GC remains disabled.
+- PR `#184` / merge `1c742de`: durable source generations, stale policy, default-off automatic build/publish settings, legacy compatibility.
+- PR `#185` / merge `57da07c`: transactional KB membership source events.
+- PR `#186` / merge `99c43d0`: orphan-binding guard and effective-input semantics.
+- PR `#187` / merge `d9f0e0f`: transactional chunk-binding source events.
+- PR `#188` / merge `adf8c9e`: canonical chunk-content events and no-op detection.
+- PR `#189` / merge `1b0e6d9`: default-off SQLite-backed automatic build/optional publish executor with durable lease/claim fencing.
 
-- PR `#181` is merged. Production now has an independent 40 GiB ext4 backup disk mounted at `/data`.
-- A verified online SQLite backup and a verified quiesced database-and-data snapshot were created on the independent disk.
-- File-level isolated restore passed. The isolated API health check passed, while `GET /api/rag/knowledge-bases` returned HTTP 500; the smoke container remains isolated and Issue `#173` is not ready to close.
-- Issue `#173` has a least-privilege diagnostic authorization request posted at `https://github.com/ferryhe/AI_actuarial_inforsearch/issues/173#issuecomment-5331395524`. It is a request only; no new production diagnosis or command was executed.
-- PR `#182` was merged into `main` as `9320efe8dd3c28f097d7f552189c24868c0c66b8`. Issue `#174` PR1 now provides durable publication records, active/previous slots, validated staging builds, atomic publish/rollback storage primitives, deterministic input provenance, and default-off manual-build integration.
-- The earlier validated-but-inactive retry and corrupt-active idempotency blockers are resolved in the authorized continuation. Each build now has an independent attempt record, publication uses expected-active CAS, failed CAS/gate attempts remain retryable, and active/previous artifacts are fail-closed validated before dedupe, preservation, or rollback.
-- The user authorized that continuation on 2026-08-18. The approved design separates per-build attempts from logical source/digest identity, keeps publish-failed validated candidates retryable, uses expected-active/CAS winner selection, revalidates active artifacts before deduplication, and excludes a corrupt active artifact from the previous slot. Scope remains backend/storage/tests only.
-- Safe duplicate policy: because filesystem validation cannot be atomic with the SQLite serving slot, a healthy same-identity duplicate remains a validated, non-serving candidate and the response reports `duplicate_retained` / `duplicate_gc_deferred`. Bounded retention/GC is required before later automatic publication is enabled; it is intentionally outside PR1.
-- The retention/GC audit found that the existing `discard_agentic_ready_publication()` delete-record-first order is not a safe GC primitive: a filesystem failure would lose the recovery anchor, and a generic validated candidate can still be retryable. The proposed fail-closed lifecycle is `protected -> eligible -> claimed -> deleted/delete_failed`, with slot-aware CAS before any filesystem action, deterministic quarantine under the verified staging root, and a retained tombstone for idempotent recovery.
-- The user confirmed the retention policy: only explicitly classified `redundant_duplicate` attempts are eligible; active, previous, legacy, unknown historical rows, and retryable validated candidates remain protected. Eligibility requires both 14 days since classification and exclusion from the newest 2 eligible attempts per `(kb_id, profile)`, ordered deterministically by marked time and publication ID. Dry-run is default and zero-write, explicit execution requires an exact policy/cutoff/candidate/slot fingerprint, and automatic GC remains disabled.
-- The implemented fail-closed lifecycle uses durable GC metadata and audit tombstones, deterministic staging quarantine, SQLite write-transaction fencing across claim/filesystem/finalize, crash-idempotent recovery, and normalized/resolved same-or-ancestor/descendant path reservations for every non-deleted publication, serving manifest, and quarantine path. No UI, full-pipeline, automatic stale/build, production, `#175`, or `#179` work is included.
-- PR `#183` is merged as `6741cbb`; the bounded retention/GC phase is complete and automatic GC remains disabled. Issue `#174` was incorrectly auto-closed by the merge, so it was reopened and its remaining automatic stale/build, full-pipeline, and Knowledge Base page-status scope was recorded at `https://github.com/ferryhe/AI_actuarial_inforsearch/issues/174#issuecomment-5336310768`.
-- The automatic stale/build audit found that the builder's exact `catalog_chunks_snapshot` consumes KB membership, selected catalog/file metadata, and bound (or fallback) global chunks. It does not currently consume the FAISS index or embedding vectors, so successful index commits should wake source evaluation but must not blindly mark ready-data stale when the exact source version is unchanged.
-- The recommended next PR is storage/status only: add default-off per-`(kb_id, profile)` automatic-build configuration, durable source-generation/coalescing state, exact/legacy-compatible stale reporting fields, and post-commit mutation hooks without launching builds. Automatic execution, retry cadence, and publication follow in a separate PR after product policy is confirmed; durable parent/child/full-pipeline semantics remain `#179`.
-- The source-state foundation now separates event/pending/evaluated generations from the builder-authored `source_version_id`. Soft changes keep the current active usable with explicit stale status; hard changes fail closed and Agentic chat falls back to standard retrieval restricted to the same KB and filtered against live `rag_kb_files` membership. Index/embedding-only evaluation does not synthesize stale when the authoritative source identity is unchanged.
-- Automatic build/publish settings are persisted per `(kb_id, profile)` and remain default-off. `false/false`, `true/false`, and `true/true` are valid; `false/true` is rejected, and legacy publish-enabled rows migrate to `true/true`. The existing manual build API remains synchronous and safely settles only the generation it captured.
-- `superseded_generation` is reserved independently from `redundant_duplicate`; serving, claimed, delete-failed, deleted, and quarantined attempts fail closed. Automatic GC remains disabled. Future executor policy is recorded only: 60-second quiet debounce, 15-second polling, SQLite concurrency 1, per-KB/profile single-flight, no initial automatic retry, offline 10-second staging smoke, citation validation for non-empty KBs, and manual confirmation for empty KBs.
-- TDD and review evidence: 13 initial source-state tests were RED before implementation; three repair cycles added regressions for hard-state monotonicity/reset, registered-path and quarantine bypasses, legacy identity, generation races, manual build settlement, same-KB live-membership fallback, slot migration, and GC/disposition recovery. Final related suite is 198 passed / 5 Windows capability skips. Four independent review cycles ended CLEAN for both specification and quality/security.
-- The mandatory local Codex CLI review gate could not start: Windows returned `Access is denied` for `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe`. The command was not retried through another executable; repository-permitted publication proceeds with the independent specification and quality/security reviews recorded above.
-- 2026-08-18 follow-up diagnosis confirmed both blockers in the current control flow. They share one design cause: a logical source/digest identity and a concrete staging attempt are collapsed into one mutable publication row. The next `#174` continuation should separate per-attempt lifecycle from logical idempotency, serialize/CAS the serving-slot winner, retain publish-failed validated artifacts as retryable, and validate an existing active artifact before a fresh duplicate can be discarded. No business-code edit was made during this diagnosis.
-- Sibling repositories remain off-limits and are not read or modified.
+Current behavior: supported source changes advance a coalesced pending generation. When automatic build is enabled for `(kb_id, profile)`, the scheduler wakes the one-shot executor; it builds and validates in staging and, only when automatic publish is also enabled and all generation/artifact/expected-active checks pass, atomically publishes. Both flags remain off by default. Manual build remains available.
 
-## Historical Context (2026-08-17)
+## Issue #174 — Remaining Owned Work
 
-## Current State
+Do these sequentially, one PR at a time:
 
-- PR `#180` is merged into `main`; the Issue plan and production audit are recorded.
-- Issue `#173` implementation is active on `ops/issue-173-production-recovery-baseline`.
-- `scripts/production_recovery.py` now provides repeatable online SQLite backups, quiesced database-and-artifact snapshots, manifest/checksum verification, isolated restore smoke, a disk-capacity gate, and image/config/schema release records.
-- `scripts/production_backup.sh` and systemd unit templates provide a reviewable daily online backup task without installing anything on production. The wrapper now requires an explicit, pre-created backup root on a filesystem separate from production data and shares a non-blocking lock with deployment snapshots.
-- `scripts/deploy_update.sh` now refuses dirty worktrees and root-disk use at or above 80%, requires a quiesced full snapshot, builds the API with OCI revision labels, and records the resulting release metadata.
-- The deployment runbook now resolves the real Docker named-volume mountpoint and no longer documents repository-local `data/index.db` copying as the production backup/restore method.
-- GitHub Epic `#172` tracks the governed Agentic acquisition and knowledge-update program.
-- AI InfoSearch implementation and operations Issues are open:
-  - `#173`: production backup, recovery, capacity, and release traceability baseline.
-  - `#174`: automatic ready-data build, validation, and atomic publication.
-  - `#175`: acquisition manifest ingestion and source/derived artifact lineage.
-  - `#176`: production migration, canary, rollback, and live validation.
-  - `#177`: bidirectional category-to-KB membership reconciliation.
-  - `#178`: reclassification-only task and taxonomy version audit.
-  - `#179`: durable parent/child execution and recoverable end-to-end pipeline state.
-- `web_listening` implementation Issues are open:
-  - `ferryhe/web_listening#47`: unified SSRF, robots, redirect, and pacing gateway.
-  - `ferryhe/web_listening#46`: governed Agentic exploration, raw HTML/PDF artifacts, and `acquisition-manifest.v1`.
-- The Epic body links all child Issues and records the dependency chain.
+1. **Metadata source events — active task now**
+   - Wire builder-visible `catalog_items` fields: `status`, `category`, `summary`, `keywords`, `markdown_content`, `rag_chunk_count`.
+   - Wire builder-visible `files` fields: `title`, `source_site`, `published_time`.
+   - Emit source-state changes in the same SQLite transaction as the metadata mutation.
+   - Valid metadata change or invalid→valid: soft `metadata_updated`.
+   - Valid→invalid: hard `source_invalidated`; deletion: hard `source_deleted`.
+   - Exact no-op, non-member, and invalid→invalid changes emit no event.
+   - Audit all real mutation paths; do not change the automatic executor, UI, full pipeline, GC, deployment, or sibling repositories.
 
-## Production Findings
+2. **Index commit re-evaluation**
+   - Successful index/embedding commits wake source evaluation.
+   - Do not blindly mark stale because the current builder does not consume FAISS vectors; compare the authoritative builder source identity and settle no-op evaluations safely.
 
-- `aiinforsearch.com` directly deploys this repository from `/opt/ai_actuarial_inforsearch`.
-- The production worktree is at `a73bac6`, 15 commits behind GitHub `main` at the time of the read-only audit.
-- Production uses Docker Compose with healthy FastAPI, React, and Caddy services and a SQLite database in a Docker named volume.
-- The application data volume is approximately 2.8 GB; the root disk was approximately 83% used with about 11 GB free.
-- The Issue `#173` server preflight confirmed that `/var/backups` is on the same root ext4 filesystem as production data. The COSFS mount at `/lhcos-data` is only a candidate until disposable-prefix write, rename, interruption, and checksum read-back tests pass.
-- The current full-snapshot contract is approximately 2.19 GiB; the proposed retention set plus one isolated restore peaks around 8.23 GiB before safety margin. The server Agent recommends a 20–30 GiB independent ext4/xfs backup volume for the near-term baseline.
-- Only one older SQLite backup was found, and no verified database-plus-files recovery rehearsal was found.
-- Scheduled collection and asynchronous search fallback run in production, but no `full_pipeline` history was found.
-- The current search fallback is not joined to its parent run; raw HTML is not retained; category KB synchronization is additive only; no reclassification-only task exists; ready-data is not automatically published after indexing.
+3. **Deterministic staging smoke**
+   - Add an offline, bounded basic retrieval/smoke query to staging validation.
+   - Smoke failure must block publication without changing active/previous.
+   - Production/API/browser canary remains `#176`.
 
-## Compatibility Requirements
+4. **KB page and provenance closure**
+   - Existing Knowledge Base page shows current/stale/building/failed/ready, automation flags, last error/attempt, active/previous, manual build and rollback.
+   - Resolve and test the publication provenance contract: actual builder source version versus Issue wording that requests index version.
+   - Update Issue `#174` with final acceptance evidence and explicitly delegate durable full-pipeline waiting/reporting to `#179` and production canary to `#176`; then close `#174` only if all owned items pass.
 
-- Keep Site Configuration, Tasks, and Knowledge Base as the primary user-facing entry points.
-- Do not require ordinary users to operate `web_listening`, manifests, workers, or raw artifact storage directly.
-- Preserve existing YAML and single-stage task workflows through migration and retain an old-pipeline rollback switch during canary rollout.
-- Show robots evidence, lineage, and stage details in advanced/detail views.
-- Protect manual KB members; require dry-run and explicit confirmation for high-volume automatic removals.
-- Make ready-data automatic publication configurable per KB and fail back to the previous validated version.
+## Active Metadata-Events Delivery
 
-## Verification
+- Added a canonical before/after Storage snapshot for exactly the builder-consumed Catalog/file fields. Only live KB memberships are selected, and the existing per-KB marker updates every known profile once.
+- Wired `insert_file`, `upsert_file`, `upsert_catalog_item`, combined file/Catalog edits, Markdown edits, explicit deletion, incremental catalog writes, webpage collection, and indexing `rag_chunk_count` updates into the same SQLite transaction as source generation/reason/automation wake state.
+- Semantics are `metadata_updated` for valid input changes and invalid-to-valid transitions, `source_invalidated` for valid-to-invalid transitions, and `source_deleted` for explicit deletion. Canonical no-ops, audit-only changes, invalid-to-invalid changes, and non-members emit nothing.
+- The API and incremental catalog paths coalesce title plus Catalog changes into one comparison/marker call, so one high-level mutation advances each `(kb_id, profile)` at most once. A two-KB/two-profile failure-injection test confirms a marker failure rolls back metadata, all generations/reasons, and automation wake state.
+- Direct SQL audit exclusions:
+  - `crawler.py` uses `INSERT OR IGNORE` only for previously unseen page files; it cannot change an existing member's builder-visible fields. The separate webpage collector was active and could replace existing rows, so it was changed to `Storage.upsert_file` and covered by a regression test.
+  - `Storage._migrate_catalog_items()` and `catalog_incremental._ensure_catalog_schema()` are schema/legacy-column backfills, not ordinary metadata mutation entry points; no runtime field update was left outside the wired production methods.
+  - `db_backend.py`, `StorageV2`, and `storage_factory.py` are exercised only by compatibility/example/tests in this repository and are not used by the current SQLite ready-data/API/task production chain.
+  - `clear_local_path()` updates only the non-builder `local_path` audit/storage field after explicit deletion; deletion itself is marked transactionally first.
+- Independent specification review and quality/security review completed with no remaining in-scope findings. The mandatory Codex CLI review could not start because packaged WindowsApps `codex.exe` returned `Access is denied`; no alternate entrypoint was attempted.
 
-- GitHub issue search confirmed that no pre-existing open AI InfoSearch Issue covers the same scope as this program.
-- GitHub App creation succeeded for one Epic and nine child Issues across the two repositories.
-- Post-creation search confirmed eight open Issues in `AI_actuarial_inforsearch` (`#172`-`#179`) and two in `web_listening` (`#46`, `#47`).
-- Cross-repository and prerequisite links were added to the Epic and dependent Issue bodies.
-- The server Agent supplied a read-only production audit; no production deployment, restart, migration, configuration change, or data write was authorized or performed.
-- `git diff --check` passed for this status-only change.
-- Copilot's single actionable wording comment on PR `#180` was accepted; the clarification does not change the plan or product behavior.
-- The mandatory Codex CLI review gate was retried for Issue `#173` and remains blocked because the local `codex.exe` WindowsApps entrypoint returns `Access is denied`.
-- The local `gh` CLI authentication was revalidated on 2026-08-16; after the fix, Copilot's original PR `#180` thread became outdated and the PR merged with passing CI.
-- Issue `#173` test-first implementation: the initial recovery test failed because the module did not exist; the implemented suite now has 9 passing recovery/CLI/source-contract tests.
-- Focused deployment verification: 16 tests passed across `tests/test_production_recovery.py` and `tests/test_deployment_config_source.py`.
-- Targeted Ruff checks, Python bytecode compilation, Compose YAML parsing, Git Bash syntax checks for both operations scripts, CLI `--help`/JSON smoke, and `git diff --check` passed.
-- PR `#181` is open and mergeable; GitHub `python-smoke` passed. Copilot generated three actionable comments at the end of the review window; all three were accepted for BOM removal, injected-clock consistency, and a standard-library Fernet-key example.
-- Post-Copilot verification passed: 16 focused tests, targeted Ruff, BOM/shebang assertion, both Git Bash syntax checks, and `git diff --check`.
-- The production preflight confirmed Python 3.11, SQLite 3.50, Docker/Compose, systemd 255, and bash 5.2 satisfy the PR runtime contract; it also confirmed no unit, timer, cron, Hermes, or running-backup conflict.
-- A new fail-closed backup-location/locking contract test first failed against the unsafe default and then passed after the wrappers, unit, and runbook were tightened.
-- Post-preflight hardening verification passed: 16 focused tests, targeted Ruff, both Git Bash syntax checks, CLI help, and `git diff --check`. The mandatory Codex CLI review was retried after these changes and remains blocked by the same WindowsApps `codex.exe` `Access is denied` error.
-- Issue `#174` used five TDD/review cycles with separate implementation, specification, and quality agents. Earlier findings covering legacy-slot preservation, truthful source provenance, cross-connection idempotency, transactional rollback, staging cleanup, symlink/reparse containment, connection closure, and pre-publish TOCTOU checks were fixed.
-- Final Issue `#174` focused verification collected 81 tests: `77 passed, 4 skipped`; all skips are real symlink safety sentinels that this Windows session cannot create and must run on Linux CI. Targeted Ruff and `git diff --check` passed.
-- Follow-up read-only verification selected 17 publication/staging/build endpoint tests: `13 passed, 4 skipped`; the four skips are the same Windows link/reparse safety sentinels. The selected suite confirms the existing covered baseline but does not cover the two final-review failure scenarios, which must be added test-first in the next continuation.
-- The final specification and quality reviews both reported the unresolved validated-but-inactive retry blocker. Because the managed-development review limit was reached, the branch was intentionally not committed, pushed, or published as a PR, and the mandatory Codex CLI review gate was not entered.
-- The explicitly authorized state-machine continuation completed four fresh remediation/review cycles. Fresh specification and quality reviewers finished clean with no Critical, Important, or Minor findings after attempt identity, CAS, migration rollback, corrupt active/previous validation, stale-slot handling, and strict publication-status gates were covered.
-- Final Issue `#174` validation collected 97 tests: `93 passed, 4 skipped`; the four skips are Windows-only inability to create real directory symlink/reparse sentinels and are expected to execute on Linux CI. Targeted Ruff, Python compilation, and `git diff --check` passed.
-- The mandatory Codex CLI review gate was attempted again after final validation. The installed WindowsApps `codex.exe` still fails to start with `Access is denied`; the exact tooling blocker is recorded before publication as required.
-- PR `#182` was created from `codex/issue-174-ready-data-atomic-publish` with implementation commit `1c2048f` and merged into `main` as merge commit `9320efe`. It explicitly leaves `#174` open for automatic stale/build integration, UI status, and bounded duplicate retention/GC follow-up.
-- Remote feedback classification for PR `#182`: the Copilot submission is an informational overview, explicitly states that no comments were generated, and requires no code change. Thread-aware and flat reads found zero inline review threads and zero ordinary comments after the full 15-minute window.
-- Issue `#174` retention/GC TDD and review gates: the final root focused suite passed `133 passed, 5 skipped`; the dedicated GC suite passed `40 passed, 1 skipped`; broader ready-data/API validation passed `129 passed, 5 skipped`. Skips are real Windows link/reparse capability sentinels intended for Linux CI. Targeted Ruff, Python compilation, and `git diff --check` passed. Independent final specification and quality/security reviews are both CLEAN.
-- A broad repository run before the final narrow path-reservation patch completed `783 passed, 5 skipped, 5 failed`; the five failures reproduce independently as unrelated Windows environment issues: one SQLite temp-file cleanup `WinError 32` and four tests invoking bare `npm` while only `npm.cmd` is available. The final narrow changes are covered by the focused and broader green suites.
-- The mandatory pre-PR Codex CLI review was attempted on the final diff. The installed entry point `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe` failed to start with `Access is denied`; this is the same local tooling blocker recorded for earlier PRs, so publication continues under the repository's documented fallback.
-- PR `#183` was created as a ready-for-review Issue `#174` follow-up and deliberately does not close the Issue. It contains only the bounded retention/GC backend, storage, status, and focused test changes; automatic GC remains disabled.
-- Copilot reviewed all six PR files and produced one actionable compatibility comment: `duplicate_gc_deferred` must continue to mean that a retained duplicate was not immediately deleted, while the new `duplicate_gc_marked` field separately reports whether durable GC classification succeeded. The comment was accepted test-first; the guard-loss regression now proves the candidate remains retryable with `duplicate_gc_deferred=true` and `duplicate_gc_marked=false`. Follow-up validation passed `97 passed, 5 skipped`, targeted Ruff, Python compilation, `git diff --check`, and a narrow independent quality review.
-- The accepted Copilot thread is fully addressed by commit `7d6debb` but remains marked unresolved on GitHub because no authorization was given to reply to or resolve review threads. Thread-aware final reads found no other inline threads and no conversation comments.
+## Program Dependency Order
 
-## Local Notes
+Canonical dependency chain from Epic `#172`:
 
-- Intended chunk-content-event changes are `.hermes/project-status.md`, `ai_actuarial/storage.py`, `tests/test_ready_data_chunk_content_events.py`, `tests/test_ready_data_binding_events.py`, and `tests/test_fastapi_file_preview.py`. `ai_actuarial/api/routers/rag_admin.py` retains its pre-existing line-ending-only worktree status with no content diff, and `graphify-out/` remains untracked and excluded.
-- No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
-- Sibling repositories remain off-limits and were not read or modified.
-- Issue `#173` remains open: the independent backup disk, verified online backup, quiesced full snapshot, and file-level isolated restore are complete. Remaining work is to classify the isolated KB HTTP 500, pass the KB restore smoke, recheck the root-disk/deployment capacity gate, and only then install/enable the daily backup timer with recorded evidence.
-- Next action: maintainer review/merge of PR `#188`; leave Issue `#174` open for later automatic-executor and remaining source-event work.
-- Issue ordering decision: keep this PR limited to central same-chunk-set canonical content replacement events. Generic removal lifecycle, Catalog/file/index/embedding events, automatic execution, UI, and production cleanup remain separate; `#173` stays paused pending explicit least-privilege diagnostic approval and Epic `#172` stays open until its child chain is complete.
+```text
+#173 OPS baseline --------------------------------------------→ #176 production
+external acquisition prerequisites → #175 → #177 → #178 ─┐
+                                      #174 ------------------├→ #179 durable pipeline → #176
+                                                          ──┘
+#176 accepted → close #172
+```
+
+After `#174` closes, re-read all live Issue states before selecting the next item. If the user explicitly authorizes the pending `#173` server diagnosis, it can be the next single task. Otherwise select the next unblocked repository-only child according to the dependency chain; do not infer sibling-repository scope.
+
+## Delivery Contract For Every PR
+
+1. Start from latest clean `main`; identify and preserve unrelated local state.
+2. Use a fresh `codex/` branch and one bounded scope.
+3. Use TDD for behavior changes; run focused regressions, Ruff, Python compilation and `git diff --check`.
+4. Complete independent specification and quality/security review. Maximum five material remediation cycles.
+5. Attempt the mandatory local Codex CLI review. Known blocker: packaged WindowsApps `codex.exe` returns `Access is denied`; record it accurately and do not invent an alternate entrypoint.
+6. Commit, push and create a Ready-for-review PR automatically after gates pass; do not close the parent Issue prematurely.
+7. Observe GitHub checks and review/Copilot feedback for the repository-required window; fix only confirmed-safe in-scope findings and rerun validation.
+8. Merge and branch deletion require the user's authorization/current repository policy; previous PRs were manually merged by the maintainer.
+
+## Known Verification Baseline
+
+- PR `#189`: automation `23 passed`; broader relevant regression `305 passed, 5 skipped`; GitHub `python-smoke` passed.
+- Last full repository result: `905 passed, 5 skipped, 5 known Windows-environment failures`.
+- Known unrelated Windows failures: one SQLite temporary-file cleanup lock and four tests invoking bare `npm` where this host exposes `npm.cmd`.
+- Windows symlink/reparse capability tests may skip locally and must run in Linux CI.
+- Current metadata-event specialty plus webpage-collector regression: `45 passed`.
+- Current file mutation/API regression: `30 passed`; membership/binding/chunk-content regression: `48 passed`; automation/source-state/publication/GC regression: `112 passed, 2 skipped`; Catalog/builder regression: `22 passed`; task/indexing/RAG-admin regression: `101 passed, 3 skipped`.
+- Current full repository run: `932 passed, 5 skipped, 5 known Windows-environment failures` (the same one temporary SQLite lock plus four bare-`npm` failures).
+- Ruff passes for all touched Python files. Repository-wide Ruff still reports 68 pre-existing findings outside this change. `python -m compileall -q ai_actuarial tests` and `git diff --check` pass.
+
+## Immediate Next Action
+
+Commit and publish only the active metadata-events changes on `codex/issue-174-ready-data-metadata-events`, create a Ready-for-review PR with `Refs #174`, then observe CI and review feedback for the required window. No server Agent and no deployment are needed. After this PR is merged, refresh `main`, reconcile GitHub status, and create a fresh branch for the index-commit re-evaluation task.
+
+## Current Uncommitted/Untracked State
+
+- Intended active-delivery changes: `.hermes/project-status.md`, `ai_actuarial/storage.py`, `ai_actuarial/api/services/files_write.py`, `ai_actuarial/catalog_incremental.py`, `ai_actuarial/collectors/web_page.py`, `ai_actuarial/rag/indexing.py`, and `tests/test_ready_data_metadata_events.py`.
+- `ai_actuarial/api/routers/rag_admin.py`: pre-existing line-ending metadata only; content diff zero; do not include.
+- `graphify-out/`: pre-existing untracked analysis output; do not include or clean.

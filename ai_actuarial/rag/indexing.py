@@ -16,7 +16,6 @@ from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
 import numpy as np
 
-from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import RAGException
 from ai_actuarial.rag.semantic_chunking import Chunk
 from ai_actuarial.rag.vector_store import VectorStore
@@ -566,22 +565,25 @@ class IndexingPipeline:
     ) -> None:
         """Update file indexing status in rag_kb_files."""
         conn = self.storage._conn
-        timestamp = KnowledgeBase._get_timestamp()
-        
-        conn.execute("""
-            UPDATE rag_kb_files
-            SET indexed_at = ?, chunk_count = ?
-            WHERE kb_id = ? AND file_url = ?
-        """, (timestamp, chunk_count, kb_id, file_url))
-        
-        # Also update catalog_items
-        conn.execute("""
-            UPDATE catalog_items
-            SET rag_indexed = 1, rag_indexed_at = ?, rag_chunk_count = ?
-            WHERE file_url = ?
-        """, (timestamp, chunk_count, file_url))
-        
-        conn.commit()
+        with self.storage.transaction(immediate=True):
+            before = self.storage._ready_data_builder_metadata_snapshot(file_url)
+            timestamp = KnowledgeBase._get_timestamp()
+            conn.execute("""
+                UPDATE rag_kb_files
+                SET indexed_at = ?, chunk_count = ?
+                WHERE kb_id = ? AND file_url = ?
+            """, (timestamp, chunk_count, kb_id, file_url))
+
+            # Also update catalog_items
+            conn.execute("""
+                UPDATE catalog_items
+                SET rag_indexed = 1, rag_indexed_at = ?, rag_chunk_count = ?
+                WHERE file_url = ?
+            """, (timestamp, chunk_count, file_url))
+            self.storage._mark_ready_data_builder_metadata_change(
+                file_url=file_url,
+                before=before,
+            )
     
     def _update_kb_stats(self, kb_id: str) -> None:
         """Update knowledge base statistics."""
@@ -614,7 +616,3 @@ class IndexingPipeline:
                 self.progress_callback(message, current, total)
             except Exception as e:
                 logger.error(f"Error in progress callback: {e}")
-
-
-# Import at bottom to avoid circular dependency
-from ai_actuarial.rag.knowledge_base import KnowledgeBase

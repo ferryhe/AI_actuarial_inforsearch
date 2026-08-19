@@ -314,33 +314,20 @@ class WebPageCollector(BaseCollector):
         except ValueError:
             relative_path = str(target_path.resolve())
 
-        ts = self.storage.now()
-        self.storage._conn.execute(
-            """
-            INSERT OR REPLACE INTO files (
-                url, sha256, title, source_site, source_page_url,
-                original_filename, local_path, bytes, content_type,
-                published_time, first_seen, last_seen, crawl_time
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                final_url,
-                sha256,
-                title,
-                config.name,
-                final_url,
-                target_path.name,
-                relative_path,
-                bytes_size,
-                "text/markdown",
-                published_time,
-                ts,
-                ts,
-                ts,
-            ),
+        self.storage.upsert_file(
+            url=final_url,
+            sha256=sha256,
+            title=title,
+            source_site=config.name,
+            source_page_url=final_url,
+            original_filename=target_path.name,
+            local_path=relative_path,
+            bytes_size=bytes_size,
+            content_type="text/markdown",
+            last_modified=None,
+            etag=None,
+            published_time=published_time,
         )
-        self.storage._conn.commit()
 
         logger.info(
             "Saved web page content: %s (%d bytes) -> %s",
