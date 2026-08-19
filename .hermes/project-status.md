@@ -4,7 +4,7 @@
 - Branch: `codex/issue-174-ready-data-orphan-binding-guard`
 - Baseline: `origin/main` at `57da07cea21868cfb3a3253a3ff308a2d7e6bcc6` (merged PR `#185`).
 - Scope: Prevent removed or otherwise non-live KB chunk bindings from surviving membership removal or affecting ready-data builder/source-status decisions. Full chunk-binding source-event wiring, automatic execution/build/publish/GC, Catalog/file/index/embedding events, UI, full-pipeline, deployment, production, and sibling repositories remain excluded.
-- Managed PR heartbeat: local implementation and all available pre-PR gates are complete; publication is pending. The PR will use `Refs #174`, and Issue `#174` must remain open.
+- Managed PR heartbeat: PR `#186` is open and Ready for review at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/186` using `Refs #174`. After the approximately 15-minute observation window, the PR is mergeable/CLEAN, `python-smoke` passed, Copilot reviewed all seven changed files and generated no comments, and there are no ordinary comments or review threads. Issue `#174` remains Open/Reopened.
 
 ## Active State
 
@@ -126,9 +126,9 @@
 
 ## Local Notes
 
-- Intended source-state changes are `.hermes/project-status.md`, `ai_actuarial/storage.py`, `ai_actuarial/api/services/agentic_rag.py`, `ai_actuarial/api/services/chat.py`, `ai_actuarial/api/services/rag_admin.py`, `tests/test_ready_data_source_state.py`, `tests/test_fastapi_chat_endpoints.py`, `tests/test_fastapi_rag_admin_endpoints.py`, and `tests/test_ready_data_retention_gc.py`. `ai_actuarial/api/routers/rag_admin.py` retains its pre-existing line-ending-only worktree status with no content diff, and `graphify-out/` remains untracked and excluded.
+- Intended orphan-binding guard changes are `.hermes/project-status.md`, `ai_actuarial/rag/knowledge_base.py`, `ai_actuarial/agentic_rag/ready_data_builder.py`, `ai_actuarial/api/services/rag_admin.py`, `tests/test_ready_data_membership_wiring.py`, `tests/agentic_rag/test_ready_data_builder.py`, and `tests/test_fastapi_rag_admin_endpoints.py`. `ai_actuarial/api/routers/rag_admin.py` retains its pre-existing line-ending-only worktree status with no content diff, and `graphify-out/` remains untracked and excluded.
 - No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
 - Sibling repositories remain off-limits and were not read or modified.
 - Issue `#173` remains open: the independent backup disk, verified online backup, quiesced full snapshot, and file-level isolated restore are complete. Remaining work is to classify the isolated KB HTTP 500, pass the KB restore smoke, recheck the root-disk/deployment capacity gate, and only then install/enable the daily backup timer with recorded evidence.
-- Next action: PR `#184` is ready for maintainer merge while Issue `#174` remains open. Follow-up mutation-path hooks and the automatic executor stay in separate PRs; full-pipeline/durable parent-child work stays in `#179`, UI stays later, and `#173` remains paused pending separate diagnostic authorization.
-- Issue ordering decision: continue the local `#174` PR1 state-machine fix now because `#173` blocks production activation, not local feature development. Keep `#173` paused pending explicit least-privilege diagnostic approval, and keep Epic `#172` open until its child chain is actually complete.
+- Next action: PR `#186` is ready for maintainer review/merge while Issue `#174` remains open. Full chunk-binding source-event wiring and the automatic executor stay in separate PRs; full-pipeline/durable parent-child work stays in `#179`, UI stays later, and `#173` remains paused pending separate diagnostic authorization.
+- Issue ordering decision: keep PR `#186` limited to the orphan-binding guard. Do not expand it into complete binding lifecycle events, automatic execution, or production cleanup; keep `#173` paused pending explicit least-privilege diagnostic approval and keep Epic `#172` open until its child chain is actually complete.
