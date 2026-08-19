@@ -550,7 +550,16 @@ class IndexingPipeline:
                 status=status,
                 artifact_path=str(index_path),
             )
-        except Exception:
+        except Exception as exc:
+            if status == "ready":
+                logger.error(
+                    "Failed to record ready KB index version for %s; index artifact was retained",
+                    kb_id,
+                    exc_info=True,
+                )
+                raise RAGException(
+                    f"Failed to record ready KB index version for '{kb_id}': {exc}"
+                ) from exc
             logger.warning(
                 "Failed to record KB index version for %s; index artifact was still written",
                 kb_id,

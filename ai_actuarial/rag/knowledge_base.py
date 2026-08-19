@@ -557,12 +557,20 @@ class KnowledgeBaseManager:
         kb = self.get_kb(kb_id)
         if not kb:
             return False
+        if self.storage._tx_depth:
+            raise KnowledgeBaseException(
+                "Knowledge base deletion cannot run inside an active database transaction"
+            )
         
         conn = self.storage._conn
         
-        # Delete from database (cascades to rag_kb_files and rag_chunks)
-        conn.execute("DELETE FROM rag_knowledge_bases WHERE kb_id = ?", (kb_id,))
-        conn.commit()
+        # Delete durable index identity alongside KB-owned rows so a later KB
+        # with the same identifier starts with no inherited ready-index tuple.
+        with self.storage.transaction(immediate=True):
+            conn.execute("DELETE FROM kb_ready_index_state WHERE kb_id = ?", (kb_id,))
+            conn.execute("DELETE FROM kb_index_versions WHERE kb_id = ?", (kb_id,))
+            # Deleting the KB cascades to rag_kb_files, rag_chunks, and ready-data state.
+            conn.execute("DELETE FROM rag_knowledge_bases WHERE kb_id = ?", (kb_id,))
         
         # Delete index files
         kb_dir = Path(self.config.data_dir) / kb_id

@@ -3,9 +3,9 @@
 - Updated: 2026-08-19 (America/New_York)
 - Repository: `ferryhe/AI_actuarial_inforsearch`
 - Workspace: `C:\Project\AI_actuarial_inforsearch`
-- Active branch: `codex/issue-174-ready-data-metadata-events`
-- Baseline: `origin/main` at `1b0e6d9fbfc9afa3c9fa2e2dd173d50b7c465335` (merged PR `#189`)
-- Delivery: commit `7247088a42f302b829f5ff6dd24a48ced3d1dcb9`, Ready-for-review PR `#190`
+- Active branch: `codex/issue-174-ready-data-index-reevaluation`
+- Baseline: `origin/main` at `1f4f4598040974bb3d3e1740643a6d909514f240` (merged PR `#190`)
+- Delivery: implementation commit `872695c`, review-fix commit `29ecd88`, Ready-for-review PR `#191`
 - Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
 - Execution rule: work on one bounded deliverable at a time. Do not start the next PR or a server action until the current deliverable reaches its terminal handoff.
 
@@ -42,6 +42,7 @@ Live GitHub status was reconciled on 2026-08-19. All Issues `#172`–`#179` are 
 - PR `#187` / merge `d9f0e0f`: transactional chunk-binding source events.
 - PR `#188` / merge `adf8c9e`: canonical chunk-content events and no-op detection.
 - PR `#189` / merge `1b0e6d9`: default-off SQLite-backed automatic build/optional publish executor with durable lease/claim fencing.
+- PR `#190` / merge `1f4f459`: transactional builder-visible metadata source events with canonical no-op and validity-transition semantics.
 
 Current behavior: supported source changes advance a coalesced pending generation. When automatic build is enabled for `(kb_id, profile)`, the scheduler wakes the one-shot executor; it builds and validates in staging and, only when automatic publish is also enabled and all generation/artifact/expected-active checks pass, atomically publishes. Both flags remain off by default. Manual build remains available.
 
@@ -49,42 +50,27 @@ Current behavior: supported source changes advance a coalesced pending generatio
 
 Do these sequentially, one PR at a time:
 
-1. **Metadata source events — active task now**
-   - Wire builder-visible `catalog_items` fields: `status`, `category`, `summary`, `keywords`, `markdown_content`, `rag_chunk_count`.
-   - Wire builder-visible `files` fields: `title`, `source_site`, `published_time`.
-   - Emit source-state changes in the same SQLite transaction as the metadata mutation.
-   - Valid metadata change or invalid→valid: soft `metadata_updated`.
-   - Valid→invalid: hard `source_invalidated`; deletion: hard `source_deleted`.
-   - Exact no-op, non-member, and invalid→invalid changes emit no event.
-   - Audit all real mutation paths; do not change the automatic executor, UI, full pipeline, GC, deployment, or sibling repositories.
-
-2. **Index commit re-evaluation**
-   - Successful index/embedding commits wake source evaluation.
-   - Do not blindly mark stale because the current builder does not consume FAISS vectors; compare the authoritative builder source identity and settle no-op evaluations safely.
-
-3. **Deterministic staging smoke**
+1. **Deterministic staging smoke**
    - Add an offline, bounded basic retrieval/smoke query to staging validation.
    - Smoke failure must block publication without changing active/previous.
    - Production/API/browser canary remains `#176`.
 
-4. **KB page and provenance closure**
+2. **KB page and provenance closure**
    - Existing Knowledge Base page shows current/stale/building/failed/ready, automation flags, last error/attempt, active/previous, manual build and rollback.
    - Resolve and test the publication provenance contract: actual builder source version versus Issue wording that requests index version.
    - Update Issue `#174` with final acceptance evidence and explicitly delegate durable full-pipeline waiting/reporting to `#179` and production canary to `#176`; then close `#174` only if all owned items pass.
 
-## Active Metadata-Events Delivery
+## Active Index Re-evaluation Delivery
 
-- Added a canonical before/after Storage snapshot for exactly the builder-consumed Catalog/file fields. Only live KB memberships are selected, and the existing per-KB marker updates every known profile once.
-- Wired `insert_file`, `upsert_file`, `upsert_catalog_item`, combined file/Catalog edits, Markdown edits, explicit deletion, incremental catalog writes, webpage collection, and indexing `rag_chunk_count` updates into the same SQLite transaction as source generation/reason/automation wake state.
-- Semantics are `metadata_updated` for valid input changes and invalid-to-valid transitions, `source_invalidated` for valid-to-invalid transitions, and `source_deleted` for explicit deletion. Canonical no-ops, audit-only changes, invalid-to-invalid changes, and non-members emit nothing.
-- The API and incremental catalog paths coalesce title plus Catalog changes into one comparison/marker call, so one high-level mutation advances each `(kb_id, profile)` at most once. A two-KB/two-profile failure-injection test confirms a marker failure rolls back metadata, all generations/reasons, and automation wake state.
-- Direct SQL audit exclusions:
-  - `crawler.py` uses `INSERT OR IGNORE` only for previously unseen page files; it cannot change an existing member's builder-visible fields. The separate webpage collector was active and could replace existing rows, so it was changed to `Storage.upsert_file` and covered by a regression test.
-  - `Storage._migrate_catalog_items()` and `catalog_incremental._ensure_catalog_schema()` are schema/legacy-column backfills, not ordinary metadata mutation entry points; no runtime field update was left outside the wired production methods.
-  - `db_backend.py`, `StorageV2`, and `storage_factory.py` are exercised only by compatibility/example/tests in this repository and are not used by the current SQLite ready-data/API/task production chain.
-  - `clear_local_path()` updates only the non-builder `local_path` audit/storage field after explicit deletion; deletion itself is marked transactionally first.
-- Independent specification review and quality/security review completed with no remaining in-scope findings. The mandatory Codex CLI review could not start because packaged WindowsApps `codex.exe` returned `Access is denied`; no alternate entrypoint was attempted.
-- PR `#190` is Ready, mergeable, and uses `Refs #174`. After the required observation window, `python-smoke` passed; Copilot reviewed all 7 changed files and generated no comments; ordinary comments, inline comments, and review threads were all empty.
+- Successful `ready` index-version commits now emit one neutral source event per known `(kb_id, profile)` in the same SQLite transaction. The reason is `embedding_index_committed` only when the latest successful ready embedding tuple changed; first and unchanged commits use `index_committed`. Non-ready commits emit no event.
+- The latest successful ready embedding tuple is persisted independently of the latest-only index-version table. Marker/state failures roll back the index-version write, and ready recording failures now fail the indexing task closed while retaining already-written artifacts.
+- A read-only fingerprint API reuses the builder's exact SQLite snapshot semantics and writes no staging files or artifacts. The automatic executor compares that fingerprint with a healthy, safely revalidated active publication before building.
+- A healthy exact match settles the claimed generation atomically as `up_to_date` without invoking the builder or creating a candidate. Mismatch, missing/legacy/non-active active rows, or damaged artifacts continue through the existing staging build path.
+- Claim token, lease, generation, automation flags, and expected-active pointer are fenced again immediately before either settlement or build. Fingerprint/validation failures and all races fail closed without changing active/previous.
+- Knowledge-base deletion clears ready-index lifecycle state and index rows transactionally; nested deletion is rejected before database or filesystem mutation so an outer rollback cannot restore a KB whose files were removed. Legacy/minimal schemas retain a safe capability-based migration path.
+- Manual build, build-only, optional auto-publish, default-off automation, and default-off GC behavior remain unchanged. No excluded UI, smoke, provenance, full-pipeline, retry/GC, deployment, server, or sibling-repository work was added.
+- Four rounds of independent specification and quality/security review completed with no remaining actionable findings. The mandatory Codex CLI review could not start because packaged WindowsApps `codex.exe` returned `Access is denied`; no alternate entrypoint was attempted.
+- PR `#191` is Ready-for-review and uses `Refs #174`. After the required post-fix observation window, `python-smoke` passed; Copilot's one test-helper maintenance comment was fixed in `29ecd88` and its only review thread is resolved; ordinary comments and additional reviews/threads are empty. The PR is Clean/Mergeable and must not be auto-merged.
 
 ## Program Dependency Order
 
@@ -113,21 +99,20 @@ After `#174` closes, re-read all live Issue states before selecting the next ite
 
 ## Known Verification Baseline
 
-- PR `#189`: automation `23 passed`; broader relevant regression `305 passed, 5 skipped`; GitHub `python-smoke` passed.
-- Last full repository result: `905 passed, 5 skipped, 5 known Windows-environment failures`.
+- PR `#190`: metadata-event delivery merged at `1f4f4598040974bb3d3e1740643a6d909514f240`.
 - Known unrelated Windows failures: one SQLite temporary-file cleanup lock and four tests invoking bare `npm` where this host exposes `npm.cmd`.
 - Windows symlink/reparse capability tests may skip locally and must run in Linux CI.
-- Current metadata-event specialty plus webpage-collector regression: `45 passed`.
-- Current file mutation/API regression: `30 passed`; membership/binding/chunk-content regression: `48 passed`; automation/source-state/publication/GC regression: `112 passed, 2 skipped`; Catalog/builder regression: `22 passed`; task/indexing/RAG-admin regression: `101 passed, 3 skipped`.
-- Current full repository run: `932 passed, 5 skipped, 5 known Windows-environment failures` (the same one temporary SQLite lock plus four bare-`npm` failures).
+- Current index re-evaluation plus ready-data automation/source-state, mutation events, publication/GC, task runtime, and RAG-admin regression: `320 passed, 5 skipped`.
+- Post-review focused re-run: index re-evaluation specialty `34 passed`; touched-test Ruff, compileall, and diff checks passed.
+- Current full repository run: `966 passed, 5 skipped, 5 known Windows-environment failures` (the same one temporary SQLite lock plus four bare-`npm` failures).
 - Ruff passes for all touched Python files. Repository-wide Ruff still reports 68 pre-existing findings outside this change. `python -m compileall -q ai_actuarial tests` and `git diff --check` pass.
 
 ## Immediate Next Action
 
-PR `#190` is ready for maintainer review/merge; no in-scope follow-up fix is pending. No server Agent and no deployment are needed. After this PR is merged, refresh `main`, reconcile GitHub status, and create a fresh branch for the index-commit re-evaluation task.
+PR `#191` is ready for maintainer review/merge; no in-scope follow-up fix is pending. No server Agent, deployment, automatic merge, or excluded follow-up is authorized.
 
 ## Current Worktree State
 
-- The active-delivery changes are committed and pushed on `codex/issue-174-ready-data-metadata-events`; this status update is the only intended follow-up change.
+- The active index re-evaluation implementation and accepted review fix are committed and pushed on `codex/issue-174-ready-data-index-reevaluation`; this final status update is the only intended follow-up change.
 - `ai_actuarial/api/routers/rag_admin.py`: pre-existing line-ending metadata only; content diff zero; do not include.
 - `graphify-out/`: pre-existing untracked analysis output; do not include or clean.
