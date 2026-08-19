@@ -53,6 +53,7 @@ class Storage:
         "builder_contract_changed": "soft_stale",
         "profile_contract_changed": "soft_stale",
         "chunk_binding_updated": "soft_stale",
+        "chunk_content_updated": "soft_stale",
         "membership_removed": "hard_stale",
         "chunk_binding_removed": "hard_stale",
         "source_invalidated": "hard_stale",
@@ -2709,32 +2710,82 @@ class Storage:
         When overwrite=False and existing chunks are present, this method keeps existing
         records and returns current counts without modification.
         """
-        current_n = int(
-            self._conn.execute(
-                "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
+        with self.transaction(immediate=True):
+            current_rows = self._conn.execute(
+                """
+                SELECT chunk_index, chunk_id, content, token_count, section_hierarchy
+                FROM global_chunks
+                WHERE chunk_set_id = ?
+                ORDER BY chunk_index, chunk_id
+                """,
                 (chunk_set_id,),
-            ).fetchone()[0]
-            or 0
-        )
-        if current_n > 0 and not overwrite:
-            return {"chunk_set_id": chunk_set_id, "chunk_count": current_n, "replaced": False, "inserted": 0}
+            ).fetchall()
+            current_chunks = tuple(
+                (
+                    int(row[0]),
+                    str(row[1]),
+                    str(row[2]),
+                    int(row[3] or 0),
+                    row[4],
+                )
+                for row in current_rows
+            )
+            current_n = len(current_chunks)
+            if current_n > 0 and not overwrite:
+                return {
+                    "chunk_set_id": chunk_set_id,
+                    "chunk_count": current_n,
+                    "replaced": False,
+                    "inserted": 0,
+                }
 
-        with self.transaction():
+            final_chunks_by_index: dict[int, tuple[int, str, str, int, Any]] = {}
+            for idx, chunk in enumerate(chunks):
+                chunk_data = chunk or {}
+                section_hierarchy = chunk_data.get("section_hierarchy")
+                if isinstance(section_hierarchy, (int, float)):
+                    section_hierarchy = self._conn.execute(
+                        "SELECT CAST(? AS TEXT)",
+                        (section_hierarchy,),
+                    ).fetchone()[0]
+                elif isinstance(section_hierarchy, (bytes, bytearray, memoryview)):
+                    section_hierarchy = bytes(section_hierarchy)
+                chunk_index = int(
+                    chunk_data.get("chunk_index")
+                    if chunk_data.get("chunk_index") is not None
+                    else idx
+                )
+                final_chunks_by_index[chunk_index] = (
+                    chunk_index,
+                    f"{chunk_set_id}:{chunk_index}",
+                    str(chunk_data.get("content") or ""),
+                    int(chunk_data.get("token_count") or 0),
+                    section_hierarchy,
+                )
+            final_chunks = tuple(
+                final_chunks_by_index[chunk_index]
+                for chunk_index in sorted(final_chunks_by_index)
+            )
+            if final_chunks == current_chunks:
+                return {
+                    "chunk_set_id": chunk_set_id,
+                    "chunk_count": current_n,
+                    "replaced": False,
+                    "inserted": 0,
+                }
+
+            affected_kb_ids = self._ready_data_chunk_content_affected_kb_ids(
+                chunk_set_id=chunk_set_id,
+            )
             if current_n > 0:
                 self._conn.execute("DELETE FROM global_chunks WHERE chunk_set_id = ?", (chunk_set_id,))
 
             now = self._utcnow_iso()
-            inserted = 0
-            for idx, chunk in enumerate(chunks):
-                content = str((chunk or {}).get("content") or "")
-                token_count = int((chunk or {}).get("token_count") or 0)
-                section_hierarchy = (chunk or {}).get("section_hierarchy")
-                chunk_index = int((chunk or {}).get("chunk_index") if (chunk or {}).get("chunk_index") is not None else idx)
-                chunk_id = f"{chunk_set_id}:{chunk_index}"
+            for chunk_index, chunk_id, content, token_count, section_hierarchy in final_chunks:
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 self._conn.execute(
                     """
-                    INSERT OR REPLACE INTO global_chunks (
+                    INSERT INTO global_chunks (
                         chunk_id, chunk_set_id, chunk_index, content, token_count,
                         section_hierarchy, content_hash, created_at
                     )
@@ -2751,7 +2802,8 @@ class Storage:
                         now,
                     ),
                 )
-                inserted += 1
+
+            inserted = len(final_chunks)
 
             self._conn.execute(
                 """
@@ -2762,12 +2814,53 @@ class Storage:
                 (inserted, now, chunk_set_id),
             )
 
+            reason = "source_invalidated" if current_n > 0 and not final_chunks else "chunk_content_updated"
+            for kb_id in affected_kb_ids:
+                self.mark_agentic_ready_source_event_for_kb(
+                    kb_id=kb_id,
+                    reason=reason,
+                )
+
         return {
             "chunk_set_id": chunk_set_id,
             "chunk_count": inserted,
             "replaced": current_n > 0,
             "inserted": inserted,
         }
+
+    def _ready_data_chunk_content_affected_kb_ids(
+        self,
+        *,
+        chunk_set_id: str,
+    ) -> tuple[str, ...]:
+        """Return KBs whose exact builder input includes one chunk set."""
+        if not self._table_exists("rag_knowledge_bases") or not self._table_exists("rag_kb_files"):
+            return ()
+        candidate_rows = self._conn.execute(
+            """
+            SELECT DISTINCT kb.kb_id, fcs.file_url
+            FROM file_chunk_sets fcs
+            JOIN files f ON f.url = fcs.file_url
+            JOIN catalog_items c
+              ON c.file_url = fcs.file_url
+             AND c.status = 'ok'
+            JOIN rag_kb_files kf ON kf.file_url = fcs.file_url
+            JOIN rag_knowledge_bases kb ON kb.kb_id = kf.kb_id
+            WHERE fcs.chunk_set_id = ?
+            ORDER BY kb.kb_id
+            """,
+            (chunk_set_id,),
+        ).fetchall()
+        affected_kb_ids: list[str] = []
+        for row in candidate_rows:
+            kb_id = str(row[0] or "")
+            file_url = str(row[1] or "")
+            if not kb_id or not file_url:
+                continue
+            bound_selection = self._ready_data_bound_chunk_selection(kb_id)
+            if not bound_selection or (file_url, chunk_set_id) in bound_selection:
+                affected_kb_ids.append(kb_id)
+        return tuple(affected_kb_ids)
 
     def list_file_chunk_sets(self, file_url: str) -> list[dict[str, Any]]:
         cur = self._conn.execute(
@@ -4687,9 +4780,15 @@ class Storage:
             pending_generation is not None and pending_generation > evaluated_generation
         )
         pending_severity = str(row[3] or "none") if pending_evaluation else "none"
+        pending_reasons = self._agentic_ready_json_list(row[4]) if pending_evaluation else []
         evaluated_kind = str(row[7] or "").strip().lower()
         evaluated_source_id = str(row[8] or "").strip()
         has_serving_record = bool(serving_record and (serving_record or {}).get("status") in {"ready", "active"})
+        confirmed_pending_content_change = bool(
+            has_serving_record
+            and pending_severity == "soft_stale"
+            and "chunk_content_updated" in pending_reasons
+        )
         source_mismatch = bool(
             has_serving_record
             and source_identity_comparable
@@ -4711,10 +4810,15 @@ class Storage:
         if legacy_hard_gate:
             evaluated_severity = "hard_stale"
         effective_severity = self._agentic_ready_severity_max(
-            pending_severity if pending_severity == "hard_stale" else "none",
+            pending_severity
+            if pending_severity == "hard_stale" or confirmed_pending_content_change
+            else "none",
             evaluated_severity,
         )
-        stale_confirmed = bool(source_mismatch and evaluated_severity != "none")
+        stale_confirmed = bool(
+            (source_mismatch and evaluated_severity != "none")
+            or confirmed_pending_content_change
+        )
         serving_stale = effective_severity in {"soft_stale", "hard_stale"}
         state = (
             "stale"
@@ -4733,7 +4837,7 @@ class Storage:
         if source_mismatch and not reasons:
             reasons = ["source_version_changed"]
         if pending_evaluation:
-            reasons = list(dict.fromkeys([*reasons, *self._agentic_ready_json_list(row[4])]))
+            reasons = list(dict.fromkeys([*reasons, *pending_reasons]))
         return {
             "kb_id": kb_id,
             "profile": normalized_profile,
@@ -4744,7 +4848,7 @@ class Storage:
             "evaluated_generation": evaluated_generation,
             "pending_evaluation": pending_evaluation,
             "pending_severity": pending_severity,
-            "pending_reasons": self._agentic_ready_json_list(row[4]) if pending_evaluation else [],
+            "pending_reasons": pending_reasons,
             "evaluated_source_version_kind": evaluated_kind,
             "evaluated_source_version_id": evaluated_source_id,
             "active_source_version_kind": active_kind,
