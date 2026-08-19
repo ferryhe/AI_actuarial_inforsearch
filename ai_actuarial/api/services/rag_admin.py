@@ -862,6 +862,10 @@ def _build_agentic_manifest_status(
         kb_id=kb_id,
         profile=normalized_profile,
     )
+    automation = storage.get_agentic_ready_automation_state(
+        kb_id=kb_id,
+        profile=normalized_profile,
+    )
     manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile)
     if not manifest:
         return {
@@ -890,6 +894,8 @@ def _build_agentic_manifest_status(
             ],
             "automatic_build_enabled": source_state["automatic_build_enabled"],
             "automatic_publish_enabled": source_state["automatic_publish_enabled"],
+            "automation": automation,
+            "automation_state": automation["automation_state"],
         }
 
     payload = dict(manifest)
@@ -949,6 +955,8 @@ def _build_agentic_manifest_status(
             "automatic_publish_enabled": source_state[
                 "automatic_publish_enabled"
             ],
+            "automation": automation,
+            "automation_state": automation["automation_state"],
         }
     )
     if stale_reason:
@@ -1498,6 +1506,22 @@ def build_agentic_ready_manifest(
     auth: Any | None = None,
 ) -> dict[str, Any]:
     _require_config_write_token(headers, auth)
+    return _build_agentic_ready_manifest_core(
+        db_path=db_path,
+        kb_id=kb_id,
+        payload=payload,
+        publish=True,
+    )
+
+
+def _build_agentic_ready_manifest_core(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: dict[str, Any],
+    publish: bool,
+) -> dict[str, Any]:
+    """Build and validate one staging attempt without applying HTTP authorization."""
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
@@ -1597,12 +1621,13 @@ def build_agentic_ready_manifest(
                 if cleanup_warning:
                     _append_validation_warning(validation, cleanup_warning)
             else:
-                _bootstrap_legacy_ready_publication(
-                    storage,
-                    kb_id=kid,
-                    profile=profile,
-                    validator=ready_data_builder.validate,
-                )
+                if publish:
+                    _bootstrap_legacy_ready_publication(
+                        storage,
+                        kb_id=kid,
+                        profile=profile,
+                        validator=ready_data_builder.validate,
+                    )
                 _require_generated_staging_candidate(
                     returned_output_dir=candidate_output_dir,
                     expected_output_dir=staging_output_dir,
@@ -1629,6 +1654,22 @@ def build_agentic_ready_manifest(
                 )
                 validated_attempt_recorded = True
                 recorded_publication_id = str(candidate_publication["publication_id"])
+                if not publish:
+                    publication_state = storage.get_agentic_ready_publication_state(
+                        kb_id=kid,
+                        profile=profile,
+                    )
+                    return {
+                        "kb_id": kid,
+                        "manifest": _build_agentic_manifest_status(
+                            storage=storage,
+                            kb_id=kid,
+                            profile=profile,
+                        ),
+                        "candidate_publication": candidate_publication,
+                        "publication_state": publication_state,
+                        "validation": validation,
+                    }
                 current_publication_state = storage.get_agentic_ready_publication_state(
                     kb_id=kid,
                     profile=profile,

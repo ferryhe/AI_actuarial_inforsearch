@@ -116,6 +116,11 @@ class _FallbackScheduleBuilder:
         self.unit = "minutes"
         return self
 
+    @property
+    def seconds(self) -> "_FallbackScheduleBuilder":
+        self.unit = "seconds"
+        return self
+
     def at(self, value: str) -> "_FallbackScheduleBuilder":
         parts = str(value or "").split(":")
         if len(parts) >= 2:
@@ -167,7 +172,13 @@ class RuntimeRefs:
 
 
 class NativeTaskRuntime:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        ready_data_db_path: str = "",
+        ready_data_poll_interval_seconds: int = 60,
+        ready_data_runner: Callable[..., dict[str, Any]] | None = None,
+    ) -> None:
         self.active_tasks: dict[str, dict[str, Any]] = {}
         self.task_history: list[dict[str, Any]] = self._load_history_from_disk()
         self.task_lock = threading.RLock()
@@ -175,6 +186,13 @@ class NativeTaskRuntime:
         self._scheduler_lock = threading.RLock()
         self._scheduler_loop_started = False
         self._site_config_override: dict[str, Any] | None = None
+        self._ready_data_db_path = str(ready_data_db_path or "")
+        self._ready_data_poll_interval_seconds = max(
+            1,
+            int(ready_data_poll_interval_seconds),
+        )
+        self._ready_data_runner = ready_data_runner
+        self._ready_data_worker_lock = threading.Lock()
 
     def _load_history_from_disk(self) -> list[dict[str, Any]]:
         path = Path("data/job_history.jsonl")
@@ -308,6 +326,10 @@ class NativeTaskRuntime:
                 interval = str(task_cfg.get("interval") or "").strip()
                 if interval:
                     self._register_schedule(interval, make_generic_task_job(task_cfg))
+            if self._ready_data_db_path:
+                self.scheduler.every(self._ready_data_poll_interval_seconds).seconds.do(
+                    self._wake_ready_data_automation
+                )
 
         if not self._scheduler_loop_started:
             thread = threading.Thread(target=self._scheduler_loop, daemon=True)
@@ -320,6 +342,34 @@ class NativeTaskRuntime:
             with self._scheduler_lock:
                 self.scheduler.run_pending()
             time.sleep(60)
+
+    def _wake_ready_data_automation(self) -> None:
+        """Wake one worker without making the scheduler thread own durable state."""
+        if not self._ready_data_db_path or not self._ready_data_worker_lock.acquire(
+            blocking=False
+        ):
+            return
+
+        def run() -> None:
+            try:
+                runner = self._ready_data_runner
+                if runner is None:
+                    from ai_actuarial.api.services.ready_data_automation import (
+                        run_ready_data_automation_once,
+                    )
+
+                    runner = run_ready_data_automation_once
+                runner(db_path=self._ready_data_db_path)
+            except Exception:  # noqa: BLE001
+                logger.exception("Ready-data automation wakeup failed")
+            finally:
+                self._ready_data_worker_lock.release()
+
+        threading.Thread(
+            target=run,
+            name="ready-data-automation-runner",
+            daemon=True,
+        ).start()
 
     def _register_schedule(self, interval_str: str, job_func: Callable[[], None]) -> None:
         interval = str(interval_str or "").strip().lower()
