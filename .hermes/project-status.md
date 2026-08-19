@@ -5,7 +5,7 @@
 - Workspace: `C:\Project\AI_actuarial_inforsearch`
 - Active branch: `codex/issue-174-ready-data-index-reevaluation`
 - Baseline: `origin/main` at `1f4f4598040974bb3d3e1740643a6d909514f240` (merged PR `#190`)
-- Delivery: local implementation and verification complete; Ready-for-review PR pending
+- Delivery: commit `872695c`, Ready-for-review PR `#191`
 - Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
 - Execution rule: work on one bounded deliverable at a time. Do not start the next PR or a server action until the current deliverable reaches its terminal handoff.
 
@@ -70,6 +70,7 @@ Do these sequentially, one PR at a time:
 - Knowledge-base deletion clears ready-index lifecycle state and index rows transactionally; nested deletion is rejected before database or filesystem mutation so an outer rollback cannot restore a KB whose files were removed. Legacy/minimal schemas retain a safe capability-based migration path.
 - Manual build, build-only, optional auto-publish, default-off automation, and default-off GC behavior remain unchanged. No excluded UI, smoke, provenance, full-pipeline, retry/GC, deployment, server, or sibling-repository work was added.
 - Four rounds of independent specification and quality/security review completed with no remaining actionable findings. The mandatory Codex CLI review could not start because packaged WindowsApps `codex.exe` returned `Access is denied`; no alternate entrypoint was attempted.
+- PR `#191` is Ready-for-review, uses `Refs #174`, and awaits the required checks/review observation window. It must not be auto-merged.
 
 ## Program Dependency Order
 
@@ -107,10 +108,10 @@ After `#174` closes, re-read all live Issue states before selecting the next ite
 
 ## Immediate Next Action
 
-Publish the verified index re-evaluation change as a Ready-for-review PR using `Refs #174`, then observe checks and reviewer/Copilot feedback for the required window. No server Agent, deployment, merge, or excluded follow-up is authorized.
+Observe PR `#191` checks and reviewer/Copilot feedback for the required window; fix only confirmed-safe in-scope findings. No server Agent, deployment, merge, or excluded follow-up is authorized.
 
 ## Current Worktree State
 
-- The active index re-evaluation changes are intentionally uncommitted pending the final local publication gate.
+- The active index re-evaluation implementation is committed and pushed on `codex/issue-174-ready-data-index-reevaluation`; this status update is the only intended follow-up change.
 - `ai_actuarial/api/routers/rag_admin.py`: pre-existing line-ending metadata only; content diff zero; do not include.
 - `graphify-out/`: pre-existing untracked analysis output; do not include or clean.
