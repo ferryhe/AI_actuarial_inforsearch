@@ -439,8 +439,21 @@ def _load_builder_source_snapshot(
                 kb_id
                 and _table_exists(conn, "kb_chunk_bindings")
                 and conn.execute(
-                    "SELECT 1 FROM kb_chunk_bindings WHERE kb_id = ? LIMIT 1",
-                    (kb_id,),
+                    f"""SELECT 1
+                        FROM kb_chunk_bindings b
+                        JOIN rag_kb_files kf
+                          ON kf.kb_id = b.kb_id
+                         AND kf.file_url = b.file_url
+                        JOIN catalog_items c
+                          ON c.file_url = b.file_url
+                         AND c.status = 'ok'
+                        JOIN file_chunk_sets fcs
+                          ON fcs.chunk_set_id = b.chunk_set_id
+                         AND fcs.file_url = b.file_url
+                        WHERE b.kb_id = ?
+                          AND b.file_url IN ({placeholders})
+                        LIMIT 1""",
+                    [kb_id, *file_urls],
                 ).fetchone()
             )
             if use_bound_chunk_sets:
@@ -453,6 +466,12 @@ def _load_builder_source_snapshot(
                           ON b.chunk_set_id = fcs.chunk_set_id
                          AND b.file_url = fcs.file_url
                          AND b.kb_id = ?
+                        JOIN rag_kb_files kf
+                          ON kf.kb_id = b.kb_id
+                         AND kf.file_url = b.file_url
+                        JOIN catalog_items c
+                          ON c.file_url = b.file_url
+                         AND c.status = 'ok'
                         WHERE fcs.file_url IN ({placeholders})
                         ORDER BY fcs.file_url, g.chunk_index""",
                     [kb_id, *file_urls],

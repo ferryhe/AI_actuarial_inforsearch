@@ -773,6 +773,131 @@ def test_build_l0_can_scope_to_knowledge_base(test_db_path, tmp_path):
     assert "Wrong Profile" not in section_text
 
 
+def test_build_l0_ignores_historical_orphan_binding_for_chunk_mode(test_db_path, tmp_path):
+    conn = sqlite3.connect(test_db_path)
+    conn.executescript(
+        """
+        CREATE TABLE rag_kb_files (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (kb_id, file_url)
+        );
+        CREATE TABLE kb_chunk_bindings (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            chunk_set_id TEXT NOT NULL,
+            bound_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
+        ("kb_rule_1", "https://example.com/rule1", "2026-08-19T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
+        ("cs-orphan", "https://example.com/orphan", 1),
+    )
+    conn.execute(
+        """
+        INSERT INTO global_chunks(
+            chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy
+        ) VALUES(?,?,?,?,?,?)
+        """,
+        ("c-orphan", "cs-orphan", 0, "Orphan content", 10, "Orphan"),
+    )
+    conn.execute(
+        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
+        ("kb_rule_1", "https://example.com/orphan", "cs-orphan", "2099-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    output_dir = tmp_path / "orphan-binding"
+    manifest = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(output_dir),
+        profile="general",
+        kb_id="kb_rule_1",
+    )
+
+    section_text = (output_dir / "sections.jsonl").read_text(encoding="utf-8")
+    assert manifest["section_count"] == 2
+    assert "第一章 总则" in section_text
+    assert "Orphan content" not in section_text
+
+
+def test_build_l0_ignores_binding_outside_current_catalog_input(test_db_path, tmp_path):
+    conn = sqlite3.connect(test_db_path)
+    conn.executescript(
+        """
+        CREATE TABLE rag_kb_files (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (kb_id, file_url)
+        );
+        CREATE TABLE kb_chunk_bindings (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            chunk_set_id TEXT NOT NULL,
+            bound_at TEXT NOT NULL
+        );
+        """
+    )
+    invalid_url = "https://example.com/not-ready"
+    conn.execute(
+        "INSERT INTO files(url,title,source_site,published_time) VALUES(?,?,?,?)",
+        (invalid_url, "Not Ready", "Example", "2026-08-19"),
+    )
+    conn.execute(
+        """
+        INSERT INTO catalog_items(file_url,status,summary,category,keywords,rag_chunk_count)
+        VALUES(?,?,?,?,?,?)
+        """,
+        (invalid_url, "error", "Not ready", "other", "", 1),
+    )
+    conn.execute(
+        "INSERT INTO file_chunk_sets(chunk_set_id,file_url,chunk_count) VALUES(?,?,?)",
+        ("cs-not-ready", invalid_url, 1),
+    )
+    conn.execute(
+        """
+        INSERT INTO global_chunks(
+            chunk_id,chunk_set_id,chunk_index,content,token_count,section_hierarchy
+        ) VALUES(?,?,?,?,?,?)
+        """,
+        ("c-not-ready", "cs-not-ready", 0, "Not-ready content", 10, "Other"),
+    )
+    conn.executemany(
+        "INSERT INTO rag_kb_files(kb_id,file_url,added_at) VALUES(?,?,?)",
+        [
+            ("kb_rule_1", "https://example.com/rule1", "2026-08-19T00:00:00+00:00"),
+            ("kb_rule_1", invalid_url, "2026-08-19T00:00:00+00:00"),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO kb_chunk_bindings(kb_id,file_url,chunk_set_id,bound_at) VALUES(?,?,?,?)",
+        ("kb_rule_1", invalid_url, "cs-not-ready", "2099-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    output_dir = tmp_path / "invalid-catalog-binding"
+    manifest = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(output_dir),
+        profile="general",
+        kb_id="kb_rule_1",
+    )
+
+    section_text = (output_dir / "sections.jsonl").read_text(encoding="utf-8")
+    assert manifest["section_count"] == 2
+    assert "第一章 总则" in section_text
+    assert "Not-ready content" not in section_text
+
+
 def test_build_l0_empty_db(tmp_path):
     """Build with no catalog items should produce empty outputs."""
     db_path = str(tmp_path / "empty.db")
