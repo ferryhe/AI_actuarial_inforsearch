@@ -652,6 +652,7 @@ class KnowledgeBaseManager:
         
         conn = self.storage._conn
         removed_count = 0
+        removed_file_urls: list[str] = []
 
         with self.storage.transaction(immediate=True):
             for file_url in file_urls:
@@ -661,33 +662,36 @@ class KnowledgeBaseManager:
                 """, (kb_id, file_url))
                 if cursor.rowcount > 0:
                     removed_count += cursor.rowcount
+                    removed_file_urls.append(file_url)
+                    conn.execute(
+                        "DELETE FROM kb_chunk_bindings WHERE kb_id = ? AND file_url = ?",
+                        (kb_id, file_url),
+                    )
                     conn.execute(
                         "DELETE FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
                         (kb_id, file_url),
                     )
 
-            # Update file count
-            timestamp = KnowledgeBase._get_timestamp()
-            conn.execute("""
-                UPDATE rag_knowledge_bases
-                SET file_count = (
-                    SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
-                ),
-                chunk_count = (
-                    SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ?
-                ),
-                updated_at = ?
-                WHERE kb_id = ?
-            """, (kb_id, kb_id, timestamp, kb_id))
-
             if removed_count > 0:
+                timestamp = KnowledgeBase._get_timestamp()
+                conn.execute("""
+                    UPDATE rag_knowledge_bases
+                    SET file_count = (
+                        SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
+                    ),
+                    chunk_count = (
+                        SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ?
+                    ),
+                    updated_at = ?
+                    WHERE kb_id = ?
+                """, (kb_id, kb_id, timestamp, kb_id))
                 self.storage.mark_agentic_ready_source_event_for_kb(
                     kb_id=kb_id,
                     reason="membership_removed",
                 )
 
         if removed_count > 0:
-            self._soft_delete_file_vectors(kb, file_urls)
+            self._soft_delete_file_vectors(kb, removed_file_urls)
 
         return removed_count
 

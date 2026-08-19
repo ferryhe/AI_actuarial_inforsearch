@@ -2112,6 +2112,96 @@ def test_fastapi_rag_admin_legacy_manifest_stale_uses_bound_chunks_and_catalog_m
     assert stale.json()["manifest"]["status"] == "stale"
 
 
+@pytest.mark.parametrize("invalid_binding_kind", ["orphan", "catalog_not_ok"])
+def test_fastapi_rag_admin_legacy_manifest_ignores_binding_outside_builder_input(
+    tmp_path: Path,
+    monkeypatch,
+    invalid_binding_kind: str,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    alpha_url = str(seed["alpha_url"])
+    beta_url = str(seed["beta_url"])
+
+    storage = Storage(str(db_path))
+    try:
+        profile = storage.create_chunk_profile(
+            name=f"legacy-invalid-binding-{invalid_binding_kind}",
+            chunk_size=300,
+            chunk_overlap=50,
+        )
+    finally:
+        storage.close()
+    _seed_ready_chunk_set(db_path, alpha_url, profile["profile_id"], text="Alpha fallback chunk")
+    invalid_chunk_set = _seed_ready_chunk_set(
+        db_path,
+        beta_url,
+        profile["profile_id"],
+        text="Ignored binding chunk",
+    )
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-legacy-invalid-binding",
+            "name": "Legacy Invalid Binding KB",
+            "kb_mode": "manual",
+            "file_urls": [alpha_url],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    build = client.post(
+        "/api/rag/knowledge-bases/kb-legacy-invalid-binding/agentic-ready-manifest/build",
+        json={},
+    )
+    assert build.status_code == 200, build.text
+    assert build.json()["manifest"]["status"] == "ready"
+
+    storage = Storage(str(db_path))
+    try:
+        if invalid_binding_kind == "catalog_not_ok":
+            storage._conn.execute(
+                """
+                INSERT INTO rag_kb_files(kb_id, file_url, added_at)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    "kb-legacy-invalid-binding",
+                    beta_url,
+                    "2000-01-01T00:00:00+00:00",
+                ),
+            )
+            storage._conn.execute(
+                "UPDATE catalog_items SET status = ?, updated_at = ? WHERE file_url = ?",
+                ("error", "2000-01-01T00:00:00+00:00", beta_url),
+            )
+            storage._conn.commit()
+        storage.bind_chunk_set_to_kb(
+            kb_id="kb-legacy-invalid-binding",
+            file_url=beta_url,
+            chunk_set_id=str(invalid_chunk_set["chunk_set_id"]),
+            bound_by="historical-test",
+        )
+        storage._conn.execute(
+            "UPDATE file_chunk_sets SET updated_at = ? WHERE chunk_set_id = ?",
+            ("2099-01-01T00:00:00+00:00", invalid_chunk_set["chunk_set_id"]),
+        )
+        storage._conn.execute(
+            "DELETE FROM agentic_ready_source_state WHERE kb_id = ?",
+            ("kb-legacy-invalid-binding",),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    status = client.get(
+        "/api/rag/knowledge-bases/kb-legacy-invalid-binding/agentic-ready-manifest"
+    )
+    assert status.status_code == 200, status.text
+    assert status.json()["manifest"]["status"] == "ready"
+
+
 def test_manual_ready_build_clears_captured_hard_generation_after_safe_publish(
     tmp_path: Path,
     monkeypatch,
@@ -2908,3 +2998,10 @@ def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path,
     assert files.status_code == 200, files.text
     assert [item["file_url"] for item in files.json()["files"]] == [alpha_url]
     assert files.json()["files"][0]["chunk_set_id"] == chunk_set["chunk_set_id"]
+
+    removed = client.delete(f"/api/rag/knowledge-bases/kb-direct-bind/files/{alpha_url}")
+    assert removed.status_code == 200, removed.text
+
+    bindings = client.get("/api/rag/knowledge-bases/kb-direct-bind/bindings")
+    assert bindings.status_code == 200, bindings.text
+    assert bindings.json()["count"] == 0

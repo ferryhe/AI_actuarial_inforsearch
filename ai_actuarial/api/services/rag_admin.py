@@ -769,7 +769,21 @@ def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]
     )
     has_chunk_bindings = bool(
         storage._conn.execute(
-            "SELECT 1 FROM kb_chunk_bindings WHERE kb_id = ? LIMIT 1",
+            """
+            SELECT 1
+            FROM kb_chunk_bindings b
+            JOIN rag_kb_files kf
+              ON kf.kb_id = b.kb_id
+             AND kf.file_url = b.file_url
+            JOIN catalog_items c
+              ON c.file_url = b.file_url
+             AND c.status = 'ok'
+            JOIN file_chunk_sets s
+              ON s.chunk_set_id = b.chunk_set_id
+             AND s.file_url = b.file_url
+            WHERE b.kb_id = ?
+            LIMIT 1
+            """,
             (kb_id,),
         ).fetchone()
     )
@@ -778,7 +792,15 @@ def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]
             """
             SELECT MAX(s.updated_at)
             FROM kb_chunk_bindings b
-            LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+            JOIN rag_kb_files kf
+              ON kf.kb_id = b.kb_id
+             AND kf.file_url = b.file_url
+            JOIN catalog_items c
+              ON c.file_url = b.file_url
+             AND c.status = 'ok'
+            JOIN file_chunk_sets s
+              ON s.chunk_set_id = b.chunk_set_id
+             AND s.file_url = b.file_url
             WHERE b.kb_id = ?
             """,
             (kb_id,),
@@ -788,6 +810,9 @@ def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]
             """
             SELECT MAX(s.updated_at)
             FROM rag_kb_files kf
+            JOIN catalog_items c
+              ON c.file_url = kf.file_url
+             AND c.status = 'ok'
             LEFT JOIN file_chunk_sets s ON s.file_url = kf.file_url
             WHERE kf.kb_id = ?
             """,

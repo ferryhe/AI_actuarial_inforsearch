@@ -54,6 +54,38 @@ def _evaluate_pending(storage: Storage, *, kb_id: str, profile: str = "general")
     )
 
 
+def _bind_file(storage: Storage, *, kb_id: str, file_url: str) -> dict[str, object]:
+    profile = storage.create_chunk_profile(
+        name="membership-binding-profile",
+        chunk_size=256,
+        chunk_overlap=32,
+    )
+    chunk_set = storage.get_or_create_file_chunk_set(
+        file_url=file_url,
+        profile_id=str(profile["profile_id"]),
+        markdown_hash=f"binding:{file_url}",
+        status="ready",
+    )
+    storage.replace_global_chunks(
+        chunk_set_id=str(chunk_set["chunk_set_id"]),
+        chunks=[
+            {
+                "chunk_index": 0,
+                "content": f"Bound chunk for {file_url}",
+                "token_count": 4,
+                "section_hierarchy": "Root",
+            }
+        ],
+        overwrite=True,
+    )
+    return storage.bind_chunk_set_to_kb(
+        kb_id=kb_id,
+        file_url=file_url,
+        chunk_set_id=str(chunk_set["chunk_set_id"]),
+        bound_by="test",
+    )
+
+
 def test_membership_add_marks_soft_stale_once(tmp_path: Path) -> None:
     storage, manager, file_urls = _manager_with_files(tmp_path)
     try:
@@ -181,12 +213,21 @@ def test_duplicate_add_does_not_advance_generation(tmp_path: Path) -> None:
 
 
 def test_membership_remove_marks_hard_stale_once(tmp_path: Path) -> None:
-    storage, manager, file_urls = _manager_with_files(tmp_path)
+    storage, manager, file_urls = _manager_with_files(tmp_path, file_count=3)
     try:
+        manager.create_kb(
+            kb_id="kb-other",
+            name="Other KB",
+            kb_mode="manual",
+        )
         manager.add_files_to_kb("kb-membership", file_urls)
+        manager.add_files_to_kb("kb-other", [file_urls[0]])
+        for file_url in file_urls:
+            _bind_file(storage, kb_id="kb-membership", file_url=file_url)
+        _bind_file(storage, kb_id="kb-other", file_url=file_urls[0])
         _evaluate_pending(storage, kb_id="kb-membership")
 
-        removed = manager.remove_files_from_kb("kb-membership", file_urls)
+        removed = manager.remove_files_from_kb("kb-membership", file_urls[:2])
 
         state = storage.get_agentic_ready_source_state(
             kb_id="kb-membership",
@@ -198,6 +239,17 @@ def test_membership_remove_marks_hard_stale_once(tmp_path: Path) -> None:
         assert state["pending_severity"] == "hard_stale"
         assert state["pending_reasons"] == ["membership_removed"]
         assert state["serving_allowed"] is False
+        remaining_bindings = storage._conn.execute(
+            """
+            SELECT kb_id, file_url
+            FROM kb_chunk_bindings
+            ORDER BY kb_id, file_url
+            """
+        ).fetchall()
+        assert [tuple(row) for row in remaining_bindings] == [
+            ("kb-membership", file_urls[2]),
+            ("kb-other", file_urls[0]),
+        ]
     finally:
         storage.close()
 
@@ -206,9 +258,29 @@ def test_missing_remove_does_not_advance_generation(tmp_path: Path) -> None:
     storage, manager, file_urls = _manager_with_files(tmp_path)
     try:
         manager.add_files_to_kb("kb-membership", [file_urls[0]])
+        orphan_binding = _bind_file(
+            storage,
+            kb_id="kb-membership",
+            file_url=file_urls[1],
+        )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET updated_at = ? WHERE kb_id = ?",
+            ("2000-01-01T00:00:00+00:00", "kb-membership"),
+        )
+        storage._conn.commit()
         before = storage.get_agentic_ready_source_state(
             kb_id="kb-membership",
             profile="general",
+        )
+        stats_before = tuple(
+            storage._conn.execute(
+                """
+                SELECT file_count, chunk_count, updated_at
+                FROM rag_knowledge_bases
+                WHERE kb_id = ?
+                """,
+                ("kb-membership",),
+            ).fetchone()
         )
 
         removed = manager.remove_files_from_kb("kb-membership", [file_urls[1]])
@@ -220,6 +292,69 @@ def test_missing_remove_does_not_advance_generation(tmp_path: Path) -> None:
         assert removed == 0
         assert after["event_generation"] == before["event_generation"]
         assert after["pending_reasons"] == before["pending_reasons"]
+        assert tuple(
+            storage._conn.execute(
+                """
+                SELECT file_count, chunk_count, updated_at
+                FROM rag_knowledge_bases
+                WHERE kb_id = ?
+                """,
+                ("kb-membership",),
+            ).fetchone()
+        ) == stats_before
+        assert storage._conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM kb_chunk_bindings
+            WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+            """,
+            (
+                "kb-membership",
+                file_urls[1],
+                orphan_binding["chunk_set_id"],
+            ),
+        ).fetchone()[0] == 1
+    finally:
+        storage.close()
+
+
+def test_mixed_remove_soft_deletes_only_actual_members(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage, manager, file_urls = _manager_with_files(tmp_path)
+    try:
+        manager.add_files_to_kb("kb-membership", [file_urls[0]])
+        _bind_file(storage, kb_id="kb-membership", file_url=file_urls[0])
+        orphan_binding = _bind_file(
+            storage,
+            kb_id="kb-membership",
+            file_url=file_urls[1],
+        )
+        soft_deleted_urls: list[str] = []
+
+        def capture_soft_delete(_kb, removed_urls: list[str]) -> dict[str, int]:
+            soft_deleted_urls.extend(removed_urls)
+            return {"removed_vectors": 0}
+
+        monkeypatch.setattr(manager, "_soft_delete_file_vectors", capture_soft_delete)
+
+        removed = manager.remove_files_from_kb("kb-membership", file_urls)
+
+        assert removed == 1
+        assert soft_deleted_urls == [file_urls[0]]
+        assert storage._conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM kb_chunk_bindings
+            WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+            """,
+            (
+                "kb-membership",
+                file_urls[1],
+                orphan_binding["chunk_set_id"],
+            ),
+        ).fetchone()[0] == 1
     finally:
         storage.close()
 
@@ -274,9 +409,53 @@ def test_source_mark_failure_rolls_back_removal_count_and_generation(
     storage, manager, file_urls = _manager_with_files(tmp_path)
     try:
         manager.add_files_to_kb("kb-membership", [file_urls[0]])
+        binding = _bind_file(
+            storage,
+            kb_id="kb-membership",
+            file_url=file_urls[0],
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO rag_chunks (
+                chunk_id, kb_id, file_url, chunk_index, content, token_count,
+                section_hierarchy, embedding_hash, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "membership-rollback-chunk",
+                "kb-membership",
+                file_urls[0],
+                0,
+                "Rollback chunk",
+                2,
+                "Root",
+                "rollback-hash",
+                "2026-08-19T00:00:00+00:00",
+            ),
+        )
+        storage._conn.execute(
+            """
+            UPDATE rag_knowledge_bases
+            SET chunk_count = 1, updated_at = ?
+            WHERE kb_id = ?
+            """,
+            ("2026-08-19T00:00:00+00:00", "kb-membership"),
+        )
+        storage._conn.commit()
         before = storage.get_agentic_ready_source_state(
             kb_id="kb-membership",
             profile="general",
+        )
+        stats_before = tuple(
+            storage._conn.execute(
+                """
+                SELECT file_count, chunk_count, updated_at
+                FROM rag_knowledge_bases
+                WHERE kb_id = ?
+                """,
+                ("kb-membership",),
+            ).fetchone()
         )
         original = storage.mark_agentic_ready_source_event_for_kb
 
@@ -297,12 +476,37 @@ def test_source_mark_failure_rolls_back_removal_count_and_generation(
             "SELECT file_count FROM rag_knowledge_bases WHERE kb_id = ?",
             ("kb-membership",),
         ).fetchone()[0]
+        binding_count = storage._conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM kb_chunk_bindings
+            WHERE kb_id = ? AND file_url = ? AND chunk_set_id = ?
+            """,
+            ("kb-membership", file_urls[0], binding["chunk_set_id"]),
+        ).fetchone()[0]
+        rag_chunk_count = storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
+            ("kb-membership", file_urls[0]),
+        ).fetchone()[0]
+        stats_after = tuple(
+            storage._conn.execute(
+                """
+                SELECT file_count, chunk_count, updated_at
+                FROM rag_knowledge_bases
+                WHERE kb_id = ?
+                """,
+                ("kb-membership",),
+            ).fetchone()
+        )
         after = storage.get_agentic_ready_source_state(
             kb_id="kb-membership",
             profile="general",
         )
         assert membership_count == 1
         assert file_count == 1
+        assert binding_count == 1
+        assert rag_chunk_count == 1
+        assert stats_after == stats_before
         assert after["event_generation"] == before["event_generation"]
         assert after["pending_reasons"] == before["pending_reasons"]
     finally:
