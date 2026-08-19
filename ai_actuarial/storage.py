@@ -1443,6 +1443,97 @@ class Storage:
         
         columns = [desc[0] for desc in cur.description]
         return dict(zip(columns, row))
+
+    @staticmethod
+    def _canonical_ready_data_keywords(raw: object) -> str:
+        """Canonicalize keywords exactly as the ready-data builder consumes them."""
+        text = str(raw or "").strip()
+        if not text:
+            values: object = []
+        elif text.startswith("["):
+            try:
+                values = json.loads(text)
+            except json.JSONDecodeError:
+                values = [part.strip() for part in text.split(",") if part.strip()]
+        else:
+            values = [part.strip() for part in text.split(",") if part.strip()]
+        return json.dumps(
+            values,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _ready_data_builder_metadata_snapshot(self, file_url: str) -> tuple[object, ...]:
+        """Return one file's canonical builder-visible Catalog/file metadata."""
+        row = self._conn.execute(
+            """
+            SELECT c.status, f.title, c.category, c.summary, c.keywords,
+                   c.markdown_content, c.rag_chunk_count,
+                   f.source_site, f.published_time
+            FROM catalog_items c
+            LEFT JOIN files f ON f.url = c.file_url
+            WHERE c.file_url = ?
+            LIMIT 1
+            """,
+            (file_url,),
+        ).fetchone()
+        if not row or row[0] != "ok":
+            return ("inactive",)
+        return (
+            "ok",
+            row[1] or file_url,
+            row[2] or "general",
+            row[3] or "",
+            self._canonical_ready_data_keywords(row[4]),
+            str(row[5] or ""),
+            row[6] or 0,
+            row[7] or "",
+            row[8] or "",
+        )
+
+    def _ready_data_metadata_affected_kb_ids(self, file_url: str) -> tuple[str, ...]:
+        if not self._table_exists("rag_knowledge_bases") or not self._table_exists(
+            "rag_kb_files"
+        ):
+            return ()
+        rows = self._conn.execute(
+            """
+            SELECT DISTINCT kb.kb_id
+            FROM rag_kb_files kf
+            JOIN rag_knowledge_bases kb ON kb.kb_id = kf.kb_id
+            WHERE kf.file_url = ?
+            ORDER BY kb.kb_id
+            """,
+            (file_url,),
+        ).fetchall()
+        return tuple(str(row[0]) for row in rows if row[0])
+
+    def _mark_ready_data_builder_metadata_change(
+        self,
+        *,
+        file_url: str,
+        before: tuple[object, ...],
+        explicit_deletion: bool = False,
+    ) -> tuple[str, ...]:
+        """Compare canonical snapshots and mark each affected KB at most once."""
+        after = self._ready_data_builder_metadata_snapshot(file_url)
+        if before == after:
+            return ()
+        before_ok = before[0] == "ok"
+        after_ok = after[0] == "ok"
+        if explicit_deletion and not after_ok:
+            reason = "source_deleted"
+        elif after_ok:
+            reason = "metadata_updated"
+        elif before_ok:
+            reason = "source_invalidated"
+        else:
+            return ()
+        kb_ids = self._ready_data_metadata_affected_kb_ids(file_url)
+        for kb_id in kb_ids:
+            self.mark_agentic_ready_source_event_for_kb(kb_id=kb_id, reason=reason)
+        return kb_ids
     
     def insert_file(
         self,
@@ -1477,35 +1568,37 @@ class Storage:
         """
         # Note: Parameter 'bytes' shadows built-in, but this is intentional
         # to match the database column name 'bytes' for consistency
-        ts = self.now()
-        self._conn.execute(
-            """
-            INSERT INTO files (
-                url, sha256, title, source_site, source_page_url, original_filename,
-                local_path, bytes, content_type, last_modified, etag, published_time,
-                first_seen, last_seen, crawl_time
+        with self.transaction(immediate=True):
+            before = self._ready_data_builder_metadata_snapshot(url)
+            ts = self.now()
+            self._conn.execute(
+                """
+                INSERT INTO files (
+                    url, sha256, title, source_site, source_page_url, original_filename,
+                    local_path, bytes, content_type, last_modified, etag, published_time,
+                    first_seen, last_seen, crawl_time
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    url,
+                    sha256,
+                    title,
+                    source_site,
+                    source_page_url,
+                    original_filename,
+                    local_path,
+                    bytes,
+                    content_type,
+                    last_modified,
+                    etag,
+                    published_time,
+                    ts,
+                    ts,
+                    ts,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                url,
-                sha256,
-                title,
-                source_site,
-                source_page_url,
-                original_filename,
-                local_path,
-                bytes,
-                content_type,
-                last_modified,
-                etag,
-                published_time,
-                ts,
-                ts,
-                ts,
-            ),
-        )
-        self._maybe_commit()
+            self._mark_ready_data_builder_metadata_change(file_url=url, before=before)
 
     def upsert_file(
         self,
@@ -1522,49 +1615,51 @@ class Storage:
         etag: str | None,
         published_time: str | None,
     ) -> None:
-        ts = self.now()
-        self._conn.execute(
-            """
-            INSERT INTO files (
-                url, sha256, title, source_site, source_page_url, original_filename,
-                local_path, bytes, content_type, last_modified, etag, published_time,
-                first_seen, last_seen, crawl_time
+        with self.transaction(immediate=True):
+            before = self._ready_data_builder_metadata_snapshot(url)
+            ts = self.now()
+            self._conn.execute(
+                """
+                INSERT INTO files (
+                    url, sha256, title, source_site, source_page_url, original_filename,
+                    local_path, bytes, content_type, last_modified, etag, published_time,
+                    first_seen, last_seen, crawl_time
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(url) DO UPDATE SET
+                    sha256=excluded.sha256,
+                    title=excluded.title,
+                    source_site=excluded.source_site,
+                    source_page_url=excluded.source_page_url,
+                    original_filename=excluded.original_filename,
+                    local_path=excluded.local_path,
+                    bytes=excluded.bytes,
+                    content_type=excluded.content_type,
+                    last_modified=excluded.last_modified,
+                    etag=excluded.etag,
+                    published_time=excluded.published_time,
+                    last_seen=excluded.last_seen,
+                    crawl_time=excluded.crawl_time
+                """,
+                (
+                    url,
+                    sha256,
+                    title,
+                    source_site,
+                    source_page_url,
+                    original_filename,
+                    local_path,
+                    bytes_size,
+                    content_type,
+                    last_modified,
+                    etag,
+                    published_time,
+                    ts,
+                    ts,
+                    ts,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(url) DO UPDATE SET
-                sha256=excluded.sha256,
-                title=excluded.title,
-                source_site=excluded.source_site,
-                source_page_url=excluded.source_page_url,
-                original_filename=excluded.original_filename,
-                local_path=excluded.local_path,
-                bytes=excluded.bytes,
-                content_type=excluded.content_type,
-                last_modified=excluded.last_modified,
-                etag=excluded.etag,
-                published_time=excluded.published_time,
-                last_seen=excluded.last_seen,
-                crawl_time=excluded.crawl_time
-            """,
-            (
-                url,
-                sha256,
-                title,
-                source_site,
-                source_page_url,
-                original_filename,
-                local_path,
-                bytes_size,
-                content_type,
-                last_modified,
-                etag,
-                published_time,
-                ts,
-                ts,
-                ts,
-            ),
-        )
-        self._maybe_commit()
+            self._mark_ready_data_builder_metadata_change(file_url=url, before=before)
 
     def mark_page_seen(self, url: str) -> None:
         ts = self.now()
@@ -1779,41 +1874,48 @@ class Storage:
         processed_at: str | None = None,
         extractor_version: str | None = None,
     ) -> None:
-        processed_ts = processed_at or self.now()
-        updated_ts = self.now()
-        effective_pipeline_version = pipeline_version or extractor_version or ""
-        self._conn.execute(
-            """
-            INSERT INTO catalog_items (
-                file_url, sha256, pipeline_version, processed_at, status, error,
-                keywords, summary, category, updated_at
+        file_url = item.get("url")
+        with self.transaction(immediate=True):
+            before = self._ready_data_builder_metadata_snapshot(file_url)
+            processed_ts = processed_at or self.now()
+            updated_ts = self.now()
+            effective_pipeline_version = pipeline_version or extractor_version or ""
+            self._conn.execute(
+                """
+                INSERT INTO catalog_items (
+                    file_url, sha256, pipeline_version, processed_at, status, error,
+                    keywords, summary, category, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_url) DO UPDATE SET
+                    sha256=excluded.sha256,
+                    pipeline_version=excluded.pipeline_version,
+                    processed_at=excluded.processed_at,
+                    status=excluded.status,
+                    error=excluded.error,
+                    keywords=excluded.keywords,
+                    summary=excluded.summary,
+                    category=excluded.category,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    file_url,
+                    item.get("sha256"),
+                    effective_pipeline_version,
+                    processed_ts,
+                    status,
+                    error,
+                    json.dumps(item.get("keywords") or [], ensure_ascii=False),
+                    item.get("summary") or "",
+                    item.get("category") or "",
+                    updated_ts,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(file_url) DO UPDATE SET
-                sha256=excluded.sha256,
-                pipeline_version=excluded.pipeline_version,
-                processed_at=excluded.processed_at,
-                status=excluded.status,
-                error=excluded.error,
-                keywords=excluded.keywords,
-                summary=excluded.summary,
-                category=excluded.category,
-                updated_at=excluded.updated_at
-            """,
-            (
-                item.get("url"),
-                item.get("sha256"),
-                effective_pipeline_version,
-                processed_ts,
-                status,
-                error,
-                json.dumps(item.get("keywords") or [], ensure_ascii=False),
-                item.get("summary") or "",
-                item.get("category") or "",
-                updated_ts,
-            ),
-        )
-        self._maybe_commit()
+            self._mark_ready_data_builder_metadata_change(
+                file_url=file_url,
+                before=before,
+                explicit_deletion=str(status or "").strip().lower() == "deleted",
+            )
 
     def write_last_run(self, output_path: str, items: Iterable[dict]) -> None:
         Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
@@ -2198,15 +2300,21 @@ class Storage:
             url: File URL
             deleted_time: ISO timestamp for deletion
         """
-        self._conn.execute(
-            "UPDATE files SET deleted_at = ? WHERE url = ?",
-            (deleted_time, url)
-        )
-        self._conn.execute(
-            "UPDATE catalog_items SET status = 'deleted' WHERE file_url = ?",
-            (url,)
-        )
-        self._maybe_commit()
+        with self.transaction(immediate=True):
+            before = self._ready_data_builder_metadata_snapshot(url)
+            self._conn.execute(
+                "UPDATE files SET deleted_at = ? WHERE url = ?",
+                (deleted_time, url),
+            )
+            self._conn.execute(
+                "UPDATE catalog_items SET status = 'deleted' WHERE file_url = ?",
+                (url,),
+            )
+            self._mark_ready_data_builder_metadata_change(
+                file_url=url,
+                before=before,
+                explicit_deletion=True,
+            )
     
     def get_file_with_catalog(self, url: str) -> dict | None:
         """Get file details with catalog information.
@@ -2310,6 +2418,70 @@ class Storage:
             )
         return out
     
+    def update_file_metadata(
+        self,
+        url: str,
+        *,
+        title: str | None = None,
+        category: str | None = None,
+        summary: str | None = None,
+        keywords: list | None = None,
+    ) -> tuple[bool, str | None]:
+        """Update builder-visible file/Catalog metadata as one source mutation."""
+        with self.transaction(immediate=True):
+            before = self._ready_data_builder_metadata_snapshot(url)
+            file_exists = self._conn.execute(
+                "SELECT 1 FROM files WHERE url = ?",
+                (url,),
+            ).fetchone()
+            if not file_exists:
+                return (False, "file_not_found")
+
+            catalog_updates = any(
+                value is not None for value in (category, summary, keywords)
+            )
+            if title is None and not catalog_updates:
+                return (False, "no_updates")
+
+            if title is not None:
+                self._conn.execute(
+                    "UPDATE files SET title = ? WHERE url = ?",
+                    (title, url),
+                )
+
+            if catalog_updates:
+                self._conn.execute(
+                    """
+                    INSERT INTO catalog_items (file_url, sha256, pipeline_version, status)
+                    SELECT url, sha256, 'manual', 'ok' FROM files WHERE url = ?
+                    ON CONFLICT(file_url) DO NOTHING
+                    """,
+                    (url,),
+                )
+                updates: list[str] = []
+                params: list[object] = []
+                if category is not None:
+                    updates.append("category = ?")
+                    params.append(category)
+                if summary is not None:
+                    updates.append("summary = ?")
+                    params.append(summary)
+                if keywords is not None:
+                    updates.append("keywords = ?")
+                    params.append(json.dumps(keywords) if keywords else "")
+                updates.append("updated_at = CURRENT_TIMESTAMP")
+                params.append(url)
+                self._conn.execute(
+                    f"UPDATE catalog_items SET {', '.join(updates)} WHERE file_url = ?",
+                    tuple(params),
+                )
+
+            self._mark_ready_data_builder_metadata_change(
+                file_url=url,
+                before=before,
+            )
+            return (True, None)
+
     def update_file_catalog(self, url: str, category: str = None, summary: str = None, keywords: list = None) -> tuple[bool, str | None]:
         """Update catalog information for a file.
         
@@ -2325,57 +2497,12 @@ class Storage:
             - (False, "file_not_found") if file doesn't exist
             - (False, "no_updates") if no update fields were provided
         """
-        # Check if file exists
-        file_cur = self._conn.execute(
-            "SELECT url FROM files WHERE url = ?",
-            (url,)
+        return self.update_file_metadata(
+            url,
+            category=category,
+            summary=summary,
+            keywords=keywords,
         )
-        if file_cur.fetchone() is None:
-            # File doesn't exist, can't update
-            return (False, "file_not_found")
-        
-        # Check if catalog entry exists
-        cur = self._conn.execute(
-            "SELECT file_url FROM catalog_items WHERE file_url = ?",
-            (url,)
-        )
-        exists = cur.fetchone() is not None
-        
-        if not exists:
-            # Create a catalog entry if it doesn't exist
-            self._conn.execute(
-                """
-                INSERT INTO catalog_items (file_url, sha256, pipeline_version, status)
-                SELECT url, sha256, 'manual', 'ok' FROM files WHERE url = ?
-                """,
-                (url,)
-            )
-        
-        # Build update query dynamically based on provided fields
-        updates = []
-        params = []
-        
-        if category is not None:
-            updates.append("category = ?")
-            params.append(category)
-        
-        if summary is not None:
-            updates.append("summary = ?")
-            params.append(summary)
-        
-        if keywords is not None:
-            updates.append("keywords = ?")
-            params.append(json.dumps(keywords) if keywords else "")
-        
-        if updates:
-            updates.append("updated_at = CURRENT_TIMESTAMP")
-            query = f"UPDATE catalog_items SET {', '.join(updates)} WHERE file_url = ?"
-            params.append(url)
-            self._conn.execute(query, tuple(params))
-            self._maybe_commit()
-            return (True, None)
-        
-        return (False, "no_updates")
     
     def update_file_markdown(self, url: str, markdown_content: str, markdown_source: str = "manual") -> tuple[bool, str | None]:
         """Update markdown content for a file.
@@ -2390,45 +2517,38 @@ class Storage:
             - (True, None) if update succeeded
             - (False, "file_not_found") if file doesn't exist
         """
-        # Check if file exists
-        file_cur = self._conn.execute(
-            "SELECT url FROM files WHERE url = ?",
-            (url,)
-        )
-        if file_cur.fetchone() is None:
-            return (False, "file_not_found")
-        
-        # Check if catalog entry exists
-        cur = self._conn.execute(
-            "SELECT file_url FROM catalog_items WHERE file_url = ?",
-            (url,)
-        )
-        exists = cur.fetchone() is not None
-        
-        if not exists:
-            # Create a catalog entry if it doesn't exist
+        with self.transaction(immediate=True):
+            before = self._ready_data_builder_metadata_snapshot(url)
+            file_exists = self._conn.execute(
+                "SELECT 1 FROM files WHERE url = ?",
+                (url,),
+            ).fetchone()
+            if not file_exists:
+                return (False, "file_not_found")
             self._conn.execute(
                 """
                 INSERT INTO catalog_items (file_url, sha256, pipeline_version, status)
                 SELECT url, sha256, 'manual', 'ok' FROM files WHERE url = ?
+                ON CONFLICT(file_url) DO NOTHING
                 """,
-                (url,)
+                (url,),
             )
-        
-        # Update markdown content
-        self._conn.execute(
-            """
-            UPDATE catalog_items 
-            SET markdown_content = ?, 
-                markdown_updated_at = CURRENT_TIMESTAMP,
-                markdown_source = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE file_url = ?
-            """,
-            (markdown_content, markdown_source, url)
-        )
-        self._maybe_commit()
-        return (True, None)
+            self._conn.execute(
+                """
+                UPDATE catalog_items
+                SET markdown_content = ?,
+                    markdown_updated_at = CURRENT_TIMESTAMP,
+                    markdown_source = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE file_url = ?
+                """,
+                (markdown_content, markdown_source, url),
+            )
+            self._mark_ready_data_builder_metadata_change(
+                file_url=url,
+                before=before,
+            )
+            return (True, None)
     
     def get_file_markdown(self, url: str) -> dict | None:
         """Get markdown content for a file.

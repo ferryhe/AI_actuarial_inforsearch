@@ -99,19 +99,17 @@ def update_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
         if title is None and not any(v is not None for v in (category, summary, keywords)):
             raise FileWriteError("No updates provided")
 
-        if title is not None:
-            file_exists = storage._conn.execute("SELECT url FROM files WHERE url = ?", (url,)).fetchone()
-            if not file_exists:
-                raise FileWriteError("File not found", status_code=404)
-            storage._conn.execute("UPDATE files SET title = ? WHERE url = ?", (title, url))
-            storage._maybe_commit()
-
-        if any(v is not None for v in (category, summary, keywords)):
-            success, reason = storage.update_file_catalog(url=url, category=category, summary=summary, keywords=keywords)
-            if not success and reason == "file_not_found":
-                raise FileWriteError("File not found", status_code=404)
-            if not success and reason != "no_updates":
-                raise FileWriteError("Update failed", status_code=500)
+        success, reason = storage.update_file_metadata(
+            url=url,
+            title=title,
+            category=category,
+            summary=summary,
+            keywords=keywords,
+        )
+        if not success and reason == "file_not_found":
+            raise FileWriteError("File not found", status_code=404)
+        if not success and reason != "no_updates":
+            raise FileWriteError("Update failed", status_code=500)
 
         file_data = storage.get_file_with_catalog(url)
         return {"success": True, "file": file_data}

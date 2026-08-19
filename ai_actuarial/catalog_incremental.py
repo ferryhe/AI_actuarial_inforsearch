@@ -25,6 +25,7 @@ from .catalog import (
     summarize,
     write_catalog_md,
 )
+from .storage import Storage
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
@@ -307,13 +308,16 @@ def _upsert_catalog_row(
     status: str,
     processed_at: str,
     error: str | None = None,
+    storage: Storage | None = None,
+    suggested_title: str | None = None,
 ) -> None:
     """Upsert catalog item with thread-safe locking.
     
     Uses _db_lock to prevent concurrent write conflicts with SQLite.
     """
     with _db_lock:
-        existing = _table_columns(conn, "catalog_items")
+        write_conn = storage._conn if storage is not None else conn
+        existing = _table_columns(write_conn, "catalog_items")
         keywords_json = json.dumps(item.keywords, ensure_ascii=False)
         value_map: dict[str, object] = {
             "file_url": item.url,
@@ -371,8 +375,29 @@ def _upsert_catalog_row(
                 INSERT OR IGNORE INTO catalog_items ({", ".join(insert_columns)})
                 VALUES ({placeholders})
             """
-        conn.execute(sql, values)
-        conn.commit()
+        if storage is None:
+            write_conn.execute(sql, values)
+            if suggested_title:
+                write_conn.execute(
+                    "UPDATE files SET title = ? WHERE url = ?",
+                    (suggested_title, item.url),
+                )
+            write_conn.commit()
+            return
+
+        file_url = str(item.url or "")
+        with storage.transaction(immediate=True):
+            before = storage._ready_data_builder_metadata_snapshot(file_url)
+            write_conn.execute(sql, values)
+            if suggested_title:
+                write_conn.execute(
+                    "UPDATE files SET title = ? WHERE url = ?",
+                    (suggested_title, file_url),
+                )
+            storage._mark_ready_data_builder_metadata_change(
+                file_url=file_url,
+                before=before,
+            )
 
 
 def _append_jsonl(out_jsonl: Path, items: list[dict]) -> None:
@@ -612,17 +637,19 @@ def run_incremental_catalog(
     Returns:
         dict with stats: {scanned, processed, written, skipped_ai, errors}
     """
-    conn = _connect(db_path)
+    storage = Storage(db_path)
+    conn = storage._conn
+    conn.row_factory = sqlite3.Row
+    _ensure_catalog_schema(conn)
+    conn.commit()
     provider_norm = (provider or "local").strip().lower()
     catalog_model: str | None = None
     catalog_api_key: str | None = None
     catalog_base_url: str | None = None
     if provider_norm != "local":
         from .ai_runtime import is_catalog_provider_supported, resolve_ai_function_runtime
-        from .storage import Storage
-
         if not is_catalog_provider_supported(provider_norm):
-            conn.close()
+            storage.close()
             raise RuntimeError(f"unsupported catalog provider: {provider}")
 
         runtime_storage = Storage(db_path)
@@ -782,14 +809,11 @@ def run_incremental_catalog(
                             catalog_version=catalog_version,
                             status="ok",
                             processed_at=processed_at,
+                            storage=storage,
+                            suggested_title=(
+                                suggested_title if update_title else None
+                            ),
                         )
-                        if update_title and suggested_title:
-                            with _db_lock:
-                                conn.execute(
-                                    "UPDATE files SET title = ? WHERE url = ?",
-                                    (suggested_title, item.url),
-                                )
-                                conn.commit()
                         if progress_callback:
                             completed = (
                                 stats["processed"] + stats["skipped_ai"] + stats["errors"]
@@ -811,6 +835,7 @@ def run_incremental_catalog(
                             catalog_version=catalog_version,
                             status="skipped",
                             processed_at=processed_at,
+                            storage=storage,
                         )
                         if progress_callback:
                             completed = (
@@ -839,6 +864,7 @@ def run_incremental_catalog(
                             status="error",
                             processed_at=processed_at,
                             error=err_msg,
+                            storage=storage,
                         )
                         if progress_callback:
                             completed = (
@@ -873,7 +899,7 @@ def run_incremental_catalog(
             stats["skipped_ai"], stats["errors"], stats["missing_files"]
         )
         
-    conn.close()
+    storage.close()
     logger.info(
         "Incremental catalog finished: scanned=%d processed=%d written=%d skipped_ai=%d errors=%d missing=%d",
         stats["scanned"], stats["processed"], stats["written"],
@@ -920,17 +946,19 @@ def run_catalog_for_urls(
     stop_check: Optional[Callable[[], bool]] = None,
 ) -> dict:
     """Catalog a specific list of file URLs (used by File Details actions)."""
-    conn = _connect(db_path)
+    storage = Storage(db_path)
+    conn = storage._conn
+    conn.row_factory = sqlite3.Row
+    _ensure_catalog_schema(conn)
+    conn.commit()
     provider_norm = (provider or "local").strip().lower()
     catalog_model: str | None = None
     catalog_api_key: str | None = None
     catalog_base_url: str | None = None
     if provider_norm != "local":
         from .ai_runtime import is_catalog_provider_supported, resolve_ai_function_runtime
-        from .storage import Storage
-
         if not is_catalog_provider_supported(provider_norm):
-            conn.close()
+            storage.close()
             raise RuntimeError(f"unsupported catalog provider: {provider}")
 
         runtime_storage = Storage(db_path)
@@ -965,7 +993,7 @@ def run_catalog_for_urls(
     urls = [u for u in (file_urls or []) if isinstance(u, str) and u.strip()]
     urls = [u.strip() for u in urls]
     if not urls:
-        conn.close()
+        storage.close()
         return stats
 
     placeholders = ", ".join(["?"] * len(urls))
@@ -1083,14 +1111,9 @@ def run_catalog_for_urls(
                         catalog_version=catalog_version,
                         status="ok",
                         processed_at=processed_at,
+                        storage=storage,
+                        suggested_title=(suggested_title if update_title else None),
                     )
-                    if update_title and suggested_title:
-                        with _db_lock:
-                            conn.execute(
-                                "UPDATE files SET title = ? WHERE url = ?",
-                                (suggested_title, item.url),
-                            )
-                            conn.commit()
                 elif status == "skipped":
                     stats["skipped_ai"] += 1
                     _upsert_catalog_row(
@@ -1100,6 +1123,7 @@ def run_catalog_for_urls(
                         catalog_version=catalog_version,
                         status="skipped",
                         processed_at=processed_at,
+                        storage=storage,
                     )
                 elif status.startswith("error:"):
                     stats["errors"] += 1
@@ -1116,6 +1140,7 @@ def run_catalog_for_urls(
                         status="error",
                         processed_at=processed_at,
                         error=err_msg,
+                        storage=storage,
                     )
                 if progress_callback:
                     completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
@@ -1136,7 +1161,7 @@ def run_catalog_for_urls(
         write_catalog_md(out_md, batch_items, append=out_md.exists())
         stats["written"] += len(batch_items)
 
-    conn.close()
+    storage.close()
     if progress_callback:
         completed = stats["processed"] + stats["skipped_ai"] + stats["errors"]
         if stats["stopped"]:
