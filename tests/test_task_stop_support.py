@@ -1692,6 +1692,121 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
     assert kwargs["payload"]["chunk_overlap"] == 20
 
 
+def test_native_task_runtime_chunk_binding_updates_ready_source_state(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "sites.yaml"
+    db_path = tmp_path / "runtime-chunk-binding.db"
+    download_dir = tmp_path / "files"
+    file_url = "https://example.com/runtime-binding.pdf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  db: {db_path.as_posix()}",
+                f"  download_dir: {download_dir.as_posix()}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    storage = Storage(str(db_path))
+    try:
+        storage.insert_file(
+            url=file_url,
+            sha256="sha-runtime-binding",
+            title="Runtime Binding",
+            source_site="example.com",
+            source_page_url="https://example.com",
+            original_filename="runtime-binding.pdf",
+            local_path=str(tmp_path / "runtime-binding.pdf"),
+            bytes=12,
+            content_type="application/pdf",
+        )
+        storage.upsert_catalog_item(
+            item={
+                "url": file_url,
+                "sha256": "sha-runtime-binding",
+                "keywords": ["binding"],
+                "summary": "Runtime binding summary",
+                "category": "Binding",
+            },
+            pipeline_version="v1",
+            status="ok",
+        )
+        storage.update_file_markdown(file_url, "# Runtime Binding", "manual")
+        KnowledgeBaseManager(storage).create_kb(
+            kb_id="kb-runtime-binding",
+            name="Runtime Binding KB",
+            kb_mode="manual",
+            manifest_profile="general",
+        )
+        profile = storage.create_chunk_profile(
+            name="Runtime Binding Profile",
+            chunk_size=120,
+            chunk_overlap=20,
+        )
+        chunk_set = storage.get_or_create_file_chunk_set(
+            file_url=file_url,
+            profile_id=str(profile["profile_id"]),
+            markdown_hash="runtime-binding-hash",
+            status="ready",
+        )
+        storage.replace_global_chunks(
+            chunk_set_id=str(chunk_set["chunk_set_id"]),
+            chunks=[
+                {
+                    "chunk_index": 0,
+                    "content": "Runtime binding chunk",
+                    "token_count": 3,
+                    "section_hierarchy": "Root",
+                }
+            ],
+            overwrite=True,
+        )
+    finally:
+        storage.close()
+
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    runtime = NativeTaskRuntime()
+    with patch(
+        "ai_actuarial.task_runtime.generate_file_chunk_sets",
+        return_value={
+            "chunk_set_id": str(chunk_set["chunk_set_id"]),
+            "chunk_count": 1,
+            "reused_existing": False,
+        },
+    ):
+        result = runtime._run_collection(
+            "task-runtime-binding",
+            "chunk_generation",
+            {
+                "file_urls": [file_url],
+                "profile_id": str(profile["profile_id"]),
+                "kb_id": "kb-runtime-binding",
+                "binding_mode": "follow_latest",
+                "overwrite_same_profile": True,
+            },
+        )
+
+    assert result.success is True
+    assert result.metadata["bound_to_kb"] == 1
+    storage = Storage(str(db_path))
+    try:
+        source_state = storage.get_agentic_ready_source_state(
+            kb_id="kb-runtime-binding",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert source_state["event_generation"] == 2
+    assert source_state["pending_severity"] == "hard_stale"
+    assert source_state["pending_reasons"] == [
+        "membership_added",
+        "access_scope_restricted",
+    ]
+
+
 def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selected_profile(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-chunk-profile.db"

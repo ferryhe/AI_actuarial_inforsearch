@@ -1,24 +1,26 @@
 # Project Status
 
 - Date: 2026-08-19
-- Branch: `codex/issue-174-ready-data-orphan-binding-guard`
-- Baseline: `origin/main` at `57da07cea21868cfb3a3253a3ff308a2d7e6bcc6` (merged PR `#185`).
-- Scope: Prevent removed or otherwise non-live KB chunk bindings from surviving membership removal or affecting ready-data builder/source-status decisions. Full chunk-binding source-event wiring, automatic execution/build/publish/GC, Catalog/file/index/embedding events, UI, full-pipeline, deployment, production, and sibling repositories remain excluded.
-- Managed PR heartbeat: PR `#186` is open and Ready for review at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/186` using `Refs #174`. After the approximately 15-minute observation window, the PR is mergeable/CLEAN, `python-smoke` passed, Copilot reviewed all seven changed files and generated no comments, and there are no ordinary comments or review threads. Issue `#174` remains Open/Reopened.
+- Branch: `codex/issue-174-ready-data-binding-events`
+- Baseline: `origin/main` at `99c43d00797bfde55bb9923b98a65bc3b794e081` (merged PR `#186`).
+- Scope: Wire ready-data source-state events only to builder-effective chunk binding additions, replacements, and follow-latest moves through the two central `Storage` methods. Automatic execution/build/publish/GC, same-chunk-set content overwrite events, generic binding removal, Catalog/file/index/embedding events, UI, full-pipeline, deployment, production, and sibling repositories remain excluded.
+- Managed PR heartbeat: local implementation and all pre-PR gates are complete; the ready-for-review PR will use `Refs #174` and must leave Issue `#174` Open/Reopened.
 
 ## Active State
 
-- `KnowledgeBaseManager.remove_files_from_kb()` deletes each matching `(kb_id, file_url)` chunk binding only after the membership row is actually deleted, inside the same `BEGIN IMMEDIATE` transaction as RAG chunk removal, KB statistics, and the existing single `membership_removed` source-state event. Any transactional failure rolls membership, binding, statistics, and generation back together.
-- A fully missing removal is now a true no-op: it leaves generation, orphan bindings, KB counts, and `updated_at` unchanged. Mixed batches soft-delete vectors only for URLs whose membership was actually removed, so a missing URL does not trigger extra orphan cleanup.
-- Ready-data builder bound-mode detection and bound chunk selection require the binding to match a live KB membership, an `ok` Catalog item in the actual builder input set, and a matching file chunk set. Legacy source-status uses the same live-input semantics for `has_chunk_bindings` and `latest_chunk_at`; historical orphan/non-input bindings are ignored while valid live bindings preserve existing behavior.
-- Active/previous publication IDs and serving manifests remain unchanged, manual build behavior is unchanged, and automatic build, publish, and GC remain default-off. No full binding lifecycle or source-event wiring was added.
-- TDD evidence: the initial targeted collection was RED with 6 failures out of 8 cases. The final focused contract passed 10 selected tests; the broader membership/builder/source-state/RAG admin/publication/GC suite passed `163 passed, 5 skipped`, plus the existing vector-soft-delete regression passed separately. The five skips are existing Windows link/reparse capability sentinels.
-- Targeted Ruff, `python -m compileall -q ai_actuarial tests`, and `git diff --check` passed. The specification review's two Important no-op findings were fixed and re-reviewed CLEAN; the independent quality/security review was CLEAN with no Critical, Important, or Minor findings.
+- `Storage.bind_chunk_set_to_kb()` now validates, mutates the binding, compares builder-effective selection, and marks ready-data source state inside one `BEGIN IMMEDIATE` transaction. The first valid binding emits hard-stale `access_scope_restricted`; a later valid addition or atomic replacement emits soft-stale `chunk_binding_updated`; duplicate and metadata-only changes emit nothing.
+- `Storage.sync_follow_latest_bindings_for_chunk_set()` validates and atomically replaces matching rows in one transaction, then emits at most one soft-stale `chunk_binding_updated` event per actually affected valid KB. Marker failure rolls insert/update/delete and every source generation back together; invalid targets fail before writes, while no matching rows remain a complete no-op even for a nonexistent target ID.
+- Builder-effective selection requires an existing KB, live KB membership, Catalog `status='ok'`, and a chunk set whose file matches the binding. Historical orphan, non-member, and non-input bindings remain safely ignored. Selection comparison is limited to the affected file while a `SELECT 1 ... LIMIT 1` check preserves the whole-KB first-binding hard/soft distinction without repeated full-KB materialization.
+- Active/previous publication IDs and serving manifests remain unchanged, manual build behavior remains unchanged, and automatic build, publish, and GC remain default-off. RAG admin, file chunk generation, and native task runtime inherit the behavior only through the central Storage calls; no caller-level duplicate marking or broader lifecycle event was added.
+- TDD evidence: the initial targeted collection was RED with 10 failures out of 17 cases. After implementation, the dedicated binding-event suite passes `18 passed`; the final focused membership/builder/source-state/RAG admin/task-runtime/publication/GC suite passes `221 passed, 5 skipped`. The skips are existing Windows link/reparse capability sentinels; three SWIG deprecation warnings are pre-existing.
+- Targeted Ruff, `python -m compileall -q ai_actuarial tests`, and `git diff --check` pass. Independent specification and quality/security reviews are CLEAN after a confirmed batch-binding materialization cost was removed and missing/wrong-target/no-match regression tests were added.
 - The mandatory local Codex CLI review could not start because Windows returned `Access is denied` for `C:\Program Files\WindowsApps\OpenAI.Codex_26.814.5167.0_x64__2p2nqsd0c76g0\app\resources\codex.exe`. It was not retried through an unknown or alternate entrypoint.
 - The pre-existing line-ending-only state of `ai_actuarial/api/routers/rag_admin.py` remains content-diff zero and must not be committed. Untracked `graphify-out/` remains protected and excluded from staging, cleanup, and the PR.
 - Issue `#173` received no new server diagnostic authorization; no server Agent, deployment, or production command was used. Sibling repositories remain off-limits and were not accessed.
 
-## Prior Context (through PR #185)
+## Prior Context (through PR #186)
+
+- PR `#186` was manually merged into `main` as `99c43d00797bfde55bb9923b98a65bc3b794e081`. It removes bindings transactionally with actual membership removal and makes builder/legacy source-status ignore historical orphan and non-input bindings. Issue `#174` remains open/reopened.
 
 - PR `#185` was manually merged into `main` as `57da07cea21868cfb3a3253a3ff308a2d7e6bcc6`. Its same-transaction KB membership source-state wiring remains the baseline for this narrow orphan-binding guard; Issue `#174` remains open/reopened.
 
@@ -126,9 +128,9 @@
 
 ## Local Notes
 
-- Intended orphan-binding guard changes are `.hermes/project-status.md`, `ai_actuarial/rag/knowledge_base.py`, `ai_actuarial/agentic_rag/ready_data_builder.py`, `ai_actuarial/api/services/rag_admin.py`, `tests/test_ready_data_membership_wiring.py`, `tests/agentic_rag/test_ready_data_builder.py`, and `tests/test_fastapi_rag_admin_endpoints.py`. `ai_actuarial/api/routers/rag_admin.py` retains its pre-existing line-ending-only worktree status with no content diff, and `graphify-out/` remains untracked and excluded.
+- Intended binding-event changes are `.hermes/project-status.md`, `ai_actuarial/storage.py`, `tests/test_ready_data_binding_events.py`, `tests/test_fastapi_file_preview.py`, `tests/test_fastapi_rag_admin_endpoints.py`, and `tests/test_task_stop_support.py`. `ai_actuarial/api/routers/rag_admin.py` retains its pre-existing line-ending-only worktree status with no content diff, and `graphify-out/` remains untracked and excluded.
 - No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
 - Sibling repositories remain off-limits and were not read or modified.
 - Issue `#173` remains open: the independent backup disk, verified online backup, quiesced full snapshot, and file-level isolated restore are complete. Remaining work is to classify the isolated KB HTTP 500, pass the KB restore smoke, recheck the root-disk/deployment capacity gate, and only then install/enable the daily backup timer with recorded evidence.
-- Next action: PR `#186` is ready for maintainer review/merge while Issue `#174` remains open. Full chunk-binding source-event wiring and the automatic executor stay in separate PRs; full-pipeline/durable parent-child work stays in `#179`, UI stays later, and `#173` remains paused pending separate diagnostic authorization.
-- Issue ordering decision: keep PR `#186` limited to the orphan-binding guard. Do not expand it into complete binding lifecycle events, automatic execution, or production cleanup; keep `#173` paused pending explicit least-privilege diagnostic approval and keep Epic `#172` open until its child chain is actually complete.
+- Next action: publish the ready-for-review binding-event PR with `Refs #174`, observe CI/Copilot/comments for approximately 15 minutes, and leave Issue `#174` open for later automatic-executor and remaining source-event work.
+- Issue ordering decision: keep this PR limited to central binding add/replace/follow-latest source events. Same-chunk-set content replacement, generic removal lifecycle, Catalog/file/index/embedding events, automatic execution, UI, and production cleanup remain separate; `#173` stays paused pending explicit least-privilege diagnostic approval and Epic `#172` stays open until its child chain is complete.
