@@ -99,6 +99,7 @@ class Storage:
         self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._tx_depth = 0
+        self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
         self._init_schema()
 
     @classmethod
@@ -119,6 +120,7 @@ class Storage:
         instance._conn.execute("PRAGMA foreign_keys=ON;")
         instance._conn.execute("PRAGMA query_only=ON;")
         instance._tx_depth = 0
+        instance._agentic_ready_publication_columns_cache = None
         instance._read_only_snapshot = before_state
         return instance
 
@@ -3831,13 +3833,20 @@ class Storage:
                 )
         return True
 
+    def _agentic_ready_publication_columns(self) -> frozenset[str]:
+        cached = self._agentic_ready_publication_columns_cache
+        if cached is None:
+            cached = frozenset(
+                str(row[1])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(agentic_ready_publications)"
+                ).fetchall()
+            )
+            self._agentic_ready_publication_columns_cache = cached
+        return cached
+
     def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
-        publication_columns = {
-            str(row[1])
-            for row in self._conn.execute(
-                "PRAGMA table_info(agentic_ready_publications)"
-            ).fetchall()
-        }
+        publication_columns = self._agentic_ready_publication_columns()
         attempt_disposition_sql = (
             "p.attempt_disposition"
             if "attempt_disposition" in publication_columns
@@ -4210,7 +4219,7 @@ class Storage:
         profile: str = "general",
         reason: str,
     ) -> dict[str, Any]:
-        """Coalesce a semantic source event inside the caller's transaction."""
+        """Atomically coalesce an event, nesting via savepoint in a caller transaction."""
         normalized_profile = str(profile or "general").strip().lower() or "general"
         normalized_reason = str(reason or "").strip().lower()
         severity = self._AGENTIC_READY_SOURCE_EVENT_SEVERITY.get(normalized_reason)
