@@ -629,6 +629,7 @@ class Storage:
                 artifact_digest TEXT NOT NULL,
                 source_db TEXT,
                 schema_versions_json TEXT NOT NULL DEFAULT '{}',
+                smoke_result_json TEXT NOT NULL DEFAULT '{}',
                 error_message TEXT,
                 validated_at TEXT,
                 published_at TEXT,
@@ -798,7 +799,10 @@ class Storage:
         self._migrate_agentic_ready_publication_attempt_schema()
         self._ensure_columns(
             "agentic_ready_publications",
-            {"attempt_disposition": "TEXT NOT NULL DEFAULT ''"},
+            {
+                "attempt_disposition": "TEXT NOT NULL DEFAULT ''",
+                "smoke_result_json": "TEXT NOT NULL DEFAULT '{}'",
+            },
         )
         self._ensure_columns(
             "agentic_ready_slots",
@@ -4095,6 +4099,7 @@ class Storage:
         built_at: str | None = None,
         source_db: str = "",
         schema_versions: dict[str, Any] | None = None,
+        smoke_result: dict[str, Any] | None = None,
         error_message: str = "",
     ) -> dict[str, Any]:
         """Persist one independent validated or failed ready-data build attempt."""
@@ -4110,6 +4115,9 @@ class Storage:
         normalized_digest = str(artifact_digest or "").strip()
         if not normalized_digest:
             raise ValueError("artifact_digest is required")
+        normalized_smoke_result = self._bounded_agentic_ready_smoke_result(
+            smoke_result
+        )
 
         now = self._utcnow_iso()
         publication_id = f"arp_{uuid.uuid4().hex}"
@@ -4130,11 +4138,11 @@ class Storage:
                     publication_id, kb_id, index_version_id, source_version_kind,
                     source_version_id, profile, profile_version, status, output_dir,
                     artifact_files_json, doc_count, section_count, built_at,
-                    artifact_digest, source_db, schema_versions_json,
+                    artifact_digest, source_db, schema_versions_json, smoke_result_json,
                     error_message, validated_at, published_at, attempt_disposition,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '', ?, ?)
                 """,
                 (
                     publication_id,
@@ -4153,6 +4161,7 @@ class Storage:
                     normalized_digest,
                     source_db,
                     json.dumps(schema_versions or {}, ensure_ascii=False, sort_keys=True),
+                    json.dumps(normalized_smoke_result, ensure_ascii=False, sort_keys=True),
                     error_message,
                     now if normalized_status == "validated" else None,
                     now,
@@ -4160,6 +4169,41 @@ class Storage:
                 ),
             )
         return self.get_agentic_ready_publication(publication_id) or {}
+
+    @staticmethod
+    def _bounded_agentic_ready_smoke_result(
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+
+        def text(key: str, limit: int) -> str:
+            return " ".join(str(value.get(key) or "").split())[:limit].rstrip()
+
+        def integer(key: str, *, maximum: int) -> int:
+            try:
+                parsed = int(value.get(key) or 0)
+            except (TypeError, ValueError, OverflowError):
+                return 0
+            return max(0, min(parsed, maximum))
+
+        result = {
+            "contract_version": text("contract_version", 64),
+            "status": text("status", 32),
+            "checked_at": text("checked_at", 64),
+            "elapsed_ms": integer("elapsed_ms", maximum=86_400_000),
+            "query_source": text("query_source", 32),
+            "query": text("query", 160),
+            "query_sha256": text("query_sha256", 64),
+            "matched_doc_id": text("matched_doc_id", 512),
+            "matched_file_url": text("matched_file_url", 512),
+            "failure_reason": text("failure_reason", 160),
+            "catalog_doc_count": integer(
+                "catalog_doc_count",
+                maximum=2_147_483_647,
+            ),
+        }
+        return result
 
     def discard_agentic_ready_publication(
         self,
@@ -4357,6 +4401,11 @@ class Storage:
             if "attempt_disposition" in publication_columns
             else "''"
         )
+        smoke_result_sql = (
+            "p.smoke_result_json"
+            if "smoke_result_json" in publication_columns
+            else "'{}'"
+        )
         row = self._conn.execute(
             f"""
             SELECT p.publication_id, p.kb_id, p.index_version_id, p.profile,
@@ -4368,7 +4417,7 @@ class Storage:
                    g.retention_class, g.state, g.marked_at, g.claim_token,
                    g.quarantine_dir, g.claimed_at, g.lease_expires_at,
                    g.deleted_at, g.last_error,
-                   g.updated_at
+                   g.updated_at, {smoke_result_sql}
             FROM agentic_ready_publications p
             LEFT JOIN agentic_ready_publication_gc g
               ON g.publication_id = p.publication_id
@@ -4387,6 +4436,10 @@ class Storage:
             schema_versions = json.loads(row[15] or "{}")
         except Exception:
             schema_versions = {}
+        try:
+            smoke_result = json.loads(row[32] or "{}")
+        except Exception:
+            smoke_result = {}
         return {
             "publication_id": row[0],
             "kb_id": row[1],
@@ -4404,6 +4457,7 @@ class Storage:
             "artifact_digest": row[13] or "",
             "source_db": row[14] or "",
             "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
+            "smoke_result": smoke_result if isinstance(smoke_result, dict) else {},
             "error_message": row[16] or "",
             "validated_at": row[17],
             "published_at": row[18],
@@ -4856,6 +4910,58 @@ class Storage:
                                     = ss.pending_evaluation_generation
                                 AND s.automatic_publish_enabled = 1
                                 AND p.status = 'validated'
+                                AND json_extract(
+                                    CASE WHEN json_valid(p.smoke_result_json)
+                                        THEN p.smoke_result_json ELSE '{}'
+                                    END,
+                                    '$.contract_version'
+                                ) = 'ready-data-staging-smoke.v1'
+                                AND (
+                                    (
+                                        json_extract(
+                                            CASE WHEN json_valid(p.smoke_result_json)
+                                                THEN p.smoke_result_json ELSE '{}'
+                                            END,
+                                            '$.status'
+                                        ) = 'passed'
+                                        AND CAST(json_extract(
+                                            CASE WHEN json_valid(p.smoke_result_json)
+                                                THEN p.smoke_result_json ELSE '{}'
+                                            END,
+                                            '$.catalog_doc_count'
+                                        ) AS INTEGER) > 0
+                                        AND (
+                                            IFNULL(TRIM(CAST(json_extract(
+                                                CASE WHEN json_valid(p.smoke_result_json)
+                                                    THEN p.smoke_result_json ELSE '{}'
+                                                END,
+                                                '$.matched_doc_id'
+                                            ) AS TEXT)), '') <> ''
+                                            OR IFNULL(TRIM(CAST(json_extract(
+                                                CASE WHEN json_valid(p.smoke_result_json)
+                                                    THEN p.smoke_result_json ELSE '{}'
+                                                END,
+                                                '$.matched_file_url'
+                                            ) AS TEXT)), '') <> ''
+                                        )
+                                    )
+                                    OR (
+                                        json_extract(
+                                            CASE WHEN json_valid(p.smoke_result_json)
+                                                THEN p.smoke_result_json ELSE '{}'
+                                            END,
+                                            '$.status'
+                                        ) = 'skipped_empty'
+                                        AND COALESCE(CAST(json_extract(
+                                            CASE WHEN json_valid(p.smoke_result_json)
+                                                THEN p.smoke_result_json ELSE '{}'
+                                            END,
+                                            '$.catalog_doc_count'
+                                        ) AS INTEGER), -1) = 0
+                                        AND IFNULL(a.last_error, '') <>
+                                            'empty ready_data requires manual publish confirmation'
+                                    )
+                                )
                                 AND IFNULL(p.attempt_disposition, '') = ''
                                 AND IFNULL(g.state, '') NOT IN (
                                     'claimed', 'delete_failed', 'deleted'
@@ -5389,6 +5495,7 @@ class Storage:
         generation: int,
         claim_token: str,
         publication_id: str,
+        require_manual_publish_confirmation: bool = False,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Atomically fence a validated build before waiting or moving to publish."""
@@ -5420,6 +5527,28 @@ class Storage:
                 return {"action": "superseded", "reason": reason, **fence}
             if not fence.get("claim_owned"):
                 return {"action": "claim_lost", "reason": reason, **fence}
+            if require_manual_publish_confirmation:
+                error = "empty ready_data requires manual publish confirmation"
+                finished = self.finish_agentic_ready_automation_claim(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                    generation=int(generation),
+                    claim_token=claim_token,
+                    automation_state="awaiting_publish",
+                    publication_id=publication_id,
+                    error_message=error,
+                    success=True,
+                    now=now,
+                )
+                if not finished:
+                    raise RuntimeError(
+                        "empty ready-data build lost its automation claim"
+                    )
+                return {
+                    "action": "awaiting_manual_confirmation",
+                    "reason": "empty_kb_requires_manual_publish_confirmation",
+                    **fence,
+                }
             if reason == "automatic_build_disabled" or not fence.get(
                 "automatic_publish_enabled"
             ):

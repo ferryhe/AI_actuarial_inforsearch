@@ -116,6 +116,19 @@ def _record_publication(
         built_at="2026-08-19T00:00:00+00:00",
         artifact_digest=_ready_data_artifact_digest(str(output_dir), artifacts),
         source_db=storage.db_path,
+        smoke_result={
+            "contract_version": "ready-data-staging-smoke.v1",
+            "status": "passed",
+            "checked_at": "2026-08-19T00:00:00+00:00",
+            "elapsed_ms": 1,
+            "query_source": "title",
+            "query": "Synthetic index re-evaluation candidate",
+            "query_sha256": "a" * 64,
+            "matched_doc_id": "doc-index-reevaluation",
+            "matched_file_url": "https://example.com/index-reevaluation",
+            "failure_reason": "",
+            "catalog_doc_count": 1,
+        },
         error_message="synthetic build failure" if status == "failed" else "",
     )
 

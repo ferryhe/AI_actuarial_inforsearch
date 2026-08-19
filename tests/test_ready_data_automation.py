@@ -99,6 +99,19 @@ def _record_candidate(
             built_at="2026-08-19T00:00:00+00:00",
             artifact_digest=artifact_digest,
             source_db=db_path,
+            smoke_result={
+                "contract_version": "ready-data-staging-smoke.v1",
+                "status": "passed",
+                "checked_at": "2026-08-19T00:00:00+00:00",
+                "elapsed_ms": 1,
+                "query_source": "title",
+                "query": "Synthetic automation candidate",
+                "query_sha256": "a" * 64,
+                "matched_doc_id": "doc-auto",
+                "matched_file_url": "https://example.com/auto",
+                "failure_reason": "",
+                "catalog_doc_count": 1,
+            },
             error_message="build failed" if status == "failed" else "",
         )
     finally:
