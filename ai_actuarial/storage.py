@@ -86,6 +86,8 @@ class Storage:
             "agentic_ready_publication_gc",
             "agentic_ready_slots",
             "agentic_ready_source_state",
+            "agentic_ready_automation",
+            "agentic_ready_automation_lock",
             "weekly_update_summaries",
             "rag_knowledge_bases",
             "users",
@@ -666,6 +668,43 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS agentic_ready_automation (
+                kb_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                automation_state TEXT NOT NULL DEFAULT 'idle',
+                running_generation INTEGER,
+                last_attempted_generation INTEGER NOT NULL DEFAULT 0,
+                claim_token TEXT,
+                claimed_at TEXT,
+                lease_expires_at TEXT,
+                last_attempt_publication_id TEXT,
+                last_success_at TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(kb_id, profile),
+                CHECK(automation_state IN (
+                    'idle', 'running', 'awaiting_publish', 'succeeded',
+                    'failed', 'pending'
+                )),
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE,
+                FOREIGN KEY(last_attempt_publication_id)
+                    REFERENCES agentic_ready_publications(publication_id) ON DELETE SET NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agentic_ready_automation_lock (
+                lock_name TEXT PRIMARY KEY,
+                claim_token TEXT,
+                claimed_at TEXT,
+                lease_expires_at TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS agentic_ready_publication_gc (
                 publication_id TEXT PRIMARY KEY,
                 retention_class TEXT NOT NULL,
@@ -778,6 +817,12 @@ class Storage:
             """
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_publication_gc_retention
             ON agentic_ready_publication_gc(retention_class, state, marked_at, publication_id)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_agentic_ready_automation_candidate
+            ON agentic_ready_automation(automation_state, lease_expires_at, updated_at)
             """
         )
         self._conn.execute(
@@ -4471,6 +4516,537 @@ class Storage:
             profile=normalized_profile,
         )
 
+    @staticmethod
+    def _agentic_ready_automation_timestamp(now: datetime | None = None) -> str:
+        value = now or datetime.now(timezone.utc)
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+
+    def get_agentic_ready_automation_state(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+        include_claim_token: bool = False,
+    ) -> dict[str, Any]:
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = self._conn.execute(
+            """
+            SELECT a.automation_state, a.running_generation,
+                   a.last_attempted_generation, a.claim_token,
+                   a.claimed_at, a.lease_expires_at,
+                   a.last_attempt_publication_id, a.last_success_at,
+                   a.last_error, a.updated_at,
+                   s.automatic_build_enabled, s.automatic_publish_enabled,
+                   ss.event_generation, ss.pending_evaluation_generation,
+                   ss.evaluated_generation
+            FROM agentic_ready_slots AS s
+            LEFT JOIN agentic_ready_automation AS a
+              ON a.kb_id = s.kb_id AND a.profile = s.profile
+            LEFT JOIN agentic_ready_source_state AS ss
+              ON ss.kb_id = s.kb_id AND ss.profile = s.profile
+            WHERE s.kb_id = ? AND s.profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        if not row:
+            return {
+                "kb_id": kb_id,
+                "profile": normalized_profile,
+                "automation_state": "disabled",
+                "running_generation": None,
+                "last_attempted_generation": 0,
+                "claim_token": None,
+                "claimed_at": None,
+                "lease_expires_at": None,
+                "last_attempt_publication_id": None,
+                "last_success_at": None,
+                "last_error": "",
+                "updated_at": None,
+                "automatic_build_enabled": False,
+                "automatic_publish_enabled": False,
+                "event_generation": 0,
+                "pending_evaluation_generation": None,
+                "evaluated_generation": 0,
+            }
+        build_enabled = bool(row[10])
+        pending_generation = int(row[13]) if row[13] is not None else None
+        stored_state = str(row[0] or "")
+        if stored_state:
+            automation_state = stored_state
+        elif not build_enabled:
+            automation_state = "disabled"
+        elif pending_generation is not None:
+            automation_state = "pending"
+        else:
+            automation_state = "idle"
+        return {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "automation_state": automation_state,
+            "running_generation": int(row[1]) if row[1] is not None else None,
+            "last_attempted_generation": int(row[2] or 0),
+            "claim_token": str(row[3]) if include_claim_token and row[3] else None,
+            "claimed_at": row[4],
+            "lease_expires_at": row[5],
+            "last_attempt_publication_id": str(row[6]) if row[6] else None,
+            "last_success_at": row[7],
+            "last_error": str(row[8] or ""),
+            "updated_at": row[9],
+            "automatic_build_enabled": build_enabled,
+            "automatic_publish_enabled": bool(row[11]),
+            "event_generation": int(row[12] or 0),
+            "pending_evaluation_generation": pending_generation,
+            "evaluated_generation": int(row[14] or 0),
+        }
+
+    def _select_agentic_ready_automation_candidate(
+        self,
+        *,
+        now_iso: str,
+    ) -> sqlite3.Row | tuple[Any, ...] | None:
+        return self._conn.execute(
+            """
+            SELECT s.kb_id, s.profile, ss.pending_evaluation_generation,
+                   s.automatic_publish_enabled,
+                   a.automation_state, a.running_generation,
+                   a.last_attempted_generation, a.lease_expires_at,
+                   a.last_attempt_publication_id,
+                   p.status, p.attempt_disposition,
+                   g.state
+            FROM agentic_ready_slots AS s
+            JOIN rag_knowledge_bases AS kb ON kb.kb_id = s.kb_id
+            JOIN agentic_ready_source_state AS ss
+              ON ss.kb_id = s.kb_id AND ss.profile = s.profile
+            LEFT JOIN agentic_ready_automation AS a
+              ON a.kb_id = s.kb_id AND a.profile = s.profile
+            LEFT JOIN agentic_ready_publications AS p
+              ON p.publication_id = a.last_attempt_publication_id
+            LEFT JOIN agentic_ready_publication_gc AS g
+              ON g.publication_id = p.publication_id
+            WHERE s.automatic_build_enabled = 1
+              AND ss.pending_evaluation_generation IS NOT NULL
+              AND ss.pending_evaluation_generation = ss.event_generation
+              AND ss.pending_evaluation_generation > ss.evaluated_generation
+              AND (
+                    a.kb_id IS NULL
+                    OR (
+                        (
+                            a.automation_state != 'running'
+                            OR a.lease_expires_at IS NULL
+                            OR a.lease_expires_at <= ?
+                        )
+                        AND (
+                            ss.pending_evaluation_generation
+                                > IFNULL(a.last_attempted_generation, 0)
+                            OR (
+                                a.automation_state = 'running'
+                                AND a.running_generation = ss.pending_evaluation_generation
+                                AND (
+                                    a.lease_expires_at IS NULL
+                                    OR a.lease_expires_at <= ?
+                                )
+                            )
+                            OR (
+                                a.automation_state = 'awaiting_publish'
+                                AND a.last_attempted_generation
+                                    = ss.pending_evaluation_generation
+                                AND s.automatic_publish_enabled = 1
+                                AND p.status = 'validated'
+                                AND IFNULL(p.attempt_disposition, '') = ''
+                                AND IFNULL(g.state, '') NOT IN (
+                                    'claimed', 'delete_failed', 'deleted'
+                                )
+                            )
+                        )
+                    )
+              )
+            ORDER BY ss.updated_at, s.kb_id, s.profile
+            LIMIT 1
+            """,
+            (now_iso, now_iso),
+        ).fetchone()
+
+    def claim_next_agentic_ready_automation(
+        self,
+        *,
+        now: datetime | None = None,
+        lease_seconds: int = 300,
+        claim_token: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Claim at most one latest pending generation under a durable global lease."""
+        if int(lease_seconds) <= 0:
+            raise ValueError("ready-data automation lease_seconds must be positive")
+        now_value = now or datetime.now(timezone.utc)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone.utc)
+        now_value = now_value.astimezone(timezone.utc)
+        now_iso = now_value.isoformat()
+        lease_expires_at = (now_value + timedelta(seconds=int(lease_seconds))).isoformat()
+        if self._select_agentic_ready_automation_candidate(now_iso=now_iso) is None:
+            return None
+        token = str(claim_token or uuid.uuid4().hex)
+        with self.transaction(immediate=True):
+            lock_result = self._conn.execute(
+                """
+                INSERT INTO agentic_ready_automation_lock (
+                    lock_name, claim_token, claimed_at, lease_expires_at, updated_at
+                )
+                VALUES ('global', ?, ?, ?, ?)
+                ON CONFLICT(lock_name) DO UPDATE SET
+                    claim_token = excluded.claim_token,
+                    claimed_at = excluded.claimed_at,
+                    lease_expires_at = excluded.lease_expires_at,
+                    updated_at = excluded.updated_at
+                WHERE agentic_ready_automation_lock.claim_token IS NULL
+                   OR agentic_ready_automation_lock.lease_expires_at IS NULL
+                   OR agentic_ready_automation_lock.lease_expires_at <= ?
+                """,
+                (token, now_iso, lease_expires_at, now_iso, now_iso),
+            )
+            if lock_result.rowcount != 1:
+                return None
+            candidate = self._select_agentic_ready_automation_candidate(now_iso=now_iso)
+            if candidate is None:
+                self._conn.execute(
+                    """
+                    UPDATE agentic_ready_automation_lock
+                    SET claim_token = NULL, claimed_at = NULL,
+                        lease_expires_at = NULL, updated_at = ?
+                    WHERE lock_name = 'global' AND claim_token = ?
+                    """,
+                    (now_iso, token),
+                )
+                return None
+            kb_id = str(candidate[0])
+            profile = str(candidate[1])
+            generation = int(candidate[2])
+            prior_state = str(candidate[4] or "")
+            prior_generation = int(candidate[6] or 0)
+            prior_publication_id = str(candidate[8]) if candidate[8] else None
+            if (
+                prior_state == "awaiting_publish"
+                and prior_publication_id
+                and prior_generation < generation
+                and str(candidate[9] or "") == "validated"
+                and not str(candidate[10] or "")
+            ):
+                self.mark_agentic_ready_publication_superseded_generation(
+                    prior_publication_id
+                )
+            reusable_publication = bool(
+                prior_publication_id
+                and prior_generation == generation
+                and bool(candidate[3])
+                and str(candidate[9] or "") == "validated"
+                and not str(candidate[10] or "")
+                and str(candidate[11] or "")
+                not in {"claimed", "delete_failed", "deleted"}
+                and prior_state in {"awaiting_publish", "running"}
+            )
+            mode = "publish" if reusable_publication else "build"
+            publication_id = prior_publication_id if reusable_publication else None
+            claim_result = self._conn.execute(
+                """
+                INSERT INTO agentic_ready_automation (
+                    kb_id, profile, automation_state, running_generation,
+                    last_attempted_generation, claim_token, claimed_at,
+                    lease_expires_at, last_attempt_publication_id,
+                    last_success_at, last_error, updated_at
+                )
+                VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, NULL, '', ?)
+                ON CONFLICT(kb_id, profile) DO UPDATE SET
+                    automation_state = 'running',
+                    running_generation = excluded.running_generation,
+                    last_attempted_generation = excluded.last_attempted_generation,
+                    claim_token = excluded.claim_token,
+                    claimed_at = excluded.claimed_at,
+                    lease_expires_at = excluded.lease_expires_at,
+                    last_attempt_publication_id = excluded.last_attempt_publication_id,
+                    last_error = '',
+                    updated_at = excluded.updated_at
+                WHERE agentic_ready_automation.automation_state != 'running'
+                   OR agentic_ready_automation.lease_expires_at IS NULL
+                   OR agentic_ready_automation.lease_expires_at <= ?
+                """,
+                (
+                    kb_id,
+                    profile,
+                    generation,
+                    generation,
+                    token,
+                    now_iso,
+                    lease_expires_at,
+                    publication_id,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            if claim_result.rowcount != 1:
+                self._conn.execute(
+                    """
+                    UPDATE agentic_ready_automation_lock
+                    SET claim_token = NULL, claimed_at = NULL,
+                        lease_expires_at = NULL, updated_at = ?
+                    WHERE lock_name = 'global' AND claim_token = ?
+                    """,
+                    (now_iso, token),
+                )
+                return None
+        return {
+            "kb_id": kb_id,
+            "profile": profile,
+            "generation": generation,
+            "claim_token": token,
+            "claimed_at": now_iso,
+            "lease_expires_at": lease_expires_at,
+            "mode": mode,
+            "publication_id": publication_id,
+        }
+
+    def check_agentic_ready_automation_claim(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        generation: int,
+        claim_token: str,
+        require_publish: bool = False,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        now_iso = self._agentic_ready_automation_timestamp(now)
+        row = self._conn.execute(
+            """
+            SELECT a.automation_state, a.running_generation, a.claim_token,
+                   a.lease_expires_at, l.claim_token, l.lease_expires_at,
+                   s.automatic_build_enabled, s.automatic_publish_enabled,
+                   ss.event_generation, ss.pending_evaluation_generation
+            FROM agentic_ready_automation AS a
+            JOIN agentic_ready_automation_lock AS l ON l.lock_name = 'global'
+            JOIN agentic_ready_slots AS s
+              ON s.kb_id = a.kb_id AND s.profile = a.profile
+            JOIN agentic_ready_source_state AS ss
+              ON ss.kb_id = a.kb_id AND ss.profile = a.profile
+            WHERE a.kb_id = ? AND a.profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        if not row:
+            return {"claim_owned": False, "reason": "claim_missing"}
+        owns_claim = bool(
+            str(row[0]) == "running"
+            and int(row[1] or -1) == int(generation)
+            and str(row[2] or "") == claim_token
+            and str(row[4] or "") == claim_token
+            and str(row[3] or "") > now_iso
+            and str(row[5] or "") > now_iso
+        )
+        if not owns_claim:
+            reason = "claim_lost"
+        elif int(row[8] or 0) != int(generation) or row[9] is None or int(row[9]) != int(
+            generation
+        ):
+            reason = "generation_superseded"
+        elif not bool(row[6]):
+            reason = "automatic_build_disabled"
+        elif require_publish and not bool(row[7]):
+            reason = "automatic_publish_disabled"
+        else:
+            reason = "ok"
+        return {
+            "claim_owned": owns_claim,
+            "reason": reason,
+            "automatic_build_enabled": bool(row[6]),
+            "automatic_publish_enabled": bool(row[7]),
+            "event_generation": int(row[8] or 0),
+            "pending_evaluation_generation": int(row[9]) if row[9] is not None else None,
+        }
+
+    def heartbeat_agentic_ready_automation_claim(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        generation: int,
+        claim_token: str,
+        now: datetime | None = None,
+        lease_seconds: int = 300,
+    ) -> bool:
+        if int(lease_seconds) <= 0:
+            raise ValueError("ready-data automation lease_seconds must be positive")
+        now_value = now or datetime.now(timezone.utc)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone.utc)
+        now_value = now_value.astimezone(timezone.utc)
+        now_iso = now_value.isoformat()
+        lease_expires_at = (now_value + timedelta(seconds=int(lease_seconds))).isoformat()
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        try:
+            with self.transaction(immediate=True):
+                pair_result = self._conn.execute(
+                    """
+                    UPDATE agentic_ready_automation
+                    SET lease_expires_at = ?, updated_at = ?
+                    WHERE kb_id = ? AND profile = ?
+                      AND automation_state = 'running'
+                      AND running_generation = ? AND claim_token = ?
+                      AND lease_expires_at > ?
+                    """,
+                    (
+                        lease_expires_at,
+                        now_iso,
+                        kb_id,
+                        normalized_profile,
+                        int(generation),
+                        claim_token,
+                        now_iso,
+                    ),
+                )
+                lock_result = self._conn.execute(
+                    """
+                    UPDATE agentic_ready_automation_lock
+                    SET lease_expires_at = ?, updated_at = ?
+                    WHERE lock_name = 'global' AND claim_token = ?
+                      AND lease_expires_at > ?
+                    """,
+                    (lease_expires_at, now_iso, claim_token, now_iso),
+                )
+                if pair_result.rowcount != 1 or lock_result.rowcount != 1:
+                    raise RuntimeError("ready-data automation heartbeat lost its claim")
+        except RuntimeError:
+            return False
+        return True
+
+    def finish_agentic_ready_automation_claim(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        generation: int,
+        claim_token: str,
+        automation_state: str,
+        publication_id: str | None = None,
+        error_message: str = "",
+        success: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        allowed_states = {"awaiting_publish", "succeeded", "failed", "pending"}
+        if automation_state not in allowed_states:
+            raise ValueError("invalid ready-data automation completion state")
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        now_iso = self._agentic_ready_automation_timestamp(now)
+        with self.transaction(immediate=True):
+            lock_row = self._conn.execute(
+                """
+                SELECT claim_token FROM agentic_ready_automation_lock
+                WHERE lock_name = 'global'
+                """
+            ).fetchone()
+            if not lock_row or str(lock_row[0] or "") != claim_token:
+                return False
+            result = self._conn.execute(
+                """
+                UPDATE agentic_ready_automation
+                SET automation_state = ?, running_generation = NULL,
+                    claim_token = NULL, claimed_at = NULL, lease_expires_at = NULL,
+                    last_attempt_publication_id = ?,
+                    last_success_at = CASE WHEN ? THEN ? ELSE last_success_at END,
+                    last_error = ?, updated_at = ?
+                WHERE kb_id = ? AND profile = ?
+                  AND automation_state = 'running'
+                  AND running_generation = ? AND claim_token = ?
+                """,
+                (
+                    automation_state,
+                    publication_id,
+                    int(bool(success)),
+                    now_iso,
+                    str(error_message or ""),
+                    now_iso,
+                    kb_id,
+                    normalized_profile,
+                    int(generation),
+                    claim_token,
+                ),
+            )
+            if result.rowcount != 1:
+                return False
+            lock_result = self._conn.execute(
+                """
+                UPDATE agentic_ready_automation_lock
+                SET claim_token = NULL, claimed_at = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE lock_name = 'global' AND claim_token = ?
+                """,
+                (now_iso, claim_token),
+            )
+            if lock_result.rowcount != 1:
+                raise RuntimeError("ready-data automation completion lost its global claim")
+        return True
+
+    def finalize_agentic_ready_automation_build(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        generation: int,
+        claim_token: str,
+        publication_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Atomically fence a validated build before waiting or moving to publish."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        with self.transaction(immediate=True):
+            fence = self.check_agentic_ready_automation_claim(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                generation=int(generation),
+                claim_token=claim_token,
+                now=now,
+            )
+            reason = str(fence.get("reason") or "claim_lost")
+            if reason == "generation_superseded":
+                self.mark_agentic_ready_publication_superseded_generation(publication_id)
+                finished = self.finish_agentic_ready_automation_claim(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                    generation=int(generation),
+                    claim_token=claim_token,
+                    automation_state="pending",
+                    publication_id=publication_id,
+                    now=now,
+                )
+                if not finished:
+                    raise RuntimeError(
+                        "ready-data superseded build lost its automation claim"
+                    )
+                return {"action": "superseded", "reason": reason, **fence}
+            if not fence.get("claim_owned"):
+                return {"action": "claim_lost", "reason": reason, **fence}
+            if reason == "automatic_build_disabled" or not fence.get(
+                "automatic_publish_enabled"
+            ):
+                finished = self.finish_agentic_ready_automation_claim(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                    generation=int(generation),
+                    claim_token=claim_token,
+                    automation_state="awaiting_publish",
+                    publication_id=publication_id,
+                    success=True,
+                    now=now,
+                )
+                if not finished:
+                    raise RuntimeError(
+                        "ready-data validated build lost its automation claim"
+                    )
+                return {"action": "awaiting_publish", "reason": reason, **fence}
+            return {"action": "publish", "reason": "ok", **fence}
+
     def mark_agentic_ready_source_event(
         self,
         *,
@@ -5078,6 +5654,85 @@ class Storage:
 
         state = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=profile)
         state["idempotent"] = False
+        state["cas_won"] = True
+        return state
+
+    def publish_claimed_agentic_ready_publication(
+        self,
+        publication_id: str,
+        *,
+        kb_id: str,
+        profile: str,
+        generation: int,
+        claim_token: str,
+        expected_active_publication_id: str | None,
+        preserve_expected_active_as_previous: bool = True,
+        invalidated_expected_active_error: str = "",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Fence an automatic publish and source settlement in one SQLite transaction."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        with self.transaction(immediate=True):
+            fence = self.check_agentic_ready_automation_claim(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                generation=int(generation),
+                claim_token=claim_token,
+                require_publish=True,
+                now=now,
+            )
+            if fence["reason"] != "ok":
+                state = self.get_agentic_ready_publication_state(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                )
+                state["automation_fence_won"] = False
+                state["automation_fence_reason"] = fence["reason"]
+                state["cas_won"] = False
+                return state
+            publication = self.get_agentic_ready_publication(publication_id)
+            if not publication:
+                raise ValueError("ready-data publication not found")
+            if (
+                str(publication["kb_id"]) != kb_id
+                or str(publication["profile"]) != normalized_profile
+            ):
+                raise ValueError("ready-data automation publication scope mismatch")
+            state = self.publish_agentic_ready_publication(
+                publication_id,
+                expected_active_publication_id=expected_active_publication_id,
+                preserve_expected_active_as_previous=preserve_expected_active_as_previous,
+                invalidated_expected_active_error=invalidated_expected_active_error,
+            )
+            state["automation_fence_won"] = True
+            state["automation_fence_reason"] = "ok"
+            if not state.get("cas_won"):
+                return state
+            self.record_agentic_ready_source_evaluation(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                evaluated_generation=int(generation),
+                source_version_kind=str(publication["source_version_kind"]),
+                source_version_id=str(publication["source_version_id"]),
+            )
+            finished = self.finish_agentic_ready_automation_claim(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                generation=int(generation),
+                claim_token=claim_token,
+                automation_state="succeeded",
+                publication_id=publication_id,
+                success=True,
+                now=now,
+            )
+            if not finished:
+                raise RuntimeError("ready-data automation publish lost its completion claim")
+        state = self.get_agentic_ready_publication_state(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+        state["automation_fence_won"] = True
+        state["automation_fence_reason"] = "ok"
         state["cas_won"] = True
         return state
 

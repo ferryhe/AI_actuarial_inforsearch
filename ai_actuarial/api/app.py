@@ -24,6 +24,7 @@ from .routers.migration import router as migration_router
 from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
 from .routers.read import router as read_router
+from .routers.ready_data_automation import router as ready_data_automation_router
 from .routers.weekly_updates import router as weekly_updates_router
 from .routers.metrics import router as metrics_router
 from ai_actuarial.config import settings
@@ -235,6 +236,11 @@ def create_app() -> FastAPI:
     app.include_router(ops_write_router, prefix="/api", tags=["ops-write"])
     app.include_router(files_write_router, prefix="/api", tags=["files-write"])
     app.include_router(rag_admin_router, prefix="/api", tags=["rag-admin"])
+    app.include_router(
+        ready_data_automation_router,
+        prefix="/api",
+        tags=["ready-data-automation"],
+    )
     app.include_router(agentic_rag_router, prefix="/api", tags=["agentic-rag"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])
 
@@ -256,7 +262,7 @@ def create_app() -> FastAPI:
     except Exception:  # noqa: BLE001
         logger.exception("Failed to bootstrap admin auth token")
     _apply_runtime_feature_state(app, runtime_features)
-    native_runtime = NativeTaskRuntime()
+    native_runtime = NativeTaskRuntime(ready_data_db_path=app.state.db_path)
     native_refs = native_runtime.refs()
     app.state.native_task_runtime = native_runtime
     app.state.active_tasks_ref = native_refs.active_tasks_ref
