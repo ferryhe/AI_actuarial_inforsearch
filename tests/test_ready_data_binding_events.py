@@ -80,18 +80,30 @@ def _create_chunk_set(
         status="ready",
     )
     chunk_set_id = str(chunk_set["chunk_set_id"])
-    storage.replace_global_chunks(
-        chunk_set_id=chunk_set_id,
-        chunks=[
-            {
-                "chunk_index": 0,
-                "content": f"Chunk content {version}",
-                "token_count": 3,
-                "section_hierarchy": "Root",
-            }
-        ],
-        overwrite=True,
+    storage._conn.execute(
+        """
+        INSERT INTO global_chunks (
+            chunk_id, chunk_set_id, chunk_index, content, token_count,
+            section_hierarchy, content_hash, created_at
+        )
+        VALUES (?, ?, 0, ?, 3, 'Root', NULL, ?)
+        """,
+        (
+            f"{chunk_set_id}:0",
+            chunk_set_id,
+            f"Chunk content {version}",
+            "2026-08-19T00:00:00+00:00",
+        ),
     )
+    storage._conn.execute(
+        """
+        UPDATE file_chunk_sets
+        SET chunk_count = 1, status = 'ready', updated_at = ?
+        WHERE chunk_set_id = ?
+        """,
+        ("2026-08-19T00:00:00+00:00", chunk_set_id),
+    )
+    storage._conn.commit()
     return chunk_set_id
 
 
@@ -787,7 +799,7 @@ def test_follow_latest_invalid_target_rolls_back_without_source_event(
         storage.close()
 
 
-def test_same_chunk_set_content_overwrite_does_not_emit_binding_event(tmp_path: Path) -> None:
+def test_same_chunk_set_content_overwrite_emits_content_event_not_binding_event(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "content-overwrite.db"))
     try:
         kb_id = "kb-content-overwrite"
@@ -823,7 +835,9 @@ def test_same_chunk_set_content_overwrite_does_not_emit_binding_event(tmp_path: 
         )
 
         after = storage.get_agentic_ready_source_state(kb_id=kb_id, profile="general")
-        assert after["event_generation"] == before["event_generation"]
-        assert after["pending_reasons"] == before["pending_reasons"]
+        assert after["event_generation"] == before["event_generation"] + 1
+        assert after["pending_reasons"].count("chunk_content_updated") == 1
+        assert "access_scope_restricted" in after["pending_reasons"]
+        assert "chunk_binding_updated" not in after["pending_reasons"]
     finally:
         storage.close()

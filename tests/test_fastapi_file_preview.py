@@ -157,6 +157,25 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
     assert generate_body["chunk_set_id"]
     assert generate_body["chunk_count"] >= 1
 
+    identical_response = client.post(
+        f"/api/files/{file_url}/chunk-sets/generate",
+        json={
+            "name": "preview-profile",
+            "chunk_size": 120,
+            "chunk_overlap": 20,
+            "splitter": "semantic",
+            "tokenizer": "cl100k_base",
+            "overwrite_same_profile": True,
+        },
+        headers=headers,
+    )
+    assert identical_response.status_code in {200, 201}, identical_response.text
+    identical_body = identical_response.json()
+    assert identical_body["chunk_set_id"] == generate_body["chunk_set_id"]
+    assert identical_body["chunk_count"] == generate_body["chunk_count"]
+    assert identical_body["reused_existing"] is True
+    assert identical_body["overwrote_existing"] is False
+
     list_after = client.get(f"/api/files/{file_url}/chunk-sets", headers=headers)
     assert list_after.status_code == 200, list_after.text
     list_body = list_after.json()
