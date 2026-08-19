@@ -4,7 +4,7 @@
 - Branch: `codex/issue-174-ready-data-membership-wiring`
 - Baseline: `origin/main` at `1c742dedfac62f305d492494d978a4273f27fadd` (merged PR `#184`).
 - Scope: Wire only actual Knowledge Base membership additions/removals to ready-data source state in the same SQLite transaction. Chunk binding, Catalog/file metadata, index/embedding commits, automatic executor/build/publish/GC, smoke query, UI, full-pipeline, deployment, production, and sibling repositories remain excluded.
-- Managed PR heartbeat: implementation and local gates are complete; commit, push, and a Ready for review PR using `Refs #174` are pending. Issue `#174` was reopened and its remaining scope was clarified at `https://github.com/ferryhe/AI_actuarial_inforsearch/issues/174#issuecomment-5342737685`.
+- Managed PR heartbeat: PR `#185` is open and Ready for review at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/185` using `Refs #174`. After the approximately 15-minute observation window, the PR is mergeable/CLEAN, `python-smoke` passed, Copilot reviewed all five changed files and generated no comments, and there are no ordinary comments or review threads. Issue `#174` remains open; its remaining scope was clarified at `https://github.com/ferryhe/AI_actuarial_inforsearch/issues/174#issuecomment-5342737685`.
 
 ## Active State
 
