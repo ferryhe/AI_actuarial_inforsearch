@@ -4,7 +4,7 @@
 - Branch: `codex/issue-174-ready-data-source-state`
 - Baseline: `origin/main` at merge commit `6741cbb9bc3b0a8e3e419f963e7f0d8552d02ad5` (merged PR `#183`).
 - Scope: Implement the Issue `#174` ready-data source-state foundation: durable generations and authoritative source identity, soft/hard serving policy, default-off automation flags, legacy-safe read models, and reserved `superseded_generation` lifecycle; do not add an executor, automatic GC, UI, full-pipeline, production work, or `#175`/`#176`/`#179` behavior.
-- Managed PR heartbeat: local implementation and four review cycles are complete; final independent specification and quality/security reviews are CLEAN. Pre-PR Codex CLI review, commit, push, PR creation, and the remote feedback window remain pending.
+- Managed PR heartbeat: PR `#184` is open and ready for review at `https://github.com/ferryhe/AI_actuarial_inforsearch/pull/184`; implementation head `ec988f1` is mergeable and `python-smoke` is running. Four local review cycles ended with independent specification and quality/security reviews CLEAN; the remote feedback window remains pending.
 
 ## Active State
 
@@ -116,5 +116,5 @@
 - No production command, deployment, service installation, backup, restore, restart, migration, capacity change, or data write was performed.
 - Sibling repositories remain off-limits and were not read or modified.
 - Issue `#173` remains open: the independent backup disk, verified online backup, quiesced full snapshot, and file-level isolated restore are complete. Remaining work is to classify the isolated KB HTTP 500, pass the KB restore smoke, recheck the root-disk/deployment capacity gate, and only then install/enable the daily backup timer with recorded evidence.
-- Next action: complete the mandatory local Codex review gate, publish this branch as a ready-for-review follow-up PR referencing (not closing) Issue `#174`, then observe GitHub checks and review/Copilot feedback for about 15 minutes. Follow-up mutation hooks and the automatic executor remain separate PRs; full-pipeline/durable parent-child work stays in `#179`, UI stays later, and `#173` remains paused pending separate diagnostic authorization.
+- Next action: observe PR `#184` GitHub checks and review/Copilot feedback for about 15 minutes, apply only confirmed-safe findings, and keep Issue `#174` open. Follow-up mutation hooks and the automatic executor remain separate PRs; full-pipeline/durable parent-child work stays in `#179`, UI stays later, and `#173` remains paused pending separate diagnostic authorization.
 - Issue ordering decision: continue the local `#174` PR1 state-machine fix now because `#173` blocks production activation, not local feature development. Keep `#173` paused pending explicit least-privilege diagnostic approval, and keep Epic `#172` open until its child chain is actually complete.
