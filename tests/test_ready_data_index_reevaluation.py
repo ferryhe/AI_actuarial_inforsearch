@@ -193,7 +193,6 @@ def _setup_automation(
     tmp_path: Path,
     *,
     active_source_id: str | None,
-    fingerprint_source_id: str,
     publish: bool,
 ) -> tuple[str, str, dict[str, Any] | None]:
     db_path = str(tmp_path / "index.db")
@@ -211,7 +210,6 @@ def _setup_automation(
         assert _source_state(storage, kb_id)["pending_evaluation"] is True
     finally:
         storage.close()
-    assert fingerprint_source_id
     return db_path, kb_id, active
 
 
@@ -795,7 +793,6 @@ def test_matching_healthy_active_settles_up_to_date_without_builder(tmp_path: Pa
     db_path, kb_id, active = _setup_automation(
         tmp_path,
         active_source_id="same-source",
-        fingerprint_source_id="same-source",
         publish=True,
     )
     calls: list[int] = []
@@ -834,7 +831,6 @@ def test_changed_fingerprint_preserves_build_only_and_auto_publish_behavior(
     db_path, kb_id, _ = _setup_automation(
         tmp_path,
         active_source_id=active_source_id,
-        fingerprint_source_id="new-source",
         publish=publish,
     )
     calls: list[int] = []
@@ -946,7 +942,6 @@ def test_corrupt_matching_active_does_not_take_up_to_date_fast_path(tmp_path: Pa
     db_path, _, active = _setup_automation(
         tmp_path,
         active_source_id="same-source",
-        fingerprint_source_id="same-source",
         publish=False,
     )
     Path(str(active["output_dir"]), "ready_data_manifest.json").unlink()
@@ -968,7 +963,6 @@ def test_non_active_slot_record_does_not_take_up_to_date_fast_path(tmp_path: Pat
     db_path, _, active = _setup_automation(
         tmp_path,
         active_source_id="same-source",
-        fingerprint_source_id="same-source",
         publish=False,
     )
     storage = Storage(db_path)
@@ -1003,7 +997,6 @@ def test_missing_or_non_comparable_active_enters_existing_build_flow(
     db_path, kb_id, active = _setup_automation(
         tmp_path,
         active_source_id=active_source,
-        fingerprint_source_id="current-source",
         publish=False,
     )
     if active_mode == "non_comparable":
@@ -1079,7 +1072,6 @@ def test_prebuild_races_fail_closed_without_starting_builder(tmp_path: Path, rac
     db_path, kb_id, _ = _setup_automation(
         tmp_path,
         active_source_id="old-source",
-        fingerprint_source_id="new-source",
         publish=True,
     )
     calls: list[int] = []
@@ -1147,7 +1139,6 @@ def test_fingerprint_failure_records_automation_failure_without_slot_changes(tmp
     db_path, kb_id, active = _setup_automation(
         tmp_path,
         active_source_id="active-source",
-        fingerprint_source_id="unused",
         publish=True,
     )
 
@@ -1178,7 +1169,6 @@ def test_validation_failure_does_not_change_active_or_previous(tmp_path: Path) -
     db_path, kb_id, active = _setup_automation(
         tmp_path,
         active_source_id="same-source",
-        fingerprint_source_id="same-source",
         publish=True,
     )
     calls: list[int] = []
@@ -1207,7 +1197,6 @@ def test_repeated_same_index_profile_reevaluation_creates_no_publication(tmp_pat
     db_path, kb_id, active = _setup_automation(
         tmp_path,
         active_source_id="same-source",
-        fingerprint_source_id="same-source",
         publish=True,
     )
     calls: list[int] = []
