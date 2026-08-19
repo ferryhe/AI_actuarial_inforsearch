@@ -30,6 +30,38 @@ def _split_visible_categories(raw_category: str | None) -> list[str]:
 
 
 class Storage:
+    AGENTIC_READY_RESERVED_ATTEMPT_DISPOSITIONS = frozenset(
+        {"superseded_generation"}
+    )
+    AGENTIC_READY_FUTURE_EXECUTION_POLICY = {
+        "quiet_debounce_seconds": 60,
+        "polling_seconds": 15,
+        "sqlite_global_max_concurrency": 1,
+        "single_flight_scope": "kb_id_profile",
+        "automatic_retry": False,
+        "staging_smoke_network": "none",
+        "staging_smoke_timeout_seconds": 10,
+        "non_empty_kb_requires_valid_reference": True,
+        "empty_kb_requires_manual_publish_confirmation": True,
+        "superseded_generation_minimum_age_days": 14,
+        "superseded_generation_keep_latest": 2,
+        "automatic_gc_enabled": False,
+    }
+    _AGENTIC_READY_SOURCE_EVENT_SEVERITY = {
+        "membership_added": "soft_stale",
+        "metadata_updated": "soft_stale",
+        "builder_contract_changed": "soft_stale",
+        "profile_contract_changed": "soft_stale",
+        "membership_removed": "hard_stale",
+        "chunk_binding_removed": "hard_stale",
+        "source_invalidated": "hard_stale",
+        "source_deleted": "hard_stale",
+        "access_scope_restricted": "hard_stale",
+        "index_committed": "none",
+        "embedding_index_committed": "none",
+        "embedding_config_changed": "none",
+    }
+
     # Allowlist for schema/migration helpers that interpolate table names into PRAGMA.
     _SCHEMA_TABLES = frozenset(
         {
@@ -51,6 +83,7 @@ class Storage:
             "agentic_ready_publications",
             "agentic_ready_publication_gc",
             "agentic_ready_slots",
+            "agentic_ready_source_state",
             "weekly_update_summaries",
             "rag_knowledge_bases",
             "users",
@@ -66,6 +99,7 @@ class Storage:
         self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._tx_depth = 0
+        self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
         self._init_schema()
 
     @classmethod
@@ -86,6 +120,7 @@ class Storage:
         instance._conn.execute("PRAGMA foreign_keys=ON;")
         instance._conn.execute("PRAGMA query_only=ON;")
         instance._tx_depth = 0
+        instance._agentic_ready_publication_columns_cache = None
         instance._read_only_snapshot = before_state
         return instance
 
@@ -579,6 +614,7 @@ class Storage:
                 error_message TEXT,
                 validated_at TEXT,
                 published_at TEXT,
+                attempt_disposition TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
@@ -592,12 +628,37 @@ class Storage:
                 profile TEXT NOT NULL,
                 active_publication_id TEXT,
                 previous_publication_id TEXT,
+                automatic_build_enabled INTEGER NOT NULL DEFAULT 0,
                 automatic_publish_enabled INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(kb_id, profile),
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE,
                 FOREIGN KEY(active_publication_id) REFERENCES agentic_ready_publications(publication_id),
                 FOREIGN KEY(previous_publication_id) REFERENCES agentic_ready_publications(publication_id)
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agentic_ready_source_state (
+                kb_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                event_generation INTEGER NOT NULL DEFAULT 0,
+                pending_evaluation_generation INTEGER,
+                evaluated_generation INTEGER NOT NULL DEFAULT 0,
+                pending_severity TEXT NOT NULL DEFAULT 'none',
+                pending_reasons_json TEXT NOT NULL DEFAULT '[]',
+                evaluated_severity TEXT NOT NULL DEFAULT 'none',
+                evaluated_reasons_json TEXT NOT NULL DEFAULT '[]',
+                evaluated_source_version_kind TEXT NOT NULL DEFAULT '',
+                evaluated_source_version_id TEXT NOT NULL DEFAULT '',
+                evaluated_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(kb_id, profile),
+                CHECK(pending_severity IN ('none', 'soft_stale', 'hard_stale')),
+                CHECK(evaluated_severity IN ('none', 'soft_stale', 'hard_stale')),
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
             """
         )
@@ -680,6 +741,22 @@ class Storage:
             """
         )
         self._migrate_agentic_ready_publication_attempt_schema()
+        self._ensure_columns(
+            "agentic_ready_publications",
+            {"attempt_disposition": "TEXT NOT NULL DEFAULT ''"},
+        )
+        self._ensure_columns(
+            "agentic_ready_slots",
+            {"automatic_build_enabled": "INTEGER NOT NULL DEFAULT 0"},
+        )
+        self._conn.execute(
+            """
+            UPDATE agentic_ready_slots
+            SET automatic_build_enabled = 1
+            WHERE automatic_publish_enabled = 1
+              AND automatic_build_enabled = 0
+            """
+        )
         self._conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_agentic_ready_publications_kb_profile
@@ -3549,9 +3626,10 @@ class Storage:
                     source_version_id, profile, profile_version, status, output_dir,
                     artifact_files_json, doc_count, section_count, built_at,
                     artifact_digest, source_db, schema_versions_json,
-                    error_message, validated_at, published_at, created_at, updated_at
+                    error_message, validated_at, published_at, attempt_disposition,
+                    created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '', ?, ?)
                 """,
                 (
                     publication_id,
@@ -3591,6 +3669,7 @@ class Storage:
                 DELETE FROM agentic_ready_publications
                 WHERE publication_id = ?
                   AND status = 'validated'
+                  AND COALESCE(attempt_disposition, '') = ''
                   AND NOT EXISTS (
                       SELECT 1
                       FROM agentic_ready_slots
@@ -3639,6 +3718,7 @@ class Storage:
                 not candidate
                 or not active
                 or candidate["status"] != "validated"
+                or bool(candidate["attempt_disposition"])
                 or active["status"] != "active"
                 or any(
                     candidate[field] != active[field]
@@ -3694,15 +3774,92 @@ class Storage:
             )
         return True
 
+    def mark_agentic_ready_publication_superseded_generation(
+        self,
+        publication_id: str,
+    ) -> bool:
+        """Reserve a non-serving validated attempt for future superseded retention."""
+        now = self._utcnow_iso()
+        with self.transaction(immediate=True):
+            current = self.get_agentic_ready_publication(publication_id)
+            if (
+                not current
+                or current["status"] != "validated"
+                or current["attempt_disposition"]
+                not in {"", "superseded_generation"}
+                or self._conn.execute(
+                    """
+                    SELECT 1 FROM agentic_ready_slots
+                    WHERE active_publication_id = ? OR previous_publication_id = ?
+                    LIMIT 1
+                    """,
+                    (publication_id, publication_id),
+                ).fetchone()
+                or self._conn.execute(
+                    """
+                    SELECT 1 FROM agentic_ready_manifests
+                    WHERE publication_id = ?
+                    LIMIT 1
+                    """,
+                    (publication_id,),
+                ).fetchone()
+            ):
+                return False
+            if current["retention_class"]:
+                if (
+                    current["retention_class"] != "redundant_duplicate"
+                    or current["gc_state"] != "eligible"
+                ):
+                    return False
+                self._conn.execute(
+                    "DELETE FROM agentic_ready_publication_gc WHERE publication_id = ?",
+                    (publication_id,),
+                )
+            elif current["attempt_disposition"] == "superseded_generation":
+                return True
+            result = self._conn.execute(
+                """
+                UPDATE agentic_ready_publications
+                SET attempt_disposition = 'superseded_generation', updated_at = ?
+                WHERE publication_id = ?
+                  AND status = 'validated'
+                  AND attempt_disposition IN ('', 'superseded_generation')
+                """,
+                (now, publication_id),
+            )
+            if result.rowcount != 1:
+                raise RuntimeError(
+                    "ready-data superseded-generation disposition lost its guard"
+                )
+        return True
+
+    def _agentic_ready_publication_columns(self) -> frozenset[str]:
+        cached = self._agentic_ready_publication_columns_cache
+        if cached is None:
+            cached = frozenset(
+                str(row[1])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(agentic_ready_publications)"
+                ).fetchall()
+            )
+            self._agentic_ready_publication_columns_cache = cached
+        return cached
+
     def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
+        publication_columns = self._agentic_ready_publication_columns()
+        attempt_disposition_sql = (
+            "p.attempt_disposition"
+            if "attempt_disposition" in publication_columns
+            else "''"
+        )
         row = self._conn.execute(
-            """
+            f"""
             SELECT p.publication_id, p.kb_id, p.index_version_id, p.profile,
                    p.profile_version, p.source_version_kind, p.source_version_id,
                    p.status, p.output_dir, p.artifact_files_json, p.doc_count,
                    p.section_count, p.built_at, p.artifact_digest, p.source_db,
                    p.schema_versions_json, p.error_message, p.validated_at,
-                   p.published_at, p.created_at, p.updated_at,
+                   p.published_at, {attempt_disposition_sql}, p.created_at, p.updated_at,
                    g.retention_class, g.state, g.marked_at, g.claim_token,
                    g.quarantine_dir, g.claimed_at, g.lease_expires_at,
                    g.deleted_at, g.last_error,
@@ -3745,18 +3902,19 @@ class Storage:
             "error_message": row[16] or "",
             "validated_at": row[17],
             "published_at": row[18],
-            "created_at": row[19],
-            "updated_at": row[20],
-            "retention_class": row[21] or "",
-            "gc_state": row[22] or "",
-            "gc_marked_at": row[23],
-            "gc_claim_token": row[24] or "",
-            "gc_quarantine_dir": row[25] or "",
-            "gc_claimed_at": row[26],
-            "gc_lease_expires_at": row[27],
-            "gc_deleted_at": row[28],
-            "gc_last_error": row[29] or "",
-            "gc_updated_at": row[30],
+            "attempt_disposition": row[19] or "",
+            "created_at": row[20],
+            "updated_at": row[21],
+            "retention_class": row[22] or "",
+            "gc_state": row[23] or "",
+            "gc_marked_at": row[24],
+            "gc_claim_token": row[25] or "",
+            "gc_quarantine_dir": row[26] or "",
+            "gc_claimed_at": row[27],
+            "gc_lease_expires_at": row[28],
+            "gc_deleted_at": row[29],
+            "gc_last_error": row[30] or "",
+            "gc_updated_at": row[31],
         }
 
     def list_agentic_ready_publications_for_gc(self) -> list[dict[str, Any]]:
@@ -3828,6 +3986,7 @@ class Storage:
             if (
                 not current
                 or current["status"] != "validated"
+                or bool(current["attempt_disposition"])
                 or current["retention_class"] != "redundant_duplicate"
                 or current["gc_state"] != normalized_state
                 or current["gc_marked_at"] != expected_marked_at
@@ -3875,6 +4034,7 @@ class Storage:
                       ON g.publication_id = p.publication_id
                     WHERE p.kb_id = ? AND p.profile = ?
                       AND p.status = 'validated'
+                      AND COALESCE(p.attempt_disposition, '') = ''
                       AND g.retention_class = 'redundant_duplicate'
                       AND g.state IN ('eligible', 'claimed', 'delete_failed')
                     """,
@@ -3929,6 +4089,7 @@ class Storage:
             if (
                 not current
                 or current["status"] != "validated"
+                or bool(current["attempt_disposition"])
                 or current["gc_state"] != "claimed"
                 or current["gc_claim_token"] != claim_token
                 or self._agentic_ready_paths_conflict(
@@ -3988,6 +4149,439 @@ class Storage:
                     raise RuntimeError("ready-data GC failure finalization lost its claim")
         return self.get_agentic_ready_publication(publication_id)
 
+    @staticmethod
+    def _agentic_ready_severity_max(*values: str) -> str:
+        rank = {"none": 0, "soft_stale": 1, "hard_stale": 2}
+        return max(
+            (str(value or "none") for value in values),
+            key=lambda value: rank.get(value, -1),
+        )
+
+    @staticmethod
+    def _agentic_ready_json_list(value: str | None) -> list[str]:
+        try:
+            parsed = json.loads(value or "[]")
+        except (TypeError, ValueError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [str(item) for item in parsed if str(item or "").strip()]
+
+    def set_agentic_ready_automation(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+        automatic_build_enabled: bool,
+        automatic_publish_enabled: bool,
+    ) -> dict[str, Any]:
+        """Persist a valid default-off automation combination without launching work."""
+        if automatic_publish_enabled and not automatic_build_enabled:
+            raise ValueError("automatic publish requires automatic build")
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        now = self._utcnow_iso()
+        with self.transaction(immediate=True):
+            kb_exists = self._conn.execute(
+                "SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ? LIMIT 1",
+                (kb_id,),
+            ).fetchone()
+            if not kb_exists:
+                raise ValueError("knowledge base not found")
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_slots (
+                    kb_id, profile, active_publication_id, previous_publication_id,
+                    automatic_build_enabled, automatic_publish_enabled, updated_at
+                )
+                VALUES (?, ?, NULL, NULL, ?, ?, ?)
+                ON CONFLICT(kb_id, profile) DO UPDATE SET
+                    automatic_build_enabled = excluded.automatic_build_enabled,
+                    automatic_publish_enabled = excluded.automatic_publish_enabled,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    kb_id,
+                    normalized_profile,
+                    int(bool(automatic_build_enabled)),
+                    int(bool(automatic_publish_enabled)),
+                    now,
+                ),
+            )
+        return self.get_agentic_ready_publication_state(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+
+    def mark_agentic_ready_source_event(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+        reason: str,
+    ) -> dict[str, Any]:
+        """Atomically coalesce an event, nesting via savepoint in a caller transaction."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        normalized_reason = str(reason or "").strip().lower()
+        severity = self._AGENTIC_READY_SOURCE_EVENT_SEVERITY.get(normalized_reason)
+        if severity is None:
+            raise ValueError(f"unsupported ready-data source event reason: {normalized_reason}")
+        now = self._utcnow_iso()
+        with self.transaction(immediate=True):
+            kb_exists = self._conn.execute(
+                "SELECT 1 FROM rag_knowledge_bases WHERE kb_id = ? LIMIT 1",
+                (kb_id,),
+            ).fetchone()
+            if not kb_exists:
+                raise ValueError("knowledge base not found")
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_source_state (
+                    kb_id, profile, event_generation,
+                    pending_evaluation_generation, evaluated_generation,
+                    pending_severity, pending_reasons_json,
+                    evaluated_severity, evaluated_reasons_json,
+                    evaluated_source_version_kind, evaluated_source_version_id,
+                    evaluated_at, created_at, updated_at
+                )
+                VALUES (?, ?, 0, NULL, 0, 'none', '[]', 'none', '[]', '', '', NULL, ?, ?)
+                ON CONFLICT(kb_id, profile) DO NOTHING
+                """,
+                (kb_id, normalized_profile, now, now),
+            )
+            row = self._conn.execute(
+                """
+                SELECT event_generation, pending_severity, pending_reasons_json
+                FROM agentic_ready_source_state
+                WHERE kb_id = ? AND profile = ?
+                """,
+                (kb_id, normalized_profile),
+            ).fetchone()
+            if not row:
+                raise RuntimeError("ready-data source state could not be initialized")
+            generation = int(row[0] or 0) + 1
+            reasons = self._agentic_ready_json_list(row[2])
+            if normalized_reason not in reasons:
+                reasons.append(normalized_reason)
+            pending_severity = self._agentic_ready_severity_max(
+                str(row[1] or "none"),
+                severity,
+            )
+            result = self._conn.execute(
+                """
+                UPDATE agentic_ready_source_state
+                SET event_generation = ?, pending_evaluation_generation = ?,
+                    pending_severity = ?, pending_reasons_json = ?, updated_at = ?
+                WHERE kb_id = ? AND profile = ?
+                """,
+                (
+                    generation,
+                    generation,
+                    pending_severity,
+                    json.dumps(reasons, ensure_ascii=False),
+                    now,
+                    kb_id,
+                    normalized_profile,
+                ),
+            )
+            if result.rowcount != 1:
+                raise RuntimeError("ready-data source event generation update failed")
+        return self.get_agentic_ready_source_state(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+
+    def record_agentic_ready_source_evaluation(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+        evaluated_generation: int,
+        source_version_kind: str,
+        source_version_id: str,
+    ) -> dict[str, Any]:
+        """Record the authoritative builder source version for the latest generation."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        normalized_kind = str(source_version_kind or "").strip().lower()
+        normalized_source_id = str(source_version_id or "").strip()
+        if not normalized_kind or not normalized_source_id:
+            raise ValueError("source_version_kind and source_version_id are required")
+        generation = int(evaluated_generation)
+        now = self._utcnow_iso()
+        with self.transaction(immediate=True):
+            row = self._conn.execute(
+                """
+                SELECT event_generation, pending_evaluation_generation,
+                       pending_severity, pending_reasons_json,
+                       evaluated_severity, evaluated_reasons_json,
+                       evaluated_source_version_kind, evaluated_source_version_id
+                FROM agentic_ready_source_state
+                WHERE kb_id = ? AND profile = ?
+                """,
+                (kb_id, normalized_profile),
+            ).fetchone()
+            if not row:
+                raise ValueError("ready-data source evaluation has no pending source event")
+            current_generation = int(row[0] or 0)
+            pending_generation = int(row[1]) if row[1] is not None else None
+            if generation != current_generation or pending_generation != current_generation:
+                raise ValueError("evaluation must target the latest event generation")
+
+            publication_state = self.get_agentic_ready_publication_state(
+                kb_id=kb_id,
+                profile=normalized_profile,
+            )
+            active = publication_state.get("active_publication")
+            manifest = self.get_agentic_ready_manifest(
+                kb_id=kb_id,
+                profile=normalized_profile,
+            )
+            serving_record = active or manifest
+            active_kind = str((serving_record or {}).get("source_version_kind") or "").strip().lower()
+            active_source_id = str((serving_record or {}).get("source_version_id") or "").strip()
+            has_serving_record = bool(serving_record and (serving_record or {}).get("status") in {"ready", "active"})
+            source_identity_comparable = bool(active_kind and active_source_id)
+            source_mismatch = bool(
+                has_serving_record
+                and source_identity_comparable
+                and (
+                    active_kind != normalized_kind
+                    or active_source_id != normalized_source_id
+                )
+            )
+            pending_reasons = self._agentic_ready_json_list(row[3])
+            previous_severity = str(row[4] or "none")
+            previous_reasons = self._agentic_ready_json_list(row[5])
+            previous_kind = str(row[6] or "").strip().lower()
+            previous_source_id = str(row[7] or "").strip()
+            previous_authority_unresolved = bool(
+                has_serving_record
+                and previous_kind
+                and previous_source_id
+                and (
+                    active_kind != previous_kind
+                    or active_source_id != previous_source_id
+                )
+            )
+            inherited_severity = (
+                previous_severity if previous_authority_unresolved else "none"
+            )
+            inherited_reasons = (
+                previous_reasons if previous_authority_unresolved else []
+            )
+            source_matches = bool(
+                has_serving_record
+                and source_identity_comparable
+                and active_kind == normalized_kind
+                and active_source_id == normalized_source_id
+            )
+            if source_matches:
+                evaluated_severity = "none"
+                evaluated_reasons: list[str] = []
+            elif source_mismatch:
+                evaluated_severity = self._agentic_ready_severity_max(
+                    inherited_severity,
+                    str(row[2] or "none"),
+                )
+                if evaluated_severity == "none":
+                    evaluated_severity = "soft_stale"
+                evaluated_reasons = list(
+                    dict.fromkeys([*inherited_reasons, *pending_reasons])
+                )
+                if not evaluated_reasons:
+                    evaluated_reasons = ["source_version_changed"]
+            else:
+                evaluated_severity = self._agentic_ready_severity_max(
+                    inherited_severity
+                    if inherited_severity == "hard_stale"
+                    else "none",
+                    str(row[2] or "none") if str(row[2] or "none") == "hard_stale" else "none",
+                )
+                evaluated_reasons = (
+                    list(dict.fromkeys([*inherited_reasons, *pending_reasons]))
+                    if evaluated_severity == "hard_stale"
+                    else []
+                )
+            result = self._conn.execute(
+                """
+                UPDATE agentic_ready_source_state
+                SET pending_evaluation_generation = NULL,
+                    evaluated_generation = ?, pending_severity = 'none',
+                    pending_reasons_json = '[]', evaluated_severity = ?,
+                    evaluated_reasons_json = ?,
+                    evaluated_source_version_kind = ?,
+                    evaluated_source_version_id = ?, evaluated_at = ?, updated_at = ?
+                WHERE kb_id = ? AND profile = ?
+                  AND event_generation = ?
+                  AND pending_evaluation_generation = ?
+                """,
+                (
+                    generation,
+                    evaluated_severity,
+                    json.dumps(evaluated_reasons, ensure_ascii=False),
+                    normalized_kind,
+                    normalized_source_id,
+                    now,
+                    now,
+                    kb_id,
+                    normalized_profile,
+                    generation,
+                    generation,
+                ),
+            )
+            if result.rowcount != 1:
+                raise RuntimeError("ready-data source evaluation lost its generation guard")
+        return self.get_agentic_ready_source_state(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+
+    def get_agentic_ready_source_state(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+    ) -> dict[str, Any]:
+        """Derive serving safety from durable events and authoritative source identity."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = self._conn.execute(
+            """
+            SELECT event_generation, pending_evaluation_generation,
+                   evaluated_generation, pending_severity, pending_reasons_json,
+                   evaluated_severity, evaluated_reasons_json,
+                   evaluated_source_version_kind, evaluated_source_version_id,
+                   evaluated_at, created_at, updated_at
+            FROM agentic_ready_source_state
+            WHERE kb_id = ? AND profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        publication_state = self.get_agentic_ready_publication_state(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+        active = publication_state.get("active_publication")
+        manifest = self.get_agentic_ready_manifest(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+        serving_record = active or manifest
+        active_kind = str((serving_record or {}).get("source_version_kind") or "").strip().lower()
+        active_source_id = str((serving_record or {}).get("source_version_id") or "").strip()
+        source_identity_comparable = bool(active_kind and active_source_id)
+        if not row:
+            return {
+                "kb_id": kb_id,
+                "profile": normalized_profile,
+                "has_source_state": False,
+                "state": "legacy_fallback",
+                "event_generation": 0,
+                "pending_evaluation_generation": None,
+                "evaluated_generation": 0,
+                "pending_evaluation": False,
+                "pending_severity": "none",
+                "pending_reasons": [],
+                "evaluated_source_version_kind": "",
+                "evaluated_source_version_id": "",
+                "active_source_version_kind": active_kind,
+                "active_source_version_id": active_source_id,
+                "source_identity_comparable": source_identity_comparable,
+                "legacy_heuristic_required": not source_identity_comparable,
+                "legacy_hard_gate": False,
+                "stale_confirmed": False,
+                "stale_severity": "none",
+                "stale_reasons": [],
+                "serving_stale": False,
+                "serving_allowed": True,
+                "automatic_build_enabled": publication_state["automatic_build_enabled"],
+                "automatic_publish_enabled": publication_state["automatic_publish_enabled"],
+                "evaluated_at": None,
+                "updated_at": None,
+            }
+
+        event_generation = int(row[0] or 0)
+        pending_generation = int(row[1]) if row[1] is not None else None
+        evaluated_generation = int(row[2] or 0)
+        pending_evaluation = bool(
+            pending_generation is not None and pending_generation > evaluated_generation
+        )
+        pending_severity = str(row[3] or "none") if pending_evaluation else "none"
+        evaluated_kind = str(row[7] or "").strip().lower()
+        evaluated_source_id = str(row[8] or "").strip()
+        has_serving_record = bool(serving_record and (serving_record or {}).get("status") in {"ready", "active"})
+        source_mismatch = bool(
+            has_serving_record
+            and source_identity_comparable
+            and evaluated_kind
+            and evaluated_source_id
+            and (
+                active_kind != evaluated_kind
+                or active_source_id != evaluated_source_id
+            )
+        )
+        evaluated_severity = str(row[5] or "none") if source_mismatch else "none"
+        if source_mismatch and evaluated_severity == "none":
+            evaluated_severity = "soft_stale"
+        legacy_hard_gate = bool(
+            has_serving_record
+            and not source_identity_comparable
+            and str(row[5] or "none") == "hard_stale"
+        )
+        if legacy_hard_gate:
+            evaluated_severity = "hard_stale"
+        effective_severity = self._agentic_ready_severity_max(
+            pending_severity if pending_severity == "hard_stale" else "none",
+            evaluated_severity,
+        )
+        stale_confirmed = bool(source_mismatch and evaluated_severity != "none")
+        serving_stale = effective_severity in {"soft_stale", "hard_stale"}
+        state = (
+            "stale"
+            if stale_confirmed
+            else (
+                "pending_evaluation"
+                if pending_evaluation
+                else ("legacy_hard_gate" if legacy_hard_gate else "fresh")
+            )
+        )
+        reasons = (
+            self._agentic_ready_json_list(row[6])
+            if source_mismatch or legacy_hard_gate
+            else []
+        )
+        if source_mismatch and not reasons:
+            reasons = ["source_version_changed"]
+        if pending_evaluation:
+            reasons = list(dict.fromkeys([*reasons, *self._agentic_ready_json_list(row[4])]))
+        return {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "has_source_state": True,
+            "state": state,
+            "event_generation": event_generation,
+            "pending_evaluation_generation": pending_generation,
+            "evaluated_generation": evaluated_generation,
+            "pending_evaluation": pending_evaluation,
+            "pending_severity": pending_severity,
+            "pending_reasons": self._agentic_ready_json_list(row[4]) if pending_evaluation else [],
+            "evaluated_source_version_kind": evaluated_kind,
+            "evaluated_source_version_id": evaluated_source_id,
+            "active_source_version_kind": active_kind,
+            "active_source_version_id": active_source_id,
+            "source_identity_comparable": source_identity_comparable,
+            "legacy_heuristic_required": not source_identity_comparable,
+            "legacy_hard_gate": legacy_hard_gate,
+            "stale_confirmed": stale_confirmed,
+            "stale_severity": effective_severity,
+            "stale_reasons": reasons,
+            "serving_stale": serving_stale,
+            "serving_allowed": effective_severity != "hard_stale",
+            "automatic_build_enabled": publication_state["automatic_build_enabled"],
+            "automatic_publish_enabled": publication_state["automatic_publish_enabled"],
+            "evaluated_at": row[9],
+            "updated_at": row[11],
+        }
+
     def get_agentic_ready_publication_state(
         self,
         *,
@@ -3998,7 +4592,7 @@ class Storage:
         row = self._conn.execute(
             """
             SELECT active_publication_id, previous_publication_id,
-                   automatic_publish_enabled, updated_at
+                   automatic_build_enabled, automatic_publish_enabled, updated_at
             FROM agentic_ready_slots
             WHERE kb_id = ? AND profile = ?
             LIMIT 1
@@ -4012,8 +4606,9 @@ class Storage:
             "profile": normalized_profile,
             "active_publication_id": active_id,
             "previous_publication_id": previous_id,
-            "automatic_publish_enabled": bool(row[2]) if row else False,
-            "updated_at": row[3] if row else None,
+            "automatic_build_enabled": bool(row[2]) if row else False,
+            "automatic_publish_enabled": bool(row[3]) if row else False,
+            "updated_at": row[4] if row else None,
             "active_publication": self.get_agentic_ready_publication(active_id) if active_id else None,
             "previous_publication": self.get_agentic_ready_publication(previous_id) if previous_id else None,
         }
@@ -4063,6 +4658,10 @@ class Storage:
             publication = self.get_agentic_ready_publication(publication_id)
             if not publication:
                 raise ValueError("ready-data publication not found")
+            if publication["attempt_disposition"]:
+                raise ValueError(
+                    "ready-data publication attempt disposition prevents publication"
+                )
             if publication["gc_state"] in {"claimed", "delete_failed", "deleted"}:
                 raise ValueError("ready-data publication is already under garbage collection")
             if self._agentic_ready_paths_conflict(
@@ -4079,9 +4678,9 @@ class Storage:
                 """
                 INSERT INTO agentic_ready_slots (
                     kb_id, profile, active_publication_id, previous_publication_id,
-                    automatic_publish_enabled, updated_at
+                    automatic_build_enabled, automatic_publish_enabled, updated_at
                 )
-                VALUES (?, ?, NULL, NULL, 0, ?)
+                VALUES (?, ?, NULL, NULL, 0, 0, ?)
                 ON CONFLICT(kb_id, profile) DO NOTHING
                 """,
                 (kb_id, profile, now),

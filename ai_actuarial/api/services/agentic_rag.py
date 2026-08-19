@@ -60,6 +60,107 @@ def _validate_agentic_ready_output_dir(*, db_path: str, output_dir: str) -> str:
     return str(candidate)
 
 
+def _resolve_agentic_ready_output_path(*, db_path: str, output_dir: str) -> str:
+    """Resolve a directory inside ready-data before inspecting its contents."""
+    normalized = _norm(output_dir)
+    if not normalized:
+        raise AgenticRagError("output_dir or kb_id is required", status_code=400)
+    path = Path(normalized)
+    if not path.is_dir():
+        raise AgenticRagError("output_dir does not exist or is not a directory", status_code=400)
+    candidate = path.resolve()
+    root = (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise AgenticRagError(
+            "output_dir must stay under the database agentic_ready_data directory",
+            status_code=400,
+        ) from exc
+    return str(candidate)
+
+
+def _enforce_registered_ready_source_gate(*, db_path: str, output_dir: str) -> None:
+    """Apply the registry source gate when an explicit path names a known artifact."""
+    candidate = Path(output_dir).resolve()
+    root = (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+
+    def _registered_path(value: Any) -> Path | None:
+        try:
+            resolved = Path(str(value or "")).resolve()
+            resolved.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return resolved
+
+    storage = Storage(db_path)
+    try:
+        rows = storage._conn.execute(
+            """
+            SELECT kb_id, profile, output_dir, 'manifest'
+            FROM agentic_ready_manifests
+            WHERE output_dir IS NOT NULL AND output_dir != ''
+            UNION ALL
+            SELECT kb_id, profile, output_dir, 'publication'
+            FROM agentic_ready_publications
+            WHERE output_dir IS NOT NULL AND output_dir != ''
+            UNION ALL
+            SELECT p.kb_id, p.profile, g.quarantine_dir, 'gc_quarantine'
+            FROM agentic_ready_publication_gc g
+            JOIN agentic_ready_publications p
+              ON p.publication_id = g.publication_id
+            WHERE g.quarantine_dir IS NOT NULL AND g.quarantine_dir != ''
+            """
+        ).fetchall()
+        identities: set[tuple[str, str]] = set()
+        registered_gc_quarantine = False
+        for row in rows:
+            registered = _registered_path(row[2])
+            if registered == candidate:
+                if str(row[3]) == "gc_quarantine":
+                    registered_gc_quarantine = True
+                identities.add((str(row[0]), str(row[1] or "general")))
+        if registered_gc_quarantine:
+            raise AgenticRagError(
+                "registered output_dir is not the current serving ready_data for "
+                "kb_id/profile",
+                status_code=409,
+            )
+        for registered_kb_id, registered_profile in sorted(identities):
+            publication_state = storage.get_agentic_ready_publication_state(
+                kb_id=registered_kb_id,
+                profile=registered_profile,
+            )
+            active = publication_state["active_publication"]
+            manifest = storage.get_agentic_ready_manifest(
+                kb_id=registered_kb_id,
+                profile=registered_profile,
+            )
+            current_output = None
+            if active and active["status"] == "active":
+                current_output = _registered_path(active["output_dir"])
+            elif manifest and manifest["status"] == "ready":
+                current_output = _registered_path(manifest["output_dir"])
+            if current_output is None or candidate != current_output:
+                raise AgenticRagError(
+                    "registered output_dir is not the current serving ready_data for "
+                    "kb_id/profile",
+                    status_code=409,
+                )
+            source_state = storage.get_agentic_ready_source_state(
+                kb_id=registered_kb_id,
+                profile=registered_profile,
+            )
+            if not source_state["serving_allowed"]:
+                raise AgenticRagError(
+                    "ready_data is hard stale for registered output_dir; "
+                    "standard fallback is required",
+                    status_code=409,
+                )
+    finally:
+        storage.close()
+
+
 def _manifest_profile_from_output_dir(output_dir: str) -> str:
     try:
         with (Path(output_dir) / "ready_data_manifest.json").open("r", encoding="utf-8") as f:
@@ -88,7 +189,15 @@ def _resolve_ready_output_dir(
     if explicit_output_dir:
         if kb_id:
             raise AgenticRagError("output_dir cannot be combined with kb_id/profile registry lookup", status_code=400)
-        resolved_output_dir = _validate_agentic_ready_output_dir(db_path=db_path, output_dir=explicit_output_dir)
+        resolved_output_dir = _resolve_agentic_ready_output_path(
+            db_path=db_path,
+            output_dir=explicit_output_dir,
+        )
+        _enforce_registered_ready_source_gate(
+            db_path=db_path,
+            output_dir=resolved_output_dir,
+        )
+        _validate_ready_output_dir(resolved_output_dir)
         if not requested_profile:
             profile = _manifest_profile_from_output_dir(resolved_output_dir) or profile
         return resolved_output_dir, "", profile
@@ -110,10 +219,19 @@ def _resolve_ready_output_dir(
             if row and _norm(row[0]):
                 profile = _norm(row[0]).lower()
         manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=profile)
+        source_state = storage.get_agentic_ready_source_state(
+            kb_id=kb_id,
+            profile=profile,
+        )
     finally:
         storage.close()
     if not manifest:
         raise AgenticRagError("ready_data manifest not found for kb_id/profile", status_code=404)
+    if not source_state["serving_allowed"]:
+        raise AgenticRagError(
+            "ready_data is hard stale for kb_id/profile; standard fallback is required",
+            status_code=409,
+        )
     status = _norm(manifest.get("status")).lower()
     output_dir = _norm(manifest.get("output_dir"))
     if status != "ready" or not output_dir:

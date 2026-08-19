@@ -64,6 +64,47 @@ def _record(
     )
 
 
+@pytest.mark.parametrize("read_only", [False, True])
+def test_publication_column_capability_is_checked_once_per_storage_instance(
+    tmp_path: Path,
+    read_only: bool,
+) -> None:
+    storage = _open_storage(tmp_path)
+    first = _record(
+        storage,
+        index_version_id="idx-1",
+        artifact_digest="digest-1",
+        output_dir=str(tmp_path / "staging" / "first"),
+    )
+    _record(
+        storage,
+        index_version_id="idx-2",
+        artifact_digest="digest-2",
+        output_dir=str(tmp_path / "staging" / "second"),
+    )
+    db_path = storage.db_path
+    storage.close()
+
+    reopened = Storage.open_read_only(db_path) if read_only else Storage(db_path)
+    statements: list[str] = []
+    reopened._conn.set_trace_callback(statements.append)
+    try:
+        publications = reopened.list_agentic_ready_publications_for_gc()
+        assert len(publications) == 2
+        assert reopened.get_agentic_ready_publication(
+            str(first["publication_id"])
+        ) is not None
+        capability_checks = [
+            statement
+            for statement in statements
+            if statement.strip().lower()
+            == "pragma table_info(agentic_ready_publications)"
+        ]
+        assert len(capability_checks) == 1
+    finally:
+        reopened.close()
+
+
 def test_failed_staging_record_does_not_replace_active_publication(tmp_path: Path) -> None:
     storage = _open_storage(tmp_path)
     try:

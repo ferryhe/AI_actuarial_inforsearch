@@ -528,7 +528,11 @@ def test_visitor_chat_knowledge_bases_do_not_depend_on_demo_kb_config(tmp_path: 
     assert {item["kb_id"] for item in payload["knowledge_bases"]} >= {"chat-kb-a", "chat-kb-b"}
 
 
-def _install_guest_chat_fakes(monkeypatch) -> None:
+def _install_guest_chat_fakes(
+    monkeypatch,
+    *,
+    retrieved_chunks: list[dict[str, object]] | None = None,
+) -> None:
     import ai_actuarial.api.services.chat as chat_service
 
     monkeypatch.setattr(
@@ -596,7 +600,24 @@ def _install_guest_chat_fakes(monkeypatch) -> None:
             pass
 
         def retrieve(self, query, kb_ids):
-            return [{"content": "Chat KB B public content", "metadata": {"filename": "kb-b.pdf", "kb_id": "chat-kb-b"}}]
+            if retrieved_chunks is not None:
+                return retrieved_chunks
+            selected_kb_id = kb_ids[0] if isinstance(kb_ids, list) and kb_ids else "chat-kb-b"
+            selected_file_url = (
+                "https://alpha.example/doc-a.pdf"
+                if selected_kb_id == "chat-kb-a"
+                else "https://beta.example/doc-b.pdf"
+            )
+            return [
+                {
+                    "content": f"{selected_kb_id} public content",
+                    "metadata": {
+                        "filename": f"{selected_kb_id}.pdf",
+                        "kb_id": selected_kb_id,
+                        "file_url": selected_file_url,
+                    },
+                }
+            ]
 
     class FakeLLMClient:
         def __init__(self, config, storage=None):
@@ -845,6 +866,183 @@ def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(tmp_pat
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[1]["metadata"]["rag_mode"] == "agentic"
     assert messages[1]["metadata"]["tool_trace"]
+
+
+def test_fastapi_chat_hard_stale_agentic_request_falls_back_to_same_kb_standard_rag(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    _install_guest_chat_fakes(monkeypatch)
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            "INSERT INTO rag_kb_files (kb_id, file_url, added_at) VALUES (?, ?, ?)",
+            (
+                "chat-kb-a",
+                "https://alpha.example/doc-a.pdf",
+                "2026-08-18T00:00:00+00:00",
+            ),
+        )
+        storage._conn.commit()
+        state = storage.mark_agentic_ready_source_event(
+            kb_id="chat-kb-a",
+            profile="regulation",
+            reason="membership_removed",
+        )
+        assert state["serving_allowed"] is False
+    finally:
+        storage.close()
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "How does Article 19 define required capital?",
+            "kb_ids": ["chat-kb-a"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+            "manifest_profile": "regulation",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    metadata = response.json()["data"]["metadata"]
+    assert metadata["requested_rag_mode"] == "agentic"
+    assert metadata["effective_rag_mode"] == "standard"
+    assert metadata["rag_mode"] == "standard"
+    assert metadata["fallback_reason"] == "hard_stale"
+    assert metadata["fallback_kb_id"] == "chat-kb-a"
+    assert metadata["fallback_membership_filter_applied"] is True
+    assert metadata["fallback_membership_filter_retained_count"] == 1
+    assert metadata["fallback_membership_filter_removed_count"] == 0
+    assert response.json()["data"]["citations"][0]["kb_id"] == "chat-kb-a"
+
+
+def test_fastapi_chat_hard_fallback_filters_removed_and_unscoped_chunks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    current_url = "https://alpha.example/doc-a.pdf"
+    removed_url = "https://beta.example/doc-b.pdf"
+    _install_guest_chat_fakes(
+        monkeypatch,
+        retrieved_chunks=[
+            {
+                "content": "current member",
+                "metadata": {
+                    "filename": "current.pdf",
+                    "kb_id": "chat-kb-a",
+                    "file_url": current_url,
+                },
+            },
+            {
+                "content": "removed member",
+                "metadata": {
+                    "filename": "removed.pdf",
+                    "kb_id": "chat-kb-a",
+                    "file_url": removed_url,
+                },
+            },
+            {
+                "content": "missing URL",
+                "metadata": {"filename": "missing.pdf", "kb_id": "chat-kb-a"},
+            },
+            {
+                "content": "wrong KB",
+                "metadata": {
+                    "filename": "wrong-kb.pdf",
+                    "kb_id": "chat-kb-b",
+                    "file_url": current_url,
+                },
+            },
+        ],
+    )
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            "INSERT INTO rag_kb_files (kb_id, file_url, added_at) VALUES (?, ?, ?)",
+            ("chat-kb-a", current_url, "2026-08-18T00:00:00+00:00"),
+        )
+        storage._conn.commit()
+        storage.mark_agentic_ready_source_event(
+            kb_id="chat-kb-a",
+            profile="regulation",
+            reason="membership_removed",
+        )
+    finally:
+        storage.close()
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "What currently remains in this KB?",
+            "kb_ids": ["chat-kb-a"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+            "manifest_profile": "regulation",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert [item["file_url"] for item in data["citations"]] == [current_url]
+    assert [item["file_url"] for item in data["retrieved_blocks"]] == [current_url]
+    assert removed_url not in json.dumps(data)
+    assert data["metadata"]["fallback_membership_filter_applied"] is True
+    assert data["metadata"]["fallback_membership_filter_retained_count"] == 1
+    assert data["metadata"]["fallback_membership_filter_removed_count"] == 3
+
+
+def test_fastapi_chat_hard_fallback_with_no_current_members_returns_no_results(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    removed_url = "https://removed.example/doc.pdf"
+    _install_guest_chat_fakes(
+        monkeypatch,
+        retrieved_chunks=[
+            {
+                "content": "removed member",
+                "metadata": {
+                    "filename": "removed.pdf",
+                    "kb_id": "chat-kb-a",
+                    "file_url": removed_url,
+                },
+            }
+        ],
+    )
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage.mark_agentic_ready_source_event(
+            kb_id="chat-kb-a",
+            profile="regulation",
+            reason="membership_removed",
+        )
+    finally:
+        storage.close()
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "What currently remains in this KB?",
+            "kb_ids": ["chat-kb-a"],
+            "mode": "expert",
+            "rag_mode": "agentic",
+            "manifest_profile": "regulation",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["citations"] == []
+    assert data["retrieved_blocks"] == []
+    assert removed_url not in json.dumps(data)
+    assert data["metadata"]["no_results"] is True
+    assert data["metadata"]["fallback_membership_filter_applied"] is True
+    assert data["metadata"]["fallback_membership_filter_retained_count"] == 0
+    assert data["metadata"]["fallback_membership_filter_removed_count"] == 1
 
 
 def test_fastapi_chat_query_agentic_mode_rejects_multiple_kbs_before_persisting(

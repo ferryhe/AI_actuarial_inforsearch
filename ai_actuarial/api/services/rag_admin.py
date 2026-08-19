@@ -833,6 +833,10 @@ def _build_agentic_manifest_status(
     normalized_profile = _manifest_profile(profile)
     profile_def = PROFILES[normalized_profile]
     source_status = _kb_agentic_source_status(storage, kb_id=kb_id)
+    source_state = storage.get_agentic_ready_source_state(
+        kb_id=kb_id,
+        profile=normalized_profile,
+    )
     manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile)
     if not manifest:
         return {
@@ -844,12 +848,39 @@ def _build_agentic_manifest_status(
             "fallback_mode": "standard",
             "current_doc_count": source_status["current_doc_count"],
             "stale_reason": "ready_data manifest has not been built",
+            "source_state": source_state,
+            "serving_stale": bool(source_state["serving_stale"]),
+            "stale_confirmed": bool(source_state["stale_confirmed"]),
+            "stale_severity": source_state["stale_severity"],
+            "event_generation": source_state["event_generation"],
+            "pending_evaluation_generation": source_state[
+                "pending_evaluation_generation"
+            ],
+            "evaluated_generation": source_state["evaluated_generation"],
+            "authoritative_source_version_kind": source_state[
+                "evaluated_source_version_kind"
+            ],
+            "authoritative_source_version_id": source_state[
+                "evaluated_source_version_id"
+            ],
+            "automatic_build_enabled": source_state["automatic_build_enabled"],
+            "automatic_publish_enabled": source_state["automatic_publish_enabled"],
         }
 
     payload = dict(manifest)
     status = _norm(payload.get("status")).lower() or "missing"
     stale_reason = ""
-    if status == "ready":
+    authoritative_state_available = bool(
+        source_state["has_source_state"]
+        and not source_state["legacy_heuristic_required"]
+    )
+    if status == "ready" and authoritative_state_available:
+        if source_state["serving_stale"]:
+            status = "stale"
+            stale_reason = "; ".join(source_state["stale_reasons"])
+            if not stale_reason:
+                stale_reason = "ready_data source evaluation is pending"
+    elif status == "ready":
         built_at = _norm(payload.get("built_at"))
         latest_source_at = _norm(source_status.get("latest_source_at"))
         if _iso_after(storage, latest_source_at, built_at):
@@ -858,7 +889,15 @@ def _build_agentic_manifest_status(
         elif int(payload.get("doc_count") or 0) != int(source_status["current_doc_count"]):
             status = "stale"
             stale_reason = "KB document count differs from the ready_data manifest"
-    usable = status == "ready"
+    if status == "ready" and not source_state["serving_allowed"]:
+        status = "stale"
+        stale_reason = "; ".join(source_state["stale_reasons"])
+        if not stale_reason:
+            stale_reason = "ready_data is blocked by a hard source-state gate"
+    artifact_usable = _norm(payload.get("status")).lower() == "ready"
+    usable = artifact_usable and bool(source_state["serving_allowed"])
+    if not authoritative_state_available:
+        usable = status == "ready" and bool(source_state["serving_allowed"])
     payload.update(
         {
             "status": status,
@@ -866,6 +905,25 @@ def _build_agentic_manifest_status(
             "fallback_mode": "agentic" if usable else "standard",
             "current_doc_count": source_status["current_doc_count"],
             "latest_source_at": source_status["latest_source_at"],
+            "source_state": source_state,
+            "serving_stale": bool(source_state["serving_stale"]),
+            "stale_confirmed": bool(source_state["stale_confirmed"]),
+            "stale_severity": source_state["stale_severity"],
+            "event_generation": source_state["event_generation"],
+            "pending_evaluation_generation": source_state[
+                "pending_evaluation_generation"
+            ],
+            "evaluated_generation": source_state["evaluated_generation"],
+            "authoritative_source_version_kind": source_state[
+                "evaluated_source_version_kind"
+            ],
+            "authoritative_source_version_id": source_state[
+                "evaluated_source_version_id"
+            ],
+            "automatic_build_enabled": source_state["automatic_build_enabled"],
+            "automatic_publish_enabled": source_state[
+                "automatic_publish_enabled"
+            ],
         }
     )
     if stale_reason:
@@ -1454,6 +1512,15 @@ def build_agentic_ready_manifest(
         candidate_publication: dict[str, Any] = {}
         publication_state: dict[str, Any] = {}
         validated_attempt_recorded = False
+        initial_source_state = storage.get_agentic_ready_source_state(
+            kb_id=kid,
+            profile=profile,
+        )
+        captured_evaluation_generation = (
+            initial_source_state["pending_evaluation_generation"]
+            if initial_source_state["pending_evaluation"]
+            else None
+        )
         try:
             builder_manifest = ready_data_builder.build_l0(
                 db_path=db_path,
@@ -1717,6 +1784,27 @@ def build_agentic_ready_manifest(
                 kb_id=kid,
                 profile=profile,
             )
+        active_publication = publication_state.get("active_publication")
+        active_matches_builder = bool(
+            active_publication
+            and validation.get("valid")
+            and str(active_publication.get("source_version_kind") or "")
+            == source_version_kind
+            and str(active_publication.get("source_version_id") or "")
+            == source_version_id
+        )
+        if captured_evaluation_generation is not None and active_matches_builder:
+            try:
+                storage.record_agentic_ready_source_evaluation(
+                    kb_id=kid,
+                    profile=profile,
+                    evaluated_generation=int(captured_evaluation_generation),
+                    source_version_kind=source_version_kind,
+                    source_version_id=source_version_id,
+                )
+            except ValueError as exc:
+                if str(exc) != "evaluation must target the latest event generation":
+                    raise
         return {
             "kb_id": kid,
             "manifest": _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile),
@@ -1829,6 +1917,7 @@ def _ready_data_gc_item(publication: Mapping[str, Any], *, reason: str) -> dict[
         "kb_id": str(publication["kb_id"]),
         "profile": str(publication["profile"]),
         "status": str(publication["status"]),
+        "attempt_disposition": str(publication.get("attempt_disposition") or ""),
         "retention_class": str(publication.get("retention_class") or ""),
         "gc_state": str(publication.get("gc_state") or ""),
         "marked_at": publication.get("gc_marked_at"),
@@ -1864,6 +1953,7 @@ def _ready_data_gc_fingerprint_payload(
                 "kb_id": item["kb_id"],
                 "profile": item["profile"],
                 "status": item["status"],
+                "attempt_disposition": item["attempt_disposition"],
                 "source_version_kind": item["source_version_kind"],
                 "output_dir": item["output_dir"],
                 "retention_class": item["retention_class"],
@@ -1914,7 +2004,8 @@ def _build_ready_data_publication_gc_plan(
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for publication in publications:
         if (
-            publication["retention_class"] != "redundant_duplicate"
+            publication["attempt_disposition"]
+            or publication["retention_class"] != "redundant_duplicate"
             or publication["gc_state"] not in {"eligible", "claimed", "delete_failed"}
         ):
             continue
@@ -1952,6 +2043,14 @@ def _build_ready_data_publication_gc_plan(
             continue
         if str(publication["source_version_kind"]).startswith("legacy"):
             retained.append(_ready_data_gc_item(publication, reason="legacy_publication"))
+            continue
+        if publication["attempt_disposition"]:
+            retained.append(
+                _ready_data_gc_item(
+                    publication,
+                    reason=f"attempt_disposition_{publication['attempt_disposition']}",
+                )
+            )
             continue
         if not publication["retention_class"]:
             reason = (
