@@ -12,6 +12,10 @@ from typing import Any, Mapping
 
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.agentic_rag.manifest_profiles import PROFILES
+from ai_actuarial.agentic_rag.staging_smoke import (
+    STAGING_SMOKE_CONTRACT_VERSION,
+    run_staging_smoke,
+)
 from ai_actuarial.config import settings
 from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage, _split_visible_categories
@@ -29,6 +33,35 @@ class RagAdminError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+def _staging_smoke_not_run(reason: str) -> dict[str, Any]:
+    return {
+        "contract_version": STAGING_SMOKE_CONTRACT_VERSION,
+        "status": "not_run",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "elapsed_ms": 0,
+        "query_source": "",
+        "query": "",
+        "query_sha256": hashlib.sha256(b"").hexdigest(),
+        "matched_doc_id": "",
+        "matched_file_url": "",
+        "failure_reason": str(reason or "smoke_not_run")[:160],
+        "catalog_doc_count": 0,
+    }
+
+
+def _staging_smoke_failed(reason: str) -> dict[str, Any]:
+    result = _staging_smoke_not_run(reason)
+    result["status"] = "failed"
+    return result
+
+
+def _staging_smoke_count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return -1
 
 
 
@@ -1561,6 +1594,7 @@ def _build_agentic_ready_manifest_core(
         candidate_publication: dict[str, Any] = {}
         publication_state: dict[str, Any] = {}
         validated_attempt_recorded = False
+        smoke_result = _staging_smoke_not_run("build_not_completed")
         initial_source_state = storage.get_agentic_ready_source_state(
             kb_id=kid,
             profile=profile,
@@ -1592,6 +1626,73 @@ def _build_agentic_ready_manifest_core(
             validation = ready_data_builder.validate(candidate_output_dir)
             artifact_files = list(builder_manifest.get("artifact_files") or [])
             artifact_digest = _ready_data_artifact_digest(candidate_output_dir, artifact_files)
+            if validation.get("valid"):
+                try:
+                    smoke_result = run_staging_smoke(
+                        output_dir=candidate_output_dir,
+                        profile=profile,
+                        kb_id=kid,
+                        timeout_seconds=float(
+                            Storage.AGENTIC_READY_FUTURE_EXECUTION_POLICY[
+                                "staging_smoke_timeout_seconds"
+                            ]
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
+                    smoke_result = _staging_smoke_failed("smoke_execution_failed")
+                smoke_status = str(smoke_result.get("status") or "")
+                smoke_contract = str(
+                    smoke_result.get("contract_version") or ""
+                )
+                smoke_catalog_doc_count = _staging_smoke_count(
+                    smoke_result.get("catalog_doc_count")
+                )
+                smoke_has_catalog_reference = bool(
+                    str(smoke_result.get("matched_doc_id") or "").strip()
+                    or str(smoke_result.get("matched_file_url") or "").strip()
+                )
+                smoke_contract_valid = (
+                    smoke_contract == STAGING_SMOKE_CONTRACT_VERSION
+                )
+                smoke_passed = (
+                    smoke_contract_valid
+                    and smoke_status == "passed"
+                    and smoke_catalog_doc_count > 0
+                    and smoke_has_catalog_reference
+                )
+                empty_smoke_confirmed = (
+                    smoke_contract_valid
+                    and smoke_status == "skipped_empty"
+                    and smoke_catalog_doc_count == 0
+                )
+                if not smoke_passed and not empty_smoke_confirmed:
+                    if not smoke_contract_valid:
+                        failure_reason = "invalid_smoke_contract"
+                    elif smoke_status == "passed" and not smoke_has_catalog_reference:
+                        failure_reason = "catalog_reference_missing"
+                    elif smoke_status == "failed":
+                        failure_reason = str(
+                            smoke_result.get("failure_reason") or "smoke_failed"
+                        )[:160]
+                    else:
+                        failure_reason = "invalid_smoke_status"
+                    if not failure_reason:
+                        failure_reason = "smoke_failed"
+                    smoke_result = {
+                        **smoke_result,
+                        "contract_version": STAGING_SMOKE_CONTRACT_VERSION,
+                        "status": "failed",
+                        "catalog_doc_count": max(0, smoke_catalog_doc_count),
+                        "failure_reason": failure_reason,
+                    }
+                    validation["valid"] = False
+                    validation.setdefault("errors", []).append(
+                        f"ready_data staging smoke failed: {failure_reason}"
+                    )
+            else:
+                smoke_result = _staging_smoke_not_run(
+                    "structural_validation_failed"
+                )
             if not validation.get("valid"):
                 error_message = "; ".join(str(item) for item in validation.get("errors") or [])
                 candidate_publication = storage.record_agentic_ready_publication(
@@ -1610,6 +1711,7 @@ def _build_agentic_ready_manifest_core(
                     artifact_digest=artifact_digest,
                     source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
+                    smoke_result=smoke_result,
                     error_message=error_message or "ready_data validation failed",
                 )
                 cleanup_warning = _best_effort_staging_cleanup(
@@ -1650,6 +1752,7 @@ def _build_agentic_ready_manifest_core(
                     artifact_digest=artifact_digest,
                     source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
+                    smoke_result=smoke_result,
                     error_message="",
                 )
                 validated_attempt_recorded = True
@@ -1835,6 +1938,7 @@ def _build_agentic_ready_manifest_core(
                     artifact_digest=artifact_digest,
                     source_db=str(builder_manifest.get("source_db") or db_path),
                     schema_versions=dict(builder_manifest.get("schema_versions") or {}),
+                    smoke_result=smoke_result,
                     error_message=str(exc),
                 )
                 cleanup_warning = _best_effort_staging_cleanup(

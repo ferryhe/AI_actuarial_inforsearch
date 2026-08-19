@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ai_actuarial.agentic_rag.staging_smoke import STAGING_SMOKE_CONTRACT_VERSION
 from ai_actuarial.storage import Storage
 
 from .rag_admin import (
@@ -155,6 +156,28 @@ def _error_text(validation: dict[str, Any], default: str) -> str:
     return "; ".join(errors) or default
 
 
+def _staging_smoke_publish_disposition(candidate: dict[str, Any]) -> str:
+    smoke_result = candidate.get("smoke_result")
+    if not isinstance(smoke_result, dict):
+        return "invalid"
+    if str(smoke_result.get("contract_version") or "") != STAGING_SMOKE_CONTRACT_VERSION:
+        return "invalid"
+    status = str(smoke_result.get("status") or "")
+    try:
+        catalog_doc_count = int(smoke_result.get("catalog_doc_count") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return "invalid"
+    has_catalog_reference = bool(
+        str(smoke_result.get("matched_doc_id") or "").strip()
+        or str(smoke_result.get("matched_file_url") or "").strip()
+    )
+    if status == "passed" and catalog_doc_count > 0 and has_catalog_reference:
+        return "passed"
+    if status == "skipped_empty" and catalog_doc_count == 0:
+        return "empty"
+    return "invalid"
+
+
 def _finish_claim(
     storage: Storage,
     claim: dict[str, Any],
@@ -183,6 +206,7 @@ def _fenced_non_publish_result(
     claim: dict[str, Any],
     candidate: dict[str, Any],
     *,
+    require_manual_publish_confirmation: bool = False,
     now: datetime,
 ) -> dict[str, Any] | None:
     fenced = storage.finalize_agentic_ready_automation_build(
@@ -191,6 +215,7 @@ def _fenced_non_publish_result(
         generation=int(claim["generation"]),
         claim_token=str(claim["claim_token"]),
         publication_id=str(candidate["publication_id"]),
+        require_manual_publish_confirmation=require_manual_publish_confirmation,
         now=now,
     )
     action = str(fenced["action"])
@@ -216,6 +241,13 @@ def _fenced_non_publish_result(
         return {
             **claim,
             "status": "awaiting_publish",
+            "candidate_publication": candidate,
+            "fence_reason": reason,
+        }
+    if action == "awaiting_manual_confirmation":
+        return {
+            **claim,
+            "status": "awaiting_manual_confirmation",
             "candidate_publication": candidate,
             "fence_reason": reason,
         }
@@ -463,6 +495,27 @@ def run_ready_data_automation_once(
                     "error": "validated ready_data candidate is missing",
                 }
 
+        smoke_disposition = _staging_smoke_publish_disposition(candidate)
+        if smoke_disposition == "invalid":
+            failure_storage = Storage(db_path)
+            try:
+                finished = _finish_claim(
+                    failure_storage,
+                    claim,
+                    state="failed",
+                    publication_id=str(candidate.get("publication_id") or "") or None,
+                    error="ready_data candidate has no passing staging smoke",
+                    now=clock(),
+                )
+            finally:
+                failure_storage.close()
+            return {
+                **claim,
+                "status": "failed" if finished else "claim_lost",
+                "candidate_publication": candidate,
+                "error": "ready_data candidate has no passing staging smoke",
+            }
+
         if heartbeat.lost:
             return {**claim, "status": "claim_lost", "candidate_publication": candidate}
 
@@ -472,6 +525,10 @@ def run_ready_data_automation_once(
                 publish_storage,
                 claim,
                 candidate,
+                require_manual_publish_confirmation=(
+                    smoke_disposition == "empty"
+                    and bool(claim["expected_automatic_publish_enabled"])
+                ),
                 now=clock(),
             )
             if non_publish is not None:
