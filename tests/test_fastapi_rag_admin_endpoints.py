@@ -2912,9 +2912,13 @@ def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_increm
             kb_id="kb-category-sync",
             profile="general",
         )
-        assert state["event_generation"] == 2
-        assert state["pending_severity"] == "soft_stale"
-        assert state["pending_reasons"] == ["membership_added"]
+        assert state["event_generation"] == 4
+        assert state["pending_severity"] == "hard_stale"
+        assert state["pending_reasons"] == [
+            "membership_added",
+            "access_scope_restricted",
+            "chunk_binding_updated",
+        ]
     finally:
         storage.close()
 
@@ -2993,6 +2997,21 @@ def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path,
     )
     assert bind.status_code == 200, bind.text
     assert bind.json()["created"] == 1
+
+    storage = Storage(str(db_path))
+    try:
+        source_state = storage.get_agentic_ready_source_state(
+            kb_id="kb-direct-bind",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert source_state["event_generation"] == 2
+    assert source_state["pending_severity"] == "hard_stale"
+    assert source_state["pending_reasons"] == [
+        "membership_added",
+        "access_scope_restricted",
+    ]
 
     files = client.get("/api/rag/knowledge-bases/kb-direct-bind/files")
     assert files.status_code == 200, files.text

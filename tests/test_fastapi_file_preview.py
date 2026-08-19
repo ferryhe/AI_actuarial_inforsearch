@@ -218,6 +218,21 @@ def test_fastapi_file_chunk_generation_can_bind_generated_chunk_to_kb(tmp_path: 
     assert binding["file_url"] == file_url
     assert binding["chunk_set_id"] == generate_body["chunk_set_id"]
 
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        source_state = storage.get_agentic_ready_source_state(
+            kb_id="kb-file-bind",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert source_state["event_generation"] == 2
+    assert source_state["pending_severity"] == "hard_stale"
+    assert source_state["pending_reasons"] == [
+        "membership_added",
+        "access_scope_restricted",
+    ]
+
 
 def test_fastapi_chunk_generation_requires_config_write_token_when_configured(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "secret-token")

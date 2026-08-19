@@ -52,6 +52,7 @@ class Storage:
         "metadata_updated": "soft_stale",
         "builder_contract_changed": "soft_stale",
         "profile_contract_changed": "soft_stale",
+        "chunk_binding_updated": "soft_stale",
         "membership_removed": "hard_stale",
         "chunk_binding_removed": "hard_stale",
         "source_invalidated": "hard_stale",
@@ -2839,24 +2840,29 @@ class Storage:
         mode = str(binding_mode or "pin").strip().lower()
         if mode not in {"pin", "follow_latest"}:
             raise ValueError("binding_mode must be 'pin' or 'follow_latest'")
-        now = self._utcnow_iso()
-        # Validate chunk_set belongs to this file and get profile relation.
-        rel = self._conn.execute(
-            """
-            SELECT file_url, profile_id
-            FROM file_chunk_sets
-            WHERE chunk_set_id = ?
-            LIMIT 1
-            """,
-            (chunk_set_id,),
-        ).fetchone()
-        if not rel:
-            raise ValueError("chunk_set_id not found")
-        if (rel[0] or "") != file_url:
-            raise ValueError("chunk_set_id does not belong to the specified file_url")
-        target_profile_id = (rel[1] or "") if mode == "follow_latest" else None
+        with self.transaction(immediate=True):
+            # Validate chunk_set belongs to this file and get profile relation.
+            rel = self._conn.execute(
+                """
+                SELECT file_url, profile_id
+                FROM file_chunk_sets
+                WHERE chunk_set_id = ?
+                LIMIT 1
+                """,
+                (chunk_set_id,),
+            ).fetchone()
+            if not rel:
+                raise ValueError("chunk_set_id not found")
+            if (rel[0] or "") != file_url:
+                raise ValueError("chunk_set_id does not belong to the specified file_url")
+            target_profile_id = (rel[1] or "") if mode == "follow_latest" else None
+            before_has_selection = self._has_ready_data_bound_chunk_selection(kb_id)
+            before_selection = self._ready_data_bound_chunk_selection(
+                kb_id,
+                file_url=file_url,
+            )
+            now = self._utcnow_iso()
 
-        with self.transaction():
             # For follow_latest mode, keep only one active binding per (kb, file, profile).
             if mode == "follow_latest":
                 self._conn.execute(
@@ -2892,7 +2898,7 @@ class Storage:
                         """,
                         (now, bound_by, mode, target_profile_id, kb_id, file_url, chunk_set_id),
                     )
-                return {
+                response = {
                     "kb_id": kb_id,
                     "file_url": file_url,
                     "chunk_set_id": chunk_set_id,
@@ -2900,24 +2906,36 @@ class Storage:
                     "target_profile_id": target_profile_id or "",
                     "created": False,
                 }
-
-            self._conn.execute(
-                """
-                INSERT INTO kb_chunk_bindings (
-                    kb_id, file_url, chunk_set_id, bound_at, bound_by, binding_mode, target_profile_id
+            else:
+                self._conn.execute(
+                    """
+                    INSERT INTO kb_chunk_bindings (
+                        kb_id, file_url, chunk_set_id, bound_at, bound_by, binding_mode, target_profile_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (kb_id, file_url, chunk_set_id, now, bound_by, mode, target_profile_id),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (kb_id, file_url, chunk_set_id, now, bound_by, mode, target_profile_id),
+                response = {
+                    "kb_id": kb_id,
+                    "file_url": file_url,
+                    "chunk_set_id": chunk_set_id,
+                    "binding_mode": mode,
+                    "target_profile_id": target_profile_id or "",
+                    "created": True,
+                }
+
+            after_selection = self._ready_data_bound_chunk_selection(
+                kb_id,
+                file_url=file_url,
             )
-            return {
-                "kb_id": kb_id,
-                "file_url": file_url,
-                "chunk_set_id": chunk_set_id,
-                "binding_mode": mode,
-                "target_profile_id": target_profile_id or "",
-                "created": True,
-            }
+            self._mark_ready_data_binding_selection_change(
+                kb_id=kb_id,
+                before_has_selection=before_has_selection,
+                before=before_selection,
+                after=after_selection,
+            )
+        return response
 
     def sync_follow_latest_bindings_for_chunk_set(
         self,
@@ -2928,30 +2946,66 @@ class Storage:
         bound_by: str = "system_follow_latest",
     ) -> dict[str, Any]:
         """Move follow_latest bindings to the newest chunk_set for same file/profile."""
-        now = self._utcnow_iso()
-        rows = self._conn.execute(
-            """
+        matching_rows_sql = """
             SELECT kb_id, file_url, chunk_set_id
             FROM kb_chunk_bindings
             WHERE file_url = ?
               AND binding_mode = 'follow_latest'
               AND COALESCE(target_profile_id, '') = ?
               AND chunk_set_id != ?
-            """,
-            (file_url, profile_id, chunk_set_id),
-        ).fetchall()
-        if not rows:
-            return {
-                "file_url": file_url,
-                "profile_id": profile_id,
-                "chunk_set_id": chunk_set_id,
-                "synced_bindings": 0,
-                "affected_kb_ids": [],
-            }
+        """
+        matching_params = (file_url, profile_id, chunk_set_id)
+        noop_response = {
+            "file_url": file_url,
+            "profile_id": profile_id,
+            "chunk_set_id": chunk_set_id,
+            "synced_bindings": 0,
+            "affected_kb_ids": [],
+        }
+        if not self._conn.execute(
+            f"{matching_rows_sql} LIMIT 1",
+            matching_params,
+        ).fetchone():
+            return noop_response
 
         affected_kb_ids: set[str] = set()
         synced = 0
-        with self.transaction():
+        with self.transaction(immediate=True):
+            rows = self._conn.execute(matching_rows_sql, matching_params).fetchall()
+            if not rows:
+                return noop_response
+
+            target = self._conn.execute(
+                """
+                SELECT file_url, profile_id
+                FROM file_chunk_sets
+                WHERE chunk_set_id = ?
+                LIMIT 1
+                """,
+                (chunk_set_id,),
+            ).fetchone()
+            if not target:
+                raise ValueError("chunk_set_id not found")
+            if (target[0] or "") != file_url or (target[1] or "") != profile_id:
+                raise ValueError("chunk_set_id does not belong to the specified file_url/profile_id")
+
+            candidate_kb_ids = {
+                str(row[0] or "")
+                for row in rows
+                if str(row[0] or "")
+            }
+            before_has_selections = {
+                kb_id: self._has_ready_data_bound_chunk_selection(kb_id)
+                for kb_id in candidate_kb_ids
+            }
+            before_selections = {
+                kb_id: self._ready_data_bound_chunk_selection(
+                    kb_id,
+                    file_url=file_url,
+                )
+                for kb_id in candidate_kb_ids
+            }
+            now = self._utcnow_iso()
             for row in rows:
                 kb_id = str(row[0] or "")
                 old_chunk_set_id = str(row[2] or "")
@@ -2997,6 +3051,17 @@ class Storage:
                 synced += 1
                 affected_kb_ids.add(kb_id)
 
+            for kb_id in sorted(affected_kb_ids):
+                self._mark_ready_data_binding_selection_change(
+                    kb_id=kb_id,
+                    before_has_selection=before_has_selections[kb_id],
+                    before=before_selections[kb_id],
+                    after=self._ready_data_bound_chunk_selection(
+                        kb_id,
+                        file_url=file_url,
+                    ),
+                )
+
         return {
             "file_url": file_url,
             "profile_id": profile_id,
@@ -3004,6 +3069,84 @@ class Storage:
             "synced_bindings": synced,
             "affected_kb_ids": sorted(affected_kb_ids),
         }
+
+    def _ready_data_bound_chunk_selection(
+        self,
+        kb_id: str,
+        *,
+        file_url: str | None = None,
+    ) -> frozenset[tuple[str, str]]:
+        """Return bindings that can select the builder's bound-chunk mode for one KB."""
+        if not self._table_exists("rag_knowledge_bases") or not self._table_exists("rag_kb_files"):
+            return frozenset()
+        file_filter = " AND b.file_url = ?" if file_url is not None else ""
+        params: tuple[str, ...] = (kb_id, file_url) if file_url is not None else (kb_id,)
+        rows = self._conn.execute(
+            f"""
+            SELECT DISTINCT b.file_url, b.chunk_set_id
+            FROM kb_chunk_bindings b
+            JOIN rag_knowledge_bases kb ON kb.kb_id = b.kb_id
+            JOIN rag_kb_files kf
+              ON kf.kb_id = b.kb_id
+             AND kf.file_url = b.file_url
+            JOIN catalog_items c
+              ON c.file_url = b.file_url
+             AND c.status = 'ok'
+            JOIN file_chunk_sets fcs
+              ON fcs.chunk_set_id = b.chunk_set_id
+             AND fcs.file_url = b.file_url
+            WHERE b.kb_id = ?
+            {file_filter}
+            """,
+            params,
+        ).fetchall()
+        return frozenset(
+            (str(row[0] or ""), str(row[1] or ""))
+            for row in rows
+            if row[0] and row[1]
+        )
+
+    def _has_ready_data_bound_chunk_selection(self, kb_id: str) -> bool:
+        if not self._table_exists("rag_knowledge_bases") or not self._table_exists("rag_kb_files"):
+            return False
+        return bool(
+            self._conn.execute(
+                """
+                SELECT 1
+                FROM kb_chunk_bindings b
+                JOIN rag_knowledge_bases kb ON kb.kb_id = b.kb_id
+                JOIN rag_kb_files kf
+                  ON kf.kb_id = b.kb_id
+                 AND kf.file_url = b.file_url
+                JOIN catalog_items c
+                  ON c.file_url = b.file_url
+                 AND c.status = 'ok'
+                JOIN file_chunk_sets fcs
+                  ON fcs.chunk_set_id = b.chunk_set_id
+                 AND fcs.file_url = b.file_url
+                WHERE b.kb_id = ?
+                LIMIT 1
+                """,
+                (kb_id,),
+            ).fetchone()
+        )
+
+    def _mark_ready_data_binding_selection_change(
+        self,
+        *,
+        kb_id: str,
+        before_has_selection: bool,
+        before: frozenset[tuple[str, str]],
+        after: frozenset[tuple[str, str]],
+    ) -> None:
+        if before == after:
+            return
+        reason = (
+            "access_scope_restricted"
+            if not before_has_selection and after
+            else "chunk_binding_updated"
+        )
+        self.mark_agentic_ready_source_event_for_kb(kb_id=kb_id, reason=reason)
 
     def list_file_index_status(self, file_url: str) -> list[dict[str, Any]]:
         cur = self._conn.execute(
