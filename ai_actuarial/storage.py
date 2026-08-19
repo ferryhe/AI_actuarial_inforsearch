@@ -49,6 +49,7 @@ class Storage:
             "kb_index_items",
             "agentic_ready_manifests",
             "agentic_ready_publications",
+            "agentic_ready_publication_gc",
             "agentic_ready_slots",
             "weekly_update_summaries",
             "rag_knowledge_bases",
@@ -66,6 +67,57 @@ class Storage:
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._tx_depth = 0
         self._init_schema()
+
+    @classmethod
+    def open_read_only(cls, db_path: str) -> "Storage":
+        """Load a stable checkpointed database snapshot without filesystem writes."""
+        path = Path(db_path)
+        if not path.is_file():
+            raise ValueError("ready-data GC requires an existing database")
+        before_state = cls._read_only_snapshot_state(path)
+        if before_state[1][0] and before_state[1][1] > 0:
+            raise ValueError(
+                "ready-data GC dry-run requires a checkpointed database with an empty WAL"
+            )
+        instance = cls.__new__(cls)
+        instance.db_path = str(path)
+        uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
+        instance._conn = sqlite3.connect(uri, uri=True)
+        instance._conn.execute("PRAGMA foreign_keys=ON;")
+        instance._conn.execute("PRAGMA query_only=ON;")
+        instance._tx_depth = 0
+        instance._read_only_snapshot = before_state
+        return instance
+
+    @staticmethod
+    def _read_only_snapshot_state(
+        path: Path,
+    ) -> tuple[tuple[bool, int, int, str], ...]:
+        def file_state(candidate: Path) -> tuple[bool, int, int, str]:
+            try:
+                details = candidate.stat()
+            except FileNotFoundError:
+                return False, 0, 0, ""
+            digest = hashlib.sha256()
+            with candidate.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return True, int(details.st_size), int(details.st_mtime_ns), digest.hexdigest()
+
+        return tuple(
+            file_state(candidate)
+            for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm"))
+        )
+
+    def assert_read_only_snapshot_unchanged(self) -> None:
+        expected = getattr(self, "_read_only_snapshot", None)
+        if expected is None:
+            raise RuntimeError("storage is not a read-only snapshot")
+        current = self._read_only_snapshot_state(Path(self.db_path))
+        if current != expected or (current[1][0] and current[1][1] > 0):
+            raise ValueError(
+                "ready-data GC dry-run requires a stable checkpointed database snapshot"
+            )
 
     def _init_schema(self) -> None:
         self._conn.execute(
@@ -551,6 +603,27 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS agentic_ready_publication_gc (
+                publication_id TEXT PRIMARY KEY,
+                retention_class TEXT NOT NULL,
+                state TEXT NOT NULL,
+                marked_at TEXT NOT NULL,
+                claim_token TEXT,
+                quarantine_dir TEXT,
+                claimed_at TEXT,
+                lease_expires_at TEXT,
+                deleted_at TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL,
+                CHECK(retention_class = 'redundant_duplicate'),
+                CHECK(state IN ('eligible', 'claimed', 'deleted', 'delete_failed')),
+                FOREIGN KEY(publication_id)
+                    REFERENCES agentic_ready_publications(publication_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS weekly_update_summaries (
                 id TEXT PRIMARY KEY,
                 period_start TEXT NOT NULL,
@@ -620,6 +693,12 @@ class Storage:
                 kb_id, source_version_kind, source_version_id, profile,
                 artifact_digest, created_at DESC
             )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_agentic_ready_publication_gc_retention
+            ON agentic_ready_publication_gc(retention_class, state, marked_at, publication_id)
             """
         )
         self._conn.execute(
@@ -863,10 +942,10 @@ class Storage:
             self._conn.commit()
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, immediate: bool = False):
         sp_name = None
         if self._tx_depth == 0:
-            self._conn.execute("BEGIN")
+            self._conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         else:
             sp_name = f"sp_{self._tx_depth}"
             self._conn.execute(f"SAVEPOINT {sp_name}")
@@ -3332,6 +3411,90 @@ class Storage:
             "artifact_digest": row[19] or "",
         }
 
+    @staticmethod
+    def _agentic_ready_path_keys(value: str | None) -> set[str]:
+        raw = str(value or "").strip()
+        if not raw:
+            return set()
+        absolute = Path(os.path.abspath(raw))
+        keys = {os.path.normcase(os.path.normpath(str(absolute)))}
+        try:
+            keys.add(
+                os.path.normcase(os.path.normpath(str(absolute.resolve(strict=False))))
+            )
+        except OSError:
+            pass
+        return keys
+
+    @staticmethod
+    def _agentic_ready_path_key_sets_overlap(
+        left_keys: set[str],
+        right_keys: set[str],
+    ) -> bool:
+        for left in left_keys:
+            for right in right_keys:
+                try:
+                    common = os.path.commonpath((left, right))
+                except ValueError:
+                    continue
+                if common in {left, right}:
+                    return True
+        return False
+
+    def _agentic_ready_paths_conflict(
+        self,
+        publication_id: str,
+        *paths: str,
+        include_manifests: bool = True,
+    ) -> bool:
+        candidate_keys: set[str] = set()
+        for path in paths:
+            candidate_keys.update(self._agentic_ready_path_keys(path))
+        if not candidate_keys:
+            return False
+        rows = self._conn.execute(
+            """
+            SELECT publication.publication_id, publication.output_dir
+            FROM agentic_ready_publications AS publication
+            LEFT JOIN agentic_ready_publication_gc AS gc
+              ON gc.publication_id = publication.publication_id
+            WHERE publication.publication_id <> ?
+              AND publication.output_dir <> ''
+              AND COALESCE(gc.state, '') <> 'deleted'
+            """,
+            (publication_id,),
+        ).fetchall()
+        if include_manifests:
+            rows.extend(
+                self._conn.execute(
+                    """
+                    SELECT COALESCE(publication_id, ''), output_dir
+                    FROM agentic_ready_manifests
+                    WHERE COALESCE(publication_id, '') <> ? AND output_dir <> ''
+                    """,
+                    (publication_id,),
+                ).fetchall()
+            )
+        rows.extend(
+            self._conn.execute(
+                """
+                SELECT publication_id, quarantine_dir
+                FROM agentic_ready_publication_gc
+                WHERE publication_id <> ?
+                  AND quarantine_dir IS NOT NULL AND quarantine_dir <> ''
+                  AND state IN ('claimed', 'delete_failed')
+                """,
+                (publication_id,),
+            ).fetchall()
+        )
+        return any(
+            self._agentic_ready_path_key_sets_overlap(
+                candidate_keys,
+                self._agentic_ready_path_keys(str(row[1] or "")),
+            )
+            for row in rows
+        )
+
     def record_agentic_ready_publication(
         self,
         *,
@@ -3368,41 +3531,51 @@ class Storage:
 
         now = self._utcnow_iso()
         publication_id = f"arp_{uuid.uuid4().hex}"
-        self._conn.execute(
-            """
-            INSERT INTO agentic_ready_publications (
-                publication_id, kb_id, index_version_id, source_version_kind,
-                source_version_id, profile, profile_version, status, output_dir,
-                artifact_files_json, doc_count, section_count, built_at,
-                artifact_digest, source_db, schema_versions_json,
-                error_message, validated_at, published_at, created_at, updated_at
+        with self.transaction():
+            self._conn.execute(
+                "UPDATE rag_knowledge_bases SET kb_id = kb_id WHERE kb_id = ?",
+                (kb_id,),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-            """,
-            (
+            if normalized_status == "validated" and self._agentic_ready_paths_conflict(
                 publication_id,
-                kb_id,
-                normalized_index_version_id,
-                normalized_source_kind,
-                normalized_source_id,
-                normalized_profile,
-                str(profile_version or "1"),
-                normalized_status,
                 str(output_dir or ""),
-                json.dumps(artifact_files or [], ensure_ascii=False),
-                int(doc_count or 0),
-                int(section_count or 0),
-                built_at,
-                normalized_digest,
-                source_db,
-                json.dumps(schema_versions or {}, ensure_ascii=False, sort_keys=True),
-                error_message,
-                now if normalized_status == "validated" else None,
-                now,
-                now,
-            ),
-        )
-        self._maybe_commit()
+                include_manifests=not normalized_source_kind.startswith("legacy"),
+            ):
+                raise ValueError("ready-data publication output path is already reserved")
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_publications (
+                    publication_id, kb_id, index_version_id, source_version_kind,
+                    source_version_id, profile, profile_version, status, output_dir,
+                    artifact_files_json, doc_count, section_count, built_at,
+                    artifact_digest, source_db, schema_versions_json,
+                    error_message, validated_at, published_at, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                """,
+                (
+                    publication_id,
+                    kb_id,
+                    normalized_index_version_id,
+                    normalized_source_kind,
+                    normalized_source_id,
+                    normalized_profile,
+                    str(profile_version or "1"),
+                    normalized_status,
+                    str(output_dir or ""),
+                    json.dumps(artifact_files or [], ensure_ascii=False),
+                    int(doc_count or 0),
+                    int(section_count or 0),
+                    built_at,
+                    normalized_digest,
+                    source_db,
+                    json.dumps(schema_versions or {}, ensure_ascii=False, sort_keys=True),
+                    error_message,
+                    now if normalized_status == "validated" else None,
+                    now,
+                    now,
+                ),
+            )
         return self.get_agentic_ready_publication(publication_id) or {}
 
     def discard_agentic_ready_publication(
@@ -3423,6 +3596,11 @@ class Storage:
                       FROM agentic_ready_slots
                       WHERE active_publication_id = ? OR previous_publication_id = ?
                   )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM agentic_ready_publication_gc
+                      WHERE publication_id = agentic_ready_publications.publication_id
+                  )
                   AND EXISTS (
                       SELECT 1
                       FROM agentic_ready_slots
@@ -3440,16 +3618,99 @@ class Storage:
             )
         return result.rowcount == 1
 
+    def mark_agentic_ready_publication_redundant_duplicate(
+        self,
+        publication_id: str,
+        *,
+        expected_active_publication_id: str,
+    ) -> bool:
+        """Classify one validated same-identity attempt for governed retention."""
+        now = self._utcnow_iso()
+        with self.transaction():
+            candidate_lock = self._conn.execute(
+                "UPDATE agentic_ready_publications SET updated_at = updated_at WHERE publication_id = ?",
+                (publication_id,),
+            )
+            if candidate_lock.rowcount != 1:
+                return False
+            candidate = self.get_agentic_ready_publication(publication_id)
+            active = self.get_agentic_ready_publication(expected_active_publication_id)
+            if (
+                not candidate
+                or not active
+                or candidate["status"] != "validated"
+                or active["status"] != "active"
+                or any(
+                    candidate[field] != active[field]
+                    for field in (
+                        "kb_id",
+                        "profile",
+                        "source_version_kind",
+                        "source_version_id",
+                        "artifact_digest",
+                    )
+                )
+                or self._agentic_ready_paths_conflict(
+                    publication_id,
+                    str(candidate["output_dir"]),
+                )
+            ):
+                return False
+            slot = self._conn.execute(
+                """
+                SELECT active_publication_id, previous_publication_id
+                FROM agentic_ready_slots
+                WHERE kb_id = ? AND profile = ?
+                LIMIT 1
+                """,
+                (candidate["kb_id"], candidate["profile"]),
+            ).fetchone()
+            if (
+                not slot
+                or slot[0] != expected_active_publication_id
+                or publication_id in {slot[0], slot[1]}
+            ):
+                return False
+            existing = self._conn.execute(
+                """
+                SELECT retention_class, state
+                FROM agentic_ready_publication_gc
+                WHERE publication_id = ?
+                """,
+                (publication_id,),
+            ).fetchone()
+            if existing:
+                return tuple(existing) == ("redundant_duplicate", "eligible")
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_publication_gc (
+                    publication_id, retention_class, state, marked_at,
+                    claim_token, quarantine_dir, claimed_at, lease_expires_at, deleted_at,
+                    last_error, updated_at
+                )
+                VALUES (?, 'redundant_duplicate', 'eligible', ?, NULL, NULL, NULL, NULL, NULL, '', ?)
+                """,
+                (publication_id, now, now),
+            )
+        return True
+
     def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
         row = self._conn.execute(
             """
-            SELECT publication_id, kb_id, index_version_id, profile, profile_version,
-                   source_version_kind, source_version_id, status, output_dir,
-                   artifact_files_json, doc_count, section_count, built_at,
-                   artifact_digest, source_db, schema_versions_json, error_message,
-                   validated_at, published_at, created_at, updated_at
-            FROM agentic_ready_publications
-            WHERE publication_id = ?
+            SELECT p.publication_id, p.kb_id, p.index_version_id, p.profile,
+                   p.profile_version, p.source_version_kind, p.source_version_id,
+                   p.status, p.output_dir, p.artifact_files_json, p.doc_count,
+                   p.section_count, p.built_at, p.artifact_digest, p.source_db,
+                   p.schema_versions_json, p.error_message, p.validated_at,
+                   p.published_at, p.created_at, p.updated_at,
+                   g.retention_class, g.state, g.marked_at, g.claim_token,
+                   g.quarantine_dir, g.claimed_at, g.lease_expires_at,
+                   g.deleted_at, g.last_error,
+                   g.updated_at
+            FROM agentic_ready_publications p
+            LEFT JOIN agentic_ready_publication_gc g
+              ON g.publication_id = p.publication_id
+            WHERE p.publication_id = ?
             LIMIT 1
             """,
             (publication_id,),
@@ -3486,7 +3747,246 @@ class Storage:
             "published_at": row[18],
             "created_at": row[19],
             "updated_at": row[20],
+            "retention_class": row[21] or "",
+            "gc_state": row[22] or "",
+            "gc_marked_at": row[23],
+            "gc_claim_token": row[24] or "",
+            "gc_quarantine_dir": row[25] or "",
+            "gc_claimed_at": row[26],
+            "gc_lease_expires_at": row[27],
+            "gc_deleted_at": row[28],
+            "gc_last_error": row[29] or "",
+            "gc_updated_at": row[30],
         }
+
+    def list_agentic_ready_publications_for_gc(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT publication_id
+            FROM agentic_ready_publications
+            ORDER BY kb_id, profile, publication_id
+            """
+        ).fetchall()
+        return [
+            publication
+            for row in rows
+            if (publication := self.get_agentic_ready_publication(str(row[0]))) is not None
+        ]
+
+    def list_agentic_ready_slots_for_gc(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT kb_id, profile, active_publication_id, previous_publication_id, updated_at
+            FROM agentic_ready_slots
+            ORDER BY kb_id, profile
+            """
+        ).fetchall()
+        return [
+            {
+                "kb_id": row[0],
+                "profile": row[1],
+                "active_publication_id": row[2],
+                "previous_publication_id": row[3],
+                "updated_at": row[4],
+            }
+            for row in rows
+        ]
+
+    def claim_agentic_ready_publication_gc(
+        self,
+        publication_id: str,
+        *,
+        expected_gc_state: str,
+        expected_marked_at: str,
+        quarantine_dir: str,
+        cutoff_at: str | None = None,
+        minimum_age_days: int = 14,
+        keep_latest: int = 2,
+        claim_lease_seconds: int = 300,
+        expected_claim_token: str = "",
+    ) -> dict[str, Any] | None:
+        """CAS-claim a non-serving redundant attempt before filesystem mutation."""
+        normalized_state = str(expected_gc_state or "").strip().lower()
+        if normalized_state not in {"eligible", "claimed", "delete_failed"}:
+            return None
+        now = self._utcnow_iso()
+        now_dt = self._parse_iso_to_utc(now)
+        cutoff_dt = self._parse_iso_to_utc(cutoff_at) if cutoff_at else now_dt
+        if now_dt is None or cutoff_dt is None:
+            raise ValueError("ready-data GC claim timestamps are invalid")
+        if minimum_age_days < 0 or keep_latest < 0 or claim_lease_seconds <= 0:
+            raise ValueError("ready-data GC claim policy is invalid")
+        lease_expires_at = (now_dt + timedelta(seconds=claim_lease_seconds)).isoformat()
+        with self.transaction():
+            publication_lock = self._conn.execute(
+                "UPDATE agentic_ready_publications SET updated_at = updated_at WHERE publication_id = ?",
+                (publication_id,),
+            )
+            if publication_lock.rowcount != 1:
+                return None
+            current = self.get_agentic_ready_publication(publication_id)
+            if (
+                not current
+                or current["status"] != "validated"
+                or current["retention_class"] != "redundant_duplicate"
+                or current["gc_state"] != normalized_state
+                or current["gc_marked_at"] != expected_marked_at
+                or self._agentic_ready_paths_conflict(
+                    publication_id,
+                    str(current["output_dir"]),
+                    quarantine_dir,
+                )
+                or self._conn.execute(
+                    """
+                    SELECT 1 FROM agentic_ready_slots
+                    WHERE active_publication_id = ? OR previous_publication_id = ?
+                    LIMIT 1
+                    """,
+                    (publication_id, publication_id),
+                ).fetchone()
+                or self._conn.execute(
+                    """
+                    SELECT 1 FROM agentic_ready_manifests
+                    WHERE publication_id = ?
+                    LIMIT 1
+                    """,
+                    (publication_id,),
+                ).fetchone()
+            ):
+                return None
+            if normalized_state == "claimed":
+                current_lease = self._parse_iso_to_utc(current["gc_lease_expires_at"])
+                if (
+                    current["gc_quarantine_dir"] != quarantine_dir
+                    or current["gc_claim_token"] != expected_claim_token
+                    or current_lease is None
+                    or current_lease > cutoff_dt
+                ):
+                    return None
+            elif normalized_state == "eligible":
+                marked_at = self._parse_iso_to_utc(current["gc_marked_at"])
+                if marked_at is None or marked_at > cutoff_dt - timedelta(days=minimum_age_days):
+                    return None
+                cohort = self._conn.execute(
+                    """
+                    SELECT p.publication_id, g.marked_at
+                    FROM agentic_ready_publications p
+                    JOIN agentic_ready_publication_gc g
+                      ON g.publication_id = p.publication_id
+                    WHERE p.kb_id = ? AND p.profile = ?
+                      AND p.status = 'validated'
+                      AND g.retention_class = 'redundant_duplicate'
+                      AND g.state IN ('eligible', 'claimed', 'delete_failed')
+                    """,
+                    (current["kb_id"], current["profile"]),
+                ).fetchall()
+                ranked: list[tuple[datetime, str]] = []
+                for cohort_id, cohort_marked_at in cohort:
+                    parsed = self._parse_iso_to_utc(cohort_marked_at)
+                    if parsed is not None:
+                        ranked.append((parsed, str(cohort_id)))
+                ranked.sort(reverse=True)
+                if publication_id in {item[1] for item in ranked[:keep_latest]}:
+                    return None
+            claim_token = f"argc_{uuid.uuid4().hex}"
+            result = self._conn.execute(
+                """
+                UPDATE agentic_ready_publication_gc
+                SET state = 'claimed', claim_token = ?, quarantine_dir = ?,
+                    claimed_at = ?, lease_expires_at = ?, last_error = '', updated_at = ?
+                WHERE publication_id = ?
+                  AND retention_class = 'redundant_duplicate'
+                  AND state = ?
+                  AND marked_at = ?
+                """,
+                (
+                    claim_token,
+                    quarantine_dir,
+                    now,
+                    lease_expires_at,
+                    now,
+                    publication_id,
+                    normalized_state,
+                    expected_marked_at,
+                ),
+            )
+            if result.rowcount != 1:
+                return None
+        return self.get_agentic_ready_publication(publication_id)
+
+    def finish_agentic_ready_publication_gc(
+        self,
+        publication_id: str,
+        *,
+        claim_token: str,
+        deleted: bool,
+        error_message: str = "",
+    ) -> dict[str, Any] | None:
+        """Finalize a claimed attempt as an audit tombstone or retryable failure."""
+        now = self._utcnow_iso()
+        with self.transaction():
+            current = self.get_agentic_ready_publication(publication_id)
+            if (
+                not current
+                or current["status"] != "validated"
+                or current["gc_state"] != "claimed"
+                or current["gc_claim_token"] != claim_token
+                or self._agentic_ready_paths_conflict(
+                    publication_id,
+                    str(current["output_dir"]),
+                    str(current["gc_quarantine_dir"]),
+                )
+                or self._conn.execute(
+                    """
+                    SELECT 1 FROM agentic_ready_slots
+                    WHERE active_publication_id = ? OR previous_publication_id = ?
+                    LIMIT 1
+                    """,
+                    (publication_id, publication_id),
+                ).fetchone()
+                or self._conn.execute(
+                    """
+                    SELECT 1 FROM agentic_ready_manifests
+                    WHERE publication_id = ?
+                    LIMIT 1
+                    """,
+                    (publication_id,),
+                ).fetchone()
+            ):
+                return None
+            if deleted:
+                publication_result = self._conn.execute(
+                    """
+                    UPDATE agentic_ready_publications
+                    SET output_dir = '', artifact_files_json = '[]', updated_at = ?
+                    WHERE publication_id = ? AND status = 'validated'
+                    """,
+                    (now, publication_id),
+                )
+                gc_result = self._conn.execute(
+                    """
+                    UPDATE agentic_ready_publication_gc
+                    SET state = 'deleted', deleted_at = ?, lease_expires_at = NULL,
+                        last_error = '', updated_at = ?
+                    WHERE publication_id = ? AND state = 'claimed' AND claim_token = ?
+                    """,
+                    (now, now, publication_id, claim_token),
+                )
+                if publication_result.rowcount != 1 or gc_result.rowcount != 1:
+                    raise RuntimeError("ready-data GC tombstone finalization lost its claim")
+            else:
+                result = self._conn.execute(
+                    """
+                    UPDATE agentic_ready_publication_gc
+                    SET state = 'delete_failed', lease_expires_at = NULL,
+                        last_error = ?, updated_at = ?
+                    WHERE publication_id = ? AND state = 'claimed' AND claim_token = ?
+                    """,
+                    (str(error_message or "ready_data deletion failed"), now, publication_id, claim_token),
+                )
+                if result.rowcount != 1:
+                    raise RuntimeError("ready-data GC failure finalization lost its claim")
+        return self.get_agentic_ready_publication(publication_id)
 
     def get_agentic_ready_publication_state(
         self,
@@ -3563,6 +4063,16 @@ class Storage:
             publication = self.get_agentic_ready_publication(publication_id)
             if not publication:
                 raise ValueError("ready-data publication not found")
+            if publication["gc_state"] in {"claimed", "delete_failed", "deleted"}:
+                raise ValueError("ready-data publication is already under garbage collection")
+            if self._agentic_ready_paths_conflict(
+                publication_id,
+                str(publication["output_dir"]),
+                include_manifests=not str(publication["source_version_kind"]).startswith(
+                    "legacy"
+                ),
+            ):
+                raise ValueError("ready-data publication output path is already reserved")
             kb_id = str(publication["kb_id"])
             profile = str(publication["profile"])
             self._conn.execute(
@@ -3578,6 +4088,10 @@ class Storage:
             )
             current = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=profile)
             if current["active_publication_id"] == publication_id:
+                self._conn.execute(
+                    "DELETE FROM agentic_ready_publication_gc WHERE publication_id = ?",
+                    (publication_id,),
+                )
                 current["idempotent"] = True
                 current["cas_won"] = True
                 return current
@@ -3649,6 +4163,10 @@ class Storage:
                 """,
                 (now, now, publication_id),
             )
+            self._conn.execute(
+                "DELETE FROM agentic_ready_publication_gc WHERE publication_id = ?",
+                (publication_id,),
+            )
             self._publish_agentic_ready_manifest_row(publication)
 
         state = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=profile)
@@ -3697,6 +4215,13 @@ class Storage:
             previous = self.get_agentic_ready_publication(str(previous_id))
             if not previous or previous["status"] != "previous":
                 raise ValueError("previous ready-data publication is not validated")
+            if previous["gc_state"] in {"claimed", "delete_failed", "deleted"}:
+                raise ValueError("previous ready-data publication is under garbage collection")
+            if self._agentic_ready_paths_conflict(
+                str(previous_id),
+                str(previous["output_dir"]),
+            ):
+                raise ValueError("previous ready-data publication output path is already reserved")
             slot_update = self._conn.execute(
                 """
                 UPDATE agentic_ready_slots
@@ -3730,6 +4255,10 @@ class Storage:
             self._conn.execute(
                 "UPDATE agentic_ready_publications SET status = 'active', published_at = ?, updated_at = ? WHERE publication_id = ?",
                 (now, now, previous_id),
+            )
+            self._conn.execute(
+                "DELETE FROM agentic_ready_publication_gc WHERE publication_id = ?",
+                (previous_id,),
             )
             self._publish_agentic_ready_manifest_row(previous)
 

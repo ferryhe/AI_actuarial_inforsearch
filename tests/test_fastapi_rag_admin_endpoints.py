@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -652,9 +653,71 @@ def test_fastapi_rag_admin_idempotent_ready_build_retains_validated_duplicate(
     assert body["publication_state"]["idempotent"] is True
     assert body["publication_state"]["duplicate_retained"] is True
     assert body["publication_state"]["duplicate_gc_deferred"] is True
+    assert body["publication_state"]["duplicate_gc_marked"] is True
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        recorded_candidate = storage.get_agentic_ready_publication(candidate["publication_id"])
+        assert recorded_candidate is not None
+        assert recorded_candidate["retention_class"] == "redundant_duplicate"
+        assert recorded_candidate["gc_state"] == "eligible"
+        assert recorded_candidate["gc_marked_at"]
+    finally:
+        storage.close()
     assert sorted(path.name for path in staging_root.iterdir()) == sorted(
         [*staging_dirs_before, Path(candidate["output_dir"]).name]
     )
+
+
+def test_fastapi_rag_admin_duplicate_keeps_deferred_compatibility_when_gc_mark_loses_guard(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-dedupe-gc-guard-loss",
+            "name": "Dedupe GC Guard Loss KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+    first = client.post(
+        "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first.status_code == 200, first.text
+
+    monkeypatch.setattr(
+        Storage,
+        "mark_agentic_ready_publication_redundant_duplicate",
+        lambda _storage, _publication_id, *, expected_active_publication_id: False,
+    )
+    duplicate = client.post(
+        "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
+        json={},
+    )
+
+    assert duplicate.status_code == 200, duplicate.text
+    body = duplicate.json()
+    candidate = body["candidate_publication"]
+    state = body["publication_state"]
+    assert candidate["status"] == "validated"
+    assert Path(candidate["output_dir"]).is_dir()
+    assert state["duplicate_retained"] is True
+    assert state["duplicate_gc_deferred"] is True
+    assert state["duplicate_gc_marked"] is False
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        recorded_candidate = storage.get_agentic_ready_publication(
+            candidate["publication_id"]
+        )
+        assert recorded_candidate is not None
+        assert recorded_candidate["retention_class"] == ""
+        assert recorded_candidate["gc_state"] == ""
+    finally:
+        storage.close()
 
 
 def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
@@ -689,6 +752,10 @@ def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
         if not concurrent and publication["publication_id"] == first_candidate["publication_id"]:
             storage = Storage(str(tmp_path / "index.db"))
             try:
+                winner_output_dir = Path(str(publication["output_dir"])).with_name(
+                    f'{Path(str(publication["output_dir"])).name}-concurrent'
+                )
+                shutil.copytree(str(publication["output_dir"]), winner_output_dir)
                 winner = storage.record_agentic_ready_publication(
                     kb_id=str(publication["kb_id"]),
                     index_version_id=publication["index_version_id"],
@@ -697,7 +764,7 @@ def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
                     profile=str(publication["profile"]),
                     profile_version=str(publication["profile_version"]),
                     status="validated",
-                    output_dir=str(publication["output_dir"]),
+                    output_dir=str(winner_output_dir),
                     artifact_files=list(publication["artifact_files"]),
                     doc_count=int(publication["doc_count"]),
                     section_count=int(publication["section_count"]),
@@ -1506,6 +1573,10 @@ def test_fastapi_rag_admin_corrupt_replacement_cas_loss_is_not_reported_as_repla
         if not concurrent:
             candidate = self.get_agentic_ready_publication(publication_id)
             assert candidate is not None
+            winner_output_dir = Path(str(candidate["output_dir"])).with_name(
+                f'{Path(str(candidate["output_dir"])).name}-concurrent'
+            )
+            shutil.copytree(str(candidate["output_dir"]), winner_output_dir)
             winner = self.record_agentic_ready_publication(
                 kb_id=str(candidate["kb_id"]),
                 index_version_id=candidate["index_version_id"],
@@ -1514,7 +1585,7 @@ def test_fastapi_rag_admin_corrupt_replacement_cas_loss_is_not_reported_as_repla
                 profile=str(candidate["profile"]),
                 profile_version=str(candidate["profile_version"]),
                 status="validated",
-                output_dir=str(candidate["output_dir"]),
+                output_dir=str(winner_output_dir),
                 artifact_files=list(candidate["artifact_files"]),
                 doc_count=int(candidate["doc_count"]),
                 section_count=int(candidate["section_count"]),
