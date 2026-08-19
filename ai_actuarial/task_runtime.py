@@ -338,10 +338,15 @@ class NativeTaskRuntime:
 
     def _scheduler_loop(self) -> None:
         logger.info("Native FastAPI scheduler loop started")
+        sleep_seconds = (
+            min(60, self._ready_data_poll_interval_seconds)
+            if self._ready_data_db_path
+            else 60
+        )
         while True:
             with self._scheduler_lock:
                 self.scheduler.run_pending()
-            time.sleep(60)
+            time.sleep(sleep_seconds)
 
     def _wake_ready_data_automation(self) -> None:
         """Wake one worker without making the scheduler thread own durable state."""

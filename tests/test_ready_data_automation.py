@@ -10,6 +10,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+import ai_actuarial.task_runtime as task_runtime_module
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.services.rag_admin import (
     _build_agentic_manifest_status,
@@ -758,6 +759,31 @@ def test_scheduler_registers_nonblocking_injected_automation_wakeup(tmp_path: Pa
     assert invoked.wait(timeout=5)
     jobs[0].job_func()
     release.set()
+
+
+def test_scheduler_loop_honors_injected_automation_poll_interval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_sleeps: list[float] = []
+
+    class StopSchedulerLoop(Exception):
+        pass
+
+    def stop_after_first_sleep(seconds: float) -> None:
+        observed_sleeps.append(seconds)
+        raise StopSchedulerLoop
+
+    runtime = NativeTaskRuntime(
+        ready_data_db_path=str(tmp_path / "index.db"),
+        ready_data_poll_interval_seconds=7,
+    )
+    monkeypatch.setattr(task_runtime_module.time, "sleep", stop_after_first_sleep)
+
+    with pytest.raises(StopSchedulerLoop):
+        runtime._scheduler_loop()
+
+    assert observed_sleeps == [7]
 
 
 def test_automation_api_is_permission_protected_and_kb_scoped(
