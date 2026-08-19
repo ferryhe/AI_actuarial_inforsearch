@@ -4290,6 +4290,44 @@ class Storage:
             profile=normalized_profile,
         )
 
+    def mark_agentic_ready_source_event_for_kb(
+        self,
+        *,
+        kb_id: str,
+        reason: str,
+    ) -> list[dict[str, Any]]:
+        """Mark one event for every ready-data profile known to a knowledge base."""
+        with self.transaction(immediate=True):
+            rows = self._conn.execute(
+                """
+                SELECT profile FROM agentic_ready_source_state WHERE kb_id = ?
+                UNION
+                SELECT profile FROM agentic_ready_slots WHERE kb_id = ?
+                UNION
+                SELECT profile FROM agentic_ready_manifests WHERE kb_id = ?
+                UNION
+                SELECT profile FROM agentic_ready_publications WHERE kb_id = ?
+                UNION
+                SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?
+                """,
+                (kb_id, kb_id, kb_id, kb_id, kb_id),
+            ).fetchall()
+            profiles = {
+                normalized
+                for row in rows
+                if (normalized := str(row[0] or "").strip().lower())
+            }
+            if not profiles:
+                profiles = {"general"}
+            return [
+                self.mark_agentic_ready_source_event(
+                    kb_id=kb_id,
+                    profile=profile,
+                    reason=reason,
+                )
+                for profile in sorted(profiles)
+            ]
+
     def record_agentic_ready_source_evaluation(
         self,
         *,

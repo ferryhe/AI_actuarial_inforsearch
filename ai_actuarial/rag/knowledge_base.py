@@ -12,9 +12,7 @@ Features:
 - Statistics and monitoring
 """
 
-import json
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -599,37 +597,42 @@ class KnowledgeBaseManager:
         added_count = 0
         skipped_count = 0
         timestamp = KnowledgeBase._get_timestamp()
-        
-        for file_url in file_urls:
-            # Check if already in KB
-            cursor = conn.execute("""
-                SELECT 1 FROM rag_kb_files 
-                WHERE kb_id = ? AND file_url = ?
-            """, (kb_id, file_url))
-            
-            if cursor.fetchone():
-                skipped_count += 1
-                continue
-            
-            # Add to KB
+
+        with self.storage.transaction(immediate=True):
+            for file_url in file_urls:
+                # Check if already in KB
+                cursor = conn.execute("""
+                    SELECT 1 FROM rag_kb_files
+                    WHERE kb_id = ? AND file_url = ?
+                """, (kb_id, file_url))
+
+                if cursor.fetchone():
+                    skipped_count += 1
+                    continue
+
+                # Add to KB
+                conn.execute("""
+                    INSERT INTO rag_kb_files (kb_id, file_url, added_at)
+                    VALUES (?, ?, ?)
+                """, (kb_id, file_url, timestamp))
+                added_count += 1
+
+            # Update file count
             conn.execute("""
-                INSERT INTO rag_kb_files (kb_id, file_url, added_at)
-                VALUES (?, ?, ?)
-            """, (kb_id, file_url, timestamp))
-            added_count += 1
-        
-        # Update file count
-        conn.execute("""
-            UPDATE rag_knowledge_bases
-            SET file_count = (
-                SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
-            ),
-            updated_at = ?,
-            index_dirty_at = CASE WHEN ? > 0 THEN ? ELSE index_dirty_at END
-            WHERE kb_id = ?
-        """, (kb_id, timestamp, added_count, timestamp, kb_id))
-        
-        conn.commit()
+                UPDATE rag_knowledge_bases
+                SET file_count = (
+                    SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
+                ),
+                updated_at = ?,
+                index_dirty_at = CASE WHEN ? > 0 THEN ? ELSE index_dirty_at END
+                WHERE kb_id = ?
+            """, (kb_id, timestamp, added_count, timestamp, kb_id))
+
+            if added_count > 0:
+                self.storage.mark_agentic_ready_source_event_for_kb(
+                    kb_id=kb_id,
+                    reason="membership_added",
+                )
         
         return {
             'added_count': added_count,
@@ -649,38 +652,43 @@ class KnowledgeBaseManager:
         
         conn = self.storage._conn
         removed_count = 0
-        
-        for file_url in file_urls:
-            cursor = conn.execute("""
-                DELETE FROM rag_kb_files 
-                WHERE kb_id = ? AND file_url = ?
-            """, (kb_id, file_url))
-            if cursor.rowcount > 0:
-                removed_count += cursor.rowcount
-                conn.execute(
-                    "DELETE FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
-                    (kb_id, file_url),
+
+        with self.storage.transaction(immediate=True):
+            for file_url in file_urls:
+                cursor = conn.execute("""
+                    DELETE FROM rag_kb_files
+                    WHERE kb_id = ? AND file_url = ?
+                """, (kb_id, file_url))
+                if cursor.rowcount > 0:
+                    removed_count += cursor.rowcount
+                    conn.execute(
+                        "DELETE FROM rag_chunks WHERE kb_id = ? AND file_url = ?",
+                        (kb_id, file_url),
+                    )
+
+            # Update file count
+            timestamp = KnowledgeBase._get_timestamp()
+            conn.execute("""
+                UPDATE rag_knowledge_bases
+                SET file_count = (
+                    SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
+                ),
+                chunk_count = (
+                    SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ?
+                ),
+                updated_at = ?
+                WHERE kb_id = ?
+            """, (kb_id, kb_id, timestamp, kb_id))
+
+            if removed_count > 0:
+                self.storage.mark_agentic_ready_source_event_for_kb(
+                    kb_id=kb_id,
+                    reason="membership_removed",
                 )
 
         if removed_count > 0:
             self._soft_delete_file_vectors(kb, file_urls)
-        
-        # Update file count
-        timestamp = KnowledgeBase._get_timestamp()
-        conn.execute("""
-            UPDATE rag_knowledge_bases
-            SET file_count = (
-                SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?
-            ),
-            chunk_count = (
-                SELECT COUNT(*) FROM rag_chunks WHERE kb_id = ?
-            ),
-            updated_at = ?
-            WHERE kb_id = ?
-        """, (kb_id, kb_id, timestamp, kb_id))
-        
-        conn.commit()
-        
+
         return removed_count
 
     def _soft_delete_file_vectors(self, kb: KnowledgeBase, file_urls: List[str]) -> Dict[str, Any]:

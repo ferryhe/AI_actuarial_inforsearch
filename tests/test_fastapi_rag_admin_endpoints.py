@@ -545,10 +545,13 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     stale = client.get("/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest")
     assert stale.status_code == 200, stale.text
     stale_manifest = stale.json()["manifest"]
-    assert stale_manifest["status"] == "stale"
-    assert stale_manifest["usable"] is False
-    assert stale_manifest["fallback_mode"] == "standard"
-    assert stale_manifest["stale_reason"]
+    assert stale_manifest["status"] == "ready"
+    assert stale_manifest["usable"] is True
+    assert stale_manifest["fallback_mode"] == "agentic"
+    assert stale_manifest["event_generation"] == 2
+    assert stale_manifest["pending_evaluation_generation"] == 2
+    assert stale_manifest["source_state"]["pending_severity"] == "soft_stale"
+    assert stale_manifest["source_state"]["pending_reasons"] == ["membership_added"]
 
 
 def test_fastapi_rag_admin_failed_ready_build_keeps_serving_publication(
@@ -2028,7 +2031,7 @@ def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(
     assert after_absolute_manifest["output_dir"] == ready_manifest["output_dir"]
 
 
-def test_fastapi_rag_admin_agentic_manifest_stale_uses_bound_chunks_and_catalog_metadata(
+def test_fastapi_rag_admin_legacy_manifest_stale_uses_bound_chunks_and_catalog_metadata(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2078,6 +2081,10 @@ def test_fastapi_rag_admin_agentic_manifest_stale_uses_bound_chunks_and_catalog_
 
     storage = Storage(str(db_path))
     try:
+        storage._conn.execute(
+            "DELETE FROM agentic_ready_source_state WHERE kb_id = ?",
+            ("kb-bound-manifest",),
+        )
         storage._conn.execute(
             "UPDATE file_chunk_sets SET updated_at = ? WHERE profile_id = ?",
             ("2099-01-01T00:00:00+00:00", profile_two["profile_id"]),
@@ -2171,6 +2178,7 @@ def test_manual_ready_build_does_not_clear_generation_created_during_build(
         json={},
     )
     assert first.status_code == 200, first.text
+    initial_generation = int(first.json()["manifest"]["event_generation"])
 
     storage = Storage(str(tmp_path / "index.db"))
     try:
@@ -2179,7 +2187,7 @@ def test_manual_ready_build_does_not_clear_generation_created_during_build(
             profile="general",
             reason="membership_removed",
         )
-        assert first_mark["event_generation"] == 1
+        assert first_mark["event_generation"] == initial_generation + 1
     finally:
         storage.close()
 
@@ -2210,14 +2218,16 @@ def test_manual_ready_build_does_not_clear_generation_created_during_build(
     assert rebuilt.status_code == 200, rebuilt.text
     manifest = rebuilt.json()["manifest"]
     assert rebuilt.json()["validation"]["valid"] is True
-    assert manifest["event_generation"] == 2
-    assert manifest["pending_evaluation_generation"] == 2
+    expected_generation = int(first_mark["event_generation"]) + 1
+    assert manifest["event_generation"] == expected_generation
+    assert manifest["pending_evaluation_generation"] == expected_generation
     assert manifest["stale_severity"] == "hard_stale"
     assert manifest["usable"] is False
 
 
 def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
     alpha_url = seed["alpha_url"]
 
     create_kb = client.post(
@@ -2243,12 +2253,37 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
     assert files_after_add.status_code == 200, files_after_add.text
     assert any(item["file_url"] == alpha_url for item in files_after_add.json()["files"])
 
+    storage = Storage(str(db_path))
+    try:
+        added_state = storage.get_agentic_ready_source_state(
+            kb_id="kb-files-test",
+            profile="general",
+        )
+        assert added_state["event_generation"] == 1
+        assert added_state["pending_severity"] == "soft_stale"
+        assert added_state["pending_reasons"] == ["membership_added"]
+    finally:
+        storage.close()
+
     remove_file = client.delete(f"/api/rag/knowledge-bases/kb-files-test/files/{alpha_url}")
     assert remove_file.status_code == 200, remove_file.text
 
     files_after_remove = client.get("/api/rag/knowledge-bases/kb-files-test/files")
     assert files_after_remove.status_code == 200, files_after_remove.text
     assert not any(item["file_url"] == alpha_url for item in files_after_remove.json()["files"])
+
+    storage = Storage(str(db_path))
+    try:
+        removed_state = storage.get_agentic_ready_source_state(
+            kb_id="kb-files-test",
+            profile="general",
+        )
+        assert removed_state["event_generation"] == 2
+        assert removed_state["pending_severity"] == "hard_stale"
+        assert removed_state["pending_reasons"] == ["membership_added", "membership_removed"]
+        assert removed_state["serving_allowed"] is False
+    finally:
+        storage.close()
 
 
 def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: Path, monkeypatch) -> None:
@@ -2689,6 +2724,34 @@ def test_fastapi_rag_admin_category_stats_and_kb_profile_metadata(tmp_path: Path
     assert listed_kb["chunk_profile_name"] == "stats-profile"
 
 
+def test_fastapi_rag_admin_file_management_marks_membership_source_state(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-membership-api",
+            "name": "Membership API KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"], seed["beta_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    storage = Storage(str(db_path))
+    try:
+        state = storage.get_agentic_ready_source_state(
+            kb_id="kb-membership-api",
+            profile="general",
+        )
+        assert state["event_generation"] == 1
+        assert state["pending_severity"] == "soft_stale"
+        assert state["pending_reasons"] == ["membership_added"]
+    finally:
+        storage.close()
+
+
 def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_incremental_index(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     db_path = tmp_path / "index.db"
@@ -2752,6 +2815,18 @@ def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_increm
     files_after = client.get("/api/rag/knowledge-bases/kb-category-sync/files")
     assert files_after.status_code == 200, files_after.text
     assert sorted(item["file_url"] for item in files_after.json()["files"]) == sorted([alpha_url, beta_url])
+
+    storage = Storage(str(db_path))
+    try:
+        state = storage.get_agentic_ready_source_state(
+            kb_id="kb-category-sync",
+            profile="general",
+        )
+        assert state["event_generation"] == 2
+        assert state["pending_severity"] == "soft_stale"
+        assert state["pending_reasons"] == ["membership_added"]
+    finally:
+        storage.close()
 
 
 def test_fastapi_rag_admin_all_mode_adds_all_ready_profile_files(tmp_path: Path, monkeypatch) -> None:
