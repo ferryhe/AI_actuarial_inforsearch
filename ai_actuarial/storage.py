@@ -80,6 +80,7 @@ class Storage:
             "chunk_embeddings",
             "kb_chunk_bindings",
             "kb_index_versions",
+            "kb_ready_index_state",
             "kb_index_items",
             "agentic_ready_manifests",
             "agentic_ready_publications",
@@ -564,6 +565,19 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS kb_ready_index_state (
+                kb_id TEXT PRIMARY KEY,
+                index_version_id TEXT NOT NULL,
+                embedding_provider TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS kb_index_items (
                 index_version_id TEXT NOT NULL,
                 chunk_id TEXT NOT NULL,
@@ -865,6 +879,73 @@ class Storage:
                     """,
                     (resolved_provider, resolved_dimension, index_version_id),
                 )
+        if self._table_exists("rag_knowledge_bases"):
+            self._conn.execute(
+                """
+                DELETE FROM kb_ready_index_state
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM rag_knowledge_bases AS kb
+                    WHERE kb.kb_id = kb_ready_index_state.kb_id
+                )
+                """
+            )
+            kb_has_created_at = "created_at" in {
+                str(row[1])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(rag_knowledge_bases)"
+                ).fetchall()
+            }
+            if kb_has_created_at:
+                self._conn.execute(
+                    """
+                    DELETE FROM kb_ready_index_state
+                    WHERE EXISTS (
+                    SELECT 1
+                    FROM rag_knowledge_bases AS kb
+                    WHERE kb.kb_id = kb_ready_index_state.kb_id
+                      AND julianday(kb_ready_index_state.updated_at)
+                          < julianday(kb.created_at)
+                    )
+                    """
+                )
+            lifecycle_predicate = (
+                "AND julianday(current.created_at) >= julianday(kb.created_at)"
+                if kb_has_created_at
+                else ""
+            )
+            self._conn.execute(
+                f"""
+                INSERT OR IGNORE INTO kb_ready_index_state (
+                    kb_id, index_version_id, embedding_provider,
+                    embedding_model, embedding_dimension, updated_at
+                )
+                SELECT
+                    current.kb_id,
+                    current.index_version_id,
+                    current.embedding_provider,
+                    current.embedding_model,
+                    current.embedding_dimension,
+                    current.created_at
+                FROM kb_index_versions AS current
+                JOIN rag_knowledge_bases AS kb ON kb.kb_id = current.kb_id
+                WHERE current.status = 'ready'
+                  {lifecycle_predicate}
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM kb_index_versions AS newer
+                      WHERE newer.kb_id = current.kb_id
+                        AND newer.status = 'ready'
+                        AND (
+                            newer.created_at > current.created_at
+                            OR (
+                                newer.created_at = current.created_at
+                                AND newer.index_version_id > current.index_version_id
+                            )
+                        )
+                  )
+                """
+            )
         self._ensure_columns(
             "kb_chunk_bindings",
             {
@@ -4735,7 +4816,7 @@ class Storage:
                    a.last_attempted_generation, a.lease_expires_at,
                    a.last_attempt_publication_id,
                    p.status, p.attempt_disposition,
-                   g.state
+                   g.state, s.active_publication_id
             FROM agentic_ready_slots AS s
             JOIN rag_knowledge_bases AS kb ON kb.kb_id = s.kb_id
             JOIN agentic_ready_source_state AS ss
@@ -4924,6 +5005,9 @@ class Storage:
             "lease_expires_at": lease_expires_at,
             "mode": mode,
             "publication_id": publication_id,
+            "expected_active_publication_id": str(candidate[12]) if candidate[12] else None,
+            "expected_automatic_build_enabled": True,
+            "expected_automatic_publish_enabled": bool(candidate[3]),
         }
 
     def check_agentic_ready_automation_claim(
@@ -4984,6 +5068,195 @@ class Storage:
             "automatic_publish_enabled": bool(row[7]),
             "event_generation": int(row[8] or 0),
             "pending_evaluation_generation": int(row[9]) if row[9] is not None else None,
+        }
+
+    def fence_agentic_ready_automation_prebuild(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        generation: int,
+        claim_token: str,
+        expected_active_publication_id: str | None,
+        expected_automatic_build_enabled: bool,
+        expected_automatic_publish_enabled: bool,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Fence a claimed generation immediately before artifact-producing work."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        with self.transaction(immediate=True):
+            fence = self.check_agentic_ready_automation_claim(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                generation=int(generation),
+                claim_token=claim_token,
+                now=now,
+            )
+            reason = str(fence.get("reason") or "claim_lost")
+            if reason != "ok":
+                if fence.get("claim_owned") and reason in {
+                    "generation_superseded",
+                    "automatic_build_disabled",
+                }:
+                    finished = self.finish_agentic_ready_automation_claim(
+                        kb_id=kb_id,
+                        profile=normalized_profile,
+                        generation=int(generation),
+                        claim_token=claim_token,
+                        automation_state="pending",
+                        now=now,
+                    )
+                    return {
+                        **fence,
+                        "action": "superseded"
+                        if reason == "generation_superseded"
+                        else "pending",
+                        "reason": reason,
+                        "claim_owned": bool(finished),
+                    }
+                return {**fence, "action": "claim_lost", "reason": reason}
+
+            flags_match = (
+                bool(fence["automatic_build_enabled"])
+                == bool(expected_automatic_build_enabled)
+                and bool(fence["automatic_publish_enabled"])
+                == bool(expected_automatic_publish_enabled)
+            )
+            if not flags_match:
+                finished = self.finish_agentic_ready_automation_claim(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                    generation=int(generation),
+                    claim_token=claim_token,
+                    automation_state="pending",
+                    now=now,
+                )
+                return {
+                    **fence,
+                    "action": "pending" if finished else "claim_lost",
+                    "reason": "automation_flags_changed",
+                }
+
+            slot = self._conn.execute(
+                """
+                SELECT active_publication_id
+                FROM agentic_ready_slots
+                WHERE kb_id = ? AND profile = ?
+                LIMIT 1
+                """,
+                (kb_id, normalized_profile),
+            ).fetchone()
+            actual_active_id = str(slot[0]) if slot and slot[0] else None
+            if actual_active_id != expected_active_publication_id:
+                error = "ready_data automation lost expected-active prebuild CAS"
+                finished = self.finish_agentic_ready_automation_claim(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                    generation=int(generation),
+                    claim_token=claim_token,
+                    automation_state="failed",
+                    error_message=error,
+                    now=now,
+                )
+                return {
+                    **fence,
+                    "action": "failed" if finished else "claim_lost",
+                    "reason": "active_publication_changed",
+                    "error": error,
+                }
+            return {**fence, "action": "build", "reason": "ok"}
+
+    def settle_agentic_ready_automation_up_to_date(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        generation: int,
+        claim_token: str,
+        expected_active_publication_id: str,
+        expected_automatic_build_enabled: bool,
+        expected_automatic_publish_enabled: bool,
+        source_version_kind: str,
+        source_version_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Settle a healthy matching active publication without creating a candidate."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        normalized_kind = str(source_version_kind or "").strip().lower()
+        normalized_source_id = str(source_version_id or "").strip()
+        if not normalized_kind or not normalized_source_id:
+            raise ValueError("source_version_kind and source_version_id are required")
+        with self.transaction(immediate=True):
+            prebuild = self.fence_agentic_ready_automation_prebuild(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                generation=int(generation),
+                claim_token=claim_token,
+                expected_active_publication_id=expected_active_publication_id,
+                expected_automatic_build_enabled=expected_automatic_build_enabled,
+                expected_automatic_publish_enabled=expected_automatic_publish_enabled,
+                now=now,
+            )
+            if prebuild["action"] != "build":
+                return prebuild
+            active = self._conn.execute(
+                """
+                SELECT p.source_version_kind, p.source_version_id, p.status
+                FROM agentic_ready_slots AS s
+                JOIN agentic_ready_publications AS p
+                  ON p.publication_id = s.active_publication_id
+                WHERE s.kb_id = ? AND s.profile = ?
+                  AND s.active_publication_id = ?
+                LIMIT 1
+                """,
+                (kb_id, normalized_profile, expected_active_publication_id),
+            ).fetchone()
+            active_matches = bool(
+                active
+                and str(active[2] or "") == "active"
+                and str(active[0] or "").strip().lower() == normalized_kind
+                and str(active[1] or "").strip() == normalized_source_id
+            )
+            if not active_matches:
+                error = "ready_data active source identity changed before up-to-date settlement"
+                finished = self.finish_agentic_ready_automation_claim(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                    generation=int(generation),
+                    claim_token=claim_token,
+                    automation_state="failed",
+                    publication_id=expected_active_publication_id,
+                    error_message=error,
+                    now=now,
+                )
+                return {
+                    "action": "failed" if finished else "claim_lost",
+                    "reason": "active_source_identity_changed",
+                    "error": error,
+                }
+            source_state = self.record_agentic_ready_source_evaluation(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                evaluated_generation=int(generation),
+                source_version_kind=normalized_kind,
+                source_version_id=normalized_source_id,
+            )
+            finished = self.finish_agentic_ready_automation_claim(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                generation=int(generation),
+                claim_token=claim_token,
+                automation_state="succeeded",
+                publication_id=expected_active_publication_id,
+                success=True,
+                now=now,
+            )
+            if not finished:
+                raise RuntimeError("ready-data up-to-date settlement lost its completion claim")
+        return {
+            "action": "up_to_date",
+            "reason": "source_identity_matches_active",
+            "source_state": source_state,
         }
 
     def heartbeat_agentic_ready_automation_claim(
@@ -5966,7 +6239,21 @@ class Storage:
         now = self._utcnow_iso()
         index_version_id = f"idxv_{uuid.uuid4().hex}"
         built_time = built_at or now
+        normalized_provider = str(embedding_provider or "openai").strip().lower() or "openai"
+        normalized_model = str(embedding_model or "").strip()
+        normalized_dimension = (
+            int(embedding_dimension) if embedding_dimension not in (None, "") else None
+        )
+        normalized_status = str(status or "").strip().lower()
         with self.transaction():
+            previous_ready = self._conn.execute(
+                """
+                SELECT embedding_provider, embedding_model, embedding_dimension
+                FROM kb_ready_index_state
+                WHERE kb_id = ?
+                """,
+                (kb_id,),
+            ).fetchone()
             # Keep only the latest index version record per KB.
             old_ids = [
                 str(r[0])
@@ -5994,11 +6281,11 @@ class Storage:
                 (
                     index_version_id,
                     kb_id,
-                    str(embedding_provider or "openai").strip().lower() or "openai",
-                    embedding_model,
-                    embedding_dimension,
+                    normalized_provider,
+                    normalized_model,
+                    normalized_dimension,
                     index_type,
-                    status,
+                    normalized_status,
                     artifact_path,
                     int(chunk_count),
                     built_time,
@@ -6014,14 +6301,61 @@ class Storage:
                         """,
                         (index_version_id, chunk_id),
                     )
+            if normalized_status == "ready":
+                previous_embedding = (
+                    (
+                        str(previous_ready[0] or "openai").strip().lower() or "openai",
+                        str(previous_ready[1] or "").strip(),
+                        int(previous_ready[2])
+                        if previous_ready[2] not in (None, "")
+                        else None,
+                    )
+                    if previous_ready
+                    else None
+                )
+                current_embedding = (
+                    normalized_provider,
+                    normalized_model,
+                    normalized_dimension,
+                )
+                reason = (
+                    "embedding_index_committed"
+                    if previous_embedding is not None
+                    and previous_embedding != current_embedding
+                    else "index_committed"
+                )
+                self.mark_agentic_ready_source_event_for_kb(kb_id=kb_id, reason=reason)
+                self._conn.execute(
+                    """
+                    INSERT INTO kb_ready_index_state (
+                        kb_id, index_version_id, embedding_provider,
+                        embedding_model, embedding_dimension, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(kb_id) DO UPDATE SET
+                        index_version_id = excluded.index_version_id,
+                        embedding_provider = excluded.embedding_provider,
+                        embedding_model = excluded.embedding_model,
+                        embedding_dimension = excluded.embedding_dimension,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        kb_id,
+                        index_version_id,
+                        normalized_provider,
+                        normalized_model,
+                        normalized_dimension,
+                        now,
+                    ),
+                )
         return {
             "index_version_id": index_version_id,
             "kb_id": kb_id,
-            "embedding_provider": str(embedding_provider or "openai").strip().lower() or "openai",
-            "embedding_model": embedding_model,
-            "embedding_dimension": embedding_dimension,
+            "embedding_provider": normalized_provider,
+            "embedding_model": normalized_model,
+            "embedding_dimension": normalized_dimension,
             "index_type": index_type,
-            "status": status,
+            "status": normalized_status,
             "artifact_path": artifact_path,
             "chunk_count": int(chunk_count),
             "built_at": built_time,

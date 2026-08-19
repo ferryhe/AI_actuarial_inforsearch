@@ -12,6 +12,7 @@ from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_increment
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.crawler import Crawler, SiteConfig
 from ai_actuarial.rag.config import RAGConfig
+from ai_actuarial.rag.exceptions import RAGException
 from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.semantic_chunking import Chunk
@@ -584,7 +585,7 @@ def test_remove_files_from_kb_soft_deletes_file_vectors(tmp_path) -> None:
         storage.close()
 
 
-def test_indexing_pipeline_keeps_index_when_version_recording_fails(tmp_path) -> None:
+def test_indexing_pipeline_fails_closed_when_ready_version_recording_fails(tmp_path) -> None:
     kb_id = "kb-index-version-warning"
     storage = SimpleNamespace(create_kb_index_version=MagicMock(side_effect=RuntimeError("locked database")))
     embedding_generator = MagicMock()
@@ -625,13 +626,13 @@ def test_indexing_pipeline_keeps_index_when_version_recording_fails(tmp_path) ->
         return_value={"success": True, "chunk_count": 4},
     ), patch.object(IndexingPipeline, "_update_kb_stats"):
         pipeline = IndexingPipeline(kb_manager)
-        stats = pipeline.index_files(
-            kb_id=kb_id,
-            file_urls=["file-1"],
-            force_reindex=True,
-        )
+        with pytest.raises(RAGException, match="record ready KB index version"):
+            pipeline.index_files(
+                kb_id=kb_id,
+                file_urls=["file-1"],
+                force_reindex=True,
+            )
 
-    assert stats["indexed_files"] == 1
     mock_vector_store.return_value.save_index.assert_called_once()
     storage.create_kb_index_version.assert_called_once()
 

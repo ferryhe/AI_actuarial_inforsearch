@@ -27,6 +27,7 @@ READY_DATA_AUTOMATION_HEARTBEAT_SECONDS = 30
 BuildCandidate = Callable[..., dict[str, Any]]
 Validator = Callable[[str], dict[str, Any]]
 Clock = Callable[[], datetime]
+SourceFingerprint = Callable[..., dict[str, str]]
 
 
 def _utcnow() -> datetime:
@@ -40,6 +41,12 @@ def _default_build_candidate(*, db_path: str, kb_id: str, profile: str) -> dict[
         payload={"profile": profile},
         publish=False,
     )
+
+
+def _default_source_fingerprint(*, db_path: str, kb_id: str) -> dict[str, str]:
+    from ai_actuarial.agentic_rag.ready_data_builder import get_builder_source_fingerprint
+
+    return get_builder_source_fingerprint(db_path=db_path, kb_id=kb_id)
 
 
 def set_ready_data_automation(
@@ -219,6 +226,7 @@ def run_ready_data_automation_once(
     db_path: str,
     *,
     build_candidate: BuildCandidate = _default_build_candidate,
+    source_fingerprint: SourceFingerprint = _default_source_fingerprint,
     validator: Validator | None = None,
     lease_seconds: int = READY_DATA_AUTOMATION_LEASE_SECONDS,
     heartbeat_interval_seconds: float = READY_DATA_AUTOMATION_HEARTBEAT_SECONDS,
@@ -250,6 +258,138 @@ def run_ready_data_automation_once(
     candidate: dict[str, Any] = {}
     try:
         if claim["mode"] == "build":
+            lookup = Storage(db_path)
+            try:
+                publication_state = lookup.get_agentic_ready_publication_state(
+                    kb_id=str(claim["kb_id"]),
+                    profile=str(claim["profile"]),
+                )
+                active = dict(publication_state.get("active_publication") or {})
+            finally:
+                lookup.close()
+            try:
+                fingerprint = dict(
+                    source_fingerprint(
+                        db_path=db_path,
+                        kb_id=str(claim["kb_id"]),
+                    )
+                )
+                fingerprint_kind = str(
+                    fingerprint.get("source_version_kind") or ""
+                ).strip().lower()
+                fingerprint_id = str(fingerprint.get("source_version_id") or "").strip()
+                if not fingerprint_kind or not fingerprint_id:
+                    raise ValueError(
+                        "ready_data source fingerprint must include source_version_kind and source_version_id"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                failure_storage = Storage(db_path)
+                try:
+                    finished = _finish_claim(
+                        failure_storage,
+                        claim,
+                        state="failed",
+                        publication_id=None,
+                        error=str(exc),
+                        now=clock(),
+                    )
+                finally:
+                    failure_storage.close()
+                return {
+                    **claim,
+                    "status": "failed" if finished else "claim_lost",
+                    "error": str(exc),
+                }
+
+            if heartbeat.lost:
+                return {**claim, "status": "claim_lost"}
+
+            active_matches = bool(
+                active
+                and str(active.get("status") or "").strip().lower() == "active"
+                and str(active.get("source_version_kind") or "").strip().lower()
+                == fingerprint_kind
+                and str(active.get("source_version_id") or "").strip() == fingerprint_id
+            )
+            allowed_output_root = str(
+                (Path(db_path).resolve().parent / "agentic_ready_data").resolve()
+            )
+            active_validation = (
+                _validate_recorded_ready_publication(
+                    active,
+                    validator=validator,
+                    allowed_output_root=allowed_output_root,
+                )
+                if active_matches
+                else None
+            )
+            if active_matches and active_validation and active_validation["valid"]:
+                settlement_storage = Storage(db_path)
+                try:
+                    settlement = settlement_storage.settle_agentic_ready_automation_up_to_date(
+                        kb_id=str(claim["kb_id"]),
+                        profile=str(claim["profile"]),
+                        generation=int(claim["generation"]),
+                        claim_token=str(claim["claim_token"]),
+                        expected_active_publication_id=str(
+                            claim["expected_active_publication_id"]
+                        ),
+                        expected_automatic_build_enabled=bool(
+                            claim["expected_automatic_build_enabled"]
+                        ),
+                        expected_automatic_publish_enabled=bool(
+                            claim["expected_automatic_publish_enabled"]
+                        ),
+                        source_version_kind=fingerprint_kind,
+                        source_version_id=fingerprint_id,
+                        now=clock(),
+                    )
+                finally:
+                    settlement_storage.close()
+                action = str(settlement.get("action") or "claim_lost")
+                if action == "up_to_date":
+                    return {
+                        **claim,
+                        "status": "up_to_date",
+                        "active_publication": active,
+                        "source_fingerprint": fingerprint,
+                        "validation": active_validation,
+                        "source_state": settlement.get("source_state"),
+                    }
+                return {
+                    **claim,
+                    "status": action,
+                    "fence_reason": settlement.get("reason"),
+                    "error": settlement.get("error", ""),
+                }
+
+            prebuild_storage = Storage(db_path)
+            try:
+                prebuild = prebuild_storage.fence_agentic_ready_automation_prebuild(
+                    kb_id=str(claim["kb_id"]),
+                    profile=str(claim["profile"]),
+                    generation=int(claim["generation"]),
+                    claim_token=str(claim["claim_token"]),
+                    expected_active_publication_id=claim["expected_active_publication_id"],
+                    expected_automatic_build_enabled=bool(
+                        claim["expected_automatic_build_enabled"]
+                    ),
+                    expected_automatic_publish_enabled=bool(
+                        claim["expected_automatic_publish_enabled"]
+                    ),
+                    now=clock(),
+                )
+            finally:
+                prebuild_storage.close()
+            prebuild_action = str(prebuild.get("action") or "claim_lost")
+            if prebuild_action != "build":
+                return {
+                    **claim,
+                    "status": prebuild_action,
+                    "fence_reason": prebuild.get("reason"),
+                    "error": prebuild.get("error", ""),
+                }
+
             try:
                 build_result = build_candidate(
                     db_path=db_path,
@@ -388,7 +528,7 @@ def run_ready_data_automation_once(
                 profile=str(claim["profile"]),
                 generation=int(claim["generation"]),
                 claim_token=str(claim["claim_token"]),
-                expected_active_publication_id=current["active_publication_id"],
+                expected_active_publication_id=claim["expected_active_publication_id"],
                 preserve_expected_active_as_previous=not corrupt_active,
                 invalidated_expected_active_error=corrupt_error,
                 now=clock(),

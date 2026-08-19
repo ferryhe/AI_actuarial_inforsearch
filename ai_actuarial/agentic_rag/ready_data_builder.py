@@ -35,6 +35,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+BUILDER_SOURCE_VERSION_KIND = "catalog_chunks_snapshot"
+
 
 def get_db_path() -> str:
     """Resolve the SQLite DB path from settings, env, or default."""
@@ -502,6 +504,26 @@ def _load_builder_source_snapshot(
         conn.rollback()
 
 
+def get_builder_source_fingerprint(
+    *,
+    db_path: str,
+    kb_id: str | None,
+) -> dict[str, str]:
+    """Return the exact builder source identity without creating artifacts."""
+    database_uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
+    conn = sqlite3.connect(database_uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA query_only = ON")
+        _, _, source_version_id = _load_builder_source_snapshot(conn, kb_id=kb_id)
+        return {
+            "source_version_kind": BUILDER_SOURCE_VERSION_KIND,
+            "source_version_id": source_version_id,
+        }
+    finally:
+        conn.close()
+
+
 def _build_l0_with_connection(
     conn: sqlite3.Connection,
     *,
@@ -852,7 +874,7 @@ def _build_l0_with_connection(
         "kb_id": kb_id or "",
         "scope": "knowledge_base" if kb_id else "global",
         "source_db": db_path,
-        "source_version_kind": "catalog_chunks_snapshot",
+        "source_version_kind": BUILDER_SOURCE_VERSION_KIND,
         "source_version_id": source_version_id,
         "output_dir": output_dir,
         "doc_count": doc_count,
