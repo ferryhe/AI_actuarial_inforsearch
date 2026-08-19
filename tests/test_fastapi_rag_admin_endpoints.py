@@ -2105,6 +2105,117 @@ def test_fastapi_rag_admin_agentic_manifest_stale_uses_bound_chunks_and_catalog_
     assert stale.json()["manifest"]["status"] == "stale"
 
 
+def test_manual_ready_build_clears_captured_hard_generation_after_safe_publish(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-manual-generation",
+            "name": "Manual generation KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first = client.post(
+        "/api/rag/knowledge-bases/kb-manual-generation/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first.status_code == 200, first.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        marked = storage.mark_agentic_ready_source_event(
+            kb_id="kb-manual-generation",
+            profile="general",
+            reason="membership_removed",
+        )
+        assert marked["serving_allowed"] is False
+    finally:
+        storage.close()
+
+    rebuilt = client.post(
+        "/api/rag/knowledge-bases/kb-manual-generation/agentic-ready-manifest/build",
+        json={},
+    )
+
+    assert rebuilt.status_code == 200, rebuilt.text
+    manifest = rebuilt.json()["manifest"]
+    assert rebuilt.json()["validation"]["valid"] is True
+    assert manifest["pending_evaluation_generation"] is None
+    assert manifest["stale_severity"] == "none"
+    assert manifest["serving_stale"] is False
+    assert manifest["usable"] is True
+
+
+def test_manual_ready_build_does_not_clear_generation_created_during_build(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-manual-generation-race",
+            "name": "Manual generation race KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first = client.post(
+        "/api/rag/knowledge-bases/kb-manual-generation-race/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first.status_code == 200, first.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        first_mark = storage.mark_agentic_ready_source_event(
+            kb_id="kb-manual-generation-race",
+            profile="general",
+            reason="membership_removed",
+        )
+        assert first_mark["event_generation"] == 1
+    finally:
+        storage.close()
+
+    from ai_actuarial.agentic_rag import ready_data_builder
+
+    original_build = ready_data_builder.build_l0
+
+    def build_then_mark_new_generation(*args, **kwargs):
+        result = original_build(*args, **kwargs)
+        concurrent = Storage(str(tmp_path / "index.db"))
+        try:
+            concurrent.mark_agentic_ready_source_event(
+                kb_id="kb-manual-generation-race",
+                profile="general",
+                reason="source_deleted",
+            )
+        finally:
+            concurrent.close()
+        return result
+
+    monkeypatch.setattr(ready_data_builder, "build_l0", build_then_mark_new_generation)
+
+    rebuilt = client.post(
+        "/api/rag/knowledge-bases/kb-manual-generation-race/agentic-ready-manifest/build",
+        json={},
+    )
+
+    assert rebuilt.status_code == 200, rebuilt.text
+    manifest = rebuilt.json()["manifest"]
+    assert rebuilt.json()["validation"]["valid"] is True
+    assert manifest["event_generation"] == 2
+    assert manifest["pending_evaluation_generation"] == 2
+    assert manifest["stale_severity"] == "hard_stale"
+    assert manifest["usable"] is False
+
+
 def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     alpha_url = seed["alpha_url"]

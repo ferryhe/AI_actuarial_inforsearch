@@ -647,6 +647,7 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
             "similarity_score": metadata.get("similarity_score"),
             "content": content,
             "source_url": links["source_url"],
+            "file_url": links["source_url"],
             "file_detail_url": links["file_detail_url"],
             "file_preview_url": links["file_preview_url"],
             "quote": content[:280].strip(),
@@ -683,6 +684,54 @@ def _selected_agentic_kb_id(kb_ids: Any) -> str:
     if len(selected) != 1:
         raise ChatApiError("Agentic RAG requires exactly one knowledge base", status_code=400)
     return selected[0]
+
+
+def _agentic_source_fallback(
+    storage: Storage,
+    *,
+    kb_id: str,
+    requested_profile: str,
+) -> bool:
+    profile = requested_profile
+    if not profile:
+        row = storage._conn.execute(
+            "SELECT manifest_profile FROM rag_knowledge_bases WHERE kb_id = ?",
+            (kb_id,),
+        ).fetchone()
+        profile = _normalize_text(row[0] if row else "")
+    profile = profile.lower() or "general"
+    source_state = storage.get_agentic_ready_source_state(
+        kb_id=kb_id,
+        profile=profile,
+    )
+    return not bool(source_state["serving_allowed"])
+
+
+def _filter_agentic_fallback_chunks(
+    storage: Storage,
+    *,
+    kb_id: str,
+    chunks: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Fail closed against current KB membership for hard-stale fallback results."""
+    allowed_file_urls = {
+        _normalize_text(row[0])
+        for row in storage._conn.execute(
+            "SELECT file_url FROM rag_kb_files WHERE kb_id = ?",
+            (kb_id,),
+        ).fetchall()
+        if _normalize_text(row[0])
+    }
+    retained: list[dict[str, Any]] = []
+    for chunk in chunks:
+        metadata = chunk.get("metadata") if isinstance(chunk, dict) else None
+        if not isinstance(metadata, dict):
+            continue
+        chunk_kb_id = _normalize_text(metadata.get("kb_id"))
+        file_url = _normalize_text(metadata.get("file_url"))
+        if chunk_kb_id == kb_id and file_url and file_url in allowed_file_urls:
+            retained.append(chunk)
+    return retained, len(chunks) - len(retained)
 
 
 def _agentic_first_text(item: Mapping[str, Any], keys: tuple[str, ...]) -> str:
@@ -929,9 +978,15 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     mode = _normalize_text(payload.get("mode") or "expert").lower()
     if mode not in VALID_CHAT_MODES:
         raise ChatApiError(f"Invalid mode '{mode}'", status_code=400)
-    rag_mode = _normalize_text(payload.get("rag_mode") or "standard").lower()
-    if rag_mode not in {"standard", "agentic"}:
-        raise ChatApiError(f"Invalid rag_mode '{rag_mode}'", status_code=400)
+    requested_rag_mode = _normalize_text(payload.get("rag_mode") or "standard").lower()
+    if requested_rag_mode not in {"standard", "agentic"}:
+        raise ChatApiError(f"Invalid rag_mode '{requested_rag_mode}'", status_code=400)
+    rag_mode = requested_rag_mode
+    fallback_reason: str | None = None
+    fallback_kb_id: str | None = None
+    fallback_membership_filter_applied = False
+    fallback_membership_filter_retained_count = 0
+    fallback_membership_filter_removed_count = 0
 
     kb_ids = payload.get("kb_ids")
     conversation_id = _normalize_text(payload.get("conversation_id")) or None
@@ -955,6 +1010,21 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         config = modules["config"].ChatbotConfig.from_config(storage=storage, default_mode=mode)
         conversation_manager = modules["conversation"].ConversationManager(storage, config)
         exceptions = modules["exceptions"]
+        requested_profile = _normalize_text(
+            payload.get("manifest_profile") or payload.get("profile")
+        )
+        if requested_rag_mode == "agentic" and agentic_kb_id:
+            must_fallback = _agentic_source_fallback(
+                storage,
+                kb_id=agentic_kb_id,
+                requested_profile=requested_profile,
+            )
+            if must_fallback:
+                rag_mode = "standard"
+                kb_ids = [agentic_kb_id]
+                fallback_reason = "hard_stale"
+                fallback_kb_id = agentic_kb_id
+                fallback_membership_filter_applied = True
 
         if conversation_id:
             conversation = conversation_manager.get_conversation(conversation_id)
@@ -974,7 +1044,15 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 user_id=user_id,
                 kb_id=primary_kb,
                 mode=mode,
-                metadata={"kb_ids": kb_ids, "mode": mode, "rag_mode": rag_mode},
+                metadata={
+                    "kb_ids": kb_ids,
+                    "mode": mode,
+                    "rag_mode": rag_mode,
+                    "requested_rag_mode": requested_rag_mode,
+                    "effective_rag_mode": rag_mode,
+                    "fallback_reason": fallback_reason,
+                    "fallback_kb_id": fallback_kb_id,
+                },
             )
 
         conversation_manager.add_message(conversation_id, "user", message)
@@ -1024,6 +1102,13 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 "model": "agentic-ready-data",
                 "mode": mode,
                 "rag_mode": "agentic",
+                "requested_rag_mode": requested_rag_mode,
+                "effective_rag_mode": "agentic",
+                "fallback_reason": None,
+                "fallback_kb_id": None,
+                "fallback_membership_filter_applied": False,
+                "fallback_membership_filter_retained_count": 0,
+                "fallback_membership_filter_removed_count": 0,
                 "retrieval_time_ms": 0,
                 "generation_time_ms": 0,
                 "synthesis_source": synthesis_source,
@@ -1068,6 +1153,13 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                         "model": "agentic-ready-data",
                         "mode": mode,
                         "rag_mode": "agentic",
+                        "requested_rag_mode": requested_rag_mode,
+                        "effective_rag_mode": "agentic",
+                        "fallback_reason": None,
+                        "fallback_kb_id": None,
+                        "fallback_membership_filter_applied": False,
+                        "fallback_membership_filter_retained_count": 0,
+                        "fallback_membership_filter_removed_count": 0,
                         "synthesis_source": assistant_metadata["synthesis_source"],
                         "synthesis_model": assistant_metadata["synthesis_model"],
                         "num_chunks": len(retrieved_blocks),
@@ -1113,6 +1205,16 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
             try:
                 chunks = retriever.retrieve(message, normalized_kb_ids)
                 used_threshold = getattr(retriever, "last_effective_threshold", used_threshold)
+                if fallback_kb_id:
+                    chunks, fallback_membership_filter_removed_count = (
+                        _filter_agentic_fallback_chunks(
+                            storage,
+                            kb_id=fallback_kb_id,
+                            chunks=chunks,
+                        )
+                    )
+                    fallback_membership_filter_retained_count = len(chunks)
+                    no_results = not chunks
             except exceptions.NoResultsException:
                 used_threshold = getattr(retriever, "last_effective_threshold", used_threshold)
                 no_results = True
@@ -1159,6 +1261,14 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
         assistant_metadata = {
             "model": getattr(config, "model", None),
             "mode": mode,
+            "rag_mode": rag_mode,
+            "requested_rag_mode": requested_rag_mode,
+            "effective_rag_mode": rag_mode,
+            "fallback_reason": fallback_reason,
+            "fallback_kb_id": fallback_kb_id,
+            "fallback_membership_filter_applied": fallback_membership_filter_applied,
+            "fallback_membership_filter_retained_count": fallback_membership_filter_retained_count,
+            "fallback_membership_filter_removed_count": fallback_membership_filter_removed_count,
             "retrieval_time_ms": 0,
             "generation_time_ms": 0,
             "num_chunks": len(chunks),
@@ -1189,6 +1299,14 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                     "generation_time_ms": 0,
                     "model": getattr(config, "model", None),
                     "mode": mode,
+                    "rag_mode": rag_mode,
+                    "requested_rag_mode": requested_rag_mode,
+                    "effective_rag_mode": rag_mode,
+                    "fallback_reason": fallback_reason,
+                    "fallback_kb_id": fallback_kb_id,
+                    "fallback_membership_filter_applied": fallback_membership_filter_applied,
+                    "fallback_membership_filter_retained_count": fallback_membership_filter_retained_count,
+                    "fallback_membership_filter_removed_count": fallback_membership_filter_removed_count,
                     "num_chunks": len(chunks),
                     "no_results": no_results,
                     "used_threshold": used_threshold,

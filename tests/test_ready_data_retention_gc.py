@@ -9,6 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from ai_actuarial.api.services.agentic_rag import (
+    AgenticRagError,
+    _resolve_ready_output_dir,
+)
 from ai_actuarial.api.services import rag_admin as rag_admin_service
 from ai_actuarial.api.services.rag_admin import (
     READY_DATA_GC_POLICY_VERSION,
@@ -158,6 +162,190 @@ def test_active_previous_retryable_and_unknown_attempts_are_protected(tmp_path: 
         assert str(unknown["publication_id"]) in _reason_ids(
             plan, "retained", "retryable_validated_candidate"
         )
+    finally:
+        storage.close()
+
+
+def test_superseded_generation_removes_retryable_gc_metadata_and_stays_protected(
+    tmp_path: Path,
+) -> None:
+    storage = _open_storage(tmp_path)
+    try:
+        active = _active(storage, tmp_path)
+        candidate = _record(storage, _candidate_dir(tmp_path, "build-superseded"))
+        candidate_id = str(candidate["publication_id"])
+        candidate_path = Path(str(candidate["output_dir"]))
+        _mark(storage, active, candidate)
+        marked = storage.get_agentic_ready_publication(candidate_id)
+        assert marked is not None
+
+        assert storage.mark_agentic_ready_publication_superseded_generation(
+            candidate_id
+        )
+        superseded = storage.get_agentic_ready_publication(candidate_id)
+        assert superseded is not None
+        assert superseded["attempt_disposition"] == "superseded_generation"
+        assert superseded["retention_class"] == ""
+        assert superseded["gc_state"] == ""
+
+        plan = _plan(storage)
+        assert candidate_id in _reason_ids(
+            plan,
+            "retained",
+            "attempt_disposition_superseded_generation",
+        )
+        retained_item = next(
+            item
+            for item in plan["retained"]
+            if item["publication_id"] == candidate_id
+        )
+        assert retained_item["attempt_disposition"] == "superseded_generation"
+        assert candidate_id not in {
+            str(item["publication_id"]) for item in plan["candidates"]
+        }
+        result = execute_ready_data_publication_gc(
+            db_path=storage.db_path,
+            cutoff_at=CUTOFF,
+            plan_fingerprint=str(plan["plan_fingerprint"]),
+        )
+        assert candidate_id in _reason_ids(
+            result,
+            "retained",
+            "attempt_disposition_superseded_generation",
+        )
+        assert candidate_path.is_dir()
+        assert storage.claim_agentic_ready_publication_gc(
+            candidate_id,
+            expected_gc_state="eligible",
+            expected_marked_at=str(marked["gc_marked_at"]),
+            quarantine_dir=str(candidate_path.parent / f".gc-quarantine-{candidate_id}"),
+            cutoff_at=CUTOFF,
+        ) is None
+    finally:
+        storage.close()
+
+
+def test_superseded_generation_rejects_serving_or_claimed_attempts(
+    tmp_path: Path,
+) -> None:
+    storage = _open_storage(tmp_path)
+    try:
+        active = _active(storage, tmp_path)
+        assert storage.mark_agentic_ready_publication_superseded_generation(
+            str(active["publication_id"])
+        ) is False
+
+        candidate = _record(storage, _candidate_dir(tmp_path, "build-claimed"))
+        _mark(storage, active, candidate)
+        storage._conn.execute(
+            """
+            UPDATE agentic_ready_publication_gc
+            SET state = 'claimed', claim_token = 'held', updated_at = ?
+            WHERE publication_id = ?
+            """,
+            (OLD_MARK, candidate["publication_id"]),
+        )
+        storage._conn.commit()
+
+        assert storage.mark_agentic_ready_publication_superseded_generation(
+            str(candidate["publication_id"])
+        ) is False
+        claimed = storage.get_agentic_ready_publication(str(candidate["publication_id"]))
+        assert claimed is not None
+        assert claimed["attempt_disposition"] == ""
+        assert claimed["gc_state"] == "claimed"
+    finally:
+        storage.close()
+
+
+def test_superseded_generation_rejects_delete_failed_and_preserves_gc_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = _open_storage(tmp_path)
+    try:
+        active = _active(storage, tmp_path)
+        attempts = [
+            _record(storage, _candidate_dir(tmp_path, f"build-delete-failed-{index}"))
+            for index in range(3)
+        ]
+        for attempt in attempts:
+            _mark(storage, active, attempt)
+        first_plan = _plan(storage)
+        doomed = first_plan["candidates"][0]
+        doomed_id = str(doomed["publication_id"])
+        original_rmtree = rag_admin_service.shutil.rmtree
+
+        def fail_delete(_path: Path) -> None:
+            raise OSError("synthetic delete failure")
+
+        monkeypatch.setattr(rag_admin_service.shutil, "rmtree", fail_delete)
+        first = execute_ready_data_publication_gc(
+            db_path=storage.db_path,
+            cutoff_at=CUTOFF,
+            plan_fingerprint=str(first_plan["plan_fingerprint"]),
+        )
+        failed = storage.get_agentic_ready_publication(doomed_id)
+        assert _reason_ids(first, "failures", "delete_failed") == {doomed_id}
+        assert failed is not None
+        assert failed["gc_state"] == "delete_failed"
+        assert failed["retention_class"] == "redundant_duplicate"
+        quarantine_dir = Path(str(failed["gc_quarantine_dir"]))
+        assert quarantine_dir.is_dir()
+        assert not Path(str(doomed["output_dir"])).exists()
+
+        before = storage.get_agentic_ready_publication(doomed_id)
+        assert storage.mark_agentic_ready_publication_superseded_generation(
+            doomed_id
+        ) is False
+        after = storage.get_agentic_ready_publication(doomed_id)
+        assert after == before
+        assert after is not None
+        assert after["attempt_disposition"] == ""
+        assert after["gc_state"] == "delete_failed"
+        assert after["gc_quarantine_dir"] == str(quarantine_dir)
+        assert quarantine_dir.is_dir()
+
+        monkeypatch.setattr(rag_admin_service.shutil, "rmtree", original_rmtree)
+        retry_plan = _plan(storage)
+        retry = execute_ready_data_publication_gc(
+            db_path=storage.db_path,
+            cutoff_at=CUTOFF,
+            plan_fingerprint=str(retry_plan["plan_fingerprint"]),
+        )
+        tombstone = storage.get_agentic_ready_publication(doomed_id)
+        assert _reason_ids(retry, "deleted", "deleted") == {doomed_id}
+        assert tombstone is not None and tombstone["gc_state"] == "deleted"
+        assert not quarantine_dir.exists()
+    finally:
+        storage.close()
+
+
+def test_superseded_generation_candidate_cannot_be_published(tmp_path: Path) -> None:
+    storage = _open_storage(tmp_path)
+    try:
+        active = _active(storage, tmp_path)
+        candidate = _record(storage, _candidate_dir(tmp_path, "build-superseded-publish"))
+        candidate_id = str(candidate["publication_id"])
+        assert storage.mark_agentic_ready_publication_superseded_generation(
+            candidate_id
+        )
+        assert storage.discard_agentic_ready_publication(
+            candidate_id,
+            expected_active_publication_id=str(active["publication_id"]),
+        ) is False
+
+        with pytest.raises(ValueError, match="attempt disposition"):
+            storage.publish_agentic_ready_publication(
+                candidate_id,
+                expected_active_publication_id=str(active["publication_id"]),
+            )
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-ready",
+            profile="general",
+        )
+        assert state["active_publication_id"] == active["publication_id"]
+        assert state["previous_publication_id"] is None
     finally:
         storage.close()
 
@@ -402,6 +590,13 @@ def test_execute_deletes_candidate_and_keeps_audit_tombstone(tmp_path: Path) -> 
         assert tombstone["gc_state"] == "deleted"
         assert tombstone["output_dir"] == ""
         assert tombstone["artifact_files"] == []
+        before = dict(tombstone)
+        assert storage.mark_agentic_ready_publication_superseded_generation(
+            str(doomed["publication_id"])
+        ) is False
+        assert storage.get_agentic_ready_publication(
+            str(doomed["publication_id"])
+        ) == before
     finally:
         storage.close()
 
@@ -436,6 +631,12 @@ def test_delete_failure_is_recoverable_and_retry_is_safe(
         assert failed is not None and failed["gc_state"] == "delete_failed"
         assert not Path(str(first_plan["candidates"][0]["output_dir"])).exists()
         assert Path(str(failed["gc_quarantine_dir"])).is_dir()
+        with pytest.raises(AgenticRagError, match="not the current serving") as exc_info:
+            _resolve_ready_output_dir(
+                db_path=storage.db_path,
+                payload={"output_dir": str(failed["gc_quarantine_dir"])},
+            )
+        assert exc_info.value.status_code == 409
 
         monkeypatch.setattr(rag_admin_service.shutil, "rmtree", original_rmtree)
         retry_plan = _plan(storage)
