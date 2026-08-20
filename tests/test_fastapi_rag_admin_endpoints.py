@@ -281,6 +281,26 @@ def _make_session_cookie(app, payload: dict[str, object]) -> str:
     return serializer.dumps(payload)
 
 
+def _disable_rag_runtime_initialization(monkeypatch, tmp_path: Path) -> None:
+    import requests
+    import tiktoken
+
+    from ai_actuarial.rag import embeddings, knowledge_base, semantic_chunking
+
+    def fail_runtime_initialization(*_args, **_kwargs):
+        raise AssertionError("KB list initialized a RAG runtime dependency")
+
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path / "empty-tokenizer-cache"))
+    monkeypatch.setattr(knowledge_base, "KnowledgeBaseManager", fail_runtime_initialization)
+    monkeypatch.setattr(knowledge_base, "SemanticChunker", fail_runtime_initialization)
+    monkeypatch.setattr(knowledge_base, "EmbeddingGenerator", fail_runtime_initialization)
+    monkeypatch.setattr(semantic_chunking, "SemanticChunker", fail_runtime_initialization)
+    monkeypatch.setattr(embeddings, "EmbeddingGenerator", fail_runtime_initialization)
+    monkeypatch.setattr(tiktoken, "get_encoding", fail_runtime_initialization)
+    monkeypatch.setattr(tiktoken, "encoding_for_model", fail_runtime_initialization)
+    monkeypatch.setattr(requests, "get", fail_runtime_initialization)
+
+
 def test_rag_index_auth_preserves_tasks_run_permission_boundary(monkeypatch) -> None:
     request = SimpleNamespace(headers={})
 
@@ -583,6 +603,436 @@ def test_fastapi_rag_admin_chunk_profiles_and_kb_crud_work(tmp_path: Path, monke
 
     delete_kb = client.delete("/api/rag/knowledge-bases/kb-pr4-test")
     assert delete_kb.status_code == 200, delete_kb.text
+
+
+def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    storage = Storage(str(db_path))
+    try:
+        profile = storage.create_chunk_profile(
+            name="offline-profile",
+            chunk_size=320,
+            chunk_overlap=40,
+            splitter="semantic",
+            tokenizer="cl100k_base",
+            version="v1",
+        )
+        storage._conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                chunk_profile_id TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE rag_kb_files (
+                kb_id TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                chunk_count INTEGER DEFAULT 0,
+                indexed_at TEXT,
+                PRIMARY KEY (kb_id, file_url)
+            );
+            """
+        )
+        storage._conn.executemany(
+            """
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, description, kb_mode, chunk_profile_id,
+                manifest_profile, embedding_provider, embedding_model,
+                embedding_dimension, chunk_size, chunk_overlap, index_type,
+                created_at, updated_at, file_count, chunk_count
+            ) VALUES (?, ?, ?, ?, ?, 'general', 'openai',
+                      'text-embedding-3-large', 3072, 320, 40, 'Flat',
+                      ?, ?, 0, 0)
+            """,
+            (
+                (
+                    "kb-offline-list",
+                    "Offline Actuarial KB",
+                    "Offline recovery metadata",
+                    "manual",
+                    profile["profile_id"],
+                    "2026-08-20T13:00:00+00:00",
+                    "2026-08-20T13:00:00+00:00",
+                ),
+                (
+                    "kb-category-other",
+                    "Other KB",
+                    "Must be filtered out",
+                    "category",
+                    None,
+                    "2026-08-20T12:00:00+00:00",
+                    "2026-08-20T12:00:00+00:00",
+                ),
+            ),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/api/rag/knowledge-bases",
+        params={"kb_mode": "manual", "search": "offline"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["current_embeddings"]["stable_credential_id"] == "openai:llm:env"
+    assert [item["kb_id"] for item in body["knowledge_bases"]] == ["kb-offline-list"]
+    listed = body["knowledge_bases"][0]
+    assert listed["kb_mode"] == "manual"
+    assert listed["chunk_profile_id"] == profile["profile_id"]
+    assert listed["chunk_profile_name"] == "offline-profile"
+    assert listed["embedding_compatible"] is True
+    assert listed["availability"] == "building"
+    assert listed["usable"] is False
+    assert listed["current_embeddings"]["configured"] is True
+    assert listed["agentic_ready_manifest"]["status"] == "missing"
+    assert listed["agentic_ready_available"] is False
+    assert listed["agentic_fallback_mode"] == "standard"
+
+
+@pytest.mark.parametrize("db_path", (":memory:", ""))
+def test_rag_admin_kb_list_supports_connection_local_database(
+    tmp_path: Path,
+    monkeypatch,
+    db_path: str,
+) -> None:
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+
+    result = rag_admin_service.list_knowledge_bases(db_path=db_path, query={})
+
+    assert result["knowledge_bases"] == []
+    current_embeddings = result["current_embeddings"]
+    assert current_embeddings["provider"] == "openai"
+    assert current_embeddings["model"]
+    assert current_embeddings["dimension"] > 0
+    assert current_embeddings["stable_credential_id"]
+    assert "configured" in current_embeddings
+
+
+def test_fastapi_rag_admin_kb_list_migrates_legacy_metadata_schema_without_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            );
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, embedding_model, chunk_size, chunk_overlap,
+                index_type, created_at, updated_at
+            ) VALUES (
+                'kb-legacy-offline', 'Legacy Offline KB',
+                'text-embedding-3-large', 800, 100, 'Flat',
+                '2026-08-20T11:00:00+00:00', '2026-08-20T11:00:00+00:00'
+            );
+            """
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+
+    response = client.get("/api/rag/knowledge-bases", params={"search": "legacy"})
+
+    assert response.status_code == 200, response.text
+    listed = response.json()["knowledge_bases"][0]
+    assert listed["kb_id"] == "kb-legacy-offline"
+    assert listed["description"] == ""
+    assert listed["kb_mode"] == "category"
+    assert listed["manifest_profile"] == "general"
+    assert listed["embedding_provider"] == "openai"
+    assert listed["embedding_dimension"] == 3072
+    assert listed["file_count"] == 0
+    assert listed["chunk_count"] == 0
+    assert listed["agentic_ready_manifest"]["status"] == "missing"
+    assert listed["agentic_fallback_mode"] == "standard"
+
+    storage = Storage(str(db_path))
+    try:
+        kb_columns = {
+            row[1] for row in storage._conn.execute("PRAGMA table_info(rag_knowledge_bases)")
+        }
+        assert {
+            "description",
+            "kb_mode",
+            "chunk_profile_id",
+            "manifest_profile",
+            "embedding_provider",
+            "embedding_dimension",
+            "file_count",
+            "chunk_count",
+            "index_dirty_at",
+        } <= kb_columns
+        assert storage._table_exists("rag_kb_files")
+        assert not storage._table_exists("rag_chunks")
+    finally:
+        storage.close()
+
+
+def test_rag_admin_kb_list_serializes_concurrent_legacy_schema_readiness(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    db_path = tmp_path / "index.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            );
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, embedding_model, chunk_size, chunk_overlap,
+                index_type, created_at, updated_at
+            ) VALUES (
+                'kb-concurrent-legacy', 'Concurrent Legacy KB',
+                'text-embedding-3-large', 800, 100, 'Flat',
+                '2026-08-20T11:00:00+00:00', '2026-08-20T11:00:00+00:00'
+            );
+            """
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    constructor_schema_read = threading.Barrier(2)
+    synchronized_constructor_reads: list[None] = []
+    real_connect = sqlite3.connect
+
+    class CoordinatedConnection:
+        def __init__(self, connection) -> None:
+            self._connection = connection
+            self._storage_constructor = False
+            self._constructor_rag_schema_reads = 0
+
+        def execute(self, sql, *args):
+            cursor = self._connection.execute(sql, *args)
+            normalized_sql = sql.strip()
+            if normalized_sql == "PRAGMA journal_mode=WAL;":
+                self._storage_constructor = True
+            elif (
+                self._storage_constructor
+                and normalized_sql == "PRAGMA table_info(rag_knowledge_bases)"
+            ):
+                self._constructor_rag_schema_reads += 1
+                if self._constructor_rag_schema_reads == 2:
+                    synchronized_constructor_reads.append(None)
+                    constructor_schema_read.wait(timeout=5)
+            return cursor
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+    def coordinated_connect(*args, **kwargs):
+        return CoordinatedConnection(real_connect(*args, **kwargs))
+
+    monkeypatch.setattr(sqlite3, "connect", coordinated_connect)
+
+    def list_legacy_kb() -> dict[str, object]:
+        return rag_admin_service.list_knowledge_bases(
+            db_path=str(db_path),
+            query={"search": "concurrent"},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(list_legacy_kb) for _ in range(2)]
+        results = [future.result(timeout=10) for future in futures]
+
+    assert len(synchronized_constructor_reads) == 2
+    for result in results:
+        listed = result["knowledge_bases"][0]
+        assert listed["kb_id"] == "kb-concurrent-legacy"
+        assert listed["description"] == ""
+        assert listed["kb_mode"] == "category"
+        assert listed["manifest_profile"] == "general"
+        assert listed["embedding_provider"] == "openai"
+        assert listed["embedding_dimension"] == 3072
+        assert listed["agentic_ready_manifest"]["status"] == "missing"
+        assert listed["agentic_fallback_mode"] == "standard"
+
+
+def test_rag_admin_kb_list_schema_ready_path_does_not_wait_for_writer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    db_path = tmp_path / "index.db"
+    setup = Storage(str(db_path))
+    try:
+        setup._conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                chunk_profile_id TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT
+            );
+            CREATE TABLE rag_kb_files (
+                kb_id TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                chunk_count INTEGER DEFAULT 0,
+                indexed_at TEXT,
+                PRIMARY KEY (kb_id, file_url)
+            );
+            """
+        )
+        setup._conn.commit()
+    finally:
+        setup.close()
+
+    reader = Storage(str(db_path))
+    reader._conn.execute("PRAGMA busy_timeout=100")
+    writer = sqlite3.connect(str(db_path))
+    writer.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(rag_admin_service, "Storage", lambda _path: reader)
+    try:
+        result = rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
+        assert writer.in_transaction
+    finally:
+        writer.rollback()
+        writer.close()
+
+    assert result["knowledge_bases"] == []
+    assert "configured" in result["current_embeddings"]
+
+
+def test_fastapi_rag_admin_kb_list_normalizes_legacy_rows_without_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT,
+                chunk_profile_id TEXT,
+                manifest_profile TEXT,
+                embedding_provider TEXT,
+                embedding_model TEXT NOT NULL,
+                embedding_dimension TEXT,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT,
+                file_count INTEGER,
+                chunk_count INTEGER
+            );
+            CREATE TABLE rag_kb_files (
+                kb_id TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                chunk_count INTEGER DEFAULT 0,
+                indexed_at TEXT,
+                PRIMARY KEY (kb_id, file_url)
+            );
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, description, kb_mode, chunk_profile_id,
+                manifest_profile, embedding_provider, embedding_model,
+                embedding_dimension, chunk_size, chunk_overlap, index_type,
+                created_at, updated_at, file_count, chunk_count
+            ) VALUES (
+                'kb-legacy-row', 'Legacy Row KB', 'Legacy row normalization',
+                '', NULL, ' Regulation ', ' OpenAI ',
+                'text-embedding-3-large', '3072', 800, 100, 'Flat',
+                NULL, NULL, 0, 0
+            );
+            """
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    monkeypatch.setattr(Storage, "_ensure_rag_kb_embedding_columns", lambda _storage: None)
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/api/rag/knowledge-bases",
+        params={"kb_mode": "category", "search": "legacy row"},
+    )
+
+    assert response.status_code == 200, response.text
+    listed = response.json()["knowledge_bases"][0]
+    assert listed["kb_id"] == "kb-legacy-row"
+    assert listed["kb_mode"] == "category"
+    assert listed["chunk_profile_id"] == ""
+    assert listed["manifest_profile"] == "regulation"
+    assert listed["embedding_provider"] == "openai"
+    assert listed["embedding_dimension"] == 3072
+    assert isinstance(listed["embedding_dimension"], int)
+    assert listed["created_at"].endswith("+00:00")
+    assert listed["updated_at"].endswith("+00:00")
+    assert listed["agentic_ready_manifest"]["status"] == "missing"
+    assert listed["agentic_fallback_mode"] == "standard"
 
 
 
