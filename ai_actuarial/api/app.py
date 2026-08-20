@@ -25,6 +25,7 @@ from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
 from .routers.read import router as read_router
 from .routers.ready_data_automation import router as ready_data_automation_router
+from .routers.ready_data_publication import router as ready_data_publication_router
 from .routers.weekly_updates import router as weekly_updates_router
 from .routers.metrics import router as metrics_router
 from ai_actuarial.config import settings
@@ -240,6 +241,11 @@ def create_app() -> FastAPI:
         ready_data_automation_router,
         prefix="/api",
         tags=["ready-data-automation"],
+    )
+    app.include_router(
+        ready_data_publication_router,
+        prefix="/api",
+        tags=["ready-data-publication"],
     )
     app.include_router(agentic_rag_router, prefix="/api", tags=["agentic-rag"])
     app.include_router(chat_router, prefix="/api", tags=["chat"])

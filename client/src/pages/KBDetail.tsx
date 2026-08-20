@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { useRoute, useLocation } from "wouter";
 import {
@@ -24,8 +24,34 @@ import {
   LinkIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  captureReadyDataRequest,
+  captureReadyDataRoute,
+  isReadyDataRequestCurrent,
+  isReadyDataRouteCurrent,
+  mergeConfirmedReadyDataAutomationForKb,
+  normalizeReadyAutomationStatus,
+  readyDataManifestAfterLoad,
+  readyDataRollbackErrorKey,
+  resolveReadyDataManifestEpisode,
+  resolveReadyDataSafeMutationManifestEpisode,
+  runReadyDataRouteMutation,
+  runReadyDataRouteRequest,
+  scheduleReadyDataPoll,
+  selectEffectiveReadyDataManifest,
+  selectReadyDataManifestEpisodeUpdate,
+  selectReadyDataManifestUpdate,
+  selectReadyDataMutationProfile,
+  shouldPollReadyDataManifest,
+  syncReadyDataRoute,
+} from "@/lib/ready-data-ui-state";
+import type {
+  AgenticReadyManifest,
+  ReadyDataAutomationResponse,
+  ReadyDataManifestEpisode,
+} from "@/lib/ready-data-ui-state";
 import { useTranslation } from "@/components/Layout";
-import { apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
+import { ApiError, apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 interface KBMeta {
@@ -57,20 +83,6 @@ interface KBMeta {
   created_at?: string;
   manifest_profile?: string;
   agentic_ready_manifest?: AgenticReadyManifest;
-}
-
-interface AgenticReadyManifest {
-  kb_id: string;
-  profile: string;
-  status: "missing" | "ready" | "building" | "failed" | "stale";
-  usable: boolean;
-  output_dir?: string;
-  built_at?: string;
-  doc_count?: number;
-  section_count?: number;
-  error_message?: string;
-  stale_reason?: string;
-  fallback_mode?: string;
 }
 
 interface KBStats {
@@ -136,6 +148,7 @@ function getManifestStatusClass(status?: AgenticReadyManifest["status"]) {
     case "building":
       return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
     case "failed":
+    case "unavailable":
       return "bg-red-500/10 text-red-700 dark:text-red-300";
     case "stale":
       return "bg-orange-500/10 text-orange-700 dark:text-orange-300";
@@ -145,26 +158,71 @@ function getManifestStatusClass(status?: AgenticReadyManifest["status"]) {
   }
 }
 
+function getAutomationStatusClass(status?: string) {
+  if (status === "failed") return "bg-red-500/10 text-red-700 dark:text-red-300";
+  if (status === "running" || status === "building" || status === "pending") {
+    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+  if (status === "succeeded") return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  return "bg-muted text-muted-foreground";
+}
+
 type Translate = (key: string) => string;
 
 function formatTranslated(t: Translate, key: string, replacements: Record<string, string>) {
   return Object.entries(replacements).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key));
 }
 
+function getReadyPublicMessageLabel(value: string | null | undefined, t: Translate) {
+  switch (value) {
+    case "ready_data source evaluation is pending":
+      return t("knowledge.ready_error_source_pending");
+    case "KB source files changed after the ready_data manifest was built":
+    case "KB document count differs from the ready_data manifest":
+      return t("knowledge.ready_error_source_changed");
+    case "empty ready_data requires manual publish confirmation":
+      return t("knowledge.ready_error_manual_confirmation");
+    case "ready_data is blocked by a hard source-state gate":
+    case "ready_data is unavailable":
+      return t("knowledge.ready_error_unavailable");
+    case "ready_data manifest has not been built":
+    case "ready_data operation failed":
+      return t("knowledge.ready_error_generic");
+    case undefined:
+    case null:
+    case "":
+      return "";
+    default:
+      return t("knowledge.ready_error_generic");
+  }
+}
+
 function getManifestDetail(t: Translate, detail?: string | null) {
-  return detail ? formatTranslated(t, "knowledge.manifest_detail", { detail }) : "";
+  const localizedDetail = getReadyPublicMessageLabel(detail, t);
+  return localizedDetail
+    ? formatTranslated(t, "knowledge.manifest_detail", { detail: localizedDetail })
+    : "";
 }
 
 function getManifestFallbackMode(t: Translate, manifest?: AgenticReadyManifest | null) {
-  const fallback = manifest?.fallback_mode || "standard";
-  return fallback === "standard" ? t("knowledge.manifest_standard_fallback") : fallback;
+  switch (manifest?.fallback_mode) {
+    case "agentic": return t("knowledge.manifest_agentic_mode");
+    case "standard": return t("knowledge.manifest_standard_fallback");
+    default: return t("knowledge.manifest_unknown_mode");
+  }
 }
 
 function getManifestFallbackMessage(manifest: AgenticReadyManifest | null | undefined, t: Translate) {
-  const status = manifest?.status || "missing";
+  const rawStatus = manifest?.status || "missing";
   const fallback = getManifestFallbackMode(t, manifest);
+  if (rawStatus === "building") return t("knowledge.manifest_building_message");
+  const status = normalizeReadyServingStatus(
+    rawStatus,
+    Boolean(manifest?.usable),
+    Boolean(manifest?.serving_stale),
+  );
   if (status === "ready" && manifest?.usable) return "";
-  if (status === "building") return t("knowledge.manifest_building_message");
+  if (status === "unavailable") return t("knowledge.manifest_unavailable_message");
   if (status === "failed") {
     return formatTranslated(t, "knowledge.manifest_failed_fallback", {
       detail: getManifestDetail(t, manifest?.error_message),
@@ -172,6 +230,11 @@ function getManifestFallbackMessage(manifest: AgenticReadyManifest | null | unde
     });
   }
   if (status === "stale") {
+    if (manifest?.usable && manifest.fallback_mode === "agentic") {
+      return formatTranslated(t, "knowledge.manifest_stale_agentic_serving", {
+        detail: getManifestDetail(t, manifest?.stale_reason),
+      });
+    }
     return formatTranslated(t, "knowledge.manifest_stale_fallback", {
       detail: getManifestDetail(t, manifest?.stale_reason),
       fallback,
@@ -185,6 +248,61 @@ function getManifestActionLabel(manifest: AgenticReadyManifest | null | undefine
   if (status === "ready" || status === "stale" || status === "failed") return t("knowledge.manifest_rebuild");
   if (status === "building") return t("knowledge.manifest_building_action");
   return t("knowledge.manifest_build");
+}
+
+function normalizeReadyServingStatus(
+  status: unknown,
+  hasActive = false,
+  stale = false,
+): AgenticReadyManifest["status"] {
+  if (status === "building") return hasActive ? (stale ? "stale" : "ready") : "missing";
+  if (["missing", "ready", "stale", "failed", "unavailable"].includes(String(status))) {
+    return status as AgenticReadyManifest["status"];
+  }
+  return "unavailable";
+}
+
+function getServingStatusLabel(status: string, t: Translate) {
+  switch (status) {
+    case "ready": return t("knowledge.ready_serving_ready");
+    case "stale": return t("knowledge.ready_serving_stale");
+    case "failed":
+    case "unavailable": return t("knowledge.ready_serving_unavailable");
+    case "missing":
+    default: return t("knowledge.ready_serving_missing");
+  }
+}
+
+function getAutomationStatusLabel(status: string, t: Translate) {
+  switch (status) {
+    case "pending": return t("knowledge.ready_automation_pending");
+    case "running": return t("knowledge.ready_automation_running");
+    case "building": return t("knowledge.ready_automation_building");
+    case "awaiting_publish": return t("knowledge.ready_automation_awaiting_publish");
+    case "awaiting_manual_confirmation": return t("knowledge.ready_automation_awaiting_manual_confirmation");
+    case "succeeded": return t("knowledge.ready_automation_succeeded");
+    case "failed": return t("knowledge.ready_automation_failed");
+    case "idle":
+    default: return t("knowledge.ready_automation_idle");
+  }
+}
+
+function getReadySmokeStatusLabel(status: string | null | undefined, t: Translate) {
+  switch (status) {
+    case "passed": return t("knowledge.ready_smoke_passed");
+    case "failed": return t("knowledge.ready_smoke_failed");
+    case "not_run": return t("knowledge.ready_smoke_not_run");
+    case "skipped_empty": return t("knowledge.ready_smoke_skipped_empty");
+    default: return t("knowledge.ready_smoke_unknown");
+  }
+}
+
+function displayValue(value?: string | null) {
+  return value || "-";
+}
+
+function displayTime(value?: string | null) {
+  return value ? new Date(value).toLocaleString() : "-";
 }
 
 export default function KBDetail() {
@@ -206,7 +324,109 @@ export default function KBDetail() {
   const [saving, setSaving] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [agenticManifest, setAgenticManifest] = useState<AgenticReadyManifest | null>(null);
+  const agenticManifestRef = useRef<AgenticReadyManifest | null>(null);
+  const metaRef = useRef<KBMeta | null>(null);
+  agenticManifestRef.current = agenticManifest;
+  metaRef.current = meta;
   const [manifestBuilding, setManifestBuilding] = useState(false);
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [rollbackRunning, setRollbackRunning] = useState(false);
+  const [manifestPollVersion, setManifestPollVersion] = useState(0);
+  const manifestPollAttempts = useRef(0);
+  const manifestRequestSequence = useRef(0);
+  const manifestEpisodeSequence = useRef(0);
+  const manifestAppliedEpisode = useRef<ReadyDataManifestEpisode | null>(null);
+  const automationAppliedEpisodeVersion = useRef(0);
+  const metaRequestSequence = useRef(0);
+  const statsRequestSequence = useRef(0);
+  const filesRequestSequence = useRef(0);
+  const categoriesRequestSequence = useRef(0);
+  const unmappedRequestSequence = useRef(0);
+  const loadAllRequestSequence = useRef(0);
+  const manifestRequestInFlight = useRef<Promise<boolean> | null>(null);
+  const manifestMounted = useRef(true);
+  const readyDataRoute = useRef({ kbId, epoch: 0 });
+  readyDataRoute.current = syncReadyDataRoute(readyDataRoute.current, kbId);
+  const isCurrentReadyDataRoute = useCallback((routeKbId: string, routeEpoch: number) => (
+    isReadyDataRouteCurrent(
+      readyDataRoute.current,
+      manifestMounted.current,
+      { kbId: routeKbId, epoch: routeEpoch },
+    )
+  ), []);
+  const selectResponseTimeReadyDataManifest = useCallback((routeKbId: string) => {
+    const currentMeta = metaRef.current;
+    const nested = (
+      currentMeta?.kb_id === routeKbId
+      && currentMeta.agentic_ready_manifest?.kb_id === routeKbId
+    ) ? currentMeta.agentic_ready_manifest : null;
+    return selectReadyDataManifestUpdate(
+      agenticManifestRef.current,
+      nested,
+      routeKbId,
+      false,
+    );
+  }, []);
+  const applyReadyDataManifestUpdate = useCallback((
+    routeKbId: string,
+    incoming: AgenticReadyManifest | null | undefined,
+    manifestEpisodeVersion: number,
+    options: { responseTimeMerged?: boolean; safeMutationSnapshot?: boolean } = {},
+  ) => {
+    const responseTime = selectResponseTimeReadyDataManifest(routeKbId);
+    const decision = options.safeMutationSnapshot
+      ? resolveReadyDataSafeMutationManifestEpisode(
+        routeKbId,
+        responseTime,
+        incoming,
+        manifestEpisodeVersion,
+        manifestAppliedEpisode.current,
+      )
+      : resolveReadyDataManifestEpisode(
+        routeKbId,
+        incoming,
+        manifestEpisodeVersion,
+        manifestAppliedEpisode.current,
+      );
+    if (!decision.applicable) return responseTime;
+    if (decision.authoritative && decision.applied) {
+      manifestAppliedEpisode.current = decision.applied;
+    }
+    const selected = selectReadyDataManifestEpisodeUpdate(
+      responseTime,
+      incoming,
+      routeKbId,
+      decision,
+      options.responseTimeMerged,
+    );
+    const nextDedicated = selectReadyDataManifestEpisodeUpdate(
+      agenticManifestRef.current,
+      selected,
+      routeKbId,
+      decision,
+      options.responseTimeMerged,
+    );
+    agenticManifestRef.current = nextDedicated;
+    setAgenticManifest(nextDedicated);
+    const currentMeta = metaRef.current;
+    if (currentMeta?.kb_id === routeKbId) {
+      const nested = selectReadyDataManifestEpisodeUpdate(
+        currentMeta.agentic_ready_manifest,
+        selected,
+        routeKbId,
+        decision,
+        options.responseTimeMerged,
+      );
+      const nextMeta = {
+        ...currentMeta,
+        manifest_profile: nested?.profile || currentMeta.manifest_profile,
+        agentic_ready_manifest: nested || undefined,
+      };
+      metaRef.current = nextMeta;
+      setMeta(nextMeta);
+    }
+    return selected;
+  }, [selectResponseTimeReadyDataManifest]);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -230,89 +450,337 @@ export default function KBDetail() {
   const [selectedBindFiles, setSelectedBindFiles] = useState<string[]>([]);
   const [bindSubmitting, setBindSubmitting] = useState(false);
 
-  const loadMeta = useCallback(async () => {
-    if (!kbId) return;
-    try {
-      const res = await apiGet<{ knowledge_base?: (KBMeta & { stats?: KBStats; categories?: string[] }) }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`);
-      const m = res.knowledge_base;
-      if (!m) {
-        setMeta(null);
-        setAgenticManifest(null);
-        return;
+  useEffect(() => {
+    manifestMounted.current = true;
+    readyDataRoute.current = syncReadyDataRoute(readyDataRoute.current, kbId);
+    manifestRequestSequence.current += 1;
+    manifestEpisodeSequence.current += 1;
+    manifestAppliedEpisode.current = null;
+    automationAppliedEpisodeVersion.current = 0;
+    metaRequestSequence.current += 1;
+    statsRequestSequence.current += 1;
+    filesRequestSequence.current += 1;
+    categoriesRequestSequence.current += 1;
+    unmappedRequestSequence.current += 1;
+    loadAllRequestSequence.current += 1;
+    manifestRequestInFlight.current = null;
+    manifestPollAttempts.current = 0;
+    setManifestPollVersion((current) => current + 1);
+    metaRef.current = null;
+    agenticManifestRef.current = null;
+    setMeta(null);
+    setStats(null);
+    setFiles([]);
+    setCategories([]);
+    setUnmappedCategories([]);
+    setEditName("");
+    setEditDesc("");
+    setHasEdits(false);
+    setLoading(true);
+    setAgenticManifest(null);
+    setManifestBuilding(false);
+    setAutomationSaving(false);
+    setRollbackRunning(false);
+    setActionNotice(null);
+    setActionError(null);
+    return () => {
+      if (readyDataRoute.current.kbId === kbId) {
+        manifestMounted.current = false;
+        readyDataRoute.current = syncReadyDataRoute(readyDataRoute.current, "");
       }
-      setMeta(m);
-      setAgenticManifest(m.agentic_ready_manifest || null);
-      if (m.stats) {
-        setStats(m.stats);
-      }
-      setEditName(m.name || "");
-      setEditDesc(m.description || "");
-    } catch {
-      setMeta(null);
-      setAgenticManifest(null);
-    }
+      manifestRequestSequence.current += 1;
+      manifestEpisodeSequence.current += 1;
+      manifestAppliedEpisode.current = null;
+      automationAppliedEpisodeVersion.current = 0;
+      metaRequestSequence.current += 1;
+      statsRequestSequence.current += 1;
+      filesRequestSequence.current += 1;
+      categoriesRequestSequence.current += 1;
+      unmappedRequestSequence.current += 1;
+      loadAllRequestSequence.current += 1;
+      manifestRequestInFlight.current = null;
+    };
   }, [kbId]);
 
-  const loadAgenticManifest = useCallback(async () => {
+  const loadMeta = useCallback(async () => {
     if (!kbId) return;
-    try {
-      const res = await apiGet<{ manifest?: AgenticReadyManifest }>(
-        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest`
-      );
-      setAgenticManifest(res.manifest || null);
-    } catch {
-      setAgenticManifest(null);
+    const requestId = ++metaRequestSequence.current;
+    const requestRoute = captureReadyDataRequest(
+      readyDataRoute.current,
+      manifestMounted.current,
+      kbId,
+      requestId,
+    );
+    if (!requestRoute) return;
+    const manifestEpisodeVersion = ++manifestEpisodeSequence.current;
+    await runReadyDataRouteRequest({
+      request: () => apiGet<{
+        knowledge_base?: (KBMeta & { stats?: KBStats; categories?: string[] });
+      }>(`/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}`),
+      isCurrent: () => isReadyDataRequestCurrent(
+        readyDataRoute.current,
+        manifestMounted.current,
+        requestRoute,
+        metaRequestSequence.current,
+      ),
+      onSuccess: (res) => {
+        const m = res.knowledge_base;
+        if (!m) {
+          metaRef.current = null;
+          setMeta(null);
+          return;
+        }
+        const selected = applyReadyDataManifestUpdate(
+          requestRoute.kbId,
+          m.agentic_ready_manifest,
+          manifestEpisodeVersion,
+        );
+        const nextMeta = {
+          ...m,
+          manifest_profile: selected?.profile || m.manifest_profile,
+          agentic_ready_manifest: selected || undefined,
+        };
+        metaRef.current = nextMeta;
+        setMeta(nextMeta);
+        if (m.stats) {
+          setStats(m.stats);
+        }
+        setEditName(m.name || "");
+        setEditDesc(m.description || "");
+      },
+      onError: () => {
+        metaRef.current = null;
+        setMeta(null);
+      },
+    });
+  }, [applyReadyDataManifestUpdate, kbId]);
+
+  const loadAgenticManifest = useCallback((options: {
+    force?: boolean;
+    preserveCurrentOnError?: boolean;
+  } = {}) => {
+    if (!kbId) return Promise.resolve(false);
+    const requestRoute = captureReadyDataRoute(
+      readyDataRoute.current,
+      manifestMounted.current,
+      kbId,
+    );
+    if (!requestRoute) return Promise.resolve(false);
+    const force = Boolean(options.force);
+    const preserveCurrentOnError = Boolean(options.preserveCurrentOnError);
+    if (!force && manifestRequestInFlight.current) {
+      return manifestRequestInFlight.current;
     }
-  }, [kbId]);
+    const manifestEpisodeVersion = ++manifestEpisodeSequence.current;
+    const requestId = ++manifestRequestSequence.current;
+    const request = (async () => {
+      let loaded = false;
+      await runReadyDataRouteRequest({
+        request: () => apiGet<{ manifest?: AgenticReadyManifest }>(
+          `/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}/agentic-ready-manifest`
+        ),
+        isCurrent: () => isReadyDataRouteCurrent(
+          readyDataRoute.current,
+          manifestMounted.current,
+          requestRoute,
+        ) && requestId === manifestRequestSequence.current,
+        onSuccess: (res) => {
+          applyReadyDataManifestUpdate(
+            requestRoute.kbId,
+            res.manifest || null,
+            manifestEpisodeVersion,
+          );
+          loaded = true;
+        },
+        onError: () => {
+          const nextManifest = readyDataManifestAfterLoad(
+            agenticManifestRef.current,
+            null,
+            false,
+            preserveCurrentOnError,
+          );
+          agenticManifestRef.current = nextManifest;
+          setAgenticManifest(nextManifest);
+        },
+      });
+      return loaded;
+    })();
+    manifestRequestInFlight.current = request;
+    void request.finally(() => {
+      if (manifestRequestInFlight.current === request) {
+        manifestRequestInFlight.current = null;
+      }
+    });
+    return request;
+  }, [applyReadyDataManifestUpdate, kbId]);
 
   const loadStats = useCallback(async () => {
     if (!kbId) return;
-    try {
-      const res = await apiGet<KBStats>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/stats`);
-      setStats(res);
-    } catch {
-      setStats(null);
-    }
+    const requestId = ++statsRequestSequence.current;
+    const requestRoute = captureReadyDataRequest(
+      readyDataRoute.current,
+      manifestMounted.current,
+      kbId,
+      requestId,
+    );
+    if (!requestRoute) return;
+    await runReadyDataRouteRequest({
+      request: () => apiGet<KBStats>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}/stats`,
+      ),
+      isCurrent: () => isReadyDataRequestCurrent(
+        readyDataRoute.current,
+        manifestMounted.current,
+        requestRoute,
+        statsRequestSequence.current,
+      ),
+      onSuccess: setStats,
+      onError: () => setStats(null),
+    });
   }, [kbId]);
 
   const loadFiles = useCallback(async () => {
     if (!kbId) return;
-    try {
-      const res = await apiGet<{ files?: KBFile[]; data?: { files?: KBFile[] } }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/files`);
-      setFiles(res.data?.files || res.files || []);
-    } catch {
-      setFiles([]);
-    }
+    const requestId = ++filesRequestSequence.current;
+    const requestRoute = captureReadyDataRequest(
+      readyDataRoute.current,
+      manifestMounted.current,
+      kbId,
+      requestId,
+    );
+    if (!requestRoute) return;
+    await runReadyDataRouteRequest({
+      request: () => apiGet<{ files?: KBFile[]; data?: { files?: KBFile[] } }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}/files`,
+      ),
+      isCurrent: () => isReadyDataRequestCurrent(
+        readyDataRoute.current,
+        manifestMounted.current,
+        requestRoute,
+        filesRequestSequence.current,
+      ),
+      onSuccess: (res) => setFiles(res.data?.files || res.files || []),
+      onError: () => setFiles([]),
+    });
   }, [kbId]);
 
   const loadCategories = useCallback(async () => {
     if (!kbId) return;
-    try {
-      const res = await apiGet<{ categories?: Array<string | KBCategory> }>(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/categories`);
-      const normalized = (res.categories || []).map((item) =>
-        typeof item === "string" ? { name: item } : { name: item.name, file_count: item.file_count }
-      );
-      setCategories(normalized);
-    } catch {
-      setCategories([]);
-    }
-    try {
-      const res2 = await apiGet<{ unmapped_categories?: UnmappedCategory[] }>("/api/rag/categories/unmapped");
-      setUnmappedCategories((res2.unmapped_categories || []).map((item) => item.name).filter(Boolean));
-    } catch {
-      setUnmappedCategories([]);
-    }
+    const requestId = ++categoriesRequestSequence.current;
+    const requestRoute = captureReadyDataRequest(
+      readyDataRoute.current,
+      manifestMounted.current,
+      kbId,
+      requestId,
+    );
+    if (!requestRoute) return;
+    const isCurrent = () => isReadyDataRequestCurrent(
+      readyDataRoute.current,
+      manifestMounted.current,
+      requestRoute,
+      categoriesRequestSequence.current,
+    );
+    await runReadyDataRouteRequest({
+      request: () => apiGet<{ categories?: Array<string | KBCategory> }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(requestRoute.kbId)}/categories`,
+      ),
+      isCurrent,
+      onSuccess: (res) => {
+        const normalized = (res.categories || []).map((item) =>
+          typeof item === "string" ? { name: item } : { name: item.name, file_count: item.file_count }
+        );
+        setCategories(normalized);
+      },
+      onError: () => setCategories([]),
+    });
+    if (!isCurrent()) return;
+    const unmappedRequestId = ++unmappedRequestSequence.current;
+    const unmappedRequest = captureReadyDataRequest(
+      readyDataRoute.current,
+      manifestMounted.current,
+      requestRoute.kbId,
+      unmappedRequestId,
+    );
+    if (!unmappedRequest) return;
+    const isUnmappedCurrent = () => isCurrent() && isReadyDataRequestCurrent(
+      readyDataRoute.current,
+      manifestMounted.current,
+      unmappedRequest,
+      unmappedRequestSequence.current,
+    );
+    await runReadyDataRouteRequest({
+      request: () => apiGet<{ unmapped_categories?: UnmappedCategory[] }>(
+        "/api/rag/categories/unmapped",
+      ),
+      isCurrent: isUnmappedCurrent,
+      onSuccess: (res) => setUnmappedCategories(
+        (res.unmapped_categories || []).map((item) => item.name).filter(Boolean),
+      ),
+      onError: () => setUnmappedCategories([]),
+    });
   }, [kbId]);
 
   const loadAll = useCallback(async () => {
+    if (!kbId) return;
+    const requestId = ++loadAllRequestSequence.current;
+    const requestRoute = captureReadyDataRequest(
+      readyDataRoute.current,
+      manifestMounted.current,
+      kbId,
+      requestId,
+    );
+    if (!requestRoute) return;
     setLoading(true);
-    await Promise.all([loadMeta(), loadStats(), loadFiles(), loadCategories(), loadAgenticManifest()]);
-    setLoading(false);
-  }, [loadMeta, loadStats, loadFiles, loadCategories, loadAgenticManifest]);
+    await runReadyDataRouteRequest({
+      request: () => Promise.all([
+        loadMeta(),
+        loadStats(),
+        loadFiles(),
+        loadCategories(),
+        loadAgenticManifest(),
+      ]),
+      isCurrent: () => isReadyDataRequestCurrent(
+        readyDataRoute.current,
+        manifestMounted.current,
+        requestRoute,
+        loadAllRequestSequence.current,
+      ),
+      onSuccess: () => {},
+      onError: () => {},
+      onSettled: () => setLoading(false),
+    });
+  }, [kbId, loadMeta, loadStats, loadFiles, loadCategories, loadAgenticManifest]);
 
   useEffect(() => {
     if (match) loadAll();
   }, [match, loadAll]);
+
+  const effectiveManifest = selectEffectiveReadyDataManifest(
+    kbId,
+    agenticManifest,
+    meta?.kb_id,
+    meta?.agentic_ready_manifest,
+  );
+
+  useEffect(() => {
+    const automationState = normalizeReadyAutomationStatus(
+      effectiveManifest?.automation_state,
+      effectiveManifest?.status,
+    );
+    if (!["pending", "running", "building"].includes(automationState)) {
+      manifestPollAttempts.current = 0;
+      return;
+    }
+    if (!shouldPollReadyDataManifest(effectiveManifest, manifestPollAttempts.current, 12)) return;
+    return scheduleReadyDataPoll(() => {
+      manifestPollAttempts.current += 1;
+      void loadAgenticManifest({ preserveCurrentOnError: true }).finally(() => {
+        if (manifestMounted.current) {
+          setManifestPollVersion((current) => current + 1);
+        }
+      });
+    }, 3000, window.setTimeout.bind(window), window.clearTimeout.bind(window));
+  }, [effectiveManifest, loadAgenticManifest, manifestPollVersion]);
 
   const handleSave = async () => {
     if (!kbId) return;
@@ -405,41 +873,198 @@ export default function KBDetail() {
 
   const handleBuildAgenticManifest = async () => {
     if (!kbId) return;
+    const mutationRoute = captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId);
+    if (!mutationRoute) return;
+    const { kbId: mutationKbId, epoch: mutationEpoch } = mutationRoute;
+    const manifestEpisodeVersion = ++manifestEpisodeSequence.current;
     setManifestBuilding(true);
     setActionNotice(null);
     setActionError(null);
-    try {
-      const res = await apiPost<{ manifest?: AgenticReadyManifest; validation?: { valid?: boolean; errors?: string[] } }>(
-        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`,
-        {}
-      );
-      const nextManifest = res.manifest || null;
-      setAgenticManifest(nextManifest);
-      if (nextManifest) {
-        setMeta((current) =>
-          current
-            ? {
-                ...current,
-                manifest_profile: nextManifest.profile || current.manifest_profile,
-                agentic_ready_manifest: nextManifest,
-              }
-            : current
+    await runReadyDataRouteMutation({
+      request: () => apiPost<{
+        ready_data_snapshot?: { manifest?: AgenticReadyManifest };
+        validation?: { valid?: boolean; errors?: string[] };
+      }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/build`,
+        {},
+      ),
+      isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch),
+      onSuccess: async (res) => {
+        const nextManifest = res.ready_data_snapshot?.manifest || null;
+        applyReadyDataManifestUpdate(
+          mutationKbId,
+          nextManifest,
+          manifestEpisodeVersion,
+          { safeMutationSnapshot: true },
         );
-      }
-      const status = nextManifest?.status || "missing";
-      if (status === "ready" && res.validation?.valid !== false) {
-        setActionNotice(t("knowledge.manifest_build_completed"));
-      } else {
-        const detail = res.validation?.errors?.join("; ") || nextManifest?.error_message || nextManifest?.stale_reason || status;
-        setActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", detail));
-      }
-    } catch (err) {
-      console.error("Failed to build agentic manifest:", err);
-      const detail = formatApiErrorDetail(err);
-      setActionError(detail || t("knowledge.manifest_build_failed"));
-    } finally {
-      setManifestBuilding(false);
-    }
+        const refreshed = await loadAgenticManifest({
+          force: true,
+          preserveCurrentOnError: true,
+        });
+        if (!isCurrentReadyDataRoute(mutationKbId, mutationEpoch)) return;
+        if (!refreshed) {
+          setActionError(t("knowledge.ready_refresh_failed"));
+        }
+        const status = nextManifest?.status || "missing";
+        if (status === "ready" && res.validation?.valid !== false) {
+          setActionNotice(t("knowledge.manifest_build_completed"));
+        } else {
+          const detail = res.validation?.errors?.join("; ") || nextManifest?.error_message || nextManifest?.stale_reason || status;
+          setActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", detail));
+        }
+      },
+      onError: (err) => {
+        console.error("Failed to build agentic manifest:", err);
+        const detail = formatApiErrorDetail(err);
+        setActionError(detail || t("knowledge.manifest_build_failed"));
+      },
+      onSettled: () => setManifestBuilding(false),
+    });
+  };
+
+  const updateReadyDataAutomation = async (buildEnabled: boolean, publishEnabled: boolean) => {
+    if (!kbId) return;
+    const mutationRoute = captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId);
+    if (!mutationRoute) return;
+    const { kbId: mutationKbId, epoch: mutationEpoch } = mutationRoute;
+    const manifestEpisodeVersion = ++manifestEpisodeSequence.current;
+    const mutationManifest = effectiveManifest;
+    const profile = selectReadyDataMutationProfile(
+      mutationKbId,
+      mutationManifest,
+      meta?.kb_id,
+      meta?.manifest_profile,
+    );
+    setAutomationSaving(true);
+    setActionNotice(null);
+    setActionError(null);
+    await runReadyDataRouteMutation({
+      request: () => apiPut<ReadyDataAutomationResponse>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-automation`,
+        {
+          profile,
+          automatic_build_enabled: buildEnabled,
+          automatic_publish_enabled: publishEnabled,
+        },
+      ),
+      isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch),
+      onSuccess: async (response) => {
+        const responseTime = selectResponseTimeReadyDataManifest(mutationKbId);
+        if (manifestEpisodeVersion >= automationAppliedEpisodeVersion.current) {
+          automationAppliedEpisodeVersion.current = manifestEpisodeVersion;
+          const confirmedManifest = mergeConfirmedReadyDataAutomationForKb(
+            responseTime,
+            responseTime,
+            mutationKbId,
+            profile,
+            response,
+          );
+          applyReadyDataManifestUpdate(
+            mutationKbId,
+            confirmedManifest,
+            manifestEpisodeVersion,
+            { responseTimeMerged: true },
+          );
+        }
+        setActionNotice(t("knowledge.ready_automation_saved"));
+        const refreshed = await loadAgenticManifest({
+          force: true,
+          preserveCurrentOnError: true,
+        });
+        if (!isCurrentReadyDataRoute(mutationKbId, mutationEpoch)) return;
+        if (!refreshed) {
+          setActionError(t("knowledge.ready_refresh_failed"));
+        }
+      },
+      onError: (err) => {
+        setActionError(formatApiErrorDetail(err) || t("knowledge.ready_automation_save_failed"));
+      },
+      onSettled: () => setAutomationSaving(false),
+    });
+  };
+
+  const handleAutomaticBuildChange = async (enabled: boolean) => {
+    await updateReadyDataAutomation(
+      enabled,
+      enabled ? Boolean(manifest?.automatic_publish_enabled) : false
+    );
+  };
+
+  const handleAutomaticPublishChange = async (enabled: boolean) => {
+    if (enabled && !manifest?.automatic_build_enabled) return;
+    await updateReadyDataAutomation(Boolean(manifest?.automatic_build_enabled), enabled);
+  };
+
+  const handleRollbackPublication = async () => {
+    if (!kbId) return;
+    const mutationRoute = captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId);
+    if (!mutationRoute) return;
+    const { kbId: mutationKbId, epoch: mutationEpoch } = mutationRoute;
+    const mutationManifest = effectiveManifest;
+    const publicationState = mutationManifest?.publication_state;
+    const activeId = publicationState?.active_publication_id;
+    const previous = publicationState?.previous_publication;
+    const previousId = publicationState?.previous_publication_id;
+    if (!activeId || !previousId || !previous) return;
+    const profile = selectReadyDataMutationProfile(
+      mutationKbId,
+      mutationManifest,
+      meta?.kb_id,
+      meta?.manifest_profile,
+    );
+    const confirmation = t("knowledge.ready_rollback_confirm")
+      .replace("{id}", previousId)
+      .replace("{time}", displayTime(previous.published_at));
+    if (!window.confirm(confirmation)) return;
+    if (!isCurrentReadyDataRoute(mutationKbId, mutationEpoch)) return;
+    const manifestEpisodeVersion = ++manifestEpisodeSequence.current;
+    setRollbackRunning(true);
+    setActionNotice(null);
+    setActionError(null);
+    await runReadyDataRouteMutation({
+      request: () => apiPost<{ manifest?: AgenticReadyManifest }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/rollback`,
+        {
+          profile,
+          expected_active_publication_id: activeId,
+          expected_previous_publication_id: previousId,
+        },
+      ),
+      isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch),
+      onSuccess: async (response) => {
+        const responseManifest = response.manifest || null;
+        applyReadyDataManifestUpdate(
+          mutationKbId,
+          responseManifest,
+          manifestEpisodeVersion,
+        );
+        setActionNotice(t("knowledge.ready_rollback_succeeded"));
+        const refreshed = await loadAgenticManifest({
+          force: true,
+          preserveCurrentOnError: true,
+        });
+        if (!isCurrentReadyDataRoute(mutationKbId, mutationEpoch)) return;
+        if (!refreshed) {
+          setActionError(t("knowledge.ready_refresh_failed"));
+        }
+      },
+      onError: async (err) => {
+        if (err instanceof ApiError && err.status === 409) {
+          const refreshed = await loadAgenticManifest({
+            force: true,
+            preserveCurrentOnError: true,
+          });
+          if (!isCurrentReadyDataRoute(mutationKbId, mutationEpoch)) return;
+          setActionError(t(readyDataRollbackErrorKey(409, refreshed)));
+        } else {
+          setActionError(t(readyDataRollbackErrorKey(
+            err instanceof ApiError ? err.status : undefined,
+            false,
+          )));
+        }
+      },
+      onSettled: () => setRollbackRunning(false),
+    });
   };
 
   const handleSearchBindable = async (query?: string) => {
@@ -553,7 +1178,7 @@ export default function KBDetail() {
 
   if (!match) return null;
 
-  if (loading) {
+  if (loading || (meta && meta.kb_id !== kbId)) {
     return (
       <div className="flex items-center justify-center py-32">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -591,16 +1216,32 @@ export default function KBDetail() {
   const needsEmbeddingRebuild = meta.needs_reindex || meta.embedding_compatible === false;
   const isManualMode = meta.kb_mode === "manual";
   const isCategoryMode = meta.kb_mode === "category";
-  const manifest = agenticManifest || meta.agentic_ready_manifest || null;
-  const manifestStatus = manifest?.status || "missing";
+  const manifest = effectiveManifest;
+  const activePublication = manifest?.publication_state?.active_publication;
+  const previousPublication = manifest?.publication_state?.previous_publication;
+  const manifestStatus = normalizeReadyServingStatus(
+    manifest?.status,
+    Boolean(activePublication),
+    Boolean(manifest?.serving_stale),
+  );
   const manifestProfile = manifest
     ? manifest.profile || meta.manifest_profile || t("knowledge.manifest_default_profile")
     : meta.manifest_profile || t("knowledge.manifest_default_profile");
   const manifestDocCount = manifest ? manifest.doc_count ?? 0 : 0;
   const manifestSectionCount = manifest ? manifest.section_count ?? 0 : 0;
-  const manifestOutputDir = manifest ? manifest.output_dir || "-" : "-";
   const manifestMessage = getManifestFallbackMessage(manifest, t);
-  const manifestBusy = manifestBuilding || manifestStatus === "building";
+  const manifestAutomationState = normalizeReadyAutomationStatus(
+    manifest?.automation_state,
+    manifest?.status,
+  );
+  const manifestBusy = manifestBuilding || ["pending", "running", "building"].includes(manifestAutomationState);
+  const currentReadyIndexVersion = manifest?.current_ready_index_version_id
+    || activePublication?.current_ready_index_version_id;
+  const rollbackAvailable = Boolean(
+    manifest?.publication_state?.active_publication_id
+    && manifest?.publication_state?.previous_publication_id
+    && previousPublication?.status === "previous"
+  );
   const currentEmbeddingLabel = [
     meta.current_embeddings?.provider,
     meta.current_embeddings?.model,
@@ -717,7 +1358,18 @@ export default function KBDetail() {
                     )}
                     data-testid="badge-agentic-manifest-detail"
                   >
-                    {t("knowledge.manifest_label")} {manifestStatus}
+                    <span data-testid="ready-data-serving-status">
+                      {t("knowledge.ready_serving_status")}: {getServingStatusLabel(manifestStatus, t)}
+                    </span>
+                  </span>
+                  <span
+                    className={cn(
+                      "inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full",
+                      getAutomationStatusClass(manifestAutomationState)
+                    )}
+                    data-testid="ready-data-automation-status"
+                  >
+                    {t("knowledge.ready_automation_status")}: {getAutomationStatusLabel(manifestAutomationState, t)}
                   </span>
                   <span className="text-[11px] text-muted-foreground font-mono">
                     {t("knowledge.manifest_profile_short")}: {manifestProfile}
@@ -746,16 +1398,70 @@ export default function KBDetail() {
                 </button>
               )}
             </div>
-            <div className="mt-3 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-3 grid gap-2 text-[11px] text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
               <span className="font-mono truncate">{t("knowledge.manifest_profile_short")} {manifestProfile}</span>
               <span className="tabular-nums">{manifestDocCount} {t("knowledge.manifest_docs")}</span>
               <span className="tabular-nums">{manifestSectionCount} {t("knowledge.manifest_sections")}</span>
-              <span className="font-mono break-all">{t("knowledge.manifest_output")} {manifestOutputDir}</span>
             </div>
             {manifest?.built_at && (
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {t("knowledge.manifest_built")} {new Date(manifest.built_at).toLocaleString()}
               </p>
+            )}
+            {canManageKnowledge && (
+              <div className="mt-4 grid gap-3 border-t border-border pt-4 sm:grid-cols-2">
+                <label className="flex items-center justify-between gap-3 text-xs">
+                  <span>{t("knowledge.ready_automatic_build")}</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(manifest?.automatic_build_enabled)}
+                    disabled={automationSaving}
+                    onChange={(event) => void handleAutomaticBuildChange(event.target.checked)}
+                    data-testid="toggle-ready-data-automatic-build"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs">
+                  <span>{t("knowledge.ready_automatic_publish")}</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(manifest?.automatic_publish_enabled)}
+                    disabled={!manifest?.automatic_build_enabled || automationSaving}
+                    onChange={(event) => void handleAutomaticPublishChange(event.target.checked)}
+                    data-testid="toggle-ready-data-automatic-publish"
+                  />
+                </label>
+              </div>
+            )}
+            <div className="mt-4 grid gap-3 border-t border-border pt-4 text-[11px] sm:grid-cols-2 lg:grid-cols-3">
+              <div><span className="text-muted-foreground">{t("knowledge.ready_last_attempt")}</span><p className="font-mono break-all">{displayValue(manifest?.last_attempt_publication_id)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_last_success")}</span><p>{displayTime(manifest?.last_success_at)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_last_error")}</span><p>{displayValue(getReadyPublicMessageLabel(manifest?.last_error, t))}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_active_publication")}</span><p className="font-mono break-all">{displayValue(activePublication?.publication_id)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_previous_publication")}</span><p className="font-mono break-all">{displayValue(previousPublication?.publication_id)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_authoritative_source")}</span><p className="font-mono break-all">{displayValue(activePublication?.authoritative_source_version_kind)} / {displayValue(activePublication?.authoritative_source_version_id)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_observed_index")}</span><p className="font-mono break-all">{displayValue(activePublication?.observed_index_version_id)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_current_index")}</span><p className="font-mono break-all">{displayValue(currentReadyIndexVersion)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_index_consumed")}</span><p>{activePublication?.index_consumed_by_builder ? t("knowledge.ready_yes") : t("knowledge.ready_no")}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_artifact_digest")}</span><p className="font-mono break-all">{displayValue(activePublication?.artifact_digest)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_smoke")}</span><p>{getReadySmokeStatusLabel(manifest?.smoke_status ?? activePublication?.smoke_status, t)} / {displayTime(manifest?.smoke_checked_at ?? activePublication?.smoke_checked_at)}</p></div>
+              <div><span className="text-muted-foreground">{t("knowledge.ready_publication_times")}</span><p>{displayTime(activePublication?.built_at)} / {displayTime(activePublication?.published_at)}</p></div>
+            </div>
+            {canRunKnowledgeTasks && (
+              <div className="mt-4 border-t border-border pt-4">
+                <p className="text-[11px] text-muted-foreground">
+                  {t("knowledge.ready_rollback_target")}: {displayValue(previousPublication?.publication_id)} / {displayTime(previousPublication?.published_at)}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleRollbackPublication()}
+                  disabled={!rollbackAvailable || rollbackRunning}
+                  className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted disabled:opacity-50"
+                  data-testid="button-rollback-ready-data"
+                >
+                  {rollbackRunning && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {t("knowledge.ready_rollback")}
+                </button>
+              </div>
             )}
           </div>
         </div>

@@ -52,6 +52,14 @@ def test_db_path(tmp_path):
             token_count INTEGER DEFAULT 0,
             section_hierarchy TEXT
         );
+        CREATE TABLE kb_ready_index_state (
+            kb_id TEXT PRIMARY KEY,
+            index_version_id TEXT NOT NULL,
+            embedding_provider TEXT,
+            embedding_model TEXT,
+            embedding_dimension INTEGER,
+            updated_at TEXT
+        );
     """
     )
 
@@ -177,6 +185,64 @@ def test_build_l0_source_version_is_stable_and_tracks_consumed_inputs(test_db_pa
         profile="general",
     )
     assert changed["source_version_id"] != first["source_version_id"]
+
+
+def test_build_l0_records_observed_ready_index_without_consuming_it(test_db_path, tmp_path):
+    conn = sqlite3.connect(test_db_path)
+    conn.execute(
+        """
+        CREATE TABLE rag_kb_files (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            PRIMARY KEY (kb_id, file_url)
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO rag_kb_files(kb_id,file_url) VALUES(?,?)",
+        ("kb-ready", "https://example.com/rule1"),
+    )
+    conn.commit()
+    conn.close()
+
+    without_index = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path / "without-index"),
+        profile="general",
+        kb_id="kb-ready",
+    )
+    assert without_index["index_version_id"] is None
+    assert without_index["index_consumed_by_builder"] is False
+
+    conn = sqlite3.connect(test_db_path)
+    conn.execute(
+        """
+        INSERT INTO kb_ready_index_state (
+            kb_id, index_version_id, embedding_provider, embedding_model,
+            embedding_dimension, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("kb-ready", "idx-observed", "openai", "embedding-test", 3, "2026-08-19T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    with_index = builder.build_l0(
+        db_path=test_db_path,
+        output_dir=str(tmp_path / "with-index"),
+        profile="general",
+        kb_id="kb-ready",
+    )
+    assert with_index["index_version_id"] == "idx-observed"
+    assert with_index["index_consumed_by_builder"] is False
+    assert with_index["source_version_id"] == without_index["source_version_id"]
+
+    fingerprint = builder.get_builder_source_fingerprint(
+        db_path=test_db_path,
+        kb_id="kb-ready",
+    )
+    assert set(fingerprint) == {"source_version_kind", "source_version_id"}
+    assert fingerprint["source_version_id"] == without_index["source_version_id"]
 
 
 def test_build_l0_closes_database_connection_when_build_fails(test_db_path, monkeypatch):

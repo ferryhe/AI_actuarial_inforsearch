@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import {
@@ -24,6 +24,16 @@ import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost, apiDelete, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
+import {
+  mergeReadyDataKnowledgeList,
+  mergeReadyDataKnowledgeManifest,
+  resolveReadyDataManifestEpisode,
+  resolveReadyDataSafeMutationManifestEpisode,
+} from "@/lib/ready-data-ui-state";
+import type {
+  AgenticReadyManifest,
+  ReadyDataManifestEpisode,
+} from "@/lib/ready-data-ui-state";
 
 interface KnowledgeBase {
   id: string;
@@ -48,20 +58,6 @@ interface KnowledgeBase {
   kb_mode?: string;
   manifest_profile?: string;
   agentic_ready_manifest?: AgenticReadyManifest;
-}
-
-interface AgenticReadyManifest {
-  kb_id: string;
-  profile: string;
-  status: "missing" | "ready" | "building" | "failed" | "stale";
-  usable: boolean;
-  output_dir?: string;
-  built_at?: string;
-  doc_count?: number;
-  section_count?: number;
-  error_message?: string;
-  stale_reason?: string;
-  fallback_mode?: string;
 }
 
 interface ChunkProfile {
@@ -108,6 +104,10 @@ const emptyKbForm = {
   manifest_profile: "general",
 };
 
+const READY_DATA_LIST_POLL_INTERVAL_MS = 3_000;
+const READY_DATA_LIST_MAX_POLL_ATTEMPTS = 12;
+const READY_DATA_LIST_BUSY_STATES = new Set(["pending", "running", "building"]);
+
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
   visible: (i: number) => ({
@@ -143,6 +143,7 @@ function getManifestStatusClass(status?: AgenticReadyManifest["status"]) {
     case "building":
       return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
     case "failed":
+    case "unavailable":
       return "bg-red-500/10 text-red-700 dark:text-red-300";
     case "stale":
       return "bg-orange-500/10 text-orange-700 dark:text-orange-300";
@@ -152,26 +153,71 @@ function getManifestStatusClass(status?: AgenticReadyManifest["status"]) {
   }
 }
 
+function getAutomationStatusClass(status?: string) {
+  if (status === "failed") return "bg-red-500/10 text-red-700 dark:text-red-300";
+  if (status === "running" || status === "building" || status === "pending") {
+    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  }
+  if (status === "succeeded") return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  return "bg-muted text-muted-foreground";
+}
+
 type Translate = (key: string) => string;
 
 function formatTranslated(t: Translate, key: string, replacements: Record<string, string>) {
   return Object.entries(replacements).reduce((text, [name, value]) => text.replace(`{${name}}`, value), t(key));
 }
 
+function getReadyPublicMessageLabel(value: string | null | undefined, t: Translate) {
+  switch (value) {
+    case "ready_data source evaluation is pending":
+      return t("knowledge.ready_error_source_pending");
+    case "KB source files changed after the ready_data manifest was built":
+    case "KB document count differs from the ready_data manifest":
+      return t("knowledge.ready_error_source_changed");
+    case "empty ready_data requires manual publish confirmation":
+      return t("knowledge.ready_error_manual_confirmation");
+    case "ready_data is blocked by a hard source-state gate":
+    case "ready_data is unavailable":
+      return t("knowledge.ready_error_unavailable");
+    case "ready_data manifest has not been built":
+    case "ready_data operation failed":
+      return t("knowledge.ready_error_generic");
+    case undefined:
+    case null:
+    case "":
+      return "";
+    default:
+      return t("knowledge.ready_error_generic");
+  }
+}
+
 function getManifestDetail(t: Translate, detail?: string | null) {
-  return detail ? formatTranslated(t, "knowledge.manifest_detail", { detail }) : "";
+  const localizedDetail = getReadyPublicMessageLabel(detail, t);
+  return localizedDetail
+    ? formatTranslated(t, "knowledge.manifest_detail", { detail: localizedDetail })
+    : "";
 }
 
 function getManifestFallbackMode(t: Translate, manifest?: AgenticReadyManifest) {
-  const fallback = manifest?.fallback_mode || "standard";
-  return fallback === "standard" ? t("knowledge.manifest_standard_fallback") : fallback;
+  switch (manifest?.fallback_mode) {
+    case "agentic": return t("knowledge.manifest_agentic_mode");
+    case "standard": return t("knowledge.manifest_standard_fallback");
+    default: return t("knowledge.manifest_unknown_mode");
+  }
 }
 
 function getManifestFallbackMessage(manifest: AgenticReadyManifest | undefined, t: Translate) {
-  const status = manifest?.status || "missing";
+  const rawStatus = manifest?.status || "missing";
   const fallback = getManifestFallbackMode(t, manifest);
+  if (rawStatus === "building") return t("knowledge.manifest_building_message");
+  const status = normalizeReadyServingStatus(
+    rawStatus,
+    Boolean(manifest?.usable),
+    Boolean(manifest?.serving_stale),
+  );
   if (status === "ready" && manifest?.usable) return "";
-  if (status === "building") return t("knowledge.manifest_building_message");
+  if (status === "unavailable") return t("knowledge.manifest_unavailable_message");
   if (status === "failed") {
     return formatTranslated(t, "knowledge.manifest_failed_fallback", {
       detail: getManifestDetail(t, manifest?.error_message),
@@ -179,6 +225,11 @@ function getManifestFallbackMessage(manifest: AgenticReadyManifest | undefined, 
     });
   }
   if (status === "stale") {
+    if (manifest?.usable && manifest.fallback_mode === "agentic") {
+      return formatTranslated(t, "knowledge.manifest_stale_agentic_serving", {
+        detail: getManifestDetail(t, manifest?.stale_reason),
+      });
+    }
     return formatTranslated(t, "knowledge.manifest_stale_fallback", {
       detail: getManifestDetail(t, manifest?.stale_reason),
       fallback,
@@ -192,6 +243,53 @@ function getManifestActionLabel(manifest: AgenticReadyManifest | undefined, t: T
   if (status === "ready" || status === "stale" || status === "failed") return t("knowledge.manifest_rebuild");
   if (status === "building") return t("knowledge.manifest_building_action");
   return t("knowledge.manifest_build");
+}
+
+function normalizeReadyServingStatus(
+  status: unknown,
+  hasActive = false,
+  stale = false,
+): AgenticReadyManifest["status"] {
+  if (status === "building") return hasActive ? (stale ? "stale" : "ready") : "missing";
+  if (["missing", "ready", "stale", "failed", "unavailable"].includes(String(status))) {
+    return status as AgenticReadyManifest["status"];
+  }
+  return "unavailable";
+}
+
+function normalizeReadyAutomationStatus(status: unknown, legacyServingStatus?: unknown) {
+  if ((status === undefined || status === null || status === "disabled" || status === "idle")
+    && legacyServingStatus === "building") return "building";
+  if (status === undefined || status === null || status === "disabled") return "idle";
+  if (["idle", "pending", "running", "building", "awaiting_publish", "awaiting_manual_confirmation", "succeeded", "failed"].includes(String(status))) {
+    return String(status);
+  }
+  return "failed";
+}
+
+function getServingStatusLabel(status: string, t: Translate) {
+  switch (status) {
+    case "ready": return t("knowledge.ready_serving_ready");
+    case "stale": return t("knowledge.ready_serving_stale");
+    case "failed":
+    case "unavailable": return t("knowledge.ready_serving_unavailable");
+    case "missing":
+    default: return t("knowledge.ready_serving_missing");
+  }
+}
+
+function getAutomationStatusLabel(status: string, t: Translate) {
+  switch (status) {
+    case "pending": return t("knowledge.ready_automation_pending");
+    case "running": return t("knowledge.ready_automation_running");
+    case "building": return t("knowledge.ready_automation_building");
+    case "awaiting_publish": return t("knowledge.ready_automation_awaiting_publish");
+    case "awaiting_manual_confirmation": return t("knowledge.ready_automation_awaiting_manual_confirmation");
+    case "succeeded": return t("knowledge.ready_automation_succeeded");
+    case "failed": return t("knowledge.ready_automation_failed");
+    case "idle":
+    default: return t("knowledge.ready_automation_idle");
+  }
 }
 
 function ModeBadge({ mode }: { mode?: string }) {
@@ -254,6 +352,41 @@ export default function Knowledge() {
   const [categoryStatsLoading, setCategoryStatsLoading] = useState(false);
   const [kbActionError, setKbActionError] = useState<string | null>(null);
   const [kbActionNotice, setKbActionNotice] = useState<string | null>(null);
+  const [readyDataListPollVersion, setReadyDataListPollVersion] = useState(0);
+  const readyDataListPollAttempts = useRef(0);
+  const loadDataInFlight = useRef<Promise<void> | null>(null);
+  const readyDataListManifestVersion = useRef(0);
+  const readyDataListAppliedManifestEpisodes = useRef(
+    new Map<string, ReadyDataManifestEpisode>(),
+  );
+
+  const applyReadyDataListManifestEpisode = useCallback((
+    kbId: string,
+    incoming: AgenticReadyManifest | null | undefined,
+    version: number,
+    current: AgenticReadyManifest | null | undefined = null,
+    safeMutationSnapshot = false,
+  ) => {
+    const latestApplied = readyDataListAppliedManifestEpisodes.current.get(kbId) || null;
+    const decision = safeMutationSnapshot
+      ? resolveReadyDataSafeMutationManifestEpisode(
+        kbId,
+        current,
+        incoming,
+        version,
+        latestApplied,
+      )
+      : resolveReadyDataManifestEpisode(
+        kbId,
+        incoming,
+        version,
+        latestApplied,
+      );
+    if (decision.applicable && decision.authoritative && decision.applied) {
+      readyDataListAppliedManifestEpisodes.current.set(kbId, decision.applied);
+    }
+    return decision.authoritative;
+  }, []);
 
   const [kbForm, setKbForm] = useState(emptyKbForm);
 
@@ -265,9 +398,11 @@ export default function Knowledge() {
     tokenizer: "cl100k_base",
   });
 
-  const loadData = useCallback(() => {
-    setLoading(true);
-    Promise.all([
+  const loadData = useCallback((showLoading = true): Promise<void> => {
+    if (loadDataInFlight.current) return loadDataInFlight.current;
+    const requestManifestVersion = ++readyDataListManifestVersion.current;
+    if (showLoading) setLoading(true);
+    const request = Promise.all([
       apiGet<Record<string, unknown>>("/api/rag/knowledge-bases").catch(() => null),
       apiGet<Record<string, unknown>>("/api/chunk/profiles").catch(() => null),
       apiGet<Record<string, unknown>>("/api/rag/categories/mapping").catch(() => null),
@@ -279,27 +414,62 @@ export default function Knowledge() {
           current_embeddings?: CurrentEmbedding;
           data?: { knowledge_bases?: KnowledgeBase[]; current_embeddings?: CurrentEmbedding };
         } | null;
-        const kbList: KnowledgeBase[] = kbPayload?.knowledge_bases || kbPayload?.data?.knowledge_bases || [];
-        setKbs(kbList);
-        setCurrentEmbedding(kbPayload?.current_embeddings || kbPayload?.data?.current_embeddings || null);
+        if (kbPayload) {
+          const kbList: KnowledgeBase[] = kbPayload.knowledge_bases || kbPayload.data?.knowledge_bases || [];
+          const manifestAuthorityByKb = new Map<string, boolean>();
+          for (const item of kbList) {
+            const itemKbId = String(
+              item.kb_id || item.id || item.agentic_ready_manifest?.kb_id || "",
+            ).trim();
+            if (!itemKbId || !item.agentic_ready_manifest) continue;
+            manifestAuthorityByKb.set(
+              itemKbId,
+              applyReadyDataListManifestEpisode(
+                itemKbId,
+                item.agentic_ready_manifest,
+                requestManifestVersion,
+              ),
+            );
+          }
+          setKbs((current) => mergeReadyDataKnowledgeList(
+            current,
+            kbList,
+            (kbId) => manifestAuthorityByKb.get(kbId) ?? false,
+          ));
+          setCurrentEmbedding(kbPayload.current_embeddings || kbPayload.data?.current_embeddings || null);
+        }
 
         const profilePayload = profileResp as { profiles?: ChunkProfile[]; data?: ChunkProfile[] | { profiles?: ChunkProfile[] } } | null;
-        const legacyProfiles = profilePayload?.data;
-        const pList: ChunkProfile[] = Array.isArray(profilePayload?.profiles)
-          ? profilePayload.profiles
-          : Array.isArray(legacyProfiles)
-            ? legacyProfiles
-            : Array.isArray((legacyProfiles as Record<string, unknown> | undefined)?.profiles)
-              ? ((legacyProfiles as Record<string, unknown>).profiles as ChunkProfile[])
-              : [];
-        setProfiles(pList);
+        if (profilePayload) {
+          const legacyProfiles = profilePayload.data;
+          const pList: ChunkProfile[] = Array.isArray(profilePayload.profiles)
+            ? profilePayload.profiles
+            : Array.isArray(legacyProfiles)
+              ? legacyProfiles
+              : Array.isArray((legacyProfiles as Record<string, unknown> | undefined)?.profiles)
+                ? ((legacyProfiles as Record<string, unknown>).profiles as ChunkProfile[])
+                : [];
+          setProfiles(pList);
+        }
 
-        const ragCategories = normalizeCategoryNames((ragCategoriesResp as { categories?: unknown[] } | null)?.categories);
-        const usedCategories = normalizeCategoryNames((usedCategoriesResp as { categories?: unknown[] } | null)?.categories);
-        setCategoryOptions(Array.from(new Set([...ragCategories, ...usedCategories])).sort((a, b) => a.localeCompare(b)));
+        if (ragCategoriesResp && usedCategoriesResp) {
+          const ragCategories = normalizeCategoryNames((ragCategoriesResp as { categories?: unknown[] }).categories);
+          const usedCategories = normalizeCategoryNames((usedCategoriesResp as { categories?: unknown[] }).categories);
+          setCategoryOptions(Array.from(new Set([...ragCategories, ...usedCategories])).sort((a, b) => a.localeCompare(b)));
+        }
       })
-      .finally(() => setLoading(false));
-  }, []);
+      .then(() => undefined);
+    loadDataInFlight.current = request.finally(() => {
+      if (showLoading) setLoading(false);
+      loadDataInFlight.current = null;
+    });
+    return loadDataInFlight.current;
+  }, [applyReadyDataListManifestEpisode]);
+
+  const readyDataListBusy = kbs.some((kb) => READY_DATA_LIST_BUSY_STATES.has(normalizeReadyAutomationStatus(
+    kb.agentic_ready_manifest?.automation_state,
+    kb.agentic_ready_manifest?.status,
+  )));
 
   const loadSelectableFiles = useCallback((query = "") => {
     if (!kbForm.chunk_profile_id) {
@@ -319,8 +489,25 @@ export default function Knowledge() {
   }, [kbForm.chunk_profile_id]);
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!readyDataListBusy) {
+      readyDataListPollAttempts.current = 0;
+      return;
+    }
+    if (readyDataListPollAttempts.current >= READY_DATA_LIST_MAX_POLL_ATTEMPTS) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      readyDataListPollAttempts.current += 1;
+      void loadData(false).finally(() => {
+        setReadyDataListPollVersion((version) => version + 1);
+      });
+    }, READY_DATA_LIST_POLL_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [loadData, readyDataListBusy, readyDataListPollVersion]);
 
   useEffect(() => {
     if (!showCreateKB || kbForm.chunk_profile_id) return;
@@ -452,33 +639,44 @@ export default function Knowledge() {
   };
 
   const handleBuildAgenticManifest = async (kbId: string) => {
+    const mutationManifestVersion = ++readyDataListManifestVersion.current;
     setBuildingManifestKb(kbId);
     setKbActionError(null);
     setKbActionNotice(null);
     try {
-      const res = await apiPost<{ manifest?: AgenticReadyManifest; validation?: { valid?: boolean; errors?: string[] } }>(
+      const res = await apiPost<{
+        ready_data_snapshot?: { manifest?: AgenticReadyManifest };
+        validation?: { valid?: boolean; errors?: string[] };
+      }>(
         `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`,
         {}
       );
-      if (res.manifest) {
-        const manifest = res.manifest;
-        setKbs((current) =>
-          current.map((kb) =>
-            getKbId(kb) === kbId
-              ? {
-                  ...kb,
-                  manifest_profile: manifest.profile || kb.manifest_profile,
-                  agentic_ready_manifest: manifest,
-                }
-              : kb
-          )
-        );
+      const manifest = res.ready_data_snapshot?.manifest;
+      if (manifest) {
+        setKbs((current) => {
+          const currentManifest = current.find((item) => (
+            String(item.kb_id || item.id || "").trim() === kbId
+          ))?.agentic_ready_manifest;
+          const manifestAuthoritative = applyReadyDataListManifestEpisode(
+            kbId,
+            manifest,
+            mutationManifestVersion,
+            currentManifest,
+            true,
+          );
+          return mergeReadyDataKnowledgeManifest(
+            current,
+            kbId,
+            manifest,
+            manifestAuthoritative,
+          );
+        });
       }
-      const status = res.manifest?.status || "missing";
+      const status = manifest?.status || "missing";
       if (status === "ready" && res.validation?.valid !== false) {
         setKbActionNotice(t("knowledge.manifest_build_completed"));
       } else {
-        const detail = res.validation?.errors?.join("; ") || res.manifest?.error_message || res.manifest?.stale_reason || status;
+        const detail = res.validation?.errors?.join("; ") || manifest?.error_message || manifest?.stale_reason || status;
         setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", detail));
       }
     } catch (err) {
@@ -994,10 +1192,18 @@ export default function Knowledge() {
             const needsReembed = kb.needs_reindex || kb.embedding_compatible === false;
             const status = kb.availability || kb.status;
             const manifest = kb.agentic_ready_manifest;
-            const manifestStatus = manifest?.status || "missing";
+            const manifestStatus = normalizeReadyServingStatus(
+              manifest?.status,
+              Boolean(manifest?.usable),
+              Boolean(manifest?.serving_stale),
+            );
+            const manifestAutomationState = normalizeReadyAutomationStatus(
+              manifest?.automation_state,
+              manifest?.status,
+            );
             const manifestProfile = manifest?.profile || kb.manifest_profile || t("knowledge.manifest_default_profile");
             const manifestMessage = getManifestFallbackMessage(manifest, t);
-            const manifestBusy = buildingManifestKb === kbId || manifestStatus === "building";
+            const manifestBusy = buildingManifestKb === kbId || ["pending", "running", "building"].includes(manifestAutomationState);
             const cardEmbeddingLabel = kb.current_embeddings?.model || currentEmbedding?.model || kb.embedding_model || "";
             return (
               <motion.div
@@ -1047,7 +1253,16 @@ export default function Knowledge() {
                             )}
                             data-testid={`badge-agentic-manifest-${kbId}`}
                           >
-                            {t("knowledge.manifest_label")} {manifestStatus}
+                            {t("knowledge.ready_serving_status")}: {getServingStatusLabel(manifestStatus, t)}
+                          </span>
+                          <span
+                            className={cn(
+                              "inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full",
+                              getAutomationStatusClass(manifestAutomationState)
+                            )}
+                            data-testid={`badge-agentic-automation-${kbId}`}
+                          >
+                            {t("knowledge.ready_automation_status")}: {getAutomationStatusLabel(manifestAutomationState, t)}
                           </span>
                           <span className="text-[10px] text-muted-foreground font-mono truncate">
                             {manifestProfile}

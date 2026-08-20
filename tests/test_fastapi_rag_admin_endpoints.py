@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,111 @@ from ai_actuarial.api.routers import rag_admin as rag_admin_router
 from ai_actuarial.storage import Storage
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+def _record_snapshot_race_publication(
+    storage: Storage,
+    *,
+    kb_id: str,
+    label: str,
+    output_dir: Path,
+) -> dict[str, object]:
+    return storage.record_agentic_ready_publication(
+        kb_id=kb_id,
+        index_version_id=f"idx-{label}",
+        source_version_kind="kb_snapshot",
+        source_version_id=f"source-{label}",
+        profile="general",
+        profile_version="1",
+        status="validated",
+        output_dir=str(output_dir),
+        artifact_files=[
+            "doc_catalog.jsonl",
+            "sections.jsonl",
+            "ready_data_manifest.json",
+        ],
+        doc_count=1,
+        section_count=1,
+        built_at="2026-08-20T12:00:00+00:00",
+        artifact_digest=f"digest-{label}",
+        source_db=storage.db_path,
+        schema_versions={"ready_data": "1"},
+    )
+
+
+def _public_snapshot_identity(body: dict[str, object]) -> tuple[object, ...]:
+    manifest = body["manifest"]
+    publication_state = body["publication_state"]
+    assert isinstance(manifest, dict)
+    assert isinstance(publication_state, dict)
+    active = publication_state.get("active_publication")
+    assert isinstance(active, dict)
+    return (
+        publication_state.get("active_publication_id"),
+        active.get("publication_id"),
+        active.get("authoritative_source_version_id"),
+        publication_state.get("current_ready_index_version_id"),
+        publication_state.get("automatic_build_enabled"),
+        publication_state.get("automatic_publish_enabled"),
+        publication_state.get("source_generation"),
+        publication_state.get("pending_generation"),
+        manifest.get("status"),
+        manifest.get("current_ready_index_version_id"),
+    )
+
+
+def _build_public_rollback_pair(
+    client: TestClient,
+    *,
+    db_path: Path,
+    kb_id: str,
+    file_url: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    first_response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first_response.status_code == 200, first_response.text
+    first = first_response.json()["candidate_publication"]
+    storage = Storage(str(db_path))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                (f"Changed source for {kb_id}", file_url),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id=kb_id,
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+    second_response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    )
+    assert second_response.status_code == 200, second_response.text
+    return first, second_response.json()["candidate_publication"]
+
+
+def _assert_publication_slots(
+    db_path: Path,
+    *,
+    kb_id: str,
+    active_id: object,
+    previous_id: object,
+) -> None:
+    storage = Storage(str(db_path))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id=kb_id,
+            profile="general",
+        )
+        assert state["active_publication_id"] == active_id
+        assert state["previous_publication_id"] == previous_id
+    finally:
+        storage.close()
 
 
 def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
@@ -249,6 +355,7 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/rag/knowledge-bases/{kb_id}/stats" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build" in body["native_paths"]
+    assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files/{file_url:path}" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/categories" in body["native_paths"]
@@ -498,18 +605,22 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     created_manifest = create_kb.json()["knowledge_base"]["agentic_ready_manifest"]
     assert created_manifest["status"] == "missing"
     assert created_manifest["fallback_mode"] == "standard"
+    assert created_manifest["publication_revision"] == 0
     assert create_kb.json()["knowledge_base"]["manifest_profile"] == "general"
 
     status_before_build = client.get("/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest")
     assert status_before_build.status_code == 200, status_before_build.text
     assert status_before_build.json()["manifest"]["status"] == "missing"
+    assert status_before_build.json()["manifest"]["publication_revision"] == 0
+    assert status_before_build.json()["publication_state"]["publication_revision"] == 0
 
     build = client.post(
         "/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest/build",
         json={},
     )
     assert build.status_code == 200, build.text
-    manifest = build.json()["manifest"]
+    build_body = build.json()
+    manifest = build_body["manifest"]
     assert manifest["status"] == "ready"
     assert manifest["usable"] is True
     assert manifest["fallback_mode"] == "agentic"
@@ -519,7 +630,30 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     assert manifest["source_version_kind"] == "catalog_chunks_snapshot"
     assert manifest["source_version_id"].startswith("rdsnap_")
     assert len(manifest["artifact_digest"]) == 64
+    assert manifest["publication_revision"] == 1
+    assert build.json()["publication_state"]["publication_revision"] == 1
     assert build.json()["publication_state"]["automatic_publish_enabled"] is False
+    safe_snapshot = build_body["ready_data_snapshot"]
+    assert safe_snapshot["manifest"]["publication_revision"] == 1
+    assert safe_snapshot["publication_state"]["publication_revision"] == 1
+    assert safe_snapshot["publication_state"]["active_publication_id"] == manifest["publication_id"]
+    assert safe_snapshot["publication_state"]["previous_publication_id"] is None
+    assert safe_snapshot["publication_state"]["previous_publication"] is None
+    safe_active = safe_snapshot["publication_state"]["active_publication"]
+    assert safe_active["publication_id"] == manifest["publication_id"]
+    assert safe_active["index_consumed_by_builder"] is False
+    serialized_safe_snapshot = json.dumps(safe_snapshot, sort_keys=True)
+    for forbidden in (
+        "source_db",
+        "output_dir",
+        "quarantine_dir",
+        "claim_token",
+        "lease_expires_at",
+        "matched_doc_id",
+        "matched_file_url",
+        "evidence",
+    ):
+        assert forbidden not in serialized_safe_snapshot
     output_dir = Path(manifest["output_dir"])
     assert output_dir.is_dir()
 
@@ -552,6 +686,1941 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     assert stale_manifest["pending_evaluation_generation"] == 2
     assert stale_manifest["source_state"]["pending_severity"] == "soft_stale"
     assert stale_manifest["source_state"]["pending_reasons"] == ["membership_added"]
+
+
+@pytest.mark.parametrize("concurrent_mutation", ("publish", "rollback"))
+def test_ready_manifest_public_projection_uses_one_sqlite_read_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+    concurrent_mutation: str,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = f"kb-read-snapshot-{concurrent_mutation}"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": f"Read snapshot {concurrent_mutation}",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+
+    setup = Storage(str(tmp_path / "index.db"))
+    try:
+        candidate = _record_snapshot_race_publication(
+            setup,
+            kb_id=kb_id,
+            label=f"{concurrent_mutation}-candidate",
+            output_dir=tmp_path / f"{concurrent_mutation}-candidate",
+        )
+        if concurrent_mutation == "rollback":
+            setup.publish_agentic_ready_publication(
+                str(candidate["publication_id"]),
+                expected_active_publication_id=str(first["publication_id"]),
+            )
+            expected_response_active = candidate
+            expected_final_active_id = str(first["publication_id"])
+        else:
+            expected_response_active = first
+            expected_final_active_id = str(candidate["publication_id"])
+    finally:
+        setup.close()
+
+    old_response = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    )
+    assert old_response.status_code == 200, old_response.text
+    old_identity = _public_snapshot_identity(old_response.json())
+
+    record_read_started = threading.Event()
+    mutation_finished = threading.Event()
+    mutation_errors: list[BaseException] = []
+    original_get_publication = Storage.get_agentic_ready_publication
+
+    def pause_after_slot_read(self, publication_id):
+        if (
+            threading.current_thread().name != "snapshot-writer"
+            and publication_id == expected_response_active["publication_id"]
+            and not record_read_started.is_set()
+        ):
+            record_read_started.set()
+            if not mutation_finished.wait(10):
+                raise RuntimeError("concurrent publication mutation did not finish")
+        return original_get_publication(self, publication_id)
+
+    monkeypatch.setattr(Storage, "get_agentic_ready_publication", pause_after_slot_read)
+
+    def mutate_publication() -> None:
+        writer = Storage(str(tmp_path / "index.db"))
+        try:
+            if not record_read_started.wait(10):
+                raise RuntimeError("reader did not reach publication record lookup")
+            with writer.transaction(immediate=True):
+                writer.create_kb_index_version(
+                    kb_id=kb_id,
+                    embedding_provider="openai",
+                    embedding_model="snapshot-race-model",
+                    embedding_dimension=8,
+                    index_type="faiss",
+                    chunk_count=0,
+                    status="ready",
+                )
+                writer.set_agentic_ready_automation(
+                    kb_id=kb_id,
+                    profile="general",
+                    automatic_build_enabled=True,
+                    automatic_publish_enabled=True,
+                )
+                if concurrent_mutation == "rollback":
+                    result = writer.rollback_agentic_ready_publication(
+                        kb_id=kb_id,
+                        profile="general",
+                        expected_active_publication_id=str(candidate["publication_id"]),
+                        expected_previous_publication_id=str(first["publication_id"]),
+                        validated_previous_publication_id=str(first["publication_id"]),
+                        validate_previous_publication=lambda _publication: True,
+                    )
+                else:
+                    result = writer.publish_agentic_ready_publication(
+                        str(candidate["publication_id"]),
+                        expected_active_publication_id=str(first["publication_id"]),
+                    )
+            assert result["cas_won"] is True
+        except BaseException as exc:  # pragma: no cover - reported in parent thread
+            mutation_errors.append(exc)
+        finally:
+            writer.close()
+            mutation_finished.set()
+
+    writer_thread = threading.Thread(
+        target=mutate_publication,
+        name="snapshot-writer",
+    )
+    writer_thread.start()
+    response = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    )
+    writer_thread.join(timeout=10)
+    assert not writer_thread.is_alive()
+    assert not mutation_errors
+    assert response.status_code == 200, response.text
+    body = response.json()
+    public_state = body["publication_state"]
+    assert public_state["active_publication_id"] == expected_response_active["publication_id"]
+    assert public_state["active_publication"]["publication_id"] == expected_response_active["publication_id"]
+    assert public_state["active_publication"]["status"] == "active"
+    assert (
+        public_state["active_publication"]["authoritative_source_version_id"]
+        == expected_response_active["source_version_id"]
+    )
+    assert body["manifest"]["status"] in {"ready", "stale"}
+    assert body["manifest"]["usable"] is True
+
+    final_response = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    )
+    assert final_response.status_code == 200, final_response.text
+    final_body = final_response.json()
+    final_identity = _public_snapshot_identity(final_body)
+    assert _public_snapshot_identity(body) in {old_identity, final_identity}
+    assert _public_snapshot_identity(body) == old_identity
+    assert final_identity != old_identity
+    assert final_body["publication_state"]["active_publication_id"] == expected_final_active_id
+
+
+def test_ready_manifest_rollback_success_response_uses_new_read_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = "kb-rollback-response-snapshot"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": "Rollback response snapshot",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("Changed for rollback response snapshot", seed["alpha_url"]),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id=kb_id,
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+    second = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        third = _record_snapshot_race_publication(
+            storage,
+            kb_id=kb_id,
+            label="post-rollback-winner",
+            output_dir=tmp_path / "post-rollback-winner",
+        )
+    finally:
+        storage.close()
+
+    rollback_completed = threading.Event()
+    record_read_started = threading.Event()
+    mutation_finished = threading.Event()
+    mutation_errors: list[BaseException] = []
+    original_rollback = Storage.rollback_agentic_ready_publication
+    original_get_publication = Storage.get_agentic_ready_publication
+
+    def rollback_then_arm(self, *args, **kwargs):
+        result = original_rollback(self, *args, **kwargs)
+        if result.get("cas_won"):
+            rollback_completed.set()
+        return result
+
+    def pause_response_record_read(self, publication_id):
+        if (
+            rollback_completed.is_set()
+            and threading.current_thread().name != "rollback-response-writer"
+            and publication_id == first["publication_id"]
+            and not record_read_started.is_set()
+        ):
+            record_read_started.set()
+            if not mutation_finished.wait(10):
+                raise RuntimeError("post-rollback publication did not finish")
+        return original_get_publication(self, publication_id)
+
+    monkeypatch.setattr(Storage, "rollback_agentic_ready_publication", rollback_then_arm)
+    monkeypatch.setattr(Storage, "get_agentic_ready_publication", pause_response_record_read)
+
+    def publish_after_rollback() -> None:
+        writer = Storage(str(tmp_path / "index.db"))
+        try:
+            if not record_read_started.wait(10):
+                raise RuntimeError("rollback response did not reach publication lookup")
+            result = writer.publish_agentic_ready_publication(
+                str(third["publication_id"]),
+                expected_active_publication_id=str(first["publication_id"]),
+            )
+            assert result["cas_won"] is True
+        except BaseException as exc:  # pragma: no cover - reported in parent thread
+            mutation_errors.append(exc)
+        finally:
+            writer.close()
+            mutation_finished.set()
+
+    writer_thread = threading.Thread(
+        target=publish_after_rollback,
+        name="rollback-response-writer",
+    )
+    writer_thread.start()
+    response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    writer_thread.join(timeout=10)
+    assert not writer_thread.is_alive()
+    assert not mutation_errors
+    assert response.status_code == 200, response.text
+    public_state = response.json()["publication_state"]
+    assert public_state["publication_revision"] == 3
+    assert response.json()["manifest"]["publication_revision"] == 3
+    assert public_state["active_publication_id"] == first["publication_id"]
+    assert public_state["active_publication"]["publication_id"] == first["publication_id"]
+    assert public_state["active_publication"]["status"] == "active"
+    assert response.json()["manifest"]["status"] in {"ready", "stale"}
+
+    final = Storage(str(tmp_path / "index.db"))
+    try:
+        final_state = final.get_agentic_ready_publication_state(
+            kb_id=kb_id,
+            profile="general",
+        )
+        assert final_state["active_publication_id"] == third["publication_id"]
+        assert final_state["publication_revision"] == 4
+    finally:
+        final.close()
+
+
+def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-publication-controls",
+            "name": "Publication Controls KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        ready_index = storage.create_kb_index_version(
+            kb_id="kb-publication-controls",
+            embedding_model="embedding-test",
+            index_type="flat",
+            chunk_count=0,
+        )
+    finally:
+        storage.close()
+
+    first = client.post(
+        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    first_publication = first_body["candidate_publication"]
+    assert first_publication["index_version_id"] == ready_index["index_version_id"]
+    first_snapshot = first_body["ready_data_snapshot"]
+    assert first_snapshot["manifest"]["publication_revision"] == 1
+    assert first_snapshot["publication_state"]["publication_revision"] == 1
+    assert first_snapshot["publication_state"]["active_publication_id"] == first_publication["publication_id"]
+    assert first_snapshot["publication_state"]["previous_publication_id"] is None
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("Changed source for publication controls", seed["alpha_url"]),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id="kb-publication-controls",
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+
+    second = client.post(
+        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/build",
+        json={},
+    )
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    second_publication = second_body["candidate_publication"]
+    assert second_publication["publication_id"] != first_publication["publication_id"]
+    second_snapshot = second_body["ready_data_snapshot"]
+    assert second_snapshot["manifest"]["publication_revision"] == 2
+    assert second_snapshot["publication_state"]["publication_revision"] == 2
+    assert second_snapshot["publication_state"]["active_publication_id"] == second_publication["publication_id"]
+    assert second_snapshot["publication_state"]["previous_publication_id"] == first_publication["publication_id"]
+    assert second_snapshot["publication_state"]["active_publication"]["publication_id"] == second_publication["publication_id"]
+    assert second_snapshot["publication_state"]["previous_publication"]["publication_id"] == first_publication["publication_id"]
+    serialized_build_snapshot = json.dumps(second_snapshot, sort_keys=True)
+    for forbidden in (
+        "source_db",
+        "output_dir",
+        "quarantine_dir",
+        "claim_token",
+        "lease_expires_at",
+        "query",
+        "matched_doc_id",
+        "matched_file_url",
+        "evidence",
+    ):
+        assert forbidden not in serialized_build_snapshot
+
+    status = client.get(
+        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest"
+    )
+    assert status.status_code == 200, status.text
+    body = status.json()
+    assert body["publication_state"]["active_publication_id"] == second_publication["publication_id"]
+    assert body["publication_state"]["previous_publication_id"] == first_publication["publication_id"]
+    active = body["publication_state"]["active_publication"]
+    previous = body["publication_state"]["previous_publication"]
+    assert active["authoritative_source_version_kind"] == "catalog_chunks_snapshot"
+    assert active["authoritative_source_version_id"] == second_publication["source_version_id"]
+    assert active["observed_index_version_id"] == ready_index["index_version_id"]
+    assert active["current_ready_index_version_id"] == ready_index["index_version_id"]
+    assert active["index_consumed_by_builder"] is False
+    assert previous["publication_id"] == first_publication["publication_id"]
+    serialized_projection = json.dumps(body["publication_state"], sort_keys=True)
+    for forbidden in (
+        "source_db",
+        "output_dir",
+        "quarantine_dir",
+        "claim_token",
+        "lease_expires_at",
+        "query",
+        "matched_doc_id",
+        "matched_file_url",
+    ):
+        assert forbidden not in serialized_projection
+
+    rollback_url = (
+        "/api/rag/knowledge-bases/kb-publication-controls/"
+        "agentic-ready-manifest/rollback"
+    )
+    expected_slots = (
+        second_publication["publication_id"],
+        first_publication["publication_id"],
+    )
+    for _case, invalid_profile, include_profile in (
+        ("missing", None, False),
+        ("null", None, True),
+        ("empty", "", True),
+        ("blank", "   ", True),
+        ("non-string", 17, True),
+    ):
+        invalid_payload = {
+            "expected_active_publication_id": expected_slots[0],
+            "expected_previous_publication_id": expected_slots[1],
+        }
+        if include_profile:
+            invalid_payload["profile"] = invalid_profile
+        invalid = client.post(rollback_url, json=invalid_payload)
+        assert invalid.status_code == 400, invalid.text
+        unchanged = client.get(
+            "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest"
+        ).json()["publication_state"]
+        assert (
+            unchanged["active_publication_id"],
+            unchanged["previous_publication_id"],
+        ) == expected_slots
+
+    for field_name in (
+        "expected_active_publication_id",
+        "expected_previous_publication_id",
+    ):
+        for invalid_value in (None, "", "   ", 17, [], {}):
+            invalid_payload = {
+                "profile": "general",
+                "expected_active_publication_id": expected_slots[0],
+                "expected_previous_publication_id": expected_slots[1],
+            }
+            invalid_payload[field_name] = invalid_value
+            invalid = client.post(rollback_url, json=invalid_payload)
+            assert invalid.status_code == 400, invalid.text
+            unchanged = client.get(
+                "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest"
+            ).json()["publication_state"]
+            assert (
+                unchanged["active_publication_id"],
+                unchanged["previous_publication_id"],
+            ) == expected_slots
+
+    stale = client.post(
+        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": first_publication["publication_id"],
+            "expected_previous_publication_id": second_publication["publication_id"],
+        },
+    )
+    assert stale.status_code == 409, stale.text
+
+    rollback = client.post(
+        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second_publication["publication_id"],
+            "expected_previous_publication_id": first_publication["publication_id"],
+        },
+    )
+    assert rollback.status_code == 200, rollback.text
+    rolled = rollback.json()
+    assert rolled["publication_state"]["active_publication_id"] == first_publication["publication_id"]
+    assert rolled["publication_state"]["previous_publication_id"] == second_publication["publication_id"]
+    assert rolled["manifest"]["status"] == "stale"
+    assert rolled["manifest"]["serving_stale"] is True
+    assert rolled["manifest"]["stale_reason"] == "source_version_changed"
+
+    registered = TestClient(app)
+    registered.cookies.set(
+        app.state.fastapi_session_cookie_name,
+        _make_session_cookie(app, {"email_user_id": seed["registered_user_id"]}),
+    )
+    forbidden = registered.post(
+        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": first_publication["publication_id"],
+            "expected_previous_publication_id": second_publication["publication_id"],
+        },
+    )
+    assert forbidden.status_code == 403, forbidden.text
+
+
+def test_public_rollback_rejects_active_publication_from_another_kb_atomically(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    for kb_id in ("kb-rollback-scope-a", "kb-rollback-scope-b"):
+        created = client.post(
+            "/api/rag/knowledge-bases",
+            json={
+                "kb_id": kb_id,
+                "name": kb_id,
+                "kb_mode": "manual",
+                "file_urls": [seed["alpha_url"]],
+            },
+        )
+        assert created.status_code == 201, created.text
+
+    first_a_response = client.post(
+        "/api/rag/knowledge-bases/kb-rollback-scope-a/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first_a_response.status_code == 200, first_a_response.text
+    first_a = first_a_response.json()["candidate_publication"]
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("Changed before second scoped rollback build", seed["alpha_url"]),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id="kb-rollback-scope-a",
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+
+    second_a_response = client.post(
+        "/api/rag/knowledge-bases/kb-rollback-scope-a/agentic-ready-manifest/build",
+        json={},
+    )
+    assert second_a_response.status_code == 200, second_a_response.text
+    second_a = second_a_response.json()["candidate_publication"]
+    active_b_response = client.post(
+        "/api/rag/knowledge-bases/kb-rollback-scope-b/agentic-ready-manifest/build",
+        json={},
+    )
+    assert active_b_response.status_code == 200, active_b_response.text
+    active_b = active_b_response.json()["candidate_publication"]
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE agentic_ready_slots SET active_publication_id = ? "
+                "WHERE kb_id = ? AND profile = ?",
+                (active_b["publication_id"], "kb-rollback-scope-a", "general"),
+            )
+
+        def snapshot() -> tuple[object, object, object]:
+            slots = storage._conn.execute(
+                "SELECT kb_id, profile, active_publication_id, previous_publication_id "
+                "FROM agentic_ready_slots "
+                "WHERE kb_id IN (?, ?) ORDER BY kb_id, profile",
+                ("kb-rollback-scope-a", "kb-rollback-scope-b"),
+            ).fetchall()
+            publications = storage._conn.execute(
+                "SELECT publication_id, kb_id, profile, status FROM agentic_ready_publications "
+                "WHERE publication_id IN (?, ?, ?) ORDER BY publication_id",
+                (
+                    first_a["publication_id"],
+                    second_a["publication_id"],
+                    active_b["publication_id"],
+                ),
+            ).fetchall()
+            manifests = (
+                storage.get_agentic_ready_manifest(
+                    kb_id="kb-rollback-scope-a",
+                    profile="general",
+                ),
+                storage.get_agentic_ready_manifest(
+                    kb_id="kb-rollback-scope-b",
+                    profile="general",
+                ),
+            )
+            return slots, publications, manifests
+
+        before = snapshot()
+    finally:
+        storage.close()
+
+    response = client.post(
+        "/api/rag/knowledge-bases/kb-rollback-scope-a/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": active_b["publication_id"],
+            "expected_previous_publication_id": first_a["publication_id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        after_slots = storage._conn.execute(
+            "SELECT kb_id, profile, active_publication_id, previous_publication_id "
+            "FROM agentic_ready_slots "
+            "WHERE kb_id IN (?, ?) ORDER BY kb_id, profile",
+            ("kb-rollback-scope-a", "kb-rollback-scope-b"),
+        ).fetchall()
+        after_publications = storage._conn.execute(
+            "SELECT publication_id, kb_id, profile, status FROM agentic_ready_publications "
+            "WHERE publication_id IN (?, ?, ?) ORDER BY publication_id",
+            (
+                first_a["publication_id"],
+                second_a["publication_id"],
+                active_b["publication_id"],
+            ),
+        ).fetchall()
+        after_manifests = (
+            storage.get_agentic_ready_manifest(
+                kb_id="kb-rollback-scope-a",
+                profile="general",
+            ),
+            storage.get_agentic_ready_manifest(
+                kb_id="kb-rollback-scope-b",
+                profile="general",
+            ),
+        )
+        assert (after_slots, after_publications, after_manifests) == before
+    finally:
+        storage.close()
+
+
+def test_public_rollback_accepts_canonical_legacy_publication_profiles(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from ai_actuarial.api.services import ready_data_publication as publication_service
+
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = "kb-legacy-publication-profile"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": "Legacy Publication Profile",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first_response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    )
+    assert first_response.status_code == 200, first_response.text
+    first = first_response.json()["candidate_publication"]
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("Changed before legacy-profile rollback", seed["alpha_url"]),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id=kb_id,
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+
+    second_response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    )
+    assert second_response.status_code == 200, second_response.text
+    second = second_response.json()["candidate_publication"]
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE agentic_ready_publications SET profile = ? "
+                "WHERE publication_id IN (?, ?)",
+                (" General ", first["publication_id"], second["publication_id"]),
+            )
+    finally:
+        storage.close()
+
+    projected = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    )
+    assert projected.status_code == 200, projected.text
+    projected_state = projected.json()["publication_state"]
+    assert projected_state["active_publication"]["profile"] == "general"
+    assert projected_state["previous_publication"]["profile"] == "general"
+
+    validation_calls: list[str] = []
+    original_validate = publication_service._validate_recorded_ready_publication
+
+    def observe_validation(publication, **kwargs):
+        validation_calls.append(str(publication.get("publication_id")))
+        return original_validate(publication, **kwargs)
+
+    monkeypatch.setattr(
+        publication_service,
+        "_validate_recorded_ready_publication",
+        observe_validation,
+    )
+    rolled = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert rolled.status_code == 200, rolled.text
+    assert validation_calls == [first["publication_id"]]
+    rolled_state = rolled.json()["publication_state"]
+    assert rolled_state["active_publication_id"] == first["publication_id"]
+    assert rolled_state["previous_publication_id"] == second["publication_id"]
+
+
+def test_ready_manifest_public_projection_fail_closes_sensitive_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-public-errors",
+            "name": "Public Errors KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-public-errors/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    sensitive = (
+        "/workspace/private/a.txt /srv/ready-data/b.txt "
+        r"\\fileserver\Ready Data\c.txt C:\Project\Ready Data\d.txt "
+        "C:/Project/Ready Data/e.txt claim_token=claim-secret "
+        "lease_token=lease-secret output_dir=/workspace/private/output "
+        "Traceback (most recent call last): internal-stack"
+    )
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        now = storage._utcnow_iso()
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                """
+                UPDATE agentic_ready_manifests
+                SET status = 'failed', error_message = ?, updated_at = ?
+                WHERE kb_id = ? AND profile = 'general'
+                """,
+                (sensitive, now, "kb-public-errors"),
+            )
+            storage._conn.execute(
+                """
+                UPDATE agentic_ready_source_state
+                SET event_generation = event_generation + 1,
+                    pending_evaluation_generation = event_generation + 1,
+                    pending_severity = 'hard_stale',
+                    pending_reasons_json = ?, updated_at = ?
+                WHERE kb_id = ? AND profile = 'general'
+                """,
+                (json.dumps(["chunk_content_updated", sensitive]), now, "kb-public-errors"),
+            )
+            storage._conn.execute(
+                """
+                INSERT INTO agentic_ready_automation (
+                    kb_id, profile, automation_state, running_generation,
+                    last_attempted_generation, claim_token, claimed_at,
+                    lease_expires_at, last_attempt_publication_id,
+                    last_success_at, last_error, updated_at
+                )
+                VALUES (?, 'general', 'failed', NULL, 0, NULL, NULL, NULL, NULL, NULL, ?, ?)
+                ON CONFLICT(kb_id, profile) DO UPDATE SET
+                    automation_state = 'failed', last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                ("kb-public-errors", sensitive, now),
+            )
+    finally:
+        storage.close()
+
+    read_only = TestClient(app)
+    read_only.cookies.set(
+        app.state.fastapi_session_cookie_name,
+        _make_session_cookie(app, {"email_user_id": seed["registered_user_id"]}),
+    )
+    for reader in (TestClient(app), read_only):
+        response = reader.get(
+            "/api/rag/knowledge-bases/kb-public-errors/agentic-ready-manifest"
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["manifest"]["error_message"] == "ready_data operation failed"
+        assert body["manifest"]["stale_reason"] == "ready_data operation failed"
+        assert body["publication_state"]["last_error"] == "ready_data operation failed"
+        assert body["publication_state"]["stale_reasons"] == [
+            "chunk_content_updated",
+            "ready_data_source_changed",
+        ]
+        serialized = json.dumps(body, sort_keys=True).lower()
+        for forbidden in (
+            "/workspace/",
+            "/srv/",
+            "fileserver",
+            "c:\\project",
+            "c:/project",
+            "a.txt",
+            "b.txt",
+            "c.txt",
+            "d.txt",
+            "e.txt",
+            "claim-secret",
+            "lease-secret",
+            "output_dir=",
+            "internal-stack",
+        ):
+            assert forbidden not in serialized
+
+
+def test_ready_manifest_public_projection_canonicalizes_all_public_state_enums(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    for kb_id in ("kb-enum-active", "kb-enum-building"):
+        created = client.post(
+            "/api/rag/knowledge-bases",
+            json={
+                "kb_id": kb_id,
+                "name": kb_id,
+                "kb_mode": "manual",
+                "file_urls": [seed["alpha_url"]],
+            },
+        )
+        assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-enum-active/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_manifest = Storage.get_agentic_ready_manifest
+    original_publications = Storage.get_agentic_ready_publication_state
+    original_automation = Storage.get_agentic_ready_automation_state
+    original_source_state = Storage.get_agentic_ready_source_state
+    injected = {
+        "manifest": r"C:\private\status secret.txt",
+        "fallback": r"\\server\ready data\fallback secret.txt",
+        "publication": "output_dir=/srv/private/publication-secret",
+        "smoke": "/workspace/private/smoke-secret.txt",
+        "automation": "claim_token=automation-secret",
+        "source_state": "lease_token=source-secret",
+        "severity": r"C:/Project/Ready Data/severity-secret.txt",
+        "profile": r"C:\private\profile-secret.txt",
+        "source_kind": "output_dir=/srv/private/source-kind-secret",
+    }
+
+    def poisoned_manifest(self, *, kb_id, profile):
+        value = original_manifest(self, kb_id=kb_id, profile=profile)
+        if kb_id == "kb-enum-building":
+            return {
+                "kb_id": kb_id,
+                "profile": profile,
+                "profile_version": "1",
+                "status": "building",
+                "fallback_mode": "standard",
+            }
+        if kb_id != "kb-enum-active" or not value:
+            return value
+        value = dict(value)
+        value["status"] = injected["manifest"]
+        value["fallback_mode"] = injected["fallback"]
+        value["profile"] = injected["profile"]
+        value["source_version_kind"] = injected["source_kind"]
+        return value
+
+    def poisoned_publications(self, *, kb_id, profile):
+        value = dict(original_publications(self, kb_id=kb_id, profile=profile))
+        if kb_id != "kb-enum-active":
+            return value
+        active = dict(value["active_publication"])
+        active["status"] = injected["publication"]
+        active["source_version_kind"] = injected["source_kind"]
+        active["smoke_result"] = {
+            "status": injected["smoke"],
+            "checked_at": "2026-08-19T12:00:00+00:00",
+        }
+        value["active_publication"] = active
+        return value
+
+    def poisoned_automation(self, *, kb_id, profile):
+        value = dict(original_automation(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-enum-active":
+            value["automation_state"] = injected["automation"]
+        return value
+
+    def poisoned_source_state(self, *, kb_id, profile):
+        value = dict(original_source_state(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-enum-active":
+            value.update(
+                {
+                    "state": injected["source_state"],
+                    "pending_severity": injected["severity"],
+                    "evaluated_severity": injected["severity"],
+                    "stale_severity": injected["severity"],
+                    "evaluated_source_version_kind": injected["source_kind"],
+                    "active_source_version_kind": injected["source_kind"],
+                }
+            )
+        return value
+
+    monkeypatch.setattr(Storage, "get_agentic_ready_manifest", poisoned_manifest)
+    monkeypatch.setattr(
+        Storage, "get_agentic_ready_publication_state", poisoned_publications
+    )
+    monkeypatch.setattr(
+        Storage, "get_agentic_ready_automation_state", poisoned_automation
+    )
+    monkeypatch.setattr(
+        Storage, "get_agentic_ready_source_state", poisoned_source_state
+    )
+
+    read_only = TestClient(app)
+    read_only.cookies.set(
+        app.state.fastapi_session_cookie_name,
+        _make_session_cookie(app, {"email_user_id": seed["registered_user_id"]}),
+    )
+    for reader in (TestClient(app), read_only):
+        response = reader.get(
+            "/api/rag/knowledge-bases/kb-enum-active/agentic-ready-manifest"
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        manifest = body["manifest"]
+        state = body["publication_state"]
+        assert manifest["status"] in {"missing", "ready", "stale", "failed", "unavailable"}
+        assert manifest["profile"] == "general"
+        assert manifest["fallback_mode"] == "standard"
+        assert state["serving_status"] in {"missing", "ready", "stale", "failed", "unavailable"}
+        assert state["automation_state"] in {
+            "idle",
+            "pending",
+            "running",
+            "building",
+            "awaiting_publish",
+            "awaiting_manual_confirmation",
+            "succeeded",
+            "failed",
+        }
+        assert state["active_publication"]["status"] in {
+            "failed",
+            "validated",
+            "active",
+            "previous",
+        }
+        assert state["active_publication"]["profile"] == "general"
+        assert state["active_publication"]["authoritative_source_version_kind"] == "unknown"
+        assert state["smoke_status"] in {"not_run", "skipped_empty", "failed", "passed"}
+        assert state["active_publication"]["smoke_status"] in {
+            "not_run",
+            "skipped_empty",
+            "failed",
+            "passed",
+        }
+        source_state = manifest["source_state"]
+        assert source_state["state"] in {
+            "legacy_fallback",
+            "pending_evaluation",
+            "stale",
+            "legacy_hard_gate",
+            "fresh",
+        }
+        for severity_name in (
+            "pending_severity",
+            "evaluated_severity",
+            "stale_severity",
+        ):
+            assert source_state[severity_name] in {"none", "soft_stale", "hard_stale"}
+        assert source_state["evaluated_source_version_kind"] == "unknown"
+        assert source_state["active_source_version_kind"] == "unknown"
+        assert manifest["source_version_kind"] == "unknown"
+        serialized = json.dumps(body, sort_keys=True)
+        for raw_value in injected.values():
+            assert raw_value not in serialized
+
+        legacy = reader.get(
+            "/api/rag/knowledge-bases/kb-enum-building/agentic-ready-manifest"
+        )
+        assert legacy.status_code == 200, legacy.text
+        legacy_body = legacy.json()
+        assert legacy_body["manifest"]["status"] == "missing"
+        assert legacy_body["publication_state"]["serving_status"] == "missing"
+        assert legacy_body["publication_state"]["automation_state"] == "building"
+
+
+def test_ready_manifest_public_projection_keeps_active_ready_while_automation_runs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-ready-running",
+            "name": "Ready While Running",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-ready-running/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_manifest = Storage.get_agentic_ready_manifest
+    original_automation = Storage.get_agentic_ready_automation_state
+    simulated = {"manifest_status": None, "automation_state": "running"}
+
+    def simulated_manifest(self, *, kb_id, profile):
+        value = original_manifest(self, kb_id=kb_id, profile=profile)
+        if kb_id == "kb-ready-running" and value and simulated["manifest_status"]:
+            value = dict(value)
+            value["status"] = simulated["manifest_status"]
+        return value
+
+    def running_automation(self, *, kb_id, profile):
+        value = dict(original_automation(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-ready-running":
+            value["automation_state"] = simulated["automation_state"]
+        return value
+
+    monkeypatch.setattr(Storage, "get_agentic_ready_manifest", simulated_manifest)
+    monkeypatch.setattr(
+        Storage, "get_agentic_ready_automation_state", running_automation
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-ready-running/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["manifest"]["status"] == "ready"
+    assert body["publication_state"]["serving_status"] == "ready"
+    assert body["publication_state"]["automation_state"] == "running"
+
+    simulated.update({"manifest_status": "building", "automation_state": "disabled"})
+    legacy_building = client.get(
+        "/api/rag/knowledge-bases/kb-ready-running/agentic-ready-manifest"
+    )
+    assert legacy_building.status_code == 200, legacy_building.text
+    legacy_body = legacy_building.json()
+    assert legacy_body["manifest"]["status"] == "ready"
+    assert legacy_body["publication_state"]["serving_status"] == "ready"
+    assert legacy_body["publication_state"]["automation_state"] == "building"
+
+
+@pytest.mark.parametrize(
+    "severity_field",
+    ("pending_severity", "evaluated_severity", "stale_severity"),
+)
+def test_ready_manifest_public_projection_fail_closes_unknown_source_severity(
+    tmp_path: Path,
+    monkeypatch,
+    severity_field: str,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-unknown-severity",
+            "name": "Unknown Severity",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-unknown-severity/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_source_state = Storage.get_agentic_ready_source_state
+    injected = r"C:\private\unknown-severity.txt"
+
+    def unknown_source_severity(self, *, kb_id, profile):
+        value = dict(original_source_state(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-unknown-severity":
+            value[severity_field] = injected
+        return value
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_source_state",
+        unknown_source_severity,
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-unknown-severity/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    manifest = body["manifest"]
+    state = body["publication_state"]
+    assert manifest["status"] == "stale"
+    assert manifest["usable"] is False
+    assert manifest["serving_stale"] is True
+    assert manifest["stale_severity"] == "hard_stale"
+    assert manifest["fallback_mode"] == "standard"
+    assert state["serving_status"] == "stale"
+    assert state["serving_usable"] is False
+    assert state["serving_stale"] is True
+    assert state["stale_severity"] == "hard_stale"
+    assert state["stale_reasons"] == ["ready_data_source_changed"]
+    public_source_state = manifest["source_state"]
+    assert public_source_state[severity_field] == "hard_stale"
+    assert public_source_state["stale_severity"] == "hard_stale"
+    assert public_source_state["stale_reasons"] == ["ready_data_source_changed"]
+    assert public_source_state["serving_stale"] is True
+    assert public_source_state["serving_allowed"] is False
+    assert injected not in json.dumps(body, sort_keys=True)
+
+
+def test_ready_manifest_public_projection_preserves_soft_stale_agentic_serving(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-soft-stale-agentic",
+            "name": "Soft Stale Agentic",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-soft-stale-agentic/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_source_state = Storage.get_agentic_ready_source_state
+
+    def soft_stale_source_state(self, *, kb_id, profile):
+        value = dict(original_source_state(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-soft-stale-agentic":
+            value.update(
+                {
+                    "stale_confirmed": True,
+                    "stale_severity": "soft_stale",
+                    "stale_reasons": ["membership_added"],
+                    "serving_stale": True,
+                    "serving_allowed": True,
+                }
+            )
+        return value
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_source_state",
+        soft_stale_source_state,
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-soft-stale-agentic/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    manifest = body["manifest"]
+    state = body["publication_state"]
+    assert manifest["status"] == "stale"
+    assert manifest["usable"] is True
+    assert manifest["fallback_mode"] == "agentic"
+    assert manifest["source_state"]["serving_stale"] is True
+    assert manifest["source_state"]["serving_allowed"] is True
+    assert state["serving_status"] == "stale"
+    assert state["serving_usable"] is True
+
+
+@pytest.mark.parametrize(
+    "active_record_state",
+    ("missing", "failed", "validated", "wrong_scope"),
+)
+def test_ready_manifest_public_projection_fail_closes_corrupt_active_slot(
+    tmp_path: Path,
+    monkeypatch,
+    active_record_state: str,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-corrupt-active-slot",
+            "name": "Corrupt Active Slot",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-corrupt-active-slot/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_publications = Storage.get_agentic_ready_publication_state
+
+    def corrupt_active_slot(self, *, kb_id, profile):
+        value = dict(original_publications(self, kb_id=kb_id, profile=profile))
+        if kb_id != "kb-corrupt-active-slot":
+            return value
+        value["active_publication_id"] = "pub-corrupt-active"
+        if active_record_state == "missing":
+            value["active_publication"] = None
+        else:
+            active = dict(value["active_publication"])
+            active["publication_id"] = "pub-corrupt-active"
+            if active_record_state == "wrong_scope":
+                active["kb_id"] = "kb-other-scope"
+            else:
+                active["status"] = active_record_state
+            value["active_publication"] = active
+        return value
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_publication_state",
+        corrupt_active_slot,
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-corrupt-active-slot/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["manifest"]["status"] == "unavailable"
+    assert body["manifest"]["usable"] is False
+    assert body["publication_state"]["serving_status"] == "unavailable"
+    assert body["publication_state"]["serving_usable"] is False
+    if active_record_state == "wrong_scope":
+        assert body["publication_state"]["active_publication"] is None
+
+
+@pytest.mark.parametrize(
+    "stored_profile",
+    (
+        pytest.param("regulation", id="other-known-profile"),
+        pytest.param("future-profile", id="unknown-profile"),
+        pytest.param("", id="empty-profile"),
+        pytest.param("   ", id="blank-profile"),
+        pytest.param(None, id="null-profile"),
+        pytest.param(17, id="number-profile"),
+        pytest.param([], id="list-profile"),
+        pytest.param({}, id="object-profile"),
+    ),
+)
+def test_ready_manifest_public_projection_rejects_invalid_active_profile_scope(
+    tmp_path: Path,
+    monkeypatch,
+    stored_profile: object,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-invalid-active-profile",
+            "name": "Invalid Active Profile",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-invalid-active-profile/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_publications = Storage.get_agentic_ready_publication_state
+
+    def invalid_active_profile(self, *, kb_id, profile):
+        value = dict(original_publications(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-invalid-active-profile":
+            active = dict(value["active_publication"])
+            active["profile"] = stored_profile
+            value["active_publication"] = active
+        return value
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_publication_state",
+        invalid_active_profile,
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-invalid-active-profile/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["publication_state"]["active_publication"] is None
+    assert body["publication_state"]["serving_status"] == "unavailable"
+    assert body["publication_state"]["serving_usable"] is False
+    assert body["manifest"]["status"] == "unavailable"
+    assert body["manifest"]["usable"] is False
+
+
+@pytest.mark.parametrize(
+    "stored_profile",
+    (
+        pytest.param("regulation", id="other-known-profile"),
+        pytest.param("future-profile", id="unknown-profile"),
+        pytest.param("", id="empty-profile"),
+        pytest.param("   ", id="blank-profile"),
+        pytest.param(None, id="null-profile"),
+        pytest.param(17, id="number-profile"),
+        pytest.param([], id="list-profile"),
+        pytest.param({}, id="object-profile"),
+    ),
+)
+def test_ready_manifest_public_projection_rejects_invalid_previous_profile_scope(
+    tmp_path: Path,
+    monkeypatch,
+    stored_profile: object,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-invalid-previous-profile",
+            "name": "Invalid Previous Profile",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-invalid-previous-profile/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_publications = Storage.get_agentic_ready_publication_state
+
+    def invalid_previous_profile(self, *, kb_id, profile):
+        value = dict(original_publications(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-invalid-previous-profile":
+            previous = dict(value["active_publication"])
+            previous.update(
+                {
+                    "publication_id": "pub-invalid-previous-profile",
+                    "profile": stored_profile,
+                    "status": "previous",
+                }
+            )
+            value["previous_publication_id"] = previous["publication_id"]
+            value["previous_publication"] = previous
+        return value
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_publication_state",
+        invalid_previous_profile,
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-invalid-previous-profile/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["publication_state"]["active_publication"]["profile"] == "general"
+    assert body["publication_state"]["serving_status"] == "ready"
+    assert body["publication_state"]["serving_usable"] is True
+    assert body["publication_state"]["previous_publication"] is None
+
+
+@pytest.mark.parametrize(
+    "stored_status",
+    (
+        pytest.param("failed", id="failed"),
+        pytest.param("validated", id="validated"),
+        pytest.param("active", id="active"),
+        pytest.param("future-status", id="unknown"),
+        pytest.param(None, id="null"),
+    ),
+)
+def test_ready_manifest_public_projection_only_exposes_previous_status(
+    tmp_path: Path,
+    monkeypatch,
+    stored_status: object,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-invalid-previous-status",
+            "name": "Invalid Previous Status",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-invalid-previous-status/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_publications = Storage.get_agentic_ready_publication_state
+
+    def invalid_previous_status(self, *, kb_id, profile):
+        value = dict(original_publications(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-invalid-previous-status":
+            previous = dict(value["active_publication"])
+            previous.update(
+                {
+                    "publication_id": "pub-invalid-previous-status",
+                    "status": stored_status,
+                }
+            )
+            value["previous_publication_id"] = previous["publication_id"]
+            value["previous_publication"] = previous
+        return value
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_publication_state",
+        invalid_previous_status,
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-invalid-previous-status/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    state = response.json()["publication_state"]
+    assert state["active_publication"]["status"] == "active"
+    assert state["previous_publication_id"] == "pub-invalid-previous-status"
+    assert state["previous_publication"] is None
+
+
+def test_ready_manifest_public_projection_accepts_exact_publication_profile_scope(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-valid-publication-profile",
+            "name": "Valid Publication Profile",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-valid-publication-profile/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+    body = client.get(
+        "/api/rag/knowledge-bases/kb-valid-publication-profile/agentic-ready-manifest"
+    ).json()
+    assert body["publication_state"]["active_publication"]["profile"] == "general"
+    assert body["publication_state"]["serving_status"] == "ready"
+    assert body["publication_state"]["serving_usable"] is True
+
+
+def test_ready_manifest_public_projection_preserves_legacy_ready_without_active_slot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-legacy-no-active-slot",
+            "name": "Legacy No Active Slot",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = client.post(
+        "/api/rag/knowledge-bases/kb-legacy-no-active-slot/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    original_publications = Storage.get_agentic_ready_publication_state
+
+    def legacy_without_slot(self, *, kb_id, profile):
+        value = dict(original_publications(self, kb_id=kb_id, profile=profile))
+        if kb_id == "kb-legacy-no-active-slot":
+            value["active_publication_id"] = None
+            value["active_publication"] = None
+        return value
+
+    monkeypatch.setattr(
+        Storage,
+        "get_agentic_ready_publication_state",
+        legacy_without_slot,
+    )
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-legacy-no-active-slot/agentic-ready-manifest"
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["manifest"]["status"] == "ready"
+    assert body["manifest"]["usable"] is True
+    assert body["publication_state"]["serving_status"] == "ready"
+    assert body["publication_state"]["serving_usable"] is True
+
+
+def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-public-rollback-corrupt",
+            "name": "Public Rollback Corrupt KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first = client.post(
+        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("Changed before corrupt rollback", seed["alpha_url"]),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id="kb-public-rollback-corrupt",
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+    second = client.post(
+        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+    catalog_path = Path(first["output_dir"]) / "doc_catalog.jsonl"
+    original_catalog = catalog_path.read_bytes()
+    catalog_path.write_text(
+        "corrupt previous\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    catalog_path.write_bytes(original_catalog)
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-public-rollback-corrupt",
+            profile="general",
+        )
+        assert state["active_publication_id"] == second["publication_id"]
+        assert state["previous_publication_id"] == first["publication_id"]
+    finally:
+        storage.close()
+
+    catalog_rows = [
+        json.loads(line)
+        for line in original_catalog.decode("utf-8").splitlines()
+        if line.strip()
+    ]
+    catalog_rows[0]["title"] = "Structurally valid but digest changed"
+    catalog_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in catalog_rows) + "\n",
+        encoding="utf-8",
+    )
+    digest_mismatch = client.post(
+        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert digest_mismatch.status_code == 422, digest_mismatch.text
+    catalog_path.write_bytes(original_catalog)
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-public-rollback-corrupt",
+            profile="general",
+        )
+        assert state["active_publication_id"] == second["publication_id"]
+        assert state["previous_publication_id"] == first["publication_id"]
+        outside = tmp_path / "outside-ready-data"
+        outside.mkdir()
+        storage._conn.execute(
+            "UPDATE agentic_ready_publications SET output_dir = ? WHERE publication_id = ?",
+            (str(outside), first["publication_id"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    escaped = client.post(
+        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert escaped.status_code == 422, escaped.text
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-public-rollback-corrupt",
+            profile="general",
+        )
+        assert state["active_publication_id"] == second["publication_id"]
+        assert state["previous_publication_id"] == first["publication_id"]
+        storage._conn.execute(
+            "UPDATE agentic_ready_publications SET output_dir = ? WHERE publication_id = ?",
+            (first["output_dir"], first["publication_id"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    original_link_check = rag_admin_service._is_link_or_reparse
+    previous_path = Path(first["output_dir"]).resolve()
+    monkeypatch.setattr(
+        rag_admin_service,
+        "_is_link_or_reparse",
+        lambda path: Path(path).resolve() == previous_path or original_link_check(path),
+    )
+    reparse = client.post(
+        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert reparse.status_code == 422, reparse.text
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-public-rollback-corrupt",
+            profile="general",
+        )
+        assert state["active_publication_id"] == second["publication_id"]
+        assert state["previous_publication_id"] == first["publication_id"]
+    finally:
+        storage.close()
+
+
+def test_public_rollback_rejects_linked_allowed_root_before_structure_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = "kb-public-rollback-linked-root"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": "Linked Root Rollback KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first, second = _build_public_rollback_pair(
+        client,
+        db_path=tmp_path / "index.db",
+        kb_id=kb_id,
+        file_url=str(seed["alpha_url"]),
+    )
+    before = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json()
+
+    ready_root = tmp_path / "agentic_ready_data"
+    external_root = tmp_path / "external-ready-data-root"
+    ready_root.rename(external_root)
+    try:
+        ready_root.symlink_to(external_root, target_is_directory=True)
+    except OSError as exc:
+        external_root.rename(ready_root)
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    from ai_actuarial.agentic_rag import ready_data_builder
+
+    validator_calls = 0
+
+    original_validator = ready_data_builder.validate
+
+    def count_only(output_dir: str) -> dict[str, object]:
+        nonlocal validator_calls
+        validator_calls += 1
+        return original_validator(output_dir)
+
+    monkeypatch.setattr(ready_data_builder, "validate", count_only)
+    response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert validator_calls == 0
+    assert client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json() == before
+
+
+@pytest.mark.parametrize("artifact_name", ["ready_data_manifest.json", "doc_catalog.jsonl"])
+def test_public_rollback_rejects_linked_artifact_before_structure_validation(
+    tmp_path: Path,
+    monkeypatch,
+    artifact_name: str,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = f"kb-public-rollback-linked-{artifact_name.split('.')[0]}"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": "Linked Artifact Rollback KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first, second = _build_public_rollback_pair(
+        client,
+        db_path=tmp_path / "index.db",
+        kb_id=kb_id,
+        file_url=str(seed["alpha_url"]),
+    )
+    before = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json()
+
+    artifact_path = Path(str(first["output_dir"])) / artifact_name
+    external = tmp_path / "linked-artifacts" / artifact_name
+    external.parent.mkdir()
+    external.write_bytes(artifact_path.read_bytes())
+    artifact_path.unlink()
+    try:
+        artifact_path.symlink_to(external)
+    except OSError as exc:
+        pytest.skip(f"file symlink unavailable: {exc}")
+
+    from ai_actuarial.agentic_rag import ready_data_builder
+
+    original_validator = ready_data_builder.validate
+    validator_calls = 0
+
+    def count_only(output_dir: str) -> dict[str, object]:
+        nonlocal validator_calls
+        validator_calls += 1
+        return original_validator(output_dir)
+
+    monkeypatch.setattr(ready_data_builder, "validate", count_only)
+    response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert validator_calls == 0
+    assert client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json() == before
+
+
+def test_public_rollback_rejects_nested_artifact_ancestor_link_atomically(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = "kb-public-rollback-linked-artifact-parent"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": "Linked Artifact Parent Rollback KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first, second = _build_public_rollback_pair(
+        client,
+        db_path=tmp_path / "index.db",
+        kb_id=kb_id,
+        file_url=str(seed["alpha_url"]),
+    )
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    output_dir = Path(str(first["output_dir"]))
+    real_dir = output_dir / "real"
+    nested_dir = output_dir / "nested"
+    real_dir.mkdir()
+    nested_dir.mkdir()
+    nested_artifact = "nested/catalog-copy.jsonl"
+    (real_dir / "catalog-copy.jsonl").write_bytes(
+        (output_dir / "doc_catalog.jsonl").read_bytes()
+    )
+    (nested_dir / "catalog-copy.jsonl").write_bytes(
+        (real_dir / "catalog-copy.jsonl").read_bytes()
+    )
+    artifact_files = [*list(first["artifact_files"]), nested_artifact]
+    recorded_digest = rag_admin_service._ready_data_artifact_digest(
+        str(output_dir), artifact_files
+    )
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            """
+            UPDATE agentic_ready_publications
+            SET artifact_files_json = ?, artifact_digest = ?
+            WHERE publication_id = ?
+            """,
+            (json.dumps(artifact_files), recorded_digest, first["publication_id"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+    shutil.rmtree(nested_dir)
+    try:
+        nested_dir.symlink_to(real_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+    before = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json()
+
+    from ai_actuarial.agentic_rag import ready_data_builder
+
+    original_validator = ready_data_builder.validate
+    validator_calls = 0
+
+    def count_only(output_path: str) -> dict[str, object]:
+        nonlocal validator_calls
+        validator_calls += 1
+        return original_validator(output_path)
+
+    monkeypatch.setattr(ready_data_builder, "validate", count_only)
+    response = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert validator_calls == 0
+    assert client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json() == before
+
+
+@pytest.mark.parametrize(
+    "unsafe_artifact",
+    ["doc_catalog.jsonl", "../outside.jsonl", "", "C:/outside.jsonl"],
+)
+def test_recorded_publication_preflight_precedes_structure_validation(
+    tmp_path: Path,
+    monkeypatch,
+    unsafe_artifact: str,
+) -> None:
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    allowed_root = tmp_path / "agentic_ready_data"
+    output_dir = allowed_root / "kbs" / "kb-preflight" / "general" / "1"
+    output_dir.mkdir(parents=True)
+    manifest_path = output_dir / "ready_data_manifest.json"
+    catalog_path = output_dir / "doc_catalog.jsonl"
+    manifest_path.write_text("{}", encoding="utf-8")
+    catalog_path.write_text("{}\n", encoding="utf-8")
+    artifact_files = ["ready_data_manifest.json", unsafe_artifact]
+    recorded_digest = "not-used-before-preflight"
+    validator_calls = 0
+
+    def validator(_output_dir: str) -> dict[str, object]:
+        nonlocal validator_calls
+        validator_calls += 1
+        return {"valid": True, "errors": [], "warnings": []}
+
+    original_link_check = rag_admin_service._is_link_or_reparse
+    monkeypatch.setattr(
+        rag_admin_service,
+        "_is_link_or_reparse",
+        lambda path: (
+            unsafe_artifact == "doc_catalog.jsonl"
+            and Path(path) == catalog_path
+        )
+        or original_link_check(path),
+    )
+    result = rag_admin_service._validate_recorded_ready_publication(
+        {
+            "output_dir": str(output_dir),
+            "artifact_files": artifact_files,
+            "artifact_digest": recorded_digest,
+        },
+        validator=validator,
+        allowed_output_root=str(allowed_root),
+    )
+    assert result["valid"] is False
+    assert validator_calls == 0
 
 
 def test_fastapi_rag_admin_failed_ready_build_keeps_serving_publication(
@@ -1251,7 +3320,7 @@ def test_fastapi_rag_admin_replaces_corrupt_active_with_fresh_duplicate(
         )
         assert corrupt_after is not None
         assert corrupt_after["status"] == "failed"
-        assert "invalid json" in corrupt_after["error_message"].lower()
+        assert "artifact digest does not match" in corrupt_after["error_message"].lower()
     finally:
         storage.close()
 
@@ -1885,7 +3954,7 @@ def test_fastapi_rag_admin_ready_build_uses_builder_input_snapshot_not_index(
     assert ready["status"] == "ready"
     assert candidate["source_version_kind"] == "catalog_chunks_snapshot"
     assert candidate["source_version_id"].startswith("rdsnap_")
-    assert candidate["index_version_id"] is None
+    assert candidate["index_version_id"] == ready["index_version_id"]
 
 
 def test_fastapi_rag_admin_agentic_ready_manifest_builds_regulation_profile(
@@ -2109,7 +4178,13 @@ def test_fastapi_rag_admin_legacy_manifest_stale_uses_bound_chunks_and_catalog_m
 
     stale = client.get("/api/rag/knowledge-bases/kb-bound-manifest/agentic-ready-manifest")
     assert stale.status_code == 200, stale.text
-    assert stale.json()["manifest"]["status"] == "stale"
+    stale_body = stale.json()
+    assert stale_body["manifest"]["status"] == "stale"
+    assert stale_body["publication_state"]["serving_stale"] is True
+    assert stale_body["publication_state"]["stale_severity"] == "soft_stale"
+    assert stale_body["publication_state"]["stale_reasons"] == [
+        "KB source files changed after the ready_data manifest was built"
+    ]
 
 
 @pytest.mark.parametrize("invalid_binding_kind", ["orphan", "catalog_not_ok"])

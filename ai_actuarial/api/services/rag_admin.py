@@ -7,7 +7,7 @@ import shutil
 import stat
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping
 
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
@@ -427,6 +427,106 @@ def _is_link_or_reparse(path: Path) -> bool:
     return bool(file_attributes & reparse_flag)
 
 
+def _recorded_ready_artifact_paths(
+    output_path: Path,
+    artifact_files: Any,
+) -> list[tuple[str, Path]]:
+    if not isinstance(artifact_files, (list, tuple)):
+        raise ValueError("publication artifact list is invalid")
+    resolved_output = output_path.resolve(strict=True)
+    artifacts: dict[str, Path] = {}
+    for raw_artifact in artifact_files:
+        if not isinstance(raw_artifact, str):
+            raise ValueError("publication artifact path is invalid")
+        artifact = raw_artifact.strip()
+        portable_parts = artifact.replace("\\", "/").split("/")
+        windows_path = PureWindowsPath(artifact)
+        if (
+            not artifact
+            or artifact != raw_artifact
+            or Path(artifact).is_absolute()
+            or windows_path.is_absolute()
+            or bool(windows_path.drive)
+            or any(part in {"", ".", ".."} for part in portable_parts)
+        ):
+            raise ValueError(f"invalid publication artifact path: {raw_artifact}")
+
+        cursor = output_path
+        for index, part in enumerate(portable_parts):
+            cursor /= part
+            if _is_link_or_reparse(cursor):
+                raise ValueError(
+                    f"ready_data artifact contains a link or reparse point: {artifact}"
+                )
+            entry_stat = cursor.lstat()
+            if index < len(portable_parts) - 1:
+                if not stat.S_ISDIR(entry_stat.st_mode):
+                    raise ValueError(
+                        f"ready_data artifact parent is not a directory: {artifact}"
+                    )
+            elif not stat.S_ISREG(entry_stat.st_mode):
+                raise ValueError(
+                    f"ready_data artifact is not a regular file: {artifact}"
+                )
+        resolved_artifact = cursor.resolve(strict=True)
+        try:
+            resolved_artifact.relative_to(resolved_output)
+        except ValueError as exc:
+            raise ValueError(
+                f"artifact path escapes output_dir: {artifact}"
+            ) from exc
+        artifacts[artifact] = resolved_artifact
+    return sorted(artifacts.items())
+
+
+def _preflight_recorded_ready_publication(
+    publication: Mapping[str, Any],
+    *,
+    allowed_output_root: str,
+) -> tuple[Path, list[str]]:
+    output_dir = str(publication.get("output_dir") or "")
+    if not output_dir:
+        raise ValueError("publication output_dir is empty")
+    allowed_path = Path(os.path.abspath(allowed_output_root))
+    if _is_link_or_reparse(allowed_path) or not allowed_path.is_dir():
+        raise ValueError("allowed ready_data root is missing, linked, or a reparse point")
+    allowed_root = allowed_path.resolve(strict=True)
+
+    raw_output_path = Path(output_dir)
+    if ".." in raw_output_path.parts:
+        raise ValueError("publication output contains path traversal")
+    output_path = Path(os.path.abspath(output_dir))
+    try:
+        relative_output = output_path.relative_to(allowed_path)
+    except ValueError as exc:
+        raise ValueError(
+            "publication output escaped the allowed ready_data root"
+        ) from exc
+    current = allowed_path
+    for part in relative_output.parts:
+        current /= part
+        if _is_link_or_reparse(current):
+            raise ValueError("publication output contains a link or reparse point")
+        if not current.is_dir():
+            raise ValueError("publication output is not a directory")
+    output_root = output_path.resolve(strict=True)
+    try:
+        output_root.relative_to(allowed_root)
+    except ValueError as exc:
+        raise ValueError(
+            "publication output escaped the allowed ready_data root"
+        ) from exc
+
+    artifact_files = publication.get("artifact_files")
+    artifact_paths = _recorded_ready_artifact_paths(output_path, artifact_files)
+    normalized_artifacts = [artifact for artifact, _path in artifact_paths]
+    if "ready_data_manifest.json" not in normalized_artifacts:
+        raise ValueError(
+            "publication artifact list does not include ready_data_manifest.json"
+        )
+    return output_root, normalized_artifacts
+
+
 def _agentic_staging_output_dir(base_output_dir: str, *, allowed_output_root: str) -> tuple[str, str]:
     allowed_root = Path(allowed_output_root).resolve()
     base = Path(base_output_dir).resolve()
@@ -456,17 +556,12 @@ def _ready_data_artifact_digest(output_dir: str, artifact_files: list[str]) -> s
     root_path = Path(os.path.abspath(output_dir))
     if _is_link_or_reparse(root_path):
         raise ValueError("ready_data output is a link or reparse point")
-    root = root_path.resolve(strict=True)
+    root_path.resolve(strict=True)
+    if not root_path.is_dir():
+        raise ValueError("ready_data output is not a directory")
+    artifact_paths = _recorded_ready_artifact_paths(root_path, artifact_files)
     digest = hashlib.sha256()
-    for artifact in sorted(set(artifact_files)):
-        artifact_path = root / artifact
-        if _is_link_or_reparse(artifact_path):
-            raise ValueError(f"ready_data artifact is a link or reparse point: {artifact}")
-        artifact_path = artifact_path.resolve(strict=True)
-        try:
-            artifact_path.relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"artifact path escapes output_dir: {artifact}") from exc
+    for artifact, artifact_path in artifact_paths:
         content = artifact_path.read_bytes()
         if artifact_path.name == "ready_data_manifest.json":
             manifest = json.loads(content.decode("utf-8"))
@@ -512,39 +607,17 @@ def _validate_recorded_ready_publication(
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
-    output_dir = str(publication.get("output_dir") or "")
-    if not output_dir:
-        return {"valid": False, "errors": ["publication output_dir is empty"], "warnings": []}
     try:
-        allowed_path = Path(os.path.abspath(allowed_output_root))
-        if _is_link_or_reparse(allowed_path):
-            raise ValueError("allowed ready_data root is a link or reparse point")
-        allowed_root = allowed_path.resolve(strict=True)
-        output_path = Path(os.path.abspath(output_dir))
-        try:
-            relative_output = output_path.relative_to(allowed_path)
-        except ValueError as exc:
-            raise ValueError("publication output escaped the allowed ready_data root") from exc
-        current = allowed_path
-        for part in relative_output.parts:
-            current = current / part
-            if _is_link_or_reparse(current):
-                raise ValueError("publication output contains a link or reparse point")
-        output_root = output_path.resolve(strict=True)
-        output_root.relative_to(allowed_root)
-        if not output_root.is_dir():
-            raise ValueError("publication output is not a directory")
-
-        artifact_files = list(publication.get("artifact_files") or [])
-        if "ready_data_manifest.json" not in artifact_files:
-            raise ValueError("publication artifact list does not include ready_data_manifest.json")
+        output_root, artifact_files = _preflight_recorded_ready_publication(
+            publication,
+            allowed_output_root=allowed_output_root,
+        )
+        actual_digest = _ready_data_artifact_digest(str(output_root), artifact_files)
+        if actual_digest != str(publication.get("artifact_digest") or ""):
+            raise ValueError("publication artifact digest does not match recorded digest")
         validation = validator(str(output_root))
         errors.extend(str(item) for item in validation.get("errors") or [])
         warnings.extend(str(item) for item in validation.get("warnings") or [])
-        if validation.get("valid"):
-            actual_digest = _ready_data_artifact_digest(str(output_root), artifact_files)
-            if actual_digest != str(publication.get("artifact_digest") or ""):
-                errors.append("publication artifact digest does not match recorded digest")
     except Exception as exc:  # noqa: BLE001
         errors.append(str(exc))
     return {"valid": not errors, "errors": errors, "warnings": warnings}
@@ -758,22 +831,26 @@ def _rollback_agentic_ready_publication(
     previous = state.get("previous_publication")
     if not active_id or not previous_id or not previous:
         raise ValueError("no previous validated ready-data publication is available")
-    validation = _validate_recorded_ready_publication(
-        previous,
-        validator=validator,
-        allowed_output_root=allowed_output_root,
-    )
-    if not validation["valid"]:
+    def validate_previous(candidate: dict[str, Any]) -> bool:
+        validation = _validate_recorded_ready_publication(
+            candidate,
+            validator=validator,
+            allowed_output_root=allowed_output_root,
+        )
+        if validation["valid"]:
+            return True
         error_message = "; ".join(validation["errors"])
         raise ValueError(
             f"previous ready_data validation failed: {error_message or 'unknown error'}"
         )
+
     return storage.rollback_agentic_ready_publication(
         kb_id=kb_id,
         profile=profile,
         expected_active_publication_id=str(active_id),
         expected_previous_publication_id=str(previous_id),
         validated_previous_publication_id=str(previous_id),
+        validate_previous_publication=validate_previous,
     )
 
 
@@ -899,6 +976,10 @@ def _build_agentic_manifest_status(
         kb_id=kb_id,
         profile=normalized_profile,
     )
+    publication_state = storage.get_agentic_ready_publication_state(
+        kb_id=kb_id,
+        profile=normalized_profile,
+    )
     manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile)
     if not manifest:
         return {
@@ -929,6 +1010,9 @@ def _build_agentic_manifest_status(
             "automatic_publish_enabled": source_state["automatic_publish_enabled"],
             "automation": automation,
             "automation_state": automation["automation_state"],
+            "publication_revision": int(
+                publication_state.get("publication_revision") or 0
+            ),
         }
 
     payload = dict(manifest)
@@ -990,6 +1074,9 @@ def _build_agentic_manifest_status(
             ],
             "automation": automation,
             "automation_state": automation["automation_state"],
+            "publication_revision": int(
+                publication_state.get("publication_revision") or 0
+            ),
         }
     )
     if stale_reason:
@@ -1524,8 +1611,13 @@ def get_agentic_ready_manifest(*, db_path: str, kb_id: str, query: Mapping[str, 
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         profile = _manifest_profile((query or {}).get("profile") or getattr(kb, "manifest_profile", "general"))
-        manifest = _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile)
-        return {"kb_id": kid, "manifest": manifest}
+        from .ready_data_publication import read_public_ready_data_snapshot
+
+        return read_public_ready_data_snapshot(
+            storage,
+            kb_id=kid,
+            profile=profile,
+        )
     finally:
         storage.close()
 
@@ -1589,6 +1681,7 @@ def _build_agentic_ready_manifest_core(
         candidate_output_dir = staging_output_dir
         artifact_files: list[str] = []
         artifact_digest = ""
+        observed_index_version_id: str | None = None
         source_version_kind = "failed_build_attempt"
         source_version_id = f"attempt:{Path(staging_output_dir).name}"
         candidate_publication: dict[str, Any] = {}
@@ -1621,6 +1714,9 @@ def _build_agentic_ready_manifest_core(
             candidate_output_dir = returned_output_dir
             source_version_kind = str(builder_manifest.get("source_version_kind") or "")
             source_version_id = str(builder_manifest.get("source_version_id") or "")
+            observed_index_version_id = (
+                str(builder_manifest.get("index_version_id") or "").strip() or None
+            )
             if not source_version_kind or not source_version_id:
                 raise ValueError("ready_data builder did not report its source snapshot version")
             validation = ready_data_builder.validate(candidate_output_dir)
@@ -1697,7 +1793,7 @@ def _build_agentic_ready_manifest_core(
                 error_message = "; ".join(str(item) for item in validation.get("errors") or [])
                 candidate_publication = storage.record_agentic_ready_publication(
                     kb_id=kid,
-                    index_version_id=None,
+                    index_version_id=observed_index_version_id,
                     source_version_kind=source_version_kind,
                     source_version_id=source_version_id,
                     profile=profile,
@@ -1738,7 +1834,7 @@ def _build_agentic_ready_manifest_core(
                 )
                 candidate_publication = storage.record_agentic_ready_publication(
                     kb_id=kid,
-                    index_version_id=None,
+                    index_version_id=observed_index_version_id,
                     source_version_kind=source_version_kind,
                     source_version_id=source_version_id,
                     profile=profile,
@@ -1924,7 +2020,7 @@ def _build_agentic_ready_manifest_core(
                         _append_validation_warning(validation, f"staging digest failed: {digest_exc}")
                 candidate_publication = storage.record_agentic_ready_publication(
                     kb_id=kid,
-                    index_version_id=None,
+                    index_version_id=observed_index_version_id,
                     source_version_kind=source_version_kind,
                     source_version_id=source_version_id,
                     profile=profile,
@@ -1975,11 +2071,20 @@ def _build_agentic_ready_manifest_core(
             except ValueError as exc:
                 if str(exc) != "evaluation must target the latest event generation":
                     raise
+        from .ready_data_publication import read_public_ready_data_snapshot
+
+        ready_data_snapshot = read_public_ready_data_snapshot(
+            storage,
+            kb_id=kid,
+            profile=profile,
+            include_legacy_output_dir=False,
+        )
         return {
             "kb_id": kid,
             "manifest": _build_agentic_manifest_status(storage=storage, kb_id=kid, profile=profile),
             "candidate_publication": candidate_publication,
             "publication_state": publication_state,
+            "ready_data_snapshot": ready_data_snapshot,
             "validation": validation,
         }
     finally:

@@ -809,6 +809,15 @@ def test_matching_healthy_active_settles_up_to_date_without_builder(tmp_path: Pa
         publish=True,
     )
     calls: list[int] = []
+    storage = Storage(db_path)
+    try:
+        storage._conn.execute(
+            "UPDATE agentic_ready_publications SET index_version_id = ? WHERE publication_id = ?",
+            ("idx-observed-at-build", active["publication_id"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
 
     result = run_ready_data_automation_once(
         db_path,
@@ -824,6 +833,7 @@ def test_matching_healthy_active_settles_up_to_date_without_builder(tmp_path: Pa
         assert result["status"] == "up_to_date"
         assert calls == []
         assert state["active_publication_id"] == active["publication_id"]
+        assert state["active_publication"]["index_version_id"] == "idx-observed-at-build"
         assert state["previous_publication_id"] is None
         assert _source_state(storage, kb_id)["pending_evaluation"] is False
         assert _publication_count(storage, kb_id) == 1

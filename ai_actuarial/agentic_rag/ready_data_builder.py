@@ -408,7 +408,7 @@ def _load_builder_source_snapshot(
     conn: sqlite3.Connection,
     *,
     kb_id: str | None,
-) -> tuple[list[sqlite3.Row], list[sqlite3.Row], str]:
+) -> tuple[list[sqlite3.Row], list[sqlite3.Row], str, str | None]:
     """Read the exact builder inputs from one consistent SQLite snapshot."""
     conn.execute("BEGIN")
     try:
@@ -499,7 +499,20 @@ def _load_builder_source_snapshot(
             separators=(",", ":"),
         ).encode("utf-8")
         source_version_id = f"rdsnap_{hashlib.sha256(source_payload).hexdigest()}"
-        return catalog_rows, chunk_rows, source_version_id
+        observed_index_version_id: str | None = None
+        if kb_id and _table_exists(conn, "kb_ready_index_state"):
+            index_row = conn.execute(
+                """
+                SELECT index_version_id
+                FROM kb_ready_index_state
+                WHERE kb_id = ?
+                LIMIT 1
+                """,
+                (kb_id,),
+            ).fetchone()
+            if index_row and str(index_row[0] or "").strip():
+                observed_index_version_id = str(index_row[0]).strip()
+        return catalog_rows, chunk_rows, source_version_id, observed_index_version_id
     finally:
         conn.rollback()
 
@@ -515,7 +528,7 @@ def get_builder_source_fingerprint(
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA query_only = ON")
-        _, _, source_version_id = _load_builder_source_snapshot(conn, kb_id=kb_id)
+        _, _, source_version_id, _ = _load_builder_source_snapshot(conn, kb_id=kb_id)
         return {
             "source_version_kind": BUILDER_SOURCE_VERSION_KIND,
             "source_version_id": source_version_id,
@@ -560,7 +573,7 @@ def _build_l0_with_connection(
     now_utc = datetime.now(timezone.utc).isoformat()
 
     # ── 1. Build doc_catalog.jsonl ────────────────────────────────────────
-    catalog_rows, chunk_rows, source_version_id = _load_builder_source_snapshot(
+    catalog_rows, chunk_rows, source_version_id, observed_index_version_id = _load_builder_source_snapshot(
         conn,
         kb_id=kb_id,
     )
@@ -876,6 +889,8 @@ def _build_l0_with_connection(
         "source_db": db_path,
         "source_version_kind": BUILDER_SOURCE_VERSION_KIND,
         "source_version_id": source_version_id,
+        "index_version_id": observed_index_version_id,
+        "index_consumed_by_builder": False,
         "output_dir": output_dir,
         "doc_count": doc_count,
         "section_count": section_count,

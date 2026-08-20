@@ -27,9 +27,9 @@ def _open_storage(tmp_path: Path) -> Storage:
         )
         """
     )
-    conn.execute(
+    conn.executemany(
         "INSERT INTO rag_knowledge_bases (kb_id) VALUES (?)",
-        ("kb-ready",),
+        [("kb-ready",), ("kb-other",)],
     )
     conn.commit()
     conn.close()
@@ -43,13 +43,15 @@ def _record(
     artifact_digest: str,
     output_dir: str,
     status: str = "validated",
+    kb_id: str = "kb-ready",
+    profile: str = "general",
 ) -> dict[str, object]:
     return storage.record_agentic_ready_publication(
-        kb_id="kb-ready",
+        kb_id=kb_id,
         index_version_id=index_version_id,
         source_version_kind="index",
         source_version_id=index_version_id,
-        profile="general",
+        profile=profile,
         profile_version="1",
         status=status,
         output_dir=output_dir,
@@ -143,16 +145,22 @@ def test_failed_staging_record_does_not_replace_active_publication(tmp_path: Pat
 def test_publish_retains_previous_validated_slot_and_rollback_swaps_slots(tmp_path: Path) -> None:
     storage = _open_storage(tmp_path)
     try:
+        initial = storage.get_agentic_ready_publication_state(
+            kb_id="kb-ready",
+            profile="general",
+        )
+        assert initial["publication_revision"] == 0
         first = _record(
             storage,
             index_version_id="idx-1",
             artifact_digest="digest-1",
             output_dir=str(tmp_path / "staging" / "first"),
         )
-        storage.publish_agentic_ready_publication(
+        first_published = storage.publish_agentic_ready_publication(
             str(first["publication_id"]),
             expected_active_publication_id=None,
         )
+        assert first_published["publication_revision"] == 1
         second = _record(
             storage,
             index_version_id="idx-2",
@@ -167,6 +175,7 @@ def test_publish_retains_previous_validated_slot_and_rollback_swaps_slots(tmp_pa
         serving = storage.get_agentic_ready_manifest(kb_id="kb-ready", profile="general")
         assert published["active_publication_id"] == second["publication_id"]
         assert published["previous_publication_id"] == first["publication_id"]
+        assert published["publication_revision"] == 2
         assert serving is not None
         assert serving["publication_id"] == second["publication_id"]
         assert serving["index_version_id"] == "idx-2"
@@ -193,10 +202,213 @@ def test_publish_retains_previous_validated_slot_and_rollback_swaps_slots(tmp_pa
         serving = storage.get_agentic_ready_manifest(kb_id="kb-ready", profile="general")
         assert rolled_back["active_publication_id"] == first["publication_id"]
         assert rolled_back["previous_publication_id"] == second["publication_id"]
+        assert rolled_back["publication_revision"] == 3
         assert serving is not None
         assert serving["publication_id"] == first["publication_id"]
         assert serving["index_version_id"] == "idx-1"
         assert serving["artifact_digest"] == "digest-1"
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "dangling_active",
+        "active_not_active",
+        "active_wrong_profile",
+        "previous_wrong_kb",
+        "previous_wrong_profile",
+    ),
+)
+def test_rollback_fail_closes_invalid_slot_publication_invariants(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    storage = _open_storage(tmp_path)
+    try:
+        previous = _record(
+            storage,
+            index_version_id="idx-previous",
+            artifact_digest="digest-previous",
+            output_dir=str(tmp_path / "staging" / "previous"),
+        )
+        storage.publish_agentic_ready_publication(
+            str(previous["publication_id"]),
+            expected_active_publication_id=None,
+        )
+        active = _record(
+            storage,
+            index_version_id="idx-active",
+            artifact_digest="digest-active",
+            output_dir=str(tmp_path / "staging" / "active"),
+        )
+        storage.publish_agentic_ready_publication(
+            str(active["publication_id"]),
+            expected_active_publication_id=str(previous["publication_id"]),
+        )
+
+        expected_active = str(active["publication_id"])
+        expected_previous = str(previous["publication_id"])
+        if corruption == "dangling_active":
+            expected_active = "pub_missing_active"
+            storage._conn.execute("PRAGMA foreign_keys = OFF")
+            storage._conn.execute(
+                "UPDATE agentic_ready_slots SET active_publication_id = ? "
+                "WHERE kb_id = ? AND profile = ?",
+                (expected_active, "kb-ready", "general"),
+            )
+            storage._conn.commit()
+            storage._conn.execute("PRAGMA foreign_keys = ON")
+        else:
+            with storage.transaction(immediate=True):
+                if corruption == "active_not_active":
+                    storage._conn.execute(
+                        "UPDATE agentic_ready_publications SET status = 'validated' "
+                        "WHERE publication_id = ?",
+                        (expected_active,),
+                    )
+                elif corruption == "active_wrong_profile":
+                    storage._conn.execute(
+                        "UPDATE agentic_ready_publications SET profile = ? "
+                        "WHERE publication_id = ?",
+                        ("special", expected_active),
+                    )
+                elif corruption == "previous_wrong_kb":
+                    storage._conn.execute(
+                        "UPDATE agentic_ready_publications SET kb_id = ? "
+                        "WHERE publication_id = ?",
+                        ("kb-other", expected_previous),
+                    )
+                else:
+                    storage._conn.execute(
+                        "UPDATE agentic_ready_publications SET profile = ? "
+                        "WHERE publication_id = ?",
+                        ("special", expected_previous),
+                    )
+
+        slots_before = storage._conn.execute(
+            "SELECT active_publication_id, previous_publication_id FROM agentic_ready_slots "
+            "WHERE kb_id = ? AND profile = ?",
+            ("kb-ready", "general"),
+        ).fetchone()
+        publications_before = storage._conn.execute(
+            "SELECT publication_id, kb_id, profile, status FROM agentic_ready_publications "
+            "ORDER BY publication_id"
+        ).fetchall()
+        manifest_before = storage.get_agentic_ready_manifest(
+            kb_id="kb-ready",
+            profile="general",
+        )
+
+        with pytest.raises(ValueError, match="publication"):
+            storage.rollback_agentic_ready_publication(
+                kb_id="kb-ready",
+                profile="general",
+                expected_active_publication_id=expected_active,
+                expected_previous_publication_id=expected_previous,
+                validated_previous_publication_id=expected_previous,
+                validate_previous_publication=lambda _candidate: True,
+            )
+
+        assert storage._conn.execute(
+            "SELECT active_publication_id, previous_publication_id FROM agentic_ready_slots "
+            "WHERE kb_id = ? AND profile = ?",
+            ("kb-ready", "general"),
+        ).fetchone() == slots_before
+        assert storage._conn.execute(
+            "SELECT publication_id, kb_id, profile, status FROM agentic_ready_publications "
+            "ORDER BY publication_id"
+        ).fetchall() == publications_before
+        assert storage.get_agentic_ready_manifest(
+            kb_id="kb-ready",
+            profile="general",
+        ) == manifest_before
+    finally:
+        storage.close()
+
+
+def test_publication_revision_changes_only_with_committed_pointer_swaps(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    storage = _open_storage(tmp_path)
+    try:
+        first = _record(
+            storage,
+            index_version_id="idx-revision-1",
+            artifact_digest="digest-revision-1",
+            output_dir=str(tmp_path / "staging" / "revision-first"),
+        )
+        first_state = storage.publish_agentic_ready_publication(
+            str(first["publication_id"]),
+            expected_active_publication_id=None,
+        )
+        assert first_state["publication_revision"] == 1
+
+        idempotent = storage.publish_agentic_ready_publication(
+            str(first["publication_id"]),
+            expected_active_publication_id=str(first["publication_id"]),
+        )
+        assert idempotent["idempotent"] is True
+        assert idempotent["publication_revision"] == 1
+
+        second = _record(
+            storage,
+            index_version_id="idx-revision-2",
+            artifact_digest="digest-revision-2",
+            output_dir=str(tmp_path / "staging" / "revision-second"),
+        )
+        cas_lost = storage.publish_agentic_ready_publication(
+            str(second["publication_id"]),
+            expected_active_publication_id="arp-stale-client",
+        )
+        assert cas_lost["cas_won"] is False
+        assert cas_lost["publication_revision"] == 1
+
+        second_state = storage.publish_agentic_ready_publication(
+            str(second["publication_id"]),
+            expected_active_publication_id=str(first["publication_id"]),
+        )
+        assert second_state["publication_revision"] == 2
+
+        with pytest.raises(ValueError, match="integrity validation"):
+            storage.rollback_agentic_ready_publication(
+                kb_id="kb-ready",
+                profile="general",
+                expected_active_publication_id=str(second["publication_id"]),
+                expected_previous_publication_id=str(first["publication_id"]),
+                validated_previous_publication_id=str(first["publication_id"]),
+                validate_previous_publication=lambda _publication: False,
+            )
+        assert storage.get_agentic_ready_publication_state(
+            kb_id="kb-ready",
+            profile="general",
+        )["publication_revision"] == 2
+
+        def fail_serving_manifest(_publication: dict[str, object]) -> None:
+            raise RuntimeError("injected rollback manifest failure")
+
+        monkeypatch.setattr(
+            storage,
+            "_publish_agentic_ready_manifest_row",
+            fail_serving_manifest,
+        )
+        with pytest.raises(RuntimeError, match="rollback manifest failure"):
+            storage.rollback_agentic_ready_publication(
+                kb_id="kb-ready",
+                profile="general",
+                expected_active_publication_id=str(second["publication_id"]),
+                expected_previous_publication_id=str(first["publication_id"]),
+                validated_previous_publication_id=str(first["publication_id"]),
+            )
+        unchanged = storage.get_agentic_ready_publication_state(
+            kb_id="kb-ready",
+            profile="general",
+        )
+        assert unchanged["active_publication_id"] == second["publication_id"]
+        assert unchanged["previous_publication_id"] == first["publication_id"]
+        assert unchanged["publication_revision"] == 2
     finally:
         storage.close()
 
@@ -720,6 +932,14 @@ def test_storage_migrates_draft_identity_unique_without_losing_slots(tmp_path: P
         state = storage.get_agentic_ready_publication_state(kb_id="kb-ready", profile="general")
         assert state["active_publication_id"] == "arp-active"
         assert state["previous_publication_id"] == "arp-previous"
+        assert state["publication_revision"] == 0
+        slot_columns = {
+            str(row[1])
+            for row in storage._conn.execute(
+                "PRAGMA table_info(agentic_ready_slots)"
+            ).fetchall()
+        }
+        assert "publication_revision" in slot_columns
         duplicate = _record(
             storage,
             index_version_id="idx-active",

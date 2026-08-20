@@ -7,10 +7,34 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Mapping
 import hashlib
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
+
+
+AGENTIC_READY_PUBLICATION_PROFILES = frozenset(
+    {"general", "regulation", "formula"}
+)
+
+
+def agentic_ready_publication_matches_scope(
+    publication: Any,
+    *,
+    kb_id: str,
+    profile: str,
+) -> bool:
+    if not isinstance(publication, Mapping) or publication.get("kb_id") != kb_id:
+        return False
+    stored_profile = publication.get("profile")
+    if not isinstance(stored_profile, str):
+        return False
+    normalized_stored_profile = stored_profile.strip().lower()
+    normalized_requested_profile = str(profile or "").strip().lower()
+    return bool(
+        normalized_stored_profile in AGENTIC_READY_PUBLICATION_PROFILES
+        and normalized_stored_profile == normalized_requested_profile
+    )
 
 
 def _is_internal_category_label(category: str) -> bool:
@@ -647,6 +671,7 @@ class Storage:
                 profile TEXT NOT NULL,
                 active_publication_id TEXT,
                 previous_publication_id TEXT,
+                publication_revision INTEGER NOT NULL DEFAULT 0,
                 automatic_build_enabled INTEGER NOT NULL DEFAULT 0,
                 automatic_publish_enabled INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL,
@@ -806,7 +831,10 @@ class Storage:
         )
         self._ensure_columns(
             "agentic_ready_slots",
-            {"automatic_build_enabled": "INTEGER NOT NULL DEFAULT 0"},
+            {
+                "automatic_build_enabled": "INTEGER NOT NULL DEFAULT 0",
+                "publication_revision": "INTEGER NOT NULL DEFAULT 0",
+            },
         )
         self._conn.execute(
             """
@@ -5998,7 +6026,8 @@ class Storage:
         row = self._conn.execute(
             """
             SELECT active_publication_id, previous_publication_id,
-                   automatic_build_enabled, automatic_publish_enabled, updated_at
+                   automatic_build_enabled, automatic_publish_enabled,
+                   publication_revision, updated_at
             FROM agentic_ready_slots
             WHERE kb_id = ? AND profile = ?
             LIMIT 1
@@ -6014,7 +6043,8 @@ class Storage:
             "previous_publication_id": previous_id,
             "automatic_build_enabled": bool(row[2]) if row else False,
             "automatic_publish_enabled": bool(row[3]) if row else False,
-            "updated_at": row[4] if row else None,
+            "publication_revision": int(row[4] or 0) if row else 0,
+            "updated_at": row[5] if row else None,
             "active_publication": self.get_agentic_ready_publication(active_id) if active_id else None,
             "previous_publication": self.get_agentic_ready_publication(previous_id) if previous_id else None,
         }
@@ -6117,7 +6147,9 @@ class Storage:
             slot_update = self._conn.execute(
                 """
                 UPDATE agentic_ready_slots
-                SET active_publication_id = ?, previous_publication_id = ?, updated_at = ?
+                SET active_publication_id = ?, previous_publication_id = ?,
+                    publication_revision = publication_revision + 1,
+                    updated_at = ?
                 WHERE kb_id = ? AND profile = ? AND active_publication_id IS ?
                 """,
                 (
@@ -6266,6 +6298,7 @@ class Storage:
         expected_active_publication_id: str,
         expected_previous_publication_id: str,
         validated_previous_publication_id: str,
+        validate_previous_publication: Callable[[dict[str, Any]], bool] | None = None,
     ) -> dict[str, Any]:
         """CAS-swap slots after the caller explicitly validates the previous artifact."""
         if (
@@ -6296,9 +6329,35 @@ class Storage:
                 current["rolled_back"] = False
                 current["cas_won"] = False
                 return current
+            active = self.get_agentic_ready_publication(str(active_id))
+            if (
+                not active
+                or not agentic_ready_publication_matches_scope(
+                    active,
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                )
+                or active.get("status") != "active"
+            ):
+                raise ValueError("active ready-data publication scope or status is invalid")
             previous = self.get_agentic_ready_publication(str(previous_id))
-            if not previous or previous["status"] != "previous":
+            if (
+                not previous
+                or not agentic_ready_publication_matches_scope(
+                    previous,
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                )
+                or previous.get("status") != "previous"
+            ):
                 raise ValueError("previous ready-data publication is not validated")
+            if (
+                validate_previous_publication is not None
+                and not validate_previous_publication(previous)
+            ):
+                raise ValueError(
+                    "previous ready-data publication failed integrity validation"
+                )
             if previous["gc_state"] in {"claimed", "delete_failed", "deleted"}:
                 raise ValueError("previous ready-data publication is under garbage collection")
             if self._agentic_ready_paths_conflict(
@@ -6309,7 +6368,9 @@ class Storage:
             slot_update = self._conn.execute(
                 """
                 UPDATE agentic_ready_slots
-                SET active_publication_id = ?, previous_publication_id = ?, updated_at = ?
+                SET active_publication_id = ?, previous_publication_id = ?,
+                    publication_revision = publication_revision + 1,
+                    updated_at = ?
                 WHERE kb_id = ? AND profile = ?
                   AND active_publication_id = ?
                   AND previous_publication_id = ?
@@ -6332,14 +6393,28 @@ class Storage:
                 current["rolled_back"] = False
                 current["cas_won"] = False
                 return current
-            self._conn.execute(
-                "UPDATE agentic_ready_publications SET status = 'previous', updated_at = ? WHERE publication_id = ?",
-                (now, active_id),
+            active_update = self._conn.execute(
+                """
+                UPDATE agentic_ready_publications
+                SET status = 'previous', updated_at = ?
+                WHERE publication_id = ? AND kb_id = ?
+                  AND LOWER(TRIM(profile)) = ? AND status = 'active'
+                """,
+                (now, active_id, kb_id, normalized_profile),
             )
-            self._conn.execute(
-                "UPDATE agentic_ready_publications SET status = 'active', published_at = ?, updated_at = ? WHERE publication_id = ?",
-                (now, now, previous_id),
+            if active_update.rowcount != 1:
+                raise ValueError("active ready-data publication changed during rollback")
+            previous_update = self._conn.execute(
+                """
+                UPDATE agentic_ready_publications
+                SET status = 'active', published_at = ?, updated_at = ?
+                WHERE publication_id = ? AND kb_id = ?
+                  AND LOWER(TRIM(profile)) = ? AND status = 'previous'
+                """,
+                (now, now, previous_id, kb_id, normalized_profile),
             )
+            if previous_update.rowcount != 1:
+                raise ValueError("previous ready-data publication changed during rollback")
             self._conn.execute(
                 "DELETE FROM agentic_ready_publication_gc WHERE publication_id = ?",
                 (previous_id,),
