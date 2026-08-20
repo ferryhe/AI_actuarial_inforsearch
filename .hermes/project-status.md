@@ -2,18 +2,27 @@
 
 - Updated: 2026-08-20 (America/New_York)
 - Repository: `ferryhe/AI_actuarial_inforsearch`
-- Workspace: `C:\Project\AI_actuarial_inforsearch`
-- Active branch: `codex/issue-174-ready-data-provenance-ui-closure`
-- Baseline: `origin/main` at `001dd494ce0dafb633c34459053891c919180823` (merged PR `#192`)
-- Delivery: Issue `#174` final provenance/API/Knowledge UI closure passed 15 review rounds plus the user-authorized final post-round-15 fix. Ready-for-review PR `#193` is open and mergeable; CI and remote/Copilot feedback observation are in progress.
+- Workspace: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-194`
+- Active branch: `codex/issue-194-kb-list-offline`
+- Baseline: `origin/main` at `1c682650bee760ca0d58eedde33de2d7987d6ec1` (merged PR `#193`)
+- Delivery: Issue `#194` application fix is implemented and locally verified; manager review, publication, and merge remain.
 - Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
+
+## Issue #194 — KB list offline delivery
+
+- For filesystem-backed databases, before constructing its normal `Storage`, `GET /api/rag/knowledge-bases` performs a raw SQLite, read-only schema readiness check for all selected KB metadata columns, all columns that `Storage._ensure_rag_kb_embedding_columns` can add, and the required `rag_kb_files` fields. Already-ready databases take no readiness write lock. Only missing schemas enter `BEGIN IMMEDIATE`, recheck under the cross-connection lock, apply the list-only migration, and commit; the later `Storage` construction therefore cannot race on those column additions. For connection-local `:memory:` and empty-string temporary databases, the same readiness logic runs on the exact `Storage` connection that performs the list query, so the prepared schema remains visible. No URI path semantics were added. No `KnowledgeBaseManager`, `SemanticChunker`, tokenizer encoding, or `EmbeddingGenerator` is constructed, and no RAG chunks or index tables are migrated.
+- Existing ordering, `kb_mode`/`search` filters, `KnowledgeBase`-compatible provider/profile/dimension/timestamp normalization, chunk-profile decoration, current-embedding compatibility/status, and agentic ready-manifest decoration are preserved. A database with no RAG KB table continues to return an empty list.
+- TDD red evidence: the original cold-cache regression failed at `list_knowledge_bases -> _manager_and_storage -> KnowledgeBaseManager`; Round 1 legacy regressions then failed with `no such column: description` and unnormalized provider value `' OpenAI '`; Round 2 exposed `duplicate column name: description`; Round 3 reproduced constructor-time `duplicate column name: embedding_provider` and an already-ready list blocked by an unrelated writer with `database is locked`; Round 4 reproduced `no such table: rag_knowledge_bases` for both `:memory:` and empty-string connection-local databases.
+- TDD green evidence: the cold-cache, legacy-schema, legacy-value, constructor-time concurrent-first-migration, steady-state writer-lock, `:memory:`, and empty-string temporary-database regressions pass. Runtime dependency entry points remain fail-fast in the offline/concurrent/connection-local regressions, and the steady-state regression proves readiness remains read-only behind an existing writer. Two independent empty-string SQLite connections were also shown to have separate temporary schemas and empty `PRAGMA database_list` filenames on this host, supporting the narrow connection-local classification.
+- Local verification: focused offline/legacy/locking/connection-local regressions `7 passed`; the two connection-local cases passed together in five consecutive isolated reruns; both Round 3 concurrency/lock regressions also passed together in five consecutive isolated reruns; complete `tests/test_fastapi_rag_admin_endpoints.py` `99 passed, 7 skipped`; a nested missing-parent/new-empty-database probe passed; touched-file Ruff, compileall, and `git diff --check` passed.
+- Heartbeat `managed-pr-173-progress` is active during delivery.
+- Parent Issue `#173` remains open pending separately authorized fixed-image no-network server smoke plus capacity, backup, and timer acceptance. This branch closes only `#194` and performs no server, image, container, deployment, backup, or timer operations.
 
 ## Hard Boundaries
 
 - This repository is the only writable workspace unless a later task explicitly names another repository.
 - No production, deployment, restart, migration, server-Agent command, sibling-repository work, automatic retry, or automatic GC was performed for this delivery.
-- Preserve `ai_actuarial/api/routers/rag_admin.py`: it has a known line-ending-only worktree state and a content diff of zero. It is excluded from the delivery.
-- Preserve `graphify-out/`: it is an existing untracked analysis artifact; do not stage, commit, or clean it.
+- Outside this isolated worktree, the primary checkout has a known line-ending-only state for `ai_actuarial/api/routers/rag_admin.py` and an existing untracked `graphify-out/` analysis artifact. Neither is part of this delivery and neither was touched here.
 - Durable full-pipeline stages, resume, lease, watermark, and Tasks reporting belong to Issue `#179`.
 - Production/API/browser canary belongs to Issue `#176`.
 
@@ -22,9 +31,9 @@
 | Issue | State | Current meaning | Close condition / next dependency |
 |---|---|---|---|
 | `#172` Epic | Open | Governs the complete acquisition-to-ready-data program. | Close after child Issues and external prerequisites complete and production acceptance is recorded. |
-| `#173` OPS baseline | Open | PR `#181` is merged; isolated KB list diagnosis remains separately authorized work. | Explicitly authorized least-privilege diagnosis and remaining acceptance. |
-| `#174` ready-data | Open/Reopened | PRs `#182`–`#192` are merged. Final provenance, public rollback API, and Knowledge UI closure are implemented and locally gated on the current branch. | Ready PR, CI/remote review, maintainer merge, then final acceptance comment and close. |
-| `#175` manifest/lineage | Open | Declared producer contract remains. | Re-triage external readiness before starting. |
+| `#173` OPS baseline | Open | Diagnosis is complete; Issue `#194` is the application correction for the KB-list defect. | Keep open only for separately authorized fixed-image no-network server smoke plus capacity, backup, and timer acceptance. |
+| `#174` ready-data | Closed / Completed | PR `#193` is merged and final acceptance was recorded; closed at `2026-08-20T16:36:02Z`. | Complete. |
+| `#175` manifest/lineage | Open / Blocked | Producer contract readiness is tracked by `web_listening #48`. | Start only after that external contract is ready. |
 | `#176` production rollout | Open | Production/API/browser canary and final rollout. | Blocked by repository work and external prerequisites. |
 | `#177` KB reconciliation | Open | Bidirectional rule membership and audit remain. | Implement before `#178`. |
 | `#178` reclassification | Open | Taxonomy-versioned reclassification remains. | Blocked by `#177`. |
@@ -66,11 +75,9 @@
 
 ## Publication State
 
-- Local implementation and final gates are complete.
-- A subsequent authorized session successfully verified `.git` write access and the existing `ferryhe` GitHub login with `repo`/`workflow` scopes. No ACL workaround or alternate credential path was used.
-- Ready-for-review PR `#193`, `feat: close ready-data provenance and KB controls`, was created with `Refs #174`. It targets `main` from `codex/issue-174-ready-data-provenance-ui-closure` and does not auto-close the Issue before acceptance.
-- After the final push, observe GitHub Actions, Copilot, reviews, inline threads, and comments for the required remote-feedback window. Fix only confirmed-safe in-scope feedback and do not auto-merge.
-- After maintainer merge, audit the merge on current `main`, post the Issue `#174` acceptance mapping, and close only the repository-owned scope. Do not claim `#179` or `#176` work as completed.
+- PR `#193`, `feat: close ready-data provenance and KB controls`, merged at `2026-08-20T16:30:07Z` with merge SHA `1c682650bee760ca0d58eedde33de2d7987d6ec1`.
+- Issue `#174` final acceptance and closure are complete; it closed at `2026-08-20T16:36:02Z`.
+- Issue `#194` is the current unpublished application correction. Publication and closure belong to its manager workflow; Issue `#173` must remain open for the separate server acceptance scope.
 
 ## Program Dependency Order
 
@@ -82,10 +89,10 @@ external acquisition prerequisites → #175 → #177 → #178 ─┐
 #176 accepted → close #172
 ```
 
-After `#174` closes, re-read live Issue state. The next repository-only dependency is `#175` when its external producer contract is ready; otherwise the explicitly authorized `#173` diagnosis may proceed. Do not infer sibling or server scope.
+Issue `#175` remains blocked on producer contract readiness tracked by `web_listening #48`. The Issue `#173` application correction is Issue `#194`; fixed-image no-network smoke and capacity/backup/timer acceptance remain a separate, explicitly authorized server-validation scope. Do not infer sibling or server scope.
 
 ## Current Worktree State
 
-- Issue `#174` final closure implementation is committed and published in PR `#193`.
-- `ai_actuarial/api/routers/rag_admin.py`: pre-existing line-ending metadata only; content diff zero; exclude from staging.
-- `graphify-out/`: pre-existing untracked analysis output; preserve and exclude.
+- Isolated worktree: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-194` on `codex/issue-194-kb-list-offline`, based on merged PR `#193` at `1c682650bee760ca0d58eedde33de2d7987d6ec1`.
+- Modified only: `.hermes/project-status.md`, `ai_actuarial/api/services/rag_admin.py`, and `tests/test_fastapi_rag_admin_endpoints.py`.
+- No untracked files exist in this isolated worktree.

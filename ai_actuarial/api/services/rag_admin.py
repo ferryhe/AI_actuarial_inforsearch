@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -1434,44 +1435,174 @@ def get_category_stats(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
         storage.close()
 
 
-def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
-    KnowledgeBase, _manager, storage = _manager_and_storage(db_path)
+_KB_LIST_COLUMN_DEFINITIONS = {
+    "kb_id": "TEXT",
+    "name": "TEXT DEFAULT ''",
+    "description": "TEXT DEFAULT ''",
+    "kb_mode": "TEXT DEFAULT 'category'",
+    "chunk_profile_id": "TEXT",
+    "manifest_profile": "TEXT DEFAULT 'general'",
+    "embedding_provider": "TEXT NOT NULL DEFAULT 'openai'",
+    "embedding_model": "TEXT NOT NULL DEFAULT 'text-embedding-3-large'",
+    "embedding_dimension": "INTEGER",
+    "chunk_size": "INTEGER NOT NULL DEFAULT 800",
+    "chunk_overlap": "INTEGER NOT NULL DEFAULT 100",
+    "index_type": "TEXT NOT NULL DEFAULT 'Flat'",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+    "file_count": "INTEGER DEFAULT 0",
+    "chunk_count": "INTEGER DEFAULT 0",
+    "index_dirty_at": "TEXT",
+}
+_KB_LIST_FILE_COLUMN_DEFINITIONS = {
+    "kb_id": "TEXT",
+    "file_url": "TEXT",
+    "added_at": "TEXT",
+    "chunk_count": "INTEGER DEFAULT 0",
+    "indexed_at": "TEXT",
+}
+_KB_LIST_CONNECTION_LOCAL_PATHS = frozenset({"", ":memory:"})
+
+
+def _kb_list_schema_ready(conn: Any) -> bool:
+    kb_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(rag_knowledge_bases)")
+    }
+    if not _KB_LIST_COLUMN_DEFINITIONS.keys() <= kb_columns:
+        return False
+    file_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(rag_kb_files)")
+    }
+    return _KB_LIST_FILE_COLUMN_DEFINITIONS.keys() <= file_columns
+
+
+def _ensure_kb_list_schema_on_connection(conn: Any) -> None:
     try:
+        if _kb_list_schema_ready(conn):
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        if _kb_list_schema_ready(conn):
+            conn.commit()
+            return
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                chunk_profile_id TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT
+            )
+            """
+        )
+        existing_kb_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(rag_knowledge_bases)")
+        }
+        for name, definition in _KB_LIST_COLUMN_DEFINITIONS.items():
+            if name not in existing_kb_columns:
+                conn.execute(f"ALTER TABLE rag_knowledge_bases ADD COLUMN {name} {definition}")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rag_kb_files (
+                kb_id TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                chunk_count INTEGER DEFAULT 0,
+                indexed_at TEXT,
+                PRIMARY KEY (kb_id, file_url),
+                FOREIGN KEY (kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE,
+                FOREIGN KEY (file_url) REFERENCES files(url) ON DELETE CASCADE
+            )
+            """
+        )
+        existing_file_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(rag_kb_files)")
+        }
+        for name, definition in _KB_LIST_FILE_COLUMN_DEFINITIONS.items():
+            if name not in existing_file_columns:
+                conn.execute(f"ALTER TABLE rag_kb_files ADD COLUMN {name} {definition}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _ensure_kb_list_schema(db_path: str) -> None:
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        _ensure_kb_list_schema_on_connection(conn)
+    finally:
+        conn.close()
+
+
+def _kb_list_row_payload(row: Any) -> dict[str, Any]:
+    return {
+        "kb_id": row[0],
+        "name": row[1],
+        "description": row[2],
+        "kb_mode": row[3] or "category",
+        "chunk_profile_id": row[4] or "",
+        "manifest_profile": str(row[5] or "general").strip().lower() or "general",
+        "embedding_provider": str(row[6] or "openai").strip().lower() or "openai",
+        "embedding_model": row[7],
+        "embedding_dimension": int(row[8]) if row[8] not in (None, "") else None,
+        "chunk_size": row[9],
+        "chunk_overlap": row[10],
+        "index_type": row[11],
+        "created_at": row[12] or datetime.now(timezone.utc).isoformat(),
+        "updated_at": row[13] or datetime.now(timezone.utc).isoformat(),
+        "file_count": row[14],
+        "chunk_count": row[15],
+    }
+
+
+def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
+    connection_local = db_path in _KB_LIST_CONNECTION_LOCAL_PATHS
+    if not connection_local:
+        _ensure_kb_list_schema(db_path)
+    storage = Storage(db_path)
+    try:
+        if connection_local:
+            _ensure_kb_list_schema_on_connection(storage._conn)
         kb_mode = _norm(query.get("kb_mode"))
         search = _norm(query.get("search")).lower()
-        cursor = storage._conn.execute(
+        rows = storage._conn.execute(
             """
             SELECT kb_id, name, description, kb_mode, chunk_profile_id, manifest_profile, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
             """
-        )
+        ).fetchall()
         current_embeddings = _current_embeddings_payload(storage=storage)
         kbs = []
-        for row in cursor.fetchall():
-            kb = KnowledgeBase(
-                kb_id=row[0], name=row[1], description=row[2],
-                kb_mode=row[3] or "category",
-                chunk_profile_id=row[4] or "",
-                manifest_profile=row[5] or "general",
-                embedding_provider=row[6] or "openai",
-                embedding_model=row[7], embedding_dimension=row[8],
-                chunk_size=row[9], chunk_overlap=row[10],
-                index_type=row[11], created_at=row[12], updated_at=row[13],
-                file_count=row[14], chunk_count=row[15],
-            )
-            if kb_mode and kb.kb_mode != kb_mode:
+        for row in rows:
+            kb_payload = _kb_list_row_payload(row)
+            if kb_mode and kb_payload["kb_mode"] != kb_mode:
                 continue
             if search and not (
-                search in (kb.name or "").lower()
-                or search in (kb.description or "").lower()
-                or search in (kb.kb_id or "").lower()
+                search in (kb_payload["name"] or "").lower()
+                or search in (kb_payload["description"] or "").lower()
+                or search in (kb_payload["kb_id"] or "").lower()
             ):
                 continue
             payload = _build_kb_embedding_status(
                 storage=storage,
-                kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
+                kb_payload=_decorate_kb_chunk_profile(storage, kb_payload),
                 current_embeddings=current_embeddings,
             )
             kbs.append(_decorate_kb_agentic_manifest(storage, payload))
