@@ -5,7 +5,7 @@
 - Workspace: `C:\Project\AI_actuarial_inforsearch`
 - Active branch: `codex/issue-174-ready-data-provenance-ui-closure`
 - Baseline: `origin/main` at `001dd494ce0dafb633c34459053891c919180823` (merged PR `#192`)
-- Delivery: Issue `#174` final provenance/API/Knowledge UI closure passed 15 review rounds plus the user-authorized final post-round-15 fix. Local publication permissions and GitHub authentication were successfully restored; Ready-for-review PR publication is in progress.
+- Delivery: Issue `#174` final provenance/API/Knowledge UI closure passed 15 review rounds plus the user-authorized final post-round-15 fix. Ready-for-review PR `#193` is open and mergeable; CI and remote/Copilot feedback observation are in progress.
 - Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
 
 ## Hard Boundaries
@@ -68,7 +68,7 @@
 
 - Local implementation and final gates are complete.
 - A subsequent authorized session successfully verified `.git` write access and the existing `ferryhe` GitHub login with `repo`/`workflow` scopes. No ACL workaround or alternate credential path was used.
-- Publication is now proceeding by explicitly staging only confirmed Issue `#174` files, committing, pushing, and creating a Ready-for-review PR titled `feat: close ready-data provenance and KB controls` with `Refs #174`.
+- Ready-for-review PR `#193`, `feat: close ready-data provenance and KB controls`, was created with `Refs #174`. It targets `main` from `codex/issue-174-ready-data-provenance-ui-closure` and does not auto-close the Issue before acceptance.
 - After the final push, observe GitHub Actions, Copilot, reviews, inline threads, and comments for the required remote-feedback window. Fix only confirmed-safe in-scope feedback and do not auto-merge.
 - After maintainer merge, audit the merge on current `main`, post the Issue `#174` acceptance mapping, and close only the repository-owned scope. Do not claim `#179` or `#176` work as completed.
 
@@ -86,6 +86,6 @@ After `#174` closes, re-read live Issue state. The next repository-only dependen
 
 ## Current Worktree State
 
-- Issue `#174` final closure files are ready for explicit staging and publication; the PR number will be recorded after GitHub creates it.
+- Issue `#174` final closure implementation is committed and published in PR `#193`.
 - `ai_actuarial/api/routers/rag_admin.py`: pre-existing line-ending metadata only; content diff zero; exclude from staging.
 - `graphify-out/`: pre-existing untracked analysis output; preserve and exclude.
