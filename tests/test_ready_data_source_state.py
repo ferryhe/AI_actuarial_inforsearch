@@ -709,7 +709,7 @@ def test_concurrent_marks_serialize_without_losing_generation(tmp_path: Path) ->
         check.close()
 
 
-def test_legacy_slot_migration_preserves_publish_as_valid_build_publish_pair(
+def test_storage_startup_does_not_backfill_legacy_slot_flags(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "index.db"
@@ -740,8 +740,20 @@ def test_legacy_slot_migration_preserves_publish_as_valid_build_publish_pair(
             kb_id="kb-source-state",
             profile="general",
         )
-        assert state["automatic_build_enabled"] is True
+        assert state["automatic_build_enabled"] is False
         assert state["automatic_publish_enabled"] is True
+        migrated.set_agentic_ready_automation(
+            kb_id="kb-source-state",
+            profile="general",
+            automatic_build_enabled=True,
+            automatic_publish_enabled=True,
+        )
+        updated = migrated.get_agentic_ready_publication_state(
+            kb_id="kb-source-state",
+            profile="general",
+        )
+        assert updated["automatic_build_enabled"] is True
+        assert updated["automatic_publish_enabled"] is True
     finally:
         migrated.close()
 

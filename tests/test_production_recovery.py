@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from scripts import production_recovery
+from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,7 @@ def _seed_data_dir(root: Path) -> tuple[Path, Path]:
     db_path = data_dir / "index.db"
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA user_version=7")
+        conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
         conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, local_path TEXT)")
         conn.execute("CREATE TABLE rag_knowledge_bases (id TEXT PRIMARY KEY)")
         conn.execute("CREATE TABLE agentic_ready_manifests (id TEXT PRIMARY KEY)")
@@ -75,7 +76,7 @@ def test_online_database_backup_is_repeatable_and_records_success(tmp_path: Path
     assert manifest["status"] == "success"
     assert manifest["finished_at"] == "2026-08-16T12:00:10Z"
     assert manifest["database"]["quick_check"] == "ok"
-    assert manifest["database"]["schema_user_version"] == 7
+    assert manifest["database"]["schema_user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
     assert manifest["included_data_directories"] == []
 
     events = [json.loads(line) for line in (backup_root / "backup-events.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -188,7 +189,7 @@ def test_release_record_captures_image_config_and_schema_versions(tmp_path: Path
     assert record["image_digest"] == "example/api@sha256:digest"
     assert record["git_sha"] == "abc123"
     assert record["git_dirty"] is False
-    assert record["schema_user_version"] == 7
+    assert record["schema_user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
     assert record["config_sha256"]
     assert json.loads(output.read_text(encoding="utf-8")) == record
 
@@ -251,6 +252,9 @@ def test_scheduled_backup_and_deploy_gate_use_named_volume_recovery_tool() -> No
     runbook = (ROOT / "docs" / "deployment-runbook.md").read_text(encoding="utf-8")
     assert "base64.urlsafe_b64encode(secrets.token_bytes(32))" in runbook
     assert "from cryptography.fernet import Fernet" not in runbook
+    assert "ai-actuarial schema status" in runbook
+    assert "ai-actuarial schema plan" in runbook
+    assert "ai-actuarial schema apply" in runbook
 
 
 def test_production_recovery_cli_help_and_json_output(tmp_path: Path) -> None:

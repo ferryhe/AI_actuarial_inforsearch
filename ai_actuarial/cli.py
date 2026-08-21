@@ -10,8 +10,6 @@ from pathlib import Path
 
 import yaml
 
-logger = logging.getLogger(__name__)
-
 from .crawler import Crawler, SiteConfig
 from .catalog import (
     CATALOG_VERSION,
@@ -26,10 +24,17 @@ from .search import search_all
 from .ai_runtime import get_search_runtime_credentials
 from .storage import Storage
 from .collectors import CollectionConfig
-from .collectors.scheduled import ScheduledCollector
-from .collectors.adhoc import AdhocCollector
 from .collectors.url import URLCollector
 from .collectors.file import FileCollector
+from .sqlite_schema import (
+    SchemaMigrationError,
+    apply_schema,
+    json_dumps,
+    schema_plan,
+    schema_status,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _load_dotenv(path: str) -> None:
@@ -338,6 +343,36 @@ def cmd_catalog(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_schema(args: argparse.Namespace) -> int:
+    if args.schema_cmd == "status":
+        payload = schema_status(args.db)
+    elif args.schema_cmd == "plan":
+        payload = schema_plan(args.db)
+    elif args.schema_cmd == "apply":
+        try:
+            payload = apply_schema(args.db)
+        except SchemaMigrationError as exc:
+            payload = {
+                "success": False,
+                "error": str(exc),
+            }
+            if args.json:
+                print(json_dumps(payload))
+            else:
+                print(f"Schema apply failed: {exc}")
+            return 2
+    else:  # pragma: no cover - argparse enforces a valid subcommand
+        raise AssertionError(args.schema_cmd)
+
+    if args.json:
+        print(json_dumps(payload))
+    else:
+        state = payload.get("state", "unknown")
+        version = (payload.get("database") or {}).get("user_version")
+        print(f"SQLite schema state: {state} (user_version={version})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ai-actuarial")
     p.add_argument(
@@ -423,6 +458,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_catalog.add_argument("--append", action="store_true", help="[legacy] Append to existing outputs")
     p_catalog.set_defaults(func=cmd_catalog)
 
+    p_schema = sub.add_parser("schema", help="Inspect or apply SQLite schema migrations")
+    p_schema_sub = p_schema.add_subparsers(dest="schema_cmd", required=True)
+    for action in ("status", "plan", "apply"):
+        p_schema_action = p_schema_sub.add_parser(action, help=f"SQLite schema {action}")
+        p_schema_action.add_argument("--db", required=True, help="SQLite database path")
+        p_schema_action.add_argument(
+            "--json",
+            action="store_true",
+            help="Emit the stable machine-readable JSON contract",
+        )
+        p_schema_action.set_defaults(func=cmd_schema)
+
     # Collection commands using new modular structure
     p_collect = sub.add_parser("collect", help="Run specific collection workflow")
     p_collect_sub = p_collect.add_subparsers(dest="collect_type", required=True)
@@ -477,7 +524,7 @@ def cmd_collect_url(args: argparse.Namespace) -> int:
     
     storage.close()
     
-    print(f"\nURL Collection Results:")
+    print("\nURL Collection Results:")
     logger.info(f"  Found: {result.items_found}")
     logger.info(f"  Downloaded: {result.items_downloaded}")
     logger.info(f"  Skipped: {result.items_skipped}")
@@ -510,7 +557,7 @@ def cmd_collect_file(args: argparse.Namespace) -> int:
     
     storage.close()
     
-    print(f"\nFile Import Results:")
+    print("\nFile Import Results:")
     logger.info(f"  Found: {result.items_found}")
     logger.info(f"  Imported: {result.items_downloaded}")
     logger.info(f"  Skipped: {result.items_skipped}")

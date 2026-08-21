@@ -20,6 +20,8 @@ from ai_actuarial.api.services.rag_admin import (
     execute_ready_data_publication_gc,
     plan_ready_data_publication_gc,
 )
+from ai_actuarial.rag.config import RAGConfig
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
 
@@ -30,19 +32,17 @@ YOUNG_MARK = "2026-08-20T00:00:00+00:00"
 
 def _open_storage(tmp_path: Path) -> Storage:
     db_path = tmp_path / "index.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
-        CREATE TABLE rag_knowledge_bases (
-            kb_id TEXT PRIMARY KEY,
-            embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-large'
-        )
-        """
+    storage = Storage(str(db_path))
+    KnowledgeBaseManager(
+        storage,
+        config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
+    ).create_kb(
+        kb_id="kb-ready",
+        name="Ready data GC",
+        kb_mode="manual",
+        manifest_profile="general",
     )
-    conn.execute("INSERT INTO rag_knowledge_bases (kb_id) VALUES ('kb-ready')")
-    conn.commit()
-    conn.close()
-    return Storage(str(db_path))
+    return storage
 
 
 def _candidate_dir(tmp_path: Path, name: str) -> Path:

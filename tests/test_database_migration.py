@@ -123,22 +123,25 @@ class TestDatabaseMigration:
                 )
             ''')
             
-            # Insert first token
-            cursor.execute(
-                "INSERT INTO api_tokens (provider, category, api_key_encrypted) VALUES (?, ?, ?)",
-                ('openai', 'llm', 'encrypted_key1')
-            )
-            conn.commit()
-            
-            # Try to insert duplicate provider+category
-            with pytest.raises(sqlite3.IntegrityError):
+            try:
+                # Insert first token
                 cursor.execute(
                     "INSERT INTO api_tokens (provider, category, api_key_encrypted) VALUES (?, ?, ?)",
-                    ('openai', 'llm', 'encrypted_key2')
+                    ('openai', 'llm', 'encrypted_key1')
                 )
                 conn.commit()
-            
-            conn.close()
+
+                # Try to insert duplicate provider+category
+                with pytest.raises(sqlite3.IntegrityError):
+                    cursor.execute(
+                        "INSERT INTO api_tokens (provider, category, api_key_encrypted) VALUES (?, ?, ?)",
+                        ('openai', 'llm', 'encrypted_key2')
+                    )
+                    conn.commit()
+                conn.rollback()
+            finally:
+                cursor.close()
+                conn.close()
         finally:
             if os.path.exists(db_path):
                 os.remove(db_path)

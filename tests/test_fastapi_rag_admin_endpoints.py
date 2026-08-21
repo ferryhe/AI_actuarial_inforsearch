@@ -20,6 +20,18 @@ from ai_actuarial.storage import Storage
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
 
+def _sqlite_file_state(db_path: Path) -> tuple[tuple[bool, int, str], ...]:
+    def file_state(candidate: Path) -> tuple[bool, int, str]:
+        if not candidate.exists():
+            return False, 0, ""
+        return True, candidate.stat().st_size, hashlib.sha256(candidate.read_bytes()).hexdigest()
+
+    return tuple(
+        file_state(candidate)
+        for candidate in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm"))
+    )
+
+
 def _record_snapshot_race_publication(
     storage: Storage,
     *,
@@ -636,7 +648,8 @@ def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(tmp_path: Pat
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 file_count INTEGER DEFAULT 0,
-                chunk_count INTEGER DEFAULT 0
+                chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT
             );
             CREATE TABLE rag_kb_files (
                 kb_id TEXT NOT NULL,
@@ -685,6 +698,7 @@ def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(tmp_path: Pat
         storage.close()
 
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    client.headers.pop("X-Auth-Token", None)
 
     response = client.get(
         "/api/rag/knowledge-bases",
@@ -729,10 +743,12 @@ def test_rag_admin_kb_list_supports_connection_local_database(
     assert "configured" in current_embeddings
 
 
-def test_fastapi_rag_admin_kb_list_migrates_legacy_metadata_schema_without_runtime(
+def test_fastapi_rag_admin_kb_list_legacy_metadata_requires_schema_apply_without_writes(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    import sqlite3
+
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
     db_path = tmp_path / "index.db"
     storage = Storage(str(db_path))
@@ -764,45 +780,39 @@ def test_fastapi_rag_admin_kb_list_migrates_legacy_metadata_schema_without_runti
         storage.close()
 
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    client.headers.pop("X-Auth-Token", None)
+    before_state = _sqlite_file_state(db_path)
+    before_schema = sqlite3.connect(str(db_path))
+    try:
+        before_columns = {
+            row[1] for row in before_schema.execute("PRAGMA table_info(rag_knowledge_bases)")
+        }
+    finally:
+        before_schema.close()
 
     response = client.get("/api/rag/knowledge-bases", params={"search": "legacy"})
 
-    assert response.status_code == 200, response.text
-    listed = response.json()["knowledge_bases"][0]
-    assert listed["kb_id"] == "kb-legacy-offline"
-    assert listed["description"] == ""
-    assert listed["kb_mode"] == "category"
-    assert listed["manifest_profile"] == "general"
-    assert listed["embedding_provider"] == "openai"
-    assert listed["embedding_dimension"] == 3072
-    assert listed["file_count"] == 0
-    assert listed["chunk_count"] == 0
-    assert listed["agentic_ready_manifest"]["status"] == "missing"
-    assert listed["agentic_fallback_mode"] == "standard"
+    assert response.status_code == 409, response.text
+    assert "schema apply" in response.text
+    assert _sqlite_file_state(db_path) == before_state
 
-    storage = Storage(str(db_path))
+    conn = sqlite3.connect(str(db_path))
     try:
         kb_columns = {
-            row[1] for row in storage._conn.execute("PRAGMA table_info(rag_knowledge_bases)")
+            row[1] for row in conn.execute("PRAGMA table_info(rag_knowledge_bases)")
         }
-        assert {
-            "description",
-            "kb_mode",
-            "chunk_profile_id",
-            "manifest_profile",
-            "embedding_provider",
-            "embedding_dimension",
-            "file_count",
-            "chunk_count",
-            "index_dirty_at",
-        } <= kb_columns
-        assert storage._table_exists("rag_kb_files")
-        assert not storage._table_exists("rag_chunks")
+        assert kb_columns == before_columns
+        assert not conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'rag_kb_files'"
+        ).fetchone()
+        assert conn.execute(
+            "SELECT COUNT(*) FROM rag_knowledge_bases WHERE kb_id = 'kb-legacy-offline'"
+        ).fetchone()[0] == 1
     finally:
-        storage.close()
+        conn.close()
 
 
-def test_rag_admin_kb_list_serializes_concurrent_legacy_schema_readiness(
+def test_rag_admin_kb_list_concurrent_legacy_reads_do_not_write(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -810,6 +820,7 @@ def test_rag_admin_kb_list_serializes_concurrent_legacy_schema_readiness(
     import sqlite3
 
     from ai_actuarial.api.services import rag_admin as rag_admin_service
+    from ai_actuarial.api.services.rag_admin import RagAdminError
 
     db_path = tmp_path / "index.db"
     storage = Storage(str(db_path))
@@ -841,65 +852,30 @@ def test_rag_admin_kb_list_serializes_concurrent_legacy_schema_readiness(
         storage.close()
 
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    constructor_schema_read = threading.Barrier(2)
-    synchronized_constructor_reads: list[None] = []
-    real_connect = sqlite3.connect
+    before_state = _sqlite_file_state(db_path)
 
-    class CoordinatedConnection:
-        def __init__(self, connection) -> None:
-            self._connection = connection
-            self._storage_constructor = False
-            self._constructor_rag_schema_reads = 0
-
-        def execute(self, sql, *args):
-            cursor = self._connection.execute(sql, *args)
-            normalized_sql = sql.strip()
-            if normalized_sql == "PRAGMA journal_mode=WAL;":
-                self._storage_constructor = True
-            elif (
-                self._storage_constructor
-                and normalized_sql == "PRAGMA table_info(rag_knowledge_bases)"
-            ):
-                self._constructor_rag_schema_reads += 1
-                if self._constructor_rag_schema_reads == 2:
-                    synchronized_constructor_reads.append(None)
-                    constructor_schema_read.wait(timeout=5)
-            return cursor
-
-        def __getattr__(self, name):
-            return getattr(self._connection, name)
-
-    def coordinated_connect(*args, **kwargs):
-        return CoordinatedConnection(real_connect(*args, **kwargs))
-
-    monkeypatch.setattr(sqlite3, "connect", coordinated_connect)
-
-    def list_legacy_kb() -> dict[str, object]:
-        return rag_admin_service.list_knowledge_bases(
-            db_path=str(db_path),
-            query={"search": "concurrent"},
-        )
+    def list_legacy_kb() -> int:
+        with pytest.raises(RagAdminError) as excinfo:
+            rag_admin_service.list_knowledge_bases(
+                db_path=str(db_path),
+                query={"search": "concurrent"},
+            )
+        return excinfo.value.status_code
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(list_legacy_kb) for _ in range(2)]
         results = [future.result(timeout=10) for future in futures]
 
-    assert len(synchronized_constructor_reads) == 2
-    for result in results:
-        listed = result["knowledge_bases"][0]
-        assert listed["kb_id"] == "kb-concurrent-legacy"
-        assert listed["description"] == ""
-        assert listed["kb_mode"] == "category"
-        assert listed["manifest_profile"] == "general"
-        assert listed["embedding_provider"] == "openai"
-        assert listed["embedding_dimension"] == 3072
-        assert listed["agentic_ready_manifest"]["status"] == "missing"
-        assert listed["agentic_fallback_mode"] == "standard"
+    assert results == [409, 409]
+    assert _sqlite_file_state(db_path) == before_state
+    with sqlite3.connect(str(db_path)) as conn:
+        assert not conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'rag_kb_files'"
+        ).fetchone()
 
 
 def test_rag_admin_kb_list_schema_ready_path_does_not_wait_for_writer(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     import sqlite3
 
@@ -943,11 +919,8 @@ def test_rag_admin_kb_list_schema_ready_path_does_not_wait_for_writer(
     finally:
         setup.close()
 
-    reader = Storage(str(db_path))
-    reader._conn.execute("PRAGMA busy_timeout=100")
     writer = sqlite3.connect(str(db_path))
     writer.execute("BEGIN IMMEDIATE")
-    monkeypatch.setattr(rag_admin_service, "Storage", lambda _path: reader)
     try:
         result = rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
         assert writer.in_transaction
@@ -957,6 +930,321 @@ def test_rag_admin_kb_list_schema_ready_path_does_not_wait_for_writer(
 
     assert result["knowledge_bases"] == []
     assert "configured" in result["current_embeddings"]
+
+
+def test_rag_admin_kb_list_existing_db_without_kb_table_is_read_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    db_path = tmp_path / "raw-no-kb-table.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("CREATE TABLE raw_rag_placeholder (id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO raw_rag_placeholder (id) VALUES ('keep')")
+        conn.commit()
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    before_state = _sqlite_file_state(db_path)
+
+    result = rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
+
+    assert result["knowledge_bases"] == []
+    assert "configured" in result["current_embeddings"]
+    assert _sqlite_file_state(db_path) == before_state
+    with sqlite3.connect(str(db_path)) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_rag_placeholder"
+        ).fetchone()[0] == 1
+
+
+def test_rag_admin_kb_list_user_schema_probe_is_read_only_query_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    db_path = tmp_path / "probe-read-only.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("CREATE TABLE raw_rag_placeholder (id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO raw_rag_placeholder (id) VALUES ('keep')")
+        conn.commit()
+
+    real_connect = sqlite3.connect
+    connect_calls = []
+    query_only_statements = []
+
+    class TrackingConnection:
+        def __init__(self, conn) -> None:
+            self._conn = conn
+
+        def execute(self, statement, *args, **kwargs):
+            if str(statement).strip().upper() == "PRAGMA QUERY_ONLY=ON":
+                query_only_statements.append(str(statement))
+            return self._conn.execute(statement, *args, **kwargs)
+
+        def close(self) -> None:
+            self._conn.close()
+
+        def __getattr__(self, name: str):
+            return getattr(self._conn, name)
+
+    def tracking_connect(database, *args, **kwargs):
+        connect_calls.append((str(database), kwargs.get("uri")))
+        return TrackingConnection(real_connect(database, *args, **kwargs))
+
+    monkeypatch.setattr(rag_admin_service.sqlite3, "connect", tracking_connect)
+
+    assert rag_admin_service._kb_list_db_has_user_schema_objects(str(db_path)) is True
+
+    assert connect_calls
+    assert connect_calls[0][1] is True
+    assert "mode=ro" in connect_calls[0][0]
+    assert query_only_statements == ["PRAGMA query_only=ON"]
+
+
+def test_rag_admin_kb_list_unreadable_sqlite_fails_closed_without_writes(
+    tmp_path: Path,
+) -> None:
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+    from ai_actuarial.api.services.rag_admin import RagAdminError
+
+    db_path = tmp_path / "unreadable.db"
+    db_path.write_bytes(b"not a sqlite database")
+    before_state = _sqlite_file_state(db_path)
+
+    with pytest.raises(RagAdminError) as excinfo:
+        rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
+
+    assert excinfo.value.status_code == 409
+    assert "schema apply" in excinfo.value.message
+    assert _sqlite_file_state(db_path) == before_state
+
+
+def test_rag_admin_kb_list_reads_raw_rag_only_database_without_core_storage_tables(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    db_path = tmp_path / "raw-rag-only.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                chunk_profile_id TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT
+            );
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, description, kb_mode, chunk_profile_id,
+                manifest_profile, embedding_provider, embedding_model,
+                embedding_dimension, chunk_size, chunk_overlap, index_type,
+                created_at, updated_at, file_count, chunk_count, index_dirty_at
+            ) VALUES (
+                'kb-raw-rag-only', 'Raw RAG Only', 'No core Storage tables',
+                'manual', NULL, 'general', 'openai',
+                'text-embedding-3-large', 3072, 800, 100, 'Flat',
+                '2026-08-20T11:00:00+00:00',
+                '2026-08-20T11:00:00+00:00', 0, 0, NULL
+            );
+            """
+        )
+        conn.commit()
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    before_state = _sqlite_file_state(db_path)
+
+    result = rag_admin_service.list_knowledge_bases(
+        db_path=str(db_path),
+        query={"search": "raw"},
+    )
+
+    assert _sqlite_file_state(db_path) == before_state
+    listed = result["knowledge_bases"][0]
+    assert listed["kb_id"] == "kb-raw-rag-only"
+    assert listed["availability"] == "building"
+    assert listed["agentic_ready_manifest"]["status"] == "missing"
+    assert listed["agentic_fallback_mode"] == "standard"
+
+
+def test_rag_admin_kb_list_legacy_optional_table_requires_schema_apply_without_writes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+    from ai_actuarial.api.services.rag_admin import RagAdminError
+
+    db_path = tmp_path / "raw-rag-legacy-agentic-slot.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                chunk_profile_id TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT
+            );
+            CREATE TABLE agentic_ready_slots (
+                kb_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                active_publication_id TEXT,
+                previous_publication_id TEXT,
+                automatic_build_enabled INTEGER NOT NULL DEFAULT 0,
+                automatic_publish_enabled INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(kb_id, profile)
+            );
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, description, kb_mode, chunk_profile_id,
+                manifest_profile, embedding_provider, embedding_model,
+                embedding_dimension, chunk_size, chunk_overlap, index_type,
+                created_at, updated_at, file_count, chunk_count, index_dirty_at
+            ) VALUES (
+                'kb-legacy-slot', 'Legacy Slot KB', 'Legacy optional table',
+                'manual', NULL, 'general', 'openai',
+                'text-embedding-3-large', 3072, 800, 100, 'Flat',
+                '2026-08-20T11:00:00+00:00',
+                '2026-08-20T11:00:00+00:00', 0, 0, NULL
+            );
+            INSERT INTO agentic_ready_slots (
+                kb_id, profile, automatic_build_enabled,
+                automatic_publish_enabled, updated_at
+            ) VALUES (
+                'kb-legacy-slot', 'general', 0, 0,
+                '2026-08-20T11:00:00+00:00'
+            );
+            """
+        )
+        conn.commit()
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    before_state = _sqlite_file_state(db_path)
+
+    with pytest.raises(RagAdminError) as excinfo:
+        rag_admin_service.list_knowledge_bases(
+            db_path=str(db_path),
+            query={"search": "legacy slot"},
+        )
+
+    assert excinfo.value.status_code == 409
+    assert "schema apply" in excinfo.value.message
+    assert _sqlite_file_state(db_path) == before_state
+    with sqlite3.connect(str(db_path)) as conn:
+        slot_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(agentic_ready_slots)")
+        }
+        assert "publication_revision" not in slot_columns
+        assert conn.execute(
+            "SELECT COUNT(*) FROM agentic_ready_slots"
+        ).fetchone()[0] == 1
+
+
+def test_rag_admin_kb_list_optional_view_requires_schema_apply_without_writes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+    from ai_actuarial.api.services.rag_admin import RagAdminError
+
+    db_path = tmp_path / "raw-rag-view-shaped-slot.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                chunk_profile_id TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_dirty_at TEXT
+            );
+            CREATE VIEW agentic_ready_slots AS
+            SELECT * FROM missing_slot_source;
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, description, kb_mode, chunk_profile_id,
+                manifest_profile, embedding_provider, embedding_model,
+                embedding_dimension, chunk_size, chunk_overlap, index_type,
+                created_at, updated_at, file_count, chunk_count, index_dirty_at
+            ) VALUES (
+                'kb-view-slot', 'View Slot KB', 'View-shaped optional object',
+                'manual', NULL, 'general', 'openai',
+                'text-embedding-3-large', 3072, 800, 100, 'Flat',
+                '2026-08-20T11:00:00+00:00',
+                '2026-08-20T11:00:00+00:00', 0, 0, NULL
+            );
+            """
+        )
+        conn.commit()
+
+    _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    before_state = _sqlite_file_state(db_path)
+
+    with pytest.raises(RagAdminError) as excinfo:
+        rag_admin_service.list_knowledge_bases(
+            db_path=str(db_path),
+            query={"search": "view slot"},
+        )
+
+    assert excinfo.value.status_code == 409
+    assert "schema apply" in excinfo.value.message
+    assert _sqlite_file_state(db_path) == before_state
+    with sqlite3.connect(str(db_path)) as conn:
+        row = conn.execute(
+            "SELECT type FROM sqlite_schema WHERE name = 'agentic_ready_slots'"
+        ).fetchone()
+        assert row[0] == "view"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM rag_knowledge_bases"
+        ).fetchone()[0] == 1
 
 
 def test_fastapi_rag_admin_kb_list_normalizes_legacy_rows_without_runtime(
@@ -985,7 +1273,8 @@ def test_fastapi_rag_admin_kb_list_normalizes_legacy_rows_without_runtime(
                 created_at TEXT,
                 updated_at TEXT,
                 file_count INTEGER,
-                chunk_count INTEGER
+                chunk_count INTEGER,
+                index_dirty_at TEXT
             );
             CREATE TABLE rag_kb_files (
                 kb_id TEXT NOT NULL,
@@ -999,12 +1288,12 @@ def test_fastapi_rag_admin_kb_list_normalizes_legacy_rows_without_runtime(
                 kb_id, name, description, kb_mode, chunk_profile_id,
                 manifest_profile, embedding_provider, embedding_model,
                 embedding_dimension, chunk_size, chunk_overlap, index_type,
-                created_at, updated_at, file_count, chunk_count
+                created_at, updated_at, file_count, chunk_count, index_dirty_at
             ) VALUES (
                 'kb-legacy-row', 'Legacy Row KB', 'Legacy row normalization',
                 '', NULL, ' Regulation ', ' OpenAI ',
                 'text-embedding-3-large', '3072', 800, 100, 'Flat',
-                NULL, NULL, 0, 0
+                NULL, NULL, 0, 0, NULL
             );
             """
         )
@@ -1014,6 +1303,7 @@ def test_fastapi_rag_admin_kb_list_normalizes_legacy_rows_without_runtime(
 
     monkeypatch.setattr(Storage, "_ensure_rag_kb_embedding_columns", lambda _storage: None)
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
+    client.headers.pop("X-Auth-Token", None)
 
     response = client.get(
         "/api/rag/knowledge-bases",
