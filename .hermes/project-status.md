@@ -5,7 +5,7 @@
 - Workspace: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-196`
 - Active branch: `codex/issue-196-sqlite-schema-runner`
 - Baseline: `eb73875f64452317fe2ccfaebc58178b54729df7`
-- Delivery: Issue `#196` SQLite schema-runner implementation is local worker state only; manager review, publication, and merge remain. No commit, push, PR, merge, server, Docker, frontend, backup, restore, timer, or sibling-repository action was performed.
+- Delivery: Issue `#196` SQLite schema-runner implementation is published in PR `#197`; local and remote review feedback have been addressed, CI is passing, and merge/cleanup remain. No server, Docker, frontend setup, backup, restore, timer, or sibling-repository action was performed.
 - Primary objective: finish Epic `#172` by completing Issues `#173`–`#179` and their declared dependencies.
 
 ## Issue #194 — KB list offline delivery
@@ -108,8 +108,8 @@
 
 - PR `#193`, `feat: close ready-data provenance and KB controls`, merged at `2026-08-20T16:30:07Z` with merge SHA `1c682650bee760ca0d58eedde33de2d7987d6ec1`.
 - Issue `#174` final acceptance and closure are complete; it closed at `2026-08-20T16:36:02Z`.
-- Issue `#194` is the current unpublished application correction. Publication and closure belong to its manager workflow; Issue `#173` must remain open for the separate server acceptance scope.
-- Issue `#196` is local implementation worker state only. Publication and closure belong to the manager workflow; any eventual PR must close only `#196`.
+- Issue `#194` closed through merged PR `#195`; the sanitized smoke acceptance comment was recorded on parent Issue `#173`, which remains open for the separate server acceptance scope.
+- Issue `#196` is published in PR `#197` with body `Closes #196`. Local review passed after seven managed rounds plus supplemental audit, remote Copilot feedback was fixed, and `python-smoke` passed on head `89b3185de54ab476500ddb698a53200257cb629a`.
 
 ## Program Dependency Order
 
@@ -126,7 +126,7 @@ Issue `#175` remains blocked on producer contract readiness tracked by `web_list
 ## Current Worktree State
 
 - Isolated worktree: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-196` on `codex/issue-196-sqlite-schema-runner`, based on `eb73875f64452317fe2ccfaebc58178b54729df7`.
+- Published branch head after remote-feedback fixes: `89b3185de54ab476500ddb698a53200257cb629a`; this status note records the final pre-merge handoff state.
 - Remote-feedback follow-up changed: `.hermes/project-status.md`, `ai_actuarial/api/services/rag_admin.py`, `ai_actuarial/sqlite_schema.py`, `ai_actuarial/storage.py`, `tests/test_fastapi_rag_admin_endpoints.py`, and `tests/test_sqlite_schema_runner.py`.
-- Modified: `.hermes/project-status.md`, `ai_actuarial/api/services/rag_admin.py`, `ai_actuarial/cli.py`, `ai_actuarial/rag/knowledge_base.py`, `ai_actuarial/storage.py`, `docs/deployment-runbook.md`, `tests/test_database_migration.py`, `tests/test_fastapi_rag_admin_endpoints.py`, `tests/test_production_recovery.py`, `tests/test_ready_data_index_reevaluation.py`, `tests/test_ready_data_publication.py`, `tests/test_ready_data_retention_gc.py`, `tests/test_ready_data_source_state.py`, and `tests/test_ready_data_staging_smoke.py`.
-- Added: `ai_actuarial/sqlite_schema.py` and `tests/test_sqlite_schema_runner.py`.
+- PR file set: `.hermes/project-status.md`, `ai_actuarial/api/services/rag_admin.py`, `ai_actuarial/cli.py`, `ai_actuarial/rag/knowledge_base.py`, `ai_actuarial/sqlite_schema.py`, `ai_actuarial/storage.py`, `docs/deployment-runbook.md`, `tests/test_database_migration.py`, `tests/test_fastapi_rag_admin_endpoints.py`, `tests/test_production_recovery.py`, `tests/test_ready_data_index_reevaluation.py`, `tests/test_ready_data_publication.py`, `tests/test_ready_data_retention_gc.py`, `tests/test_ready_data_source_state.py`, `tests/test_ready_data_staging_smoke.py`, and `tests/test_sqlite_schema_runner.py`.
 - Generated verification artifacts are ignored under `.codex/` and will be removed with the isolated worktree after merge.
