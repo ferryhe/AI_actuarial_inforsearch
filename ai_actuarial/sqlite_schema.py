@@ -773,18 +773,23 @@ def _migration_accepts_source(
         conn.execute(f"PRAGMA query_only={restore_value}")
 
 
-def _analyze_connection(conn: sqlite3.Connection) -> dict[str, Any]:
-    quick_rows = [str(row[0]) for row in conn.execute("PRAGMA quick_check")]
-    if quick_rows != ["ok"]:
-        return _base_payload(
-            state="invalid",
-            user_version=None,
-            schema="unreadable",
-            can_apply=False,
-            blocked=True,
-            problems=["quick_check_failed"],
-            details={"quick_check": {"result_count": len(quick_rows)}},
-        )
+def _analyze_connection(
+    conn: sqlite3.Connection,
+    *,
+    include_quick_check: bool = True,
+) -> dict[str, Any]:
+    if include_quick_check:
+        quick_rows = [str(row[0]) for row in conn.execute("PRAGMA quick_check")]
+        if quick_rows != ["ok"]:
+            return _base_payload(
+                state="invalid",
+                user_version=None,
+                schema="unreadable",
+                can_apply=False,
+                blocked=True,
+                problems=["quick_check_failed"],
+                details={"quick_check": {"result_count": len(quick_rows)}},
+            )
 
     version = _user_version(conn)
     schema_objects = _user_schema_objects(conn)
@@ -889,7 +894,7 @@ def _analyze_connection(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def storage_startup_status(conn: sqlite3.Connection) -> dict[str, Any]:
-    return _analyze_connection(conn)
+    return _analyze_connection(conn, include_quick_check=False)
 
 
 def schema_status(db_path: str | Path) -> dict[str, Any]:

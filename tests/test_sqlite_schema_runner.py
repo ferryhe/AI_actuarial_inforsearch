@@ -125,6 +125,93 @@ def test_storage_open_current_schema_does_not_run_backfills(tmp_path: Path) -> N
     assert _db_file_state(db_path) == before_state
 
 
+@pytest.mark.parametrize(
+    "failing_probe",
+    ("has_user_schema_objects", "storage_startup_status"),
+)
+def test_storage_closes_connection_when_startup_probe_raises_sqlite_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_probe: str,
+) -> None:
+    import ai_actuarial.storage as storage_module
+
+    real_connect = sqlite3.connect
+    connections = []
+
+    class TrackingConnection:
+        def __init__(self, conn) -> None:
+            self._conn = conn
+            self.closed = False
+
+        def execute(self, *args, **kwargs):
+            return self._conn.execute(*args, **kwargs)
+
+        def close(self) -> None:
+            self.closed = True
+            self._conn.close()
+
+        def __getattr__(self, name: str):
+            return getattr(self._conn, name)
+
+    def tracking_connect(*args, **kwargs):
+        conn = TrackingConnection(real_connect(*args, **kwargs))
+        connections.append(conn)
+        return conn
+
+    def raise_sqlite_error(_conn) -> bool:
+        raise sqlite3.DatabaseError("injected startup probe failure")
+
+    monkeypatch.setattr(storage_module.sqlite3, "connect", tracking_connect)
+    if failing_probe == "has_user_schema_objects":
+        monkeypatch.setattr(storage_module, "has_user_schema_objects", raise_sqlite_error)
+    else:
+        monkeypatch.setattr(storage_module, "has_user_schema_objects", lambda _conn: True)
+        monkeypatch.setattr(storage_module, "storage_startup_status", raise_sqlite_error)
+
+    with pytest.raises(sqlite3.DatabaseError, match="injected startup probe failure"):
+        Storage(str(tmp_path / "probe-failure.db"))
+
+    assert connections
+    assert connections[-1].closed is True
+
+
+def test_storage_startup_status_skips_quick_check_but_schema_status_keeps_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ai_actuarial.sqlite_schema as sqlite_schema
+
+    db_path = tmp_path / "startup-no-quick-check.db"
+    storage = Storage(str(db_path))
+    storage.close()
+
+    analyze_calls: list[bool] = []
+    real_analyze = sqlite_schema._analyze_connection
+
+    def recording_analyze(
+        conn: sqlite3.Connection,
+        *,
+        include_quick_check: bool = True,
+    ) -> dict[str, object]:
+        analyze_calls.append(include_quick_check)
+        return real_analyze(conn, include_quick_check=include_quick_check)
+
+    monkeypatch.setattr(sqlite_schema, "_analyze_connection", recording_analyze)
+
+    with sqlite3.connect(db_path) as conn:
+        startup_status = sqlite_schema.storage_startup_status(conn)
+
+    assert startup_status["state"] == "current"
+    assert analyze_calls == [False]
+
+    analyze_calls.clear()
+    explicit_status = sqlite_schema.schema_status(db_path)
+
+    assert explicit_status["state"] == "current"
+    assert analyze_calls == [True]
+
+
 def test_storage_rejects_non_empty_version_zero_without_mutating(tmp_path: Path) -> None:
     from ai_actuarial.sqlite_schema import schema_status
 

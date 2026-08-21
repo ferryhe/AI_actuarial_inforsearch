@@ -130,48 +130,52 @@ class Storage:
         self.db_path = db_path
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
-        self._conn.execute("PRAGMA foreign_keys=ON;")
-        user_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-        if user_version > CURRENT_SQLITE_SCHEMA_VERSION:
-            self._conn.close()
-            raise RuntimeError("SQLite schema version is newer than this code")
-        has_schema_objects = has_user_schema_objects(self._conn)
-        fresh_schema = False
-        if has_schema_objects:
-            status = storage_startup_status(self._conn)
-            state = str(status.get("state") or "")
-            if state == "newer_than_code":
+        try:
+            self._conn.execute("PRAGMA foreign_keys=ON;")
+            user_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if user_version > CURRENT_SQLITE_SCHEMA_VERSION:
                 self._conn.close()
                 raise RuntimeError("SQLite schema version is newer than this code")
-            if state == "needs_migration":
-                self._conn.close()
-                if user_version == 0:
+            has_schema_objects = has_user_schema_objects(self._conn)
+            fresh_schema = False
+            if has_schema_objects:
+                status = storage_startup_status(self._conn)
+                state = str(status.get("state") or "")
+                if state == "newer_than_code":
+                    self._conn.close()
+                    raise RuntimeError("SQLite schema version is newer than this code")
+                if state == "needs_migration":
+                    self._conn.close()
+                    if user_version == 0:
+                        raise RuntimeError(
+                            "SQLite schema user_version=0 requires explicit schema apply before Storage startup"
+                        )
                     raise RuntimeError(
-                        "SQLite schema user_version=0 requires explicit schema apply before Storage startup"
+                        "SQLite schema requires explicit schema apply before Storage startup"
                     )
-                raise RuntimeError(
-                    "SQLite schema requires explicit schema apply before Storage startup"
-                )
-            if state != "current":
-                self._conn.close()
-                raise RuntimeError("SQLite schema preflight failed before Storage startup")
+                if state != "current":
+                    self._conn.close()
+                    raise RuntimeError("SQLite schema preflight failed before Storage startup")
+                self._tx_depth = 0
+                self._agentic_ready_publication_columns_cache = None
+                self._defer_schema_commits = False
+                return
+            else:
+                if user_version != 0:
+                    self._conn.close()
+                    raise RuntimeError("SQLite schema preflight failed before Storage startup")
+                fresh_schema = True
+            self._conn.execute("PRAGMA journal_mode=WAL;")
             self._tx_depth = 0
-            self._agentic_ready_publication_columns_cache = None
+            self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
             self._defer_schema_commits = False
-            return
-        else:
-            if user_version != 0:
-                self._conn.close()
-                raise RuntimeError("SQLite schema preflight failed before Storage startup")
-            fresh_schema = True
-        self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._tx_depth = 0
-        self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
-        self._defer_schema_commits = False
-        self._init_schema()
-        if fresh_schema:
-            self._conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
-            self._conn.commit()
+            self._init_schema()
+            if fresh_schema:
+                self._conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
+                self._conn.commit()
+        except sqlite3.Error:
+            self._conn.close()
+            raise
 
     @classmethod
     def open_read_only(cls, db_path: str) -> "Storage":

@@ -960,6 +960,71 @@ def test_rag_admin_kb_list_existing_db_without_kb_table_is_read_only(
         ).fetchone()[0] == 1
 
 
+def test_rag_admin_kb_list_user_schema_probe_is_read_only_query_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import sqlite3
+
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    db_path = tmp_path / "probe-read-only.db"
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("CREATE TABLE raw_rag_placeholder (id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO raw_rag_placeholder (id) VALUES ('keep')")
+        conn.commit()
+
+    real_connect = sqlite3.connect
+    connect_calls = []
+    query_only_statements = []
+
+    class TrackingConnection:
+        def __init__(self, conn) -> None:
+            self._conn = conn
+
+        def execute(self, statement, *args, **kwargs):
+            if str(statement).strip().upper() == "PRAGMA QUERY_ONLY=ON":
+                query_only_statements.append(str(statement))
+            return self._conn.execute(statement, *args, **kwargs)
+
+        def close(self) -> None:
+            self._conn.close()
+
+        def __getattr__(self, name: str):
+            return getattr(self._conn, name)
+
+    def tracking_connect(database, *args, **kwargs):
+        connect_calls.append((str(database), kwargs.get("uri")))
+        return TrackingConnection(real_connect(database, *args, **kwargs))
+
+    monkeypatch.setattr(rag_admin_service.sqlite3, "connect", tracking_connect)
+
+    assert rag_admin_service._kb_list_db_has_user_schema_objects(str(db_path)) is True
+
+    assert connect_calls
+    assert connect_calls[0][1] is True
+    assert "mode=ro" in connect_calls[0][0]
+    assert query_only_statements == ["PRAGMA query_only=ON"]
+
+
+def test_rag_admin_kb_list_unreadable_sqlite_fails_closed_without_writes(
+    tmp_path: Path,
+) -> None:
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+    from ai_actuarial.api.services.rag_admin import RagAdminError
+
+    db_path = tmp_path / "unreadable.db"
+    db_path.write_bytes(b"not a sqlite database")
+    before_state = _sqlite_file_state(db_path)
+
+    with pytest.raises(RagAdminError) as excinfo:
+        rag_admin_service.list_knowledge_bases(db_path=str(db_path), query={})
+
+    assert excinfo.value.status_code == 409
+    assert "schema apply" in excinfo.value.message
+    assert _sqlite_file_state(db_path) == before_state
+
+
 def test_rag_admin_kb_list_reads_raw_rag_only_database_without_core_storage_tables(
     tmp_path: Path,
     monkeypatch,

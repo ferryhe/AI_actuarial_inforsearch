@@ -2643,7 +2643,13 @@ def _kb_list_db_has_user_schema_objects(db_path: str) -> bool:
     path = Path(db_path)
     if not path.exists() or path.stat().st_size == 0:
         return False
-    conn = sqlite3.connect(db_path)
+    try:
+        conn = _open_kb_list_read_only_connection(db_path)
+    except sqlite3.Error as exc:
+        raise RagAdminError(
+            "Knowledge base list schema requires explicit schema apply",
+            status_code=409,
+        ) from exc
     try:
         row = conn.execute(
             """
@@ -2654,6 +2660,11 @@ def _kb_list_db_has_user_schema_objects(db_path: str) -> bool:
             """
         ).fetchone()
         return row is not None
+    except sqlite3.Error as exc:
+        raise RagAdminError(
+            "Knowledge base list schema requires explicit schema apply",
+            status_code=409,
+        ) from exc
     finally:
         conn.close()
 
