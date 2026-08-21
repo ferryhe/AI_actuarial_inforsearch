@@ -16,6 +16,7 @@ from ai_actuarial.api.services.ready_data_automation import (
     run_ready_data_automation_once,
 )
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.sqlite_schema import schema_status
 from ai_actuarial.storage import Storage
 
 
@@ -851,7 +852,7 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
     assert state["previous_publication_id"] is None
 
 
-def test_legacy_publication_without_smoke_column_is_readable_and_migrates(
+def test_legacy_publication_without_smoke_column_is_readable_but_startup_fails_closed(
     tmp_path: Path,
 ) -> None:
     db_path = _setup_db(tmp_path)
@@ -878,20 +879,12 @@ def test_legacy_publication_without_smoke_column_is_readable_and_migrates(
     assert publication["status"] == "active"
     assert publication["smoke_result"] == {}
 
-    migrated = Storage(str(db_path))
-    try:
-        columns = {
-            str(row[1])
-            for row in migrated._conn.execute(
-                "PRAGMA table_info(agentic_ready_publications)"
-            ).fetchall()
-        }
-        publication = migrated.get_agentic_ready_publication(publication_id)
-    finally:
-        migrated.close()
-    assert "smoke_result_json" in columns
-    assert publication is not None
-    assert publication["smoke_result"] == {}
+    status = schema_status(str(db_path))
+    assert status["state"] == "invalid"
+    assert status["blocked"] is True
+
+    with pytest.raises(RuntimeError, match="schema preflight failed"):
+        Storage(str(db_path))
 
 
 def test_repeated_identical_manual_build_keeps_active_and_query_identity(

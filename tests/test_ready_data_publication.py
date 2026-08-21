@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from ai_actuarial.storage import Storage
+from ai_actuarial.sqlite_schema import CURRENT_SQLITE_SCHEMA_VERSION
 from ai_actuarial.api.services.rag_admin import (
     _ready_data_artifact_digest,
     _remove_unreferenced_staging_dir,
@@ -18,22 +19,45 @@ from ai_actuarial.api.services.rag_admin import (
 
 def _open_storage(tmp_path: Path) -> Storage:
     db_path = tmp_path / "index.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
+    storage = Storage(str(db_path))
+    storage._conn.execute(
         """
-        CREATE TABLE rag_knowledge_bases (
+        CREATE TABLE IF NOT EXISTS rag_knowledge_bases (
             kb_id TEXT PRIMARY KEY,
-            embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-large'
+            name TEXT NOT NULL,
+            description TEXT,
+            kb_mode TEXT DEFAULT 'category',
+            chunk_profile_id TEXT,
+            manifest_profile TEXT DEFAULT 'general',
+            embedding_provider TEXT DEFAULT 'openai',
+            embedding_model TEXT NOT NULL,
+            embedding_dimension INTEGER,
+            chunk_size INTEGER NOT NULL,
+            chunk_overlap INTEGER NOT NULL,
+            index_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            file_count INTEGER DEFAULT 0,
+            chunk_count INTEGER DEFAULT 0,
+            index_dirty_at TEXT
         )
         """
     )
-    conn.executemany(
-        "INSERT INTO rag_knowledge_bases (kb_id) VALUES (?)",
-        [("kb-ready",), ("kb-other",)],
+    storage._conn.executemany(
+        """
+        INSERT OR IGNORE INTO rag_knowledge_bases (
+            kb_id, name, embedding_model, chunk_size, chunk_overlap,
+            index_type, created_at, updated_at
+        )
+        VALUES (?, ?, 'text-embedding-3-large', 800, 120, 'faiss', ?, ?)
+        """,
+        [
+            ("kb-ready", "Ready KB", "2026-08-18T00:00:00Z", "2026-08-18T00:00:00Z"),
+            ("kb-other", "Other KB", "2026-08-18T00:00:00Z", "2026-08-18T00:00:00Z"),
+        ],
     )
-    conn.commit()
-    conn.close()
-    return Storage(str(db_path))
+    storage._conn.commit()
+    return storage
 
 
 def _record(
@@ -859,7 +883,9 @@ def test_corrupt_expected_active_is_atomically_excluded_from_previous(tmp_path: 
         storage.close()
 
 
-def test_storage_migrates_draft_identity_unique_without_losing_slots(tmp_path: Path) -> None:
+def test_storage_rejects_legacy_draft_identity_schema_without_mutating(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "index.db"
     conn = sqlite3.connect(db_path)
     conn.executescript(
@@ -924,33 +950,50 @@ def test_storage_migrates_draft_identity_unique_without_losing_slots(tmp_path: P
         ) VALUES ('kb-ready', 'general', 'arp-active', 'arp-previous', '2026-08-18');
         """
     )
+    conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
     conn.commit()
     conn.close()
 
-    storage = Storage(str(db_path))
+    before_rows = sqlite3.connect(db_path)
     try:
-        state = storage.get_agentic_ready_publication_state(kb_id="kb-ready", profile="general")
-        assert state["active_publication_id"] == "arp-active"
-        assert state["previous_publication_id"] == "arp-previous"
-        assert state["publication_revision"] == 0
-        slot_columns = {
+        before_schema = {
             str(row[1])
-            for row in storage._conn.execute(
+            for row in before_rows.execute(
                 "PRAGMA table_info(agentic_ready_slots)"
             ).fetchall()
         }
-        assert "publication_revision" in slot_columns
-        duplicate = _record(
-            storage,
-            index_version_id="idx-active",
-            artifact_digest="digest-active",
-            output_dir=str(tmp_path / "staging" / "new-attempt"),
-        )
-        assert duplicate["publication_id"] != "arp-active"
-        assert storage._conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert storage._conn.execute("PRAGMA foreign_keys").fetchone() == (1,)
+        slot_pointer = before_rows.execute(
+            """
+            SELECT active_publication_id, previous_publication_id
+            FROM agentic_ready_slots
+            """
+        ).fetchone()
     finally:
-        storage.close()
+        before_rows.close()
+
+    with pytest.raises(RuntimeError, match="schema preflight"):
+        Storage(str(db_path))
+
+    check = sqlite3.connect(db_path)
+    try:
+        after_schema = {
+            str(row[1])
+            for row in check.execute("PRAGMA table_info(agentic_ready_slots)").fetchall()
+        }
+        assert after_schema == before_schema
+        assert "publication_revision" not in after_schema
+        assert check.execute(
+            """
+            SELECT active_publication_id, previous_publication_id
+            FROM agentic_ready_slots
+            """
+        ).fetchone() == slot_pointer
+        assert check.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name = ?",
+            ("agentic_ready_publications_attempts_new",),
+        ).fetchone() is None
+    finally:
+        check.close()
 
 
 def test_storage_rejects_dangling_draft_slots_without_committing_migration(
@@ -1005,13 +1048,14 @@ def test_storage_rejects_dangling_draft_slots_without_committing_migration(
         ) VALUES ('kb-ready', 'general', 'arp-missing', NULL, '2026-08-18');
         """
     )
+    conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
     conn.commit()
     conn.close()
 
     for _attempt in range(2):
         with pytest.raises(
             RuntimeError,
-            match="migration broke foreign-key references",
+            match="schema preflight",
         ):
             Storage(str(db_path))
 

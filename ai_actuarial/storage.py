@@ -11,6 +11,11 @@ from typing import Any, Callable, Iterable, Mapping
 import hashlib
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
+from ai_actuarial.sqlite_schema import (
+    CURRENT_SQLITE_SCHEMA_VERSION,
+    has_user_schema_objects,
+    storage_startup_status,
+)
 
 
 AGENTIC_READY_PUBLICATION_PROFILES = frozenset(
@@ -126,10 +131,47 @@ class Storage:
         Path(os.path.dirname(db_path)).mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
         self._conn.execute("PRAGMA foreign_keys=ON;")
+        user_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if user_version > CURRENT_SQLITE_SCHEMA_VERSION:
+            self._conn.close()
+            raise RuntimeError("SQLite schema version is newer than this code")
+        has_schema_objects = has_user_schema_objects(self._conn)
+        fresh_schema = False
+        if has_schema_objects:
+            status = storage_startup_status(self._conn)
+            state = str(status.get("state") or "")
+            if state == "newer_than_code":
+                self._conn.close()
+                raise RuntimeError("SQLite schema version is newer than this code")
+            if state == "needs_migration":
+                self._conn.close()
+                if user_version == 0:
+                    raise RuntimeError(
+                        "SQLite schema user_version=0 requires explicit schema apply before Storage startup"
+                    )
+                raise RuntimeError(
+                    "SQLite schema requires explicit schema apply before Storage startup"
+                )
+            if state != "current":
+                self._conn.close()
+                raise RuntimeError("SQLite schema preflight failed before Storage startup")
+            self._tx_depth = 0
+            self._agentic_ready_publication_columns_cache = None
+            self._defer_schema_commits = False
+            return
+        else:
+            if user_version != 0:
+                self._conn.close()
+                raise RuntimeError("SQLite schema preflight failed before Storage startup")
+            fresh_schema = True
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._tx_depth = 0
         self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
+        self._defer_schema_commits = False
         self._init_schema()
+        if fresh_schema:
+            self._conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
+            self._conn.commit()
 
     @classmethod
     def open_read_only(cls, db_path: str) -> "Storage":
@@ -150,6 +192,7 @@ class Storage:
         instance._conn.execute("PRAGMA query_only=ON;")
         instance._tx_depth = 0
         instance._agentic_ready_publication_columns_cache = None
+        instance._defer_schema_commits = False
         instance._read_only_snapshot = before_state
         return instance
 
@@ -343,7 +386,7 @@ class Storage:
             ON api_tokens(provider, category, is_default)
             """
         )
-        self._conn.commit()
+        self._schema_commit()
         self._ensure_columns(
             "files",
             {
@@ -375,6 +418,7 @@ class Storage:
                 "markdown_updated_at": "TEXT",
                 "markdown_source": "TEXT",
                 "rag_chunk_count": "INTEGER DEFAULT 0",
+                "rag_indexed": "INTEGER DEFAULT 0",
                 "rag_indexed_at": "TEXT",
             },
         )
@@ -487,7 +531,7 @@ class Storage:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_activity_created ON user_activity_logs(created_at)"
         )
-        self._conn.commit()
+        self._schema_commit()
 
     def _init_global_chunk_schema(self) -> None:
         """Initialize schema for global chunk generation and KB composition."""
@@ -996,7 +1040,7 @@ class Storage:
             },
         )
         self._ensure_rag_kb_embedding_columns()
-        self._conn.commit()
+        self._schema_commit()
 
     def _migrate_agentic_ready_publication_attempt_schema(self) -> None:
         """Remove the draft logical-identity UNIQUE constraint without losing slots."""
@@ -1026,7 +1070,7 @@ class Storage:
             return
 
         replacement = "agentic_ready_publications_attempts_new"
-        self._conn.commit()
+        self._schema_commit()
         foreign_keys_enabled = bool(
             self._conn.execute("PRAGMA foreign_keys").fetchone()[0]
         )
@@ -1091,7 +1135,7 @@ class Storage:
                 raise RuntimeError(
                     "ready-data publication attempt migration broke foreign-key references"
                 )
-            self._conn.commit()
+            self._schema_commit()
         except Exception:
             self._conn.rollback()
             raise
@@ -1117,7 +1161,7 @@ class Storage:
                 self._conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"
                 )
-        self._conn.commit()
+        self._schema_commit()
 
     def _ensure_rag_kb_embedding_columns(self) -> None:
         cur = self._conn.execute("PRAGMA table_info(rag_knowledge_bases)")
@@ -1165,7 +1209,12 @@ class Storage:
                 )
                 changed = True
         if changed:
-            self._conn.commit()
+            self._schema_commit()
+
+    def _schema_commit(self) -> None:
+        if getattr(self, "_defer_schema_commits", False):
+            return
+        self._conn.commit()
 
     def _table_exists(self, table: str) -> bool:
         row = self._conn.execute(
@@ -1244,7 +1293,7 @@ class Storage:
                 WHERE (keywords IS NULL OR keywords = '') AND keywords_json IS NOT NULL
                 """
             )
-        self._conn.commit()
+        self._schema_commit()
 
     def close(self) -> None:
         self._conn.close()

@@ -408,6 +408,17 @@ class KnowledgeBaseManager:
             str(kb_dir / "index.faiss"),
             str(kb_dir / "index.meta.pkl")
         ))
+        conn.execute(
+            """
+            DELETE FROM kb_index_items
+            WHERE index_version_id IN (
+                SELECT index_version_id FROM kb_index_versions WHERE kb_id = ?
+            )
+            """,
+            (kb_id,),
+        )
+        conn.execute("DELETE FROM kb_index_versions WHERE kb_id = ?", (kb_id,))
+        conn.execute("DELETE FROM kb_ready_index_state WHERE kb_id = ?", (kb_id,))
         conn.commit()
         
         return kb

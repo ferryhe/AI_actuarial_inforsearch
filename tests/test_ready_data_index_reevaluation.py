@@ -546,7 +546,11 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
         assert storage._conn.execute(
             "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
             ("kb-index-reeval",),
-        ).fetchone() is None
+        ).fetchone() is not None
+        assert storage._conn.execute(
+            "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
+            ("kb-index-reeval",),
+        ).fetchone() is not None
         manager = KnowledgeBaseManager(
             storage,
             config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
@@ -557,6 +561,14 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
             kb_mode="manual",
             manifest_profile="general",
         )
+        assert storage._conn.execute(
+            "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
+            ("kb-index-reeval",),
+        ).fetchone() is None
+        assert storage._conn.execute(
+            "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
+            ("kb-index-reeval",),
+        ).fetchone() is None
     finally:
         storage.close()
 
@@ -564,6 +576,10 @@ def test_legacy_orphan_index_state_is_not_inherited_by_recreated_kb(
     try:
         assert storage._conn.execute(
             "SELECT 1 FROM kb_ready_index_state WHERE kb_id = ?",
+            ("kb-index-reeval",),
+        ).fetchone() is None
+        assert storage._conn.execute(
+            "SELECT 1 FROM kb_index_versions WHERE kb_id = ?",
             ("kb-index-reeval",),
         ).fetchone() is None
         _commit_index(

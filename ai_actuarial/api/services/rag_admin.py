@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping
 
-from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, resolve_ai_function_runtime
+from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, infer_embedding_provider, resolve_ai_function_runtime
 from ai_actuarial.agentic_rag.manifest_profiles import PROFILES
 from ai_actuarial.agentic_rag.staging_smoke import (
     STAGING_SMOKE_CONTRACT_VERSION,
@@ -855,49 +855,74 @@ def _rollback_agentic_ready_publication(
     )
 
 
-def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]:
+def _storage_has_table(storage: Any, table: str) -> bool:
+    table_exists = getattr(storage, "_table_exists", None)
+    if callable(table_exists):
+        return bool(table_exists(table))
     row = storage._conn.execute(
-        """
-        SELECT updated_at
-        FROM rag_knowledge_bases
-        WHERE kb_id = ?
-        """,
-        (kb_id,),
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1",
+        (table,),
     ).fetchone()
-    kb_updated_at = row[0] if row else None
-    doc_count = int(
-        storage._conn.execute(
+    return row is not None
+
+
+def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]:
+    kb_updated_at = None
+    if _storage_has_table(storage, "rag_knowledge_bases"):
+        row = storage._conn.execute(
             """
-            SELECT COUNT(DISTINCT c.file_url)
-            FROM catalog_items c
-            JOIN rag_kb_files kf ON kf.file_url = c.file_url
-            WHERE kf.kb_id = ?
-              AND c.status = 'ok'
-            """,
-            (kb_id,),
-        ).fetchone()[0]
-        or 0
-    )
-    has_chunk_bindings = bool(
-        storage._conn.execute(
-            """
-            SELECT 1
-            FROM kb_chunk_bindings b
-            JOIN rag_kb_files kf
-              ON kf.kb_id = b.kb_id
-             AND kf.file_url = b.file_url
-            JOIN catalog_items c
-              ON c.file_url = b.file_url
-             AND c.status = 'ok'
-            JOIN file_chunk_sets s
-              ON s.chunk_set_id = b.chunk_set_id
-             AND s.file_url = b.file_url
-            WHERE b.kb_id = ?
-            LIMIT 1
+            SELECT updated_at
+            FROM rag_knowledge_bases
+            WHERE kb_id = ?
             """,
             (kb_id,),
         ).fetchone()
-    )
+        kb_updated_at = row[0] if row else None
+
+    has_rag_files = _storage_has_table(storage, "rag_kb_files")
+    has_catalog = _storage_has_table(storage, "catalog_items")
+    has_file_chunks = _storage_has_table(storage, "file_chunk_sets")
+    has_files = _storage_has_table(storage, "files")
+    has_bindings_table = _storage_has_table(storage, "kb_chunk_bindings")
+
+    doc_count = 0
+    if has_rag_files and has_catalog:
+        doc_count = int(
+            storage._conn.execute(
+                """
+                SELECT COUNT(DISTINCT c.file_url)
+                FROM catalog_items c
+                JOIN rag_kb_files kf ON kf.file_url = c.file_url
+                WHERE kf.kb_id = ?
+                  AND c.status = 'ok'
+                """,
+                (kb_id,),
+            ).fetchone()[0]
+            or 0
+        )
+
+    has_chunk_bindings = False
+    if has_bindings_table and has_rag_files and has_catalog and has_file_chunks:
+        has_chunk_bindings = bool(
+            storage._conn.execute(
+                """
+                SELECT 1
+                FROM kb_chunk_bindings b
+                JOIN rag_kb_files kf
+                  ON kf.kb_id = b.kb_id
+                 AND kf.file_url = b.file_url
+                JOIN catalog_items c
+                  ON c.file_url = b.file_url
+                 AND c.status = 'ok'
+                JOIN file_chunk_sets s
+                  ON s.chunk_set_id = b.chunk_set_id
+                 AND s.file_url = b.file_url
+                WHERE b.kb_id = ?
+                LIMIT 1
+                """,
+                (kb_id,),
+            ).fetchone()
+        )
     if has_chunk_bindings:
         latest_chunk_at = storage._conn.execute(
             """
@@ -916,7 +941,7 @@ def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]
             """,
             (kb_id,),
         ).fetchone()[0]
-    else:
+    elif has_rag_files and has_catalog and has_file_chunks:
         latest_chunk_at = storage._conn.execute(
             """
             SELECT MAX(s.updated_at)
@@ -929,24 +954,43 @@ def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]
             """,
             (kb_id,),
         ).fetchone()[0]
-    latest_added_at = storage._conn.execute(
-        """
-        SELECT MAX(added_at)
-        FROM rag_kb_files
-        WHERE kb_id = ?
-        """,
-        (kb_id,),
-    ).fetchone()[0]
-    metadata_row = storage._conn.execute(
-        """
-        SELECT MAX(c.updated_at), MAX(c.markdown_updated_at), MAX(f.last_seen), MAX(f.crawl_time)
-        FROM rag_kb_files kf
-        JOIN catalog_items c ON c.file_url = kf.file_url
-        LEFT JOIN files f ON f.url = kf.file_url
-        WHERE kf.kb_id = ?
-        """,
-        (kb_id,),
-    ).fetchone()
+    else:
+        latest_chunk_at = None
+
+    latest_added_at = None
+    if has_rag_files:
+        latest_added_at = storage._conn.execute(
+            """
+            SELECT MAX(added_at)
+            FROM rag_kb_files
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()[0]
+
+    metadata_row = None
+    if has_rag_files and has_catalog:
+        if has_files:
+            metadata_row = storage._conn.execute(
+                """
+                SELECT MAX(c.updated_at), MAX(c.markdown_updated_at), MAX(f.last_seen), MAX(f.crawl_time)
+                FROM rag_kb_files kf
+                JOIN catalog_items c ON c.file_url = kf.file_url
+                LEFT JOIN files f ON f.url = kf.file_url
+                WHERE kf.kb_id = ?
+                """,
+                (kb_id,),
+            ).fetchone()
+        else:
+            metadata_row = storage._conn.execute(
+                """
+                SELECT MAX(c.updated_at), MAX(c.markdown_updated_at), NULL, NULL
+                FROM rag_kb_files kf
+                JOIN catalog_items c ON c.file_url = kf.file_url
+                WHERE kf.kb_id = ?
+                """,
+                (kb_id,),
+            ).fetchone()
     latest_source_at = _latest_iso(
         storage,
         kb_updated_at,
@@ -1124,7 +1168,7 @@ def _embedding_metadata_matches(current: Mapping[str, Any], *, provider: Any, mo
 
 
 
-def _current_embeddings_payload(*, storage: Storage) -> dict[str, Any]:
+def _current_embeddings_payload(*, storage: Storage | None) -> dict[str, Any]:
     runtime = resolve_ai_function_runtime("embeddings", storage=storage)
     return {
         "provider": runtime.provider,
@@ -1461,7 +1505,971 @@ _KB_LIST_FILE_COLUMN_DEFINITIONS = {
     "chunk_count": "INTEGER DEFAULT 0",
     "indexed_at": "TEXT",
 }
+_KB_LIST_OPTIONAL_TABLE_COLUMN_REQUIREMENTS = {
+    "api_tokens": frozenset(
+        {
+            "id",
+            "provider",
+            "category",
+            "instance_id",
+            "label",
+            "is_default",
+            "api_key_encrypted",
+            "api_base_url",
+            "status",
+            "created_at",
+            "updated_at",
+            "notes",
+        }
+    ),
+    "catalog_items": frozenset(
+        {
+            "file_url",
+            "status",
+            "updated_at",
+            "markdown_updated_at",
+        }
+    ),
+    "files": frozenset({"url", "last_seen", "crawl_time"}),
+    "chunk_profiles": frozenset(
+        {
+            "profile_id",
+            "name",
+            "chunk_size",
+            "chunk_overlap",
+            "splitter",
+            "tokenizer",
+            "version",
+            "config_hash",
+            "config_json",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "kb_chunk_bindings": frozenset(
+        {
+            "kb_id",
+            "file_url",
+            "chunk_set_id",
+            "bound_at",
+            "bound_by",
+            "binding_mode",
+            "target_profile_id",
+        }
+    ),
+    "file_chunk_sets": frozenset(
+        {
+            "chunk_set_id",
+            "file_url",
+            "profile_id",
+            "chunk_count",
+            "markdown_hash",
+            "updated_at",
+            "created_at",
+        }
+    ),
+    "kb_index_versions": frozenset(
+        {
+            "kb_id",
+            "embedding_provider",
+            "embedding_model",
+            "embedding_dimension",
+            "index_type",
+            "status",
+            "chunk_count",
+            "built_at",
+            "created_at",
+        }
+    ),
+    "agentic_ready_manifests": frozenset(
+        {
+            "manifest_id",
+            "kb_id",
+            "profile",
+            "profile_version",
+            "status",
+            "output_dir",
+            "artifact_files_json",
+            "doc_count",
+            "section_count",
+            "built_at",
+            "source_db",
+            "schema_versions_json",
+            "error_message",
+            "created_at",
+            "updated_at",
+            "publication_id",
+            "index_version_id",
+            "source_version_kind",
+            "source_version_id",
+            "artifact_digest",
+        }
+    ),
+    "agentic_ready_publications": frozenset(
+        {
+            "publication_id",
+            "kb_id",
+            "index_version_id",
+            "profile",
+            "profile_version",
+            "source_version_kind",
+            "source_version_id",
+            "status",
+            "output_dir",
+            "artifact_files_json",
+            "doc_count",
+            "section_count",
+            "built_at",
+            "artifact_digest",
+            "source_db",
+            "schema_versions_json",
+            "error_message",
+            "validated_at",
+            "published_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "agentic_ready_publication_gc": frozenset(
+        {
+            "publication_id",
+            "retention_class",
+            "state",
+            "marked_at",
+            "claim_token",
+            "quarantine_dir",
+            "claimed_at",
+            "lease_expires_at",
+            "deleted_at",
+            "last_error",
+            "updated_at",
+        }
+    ),
+    "agentic_ready_slots": frozenset(
+        {
+            "kb_id",
+            "profile",
+            "active_publication_id",
+            "previous_publication_id",
+            "automatic_build_enabled",
+            "automatic_publish_enabled",
+            "publication_revision",
+            "updated_at",
+        }
+    ),
+    "agentic_ready_automation": frozenset(
+        {
+            "kb_id",
+            "profile",
+            "automation_state",
+            "running_generation",
+            "last_attempted_generation",
+            "claim_token",
+            "claimed_at",
+            "lease_expires_at",
+            "last_attempt_publication_id",
+            "last_success_at",
+            "last_error",
+            "updated_at",
+        }
+    ),
+    "agentic_ready_source_state": frozenset(
+        {
+            "kb_id",
+            "profile",
+            "event_generation",
+            "pending_evaluation_generation",
+            "evaluated_generation",
+            "pending_severity",
+            "pending_reasons_json",
+            "evaluated_severity",
+            "evaluated_reasons_json",
+            "evaluated_source_version_kind",
+            "evaluated_source_version_id",
+            "evaluated_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+}
 _KB_LIST_CONNECTION_LOCAL_PATHS = frozenset({"", ":memory:"})
+
+
+class _KBListStorageView:
+    """Read-only storage-shaped view for the KB list readiness path."""
+
+    def __init__(self, db_path: str, conn: sqlite3.Connection) -> None:
+        self.db_path = db_path
+        self._conn = conn
+        self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
+
+    @staticmethod
+    def _parse_iso_to_utc(value: str | None) -> datetime | None:
+        return Storage._parse_iso_to_utc(value)
+
+    @staticmethod
+    def _agentic_ready_severity_max(*values: str) -> str:
+        return Storage._agentic_ready_severity_max(*values)
+
+    @staticmethod
+    def _agentic_ready_json_list(value: str | None) -> list[str]:
+        return Storage._agentic_ready_json_list(value)
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def _table_exists(self, table: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+    def _table_columns(self, table: str) -> frozenset[str]:
+        if not self._table_exists(table):
+            return frozenset()
+        return frozenset(str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})"))
+
+    def get_llm_provider(
+        self,
+        provider: str,
+        category: str = "llm",
+        instance_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if not self._table_exists("api_tokens"):
+            return None
+        if instance_id:
+            cur = self._conn.execute(
+                "SELECT id, provider, category, instance_id, label, is_default, api_key_encrypted, api_base_url, status, "
+                "created_at, updated_at, notes FROM api_tokens WHERE provider=? AND category=? AND instance_id=?",
+                (provider, category, instance_id),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT id, provider, category, instance_id, label, is_default, api_key_encrypted, api_base_url, status, "
+                "created_at, updated_at, notes FROM api_tokens WHERE provider=? AND category=? "
+                "ORDER BY is_default DESC, updated_at DESC, id DESC LIMIT 1",
+                (provider, category),
+            )
+        row = cur.fetchone()
+        return dict(zip(Storage._LLM_TOKEN_COLS, row)) if row else None
+
+    def list_llm_providers(self, category: str = "llm") -> list[dict[str, Any]]:
+        if not self._table_exists("api_tokens"):
+            return []
+        cur = self._conn.execute(
+            "SELECT id, provider, category, instance_id, label, is_default, api_key_encrypted, api_base_url, status, "
+            "created_at, updated_at, notes FROM api_tokens WHERE category=? "
+            "ORDER BY provider, is_default DESC, updated_at DESC, id DESC",
+            (category,),
+        )
+        return [dict(zip(Storage._LLM_TOKEN_COLS, row)) for row in cur.fetchall()]
+
+    def get_chunk_profile(self, profile_id: str) -> dict[str, Any] | None:
+        if not self._table_exists("chunk_profiles"):
+            return None
+        row = self._conn.execute(
+            """
+            SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer, version,
+                   config_hash, config_json, created_at, updated_at
+            FROM chunk_profiles
+            WHERE profile_id = ?
+            LIMIT 1
+            """,
+            (profile_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "profile_id": row[0],
+            "name": row[1],
+            "chunk_size": row[2],
+            "chunk_overlap": row[3],
+            "splitter": row[4],
+            "tokenizer": row[5],
+            "version": row[6],
+            "config_hash": row[7],
+            "config_json": row[8],
+            "created_at": row[9],
+            "updated_at": row[10],
+        }
+
+    def list_kb_chunk_bindings(self, kb_id: str) -> list[dict[str, Any]]:
+        if (
+            not self._table_exists("kb_chunk_bindings")
+            or not self._table_exists("file_chunk_sets")
+            or not self._table_exists("chunk_profiles")
+        ):
+            return []
+        cur = self._conn.execute(
+            """
+            SELECT
+                b.kb_id,
+                b.file_url,
+                b.chunk_set_id,
+                b.bound_at,
+                b.bound_by,
+                b.binding_mode,
+                b.target_profile_id,
+                s.profile_id,
+                p.name AS profile_name,
+                s.chunk_count,
+                s.markdown_hash,
+                s.updated_at AS chunk_set_updated_at,
+                (
+                    SELECT s2.chunk_set_id
+                    FROM file_chunk_sets s2
+                    WHERE s2.file_url = b.file_url
+                      AND s2.profile_id = s.profile_id
+                    ORDER BY s2.updated_at DESC, s2.created_at DESC
+                    LIMIT 1
+                ) AS latest_chunk_set_id
+            FROM kb_chunk_bindings b
+            LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+            LEFT JOIN chunk_profiles p ON p.profile_id = s.profile_id
+            WHERE b.kb_id = ?
+            ORDER BY b.bound_at DESC
+            """,
+            (kb_id,),
+        )
+        out: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "kb_id": row[0],
+                    "file_url": row[1],
+                    "chunk_set_id": row[2],
+                    "bound_at": row[3],
+                    "bound_by": row[4],
+                    "binding_mode": row[5] or "pin",
+                    "target_profile_id": row[6] or "",
+                    "profile_id": row[7],
+                    "profile_name": row[8] or "",
+                    "chunk_count": row[9] or 0,
+                    "markdown_hash": row[10] or "",
+                    "chunk_set_updated_at": row[11],
+                    "latest_chunk_set_id": row[12],
+                    "is_latest": (row[12] is None or row[12] == row[2]),
+                }
+            )
+        return out
+
+    def get_kb_composition_status(self, kb_id: str) -> dict[str, Any]:
+        binding_file_count = 0
+        chunk_set_count = 0
+        latest_binding_at = None
+        follow_latest_count = 0
+        pin_count = 0
+        outdated_binding_count = 0
+        if self._table_exists("kb_chunk_bindings"):
+            binding_file_count = int(
+                self._conn.execute(
+                    "SELECT COUNT(DISTINCT file_url) FROM kb_chunk_bindings WHERE kb_id = ?",
+                    (kb_id,),
+                ).fetchone()[0]
+                or 0
+            )
+            chunk_set_count = int(
+                self._conn.execute(
+                    "SELECT COUNT(DISTINCT chunk_set_id) FROM kb_chunk_bindings WHERE kb_id = ?",
+                    (kb_id,),
+                ).fetchone()[0]
+                or 0
+            )
+            latest_binding_at = self._conn.execute(
+                "SELECT MAX(bound_at) FROM kb_chunk_bindings WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()[0]
+            mode_counts = self._conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN binding_mode = 'follow_latest' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN binding_mode = 'pin' OR binding_mode IS NULL THEN 1 ELSE 0 END)
+                FROM kb_chunk_bindings
+                WHERE kb_id = ?
+                """,
+                (kb_id,),
+            ).fetchone()
+            follow_latest_count = int((mode_counts[0] or 0) if mode_counts else 0)
+            pin_count = int((mode_counts[1] or 0) if mode_counts else 0)
+            if self._table_exists("file_chunk_sets"):
+                outdated_binding_count = int(
+                    self._conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM kb_chunk_bindings b
+                        LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                        WHERE b.kb_id = ?
+                          AND s.profile_id IS NOT NULL
+                          AND b.chunk_set_id != (
+                            SELECT s2.chunk_set_id
+                            FROM file_chunk_sets s2
+                            WHERE s2.file_url = b.file_url
+                              AND s2.profile_id = s.profile_id
+                            ORDER BY s2.updated_at DESC, s2.created_at DESC
+                            LIMIT 1
+                          )
+                        """,
+                        (kb_id,),
+                    ).fetchone()[0]
+                    or 0
+                )
+
+        latest = None
+        if self._table_exists("kb_index_versions"):
+            latest = self._conn.execute(
+                """
+                SELECT embedding_provider, embedding_model, embedding_dimension, index_type,
+                       status, chunk_count, built_at, created_at
+                FROM kb_index_versions
+                WHERE kb_id = ?
+                ORDER BY COALESCE(built_at, created_at) DESC
+                LIMIT 1
+                """,
+                (kb_id,),
+            ).fetchone()
+
+        kb_row = self._conn.execute(
+            """
+            SELECT embedding_provider, embedding_model, embedding_dimension,
+                   chunk_count, file_count, updated_at, index_dirty_at
+            FROM rag_knowledge_bases
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()
+        kb_provider = ""
+        kb_model = ""
+        kb_dimension = None
+        kb_chunk_count = 0
+        kb_file_count = 0
+        kb_updated_at = None
+        index_dirty_at = None
+        if kb_row:
+            kb_provider = kb_row[0] or infer_embedding_provider(kb_row[1], fallback="openai") or "openai"
+            kb_model = kb_row[1] or ""
+            kb_dimension = (
+                kb_row[2]
+                if kb_row[2] not in (None, "")
+                else infer_embedding_dimension(kb_row[1])
+            )
+            kb_chunk_count = int((kb_row[3] or 0) or 0)
+            kb_file_count = int((kb_row[4] or 0) or 0)
+            kb_updated_at = kb_row[5]
+            index_dirty_at = kb_row[6]
+
+        indexed_file_count = kb_file_count if kb_chunk_count > 0 else 0
+        legacy_index_time = kb_updated_at
+        pending_file_count = 0
+        if self._table_exists("rag_kb_files"):
+            kb_file_count_row = self._conn.execute(
+                "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
+                (kb_id,),
+            ).fetchone()
+            kb_file_count = int((kb_file_count_row[0] if kb_file_count_row else 0) or kb_file_count)
+            indexed_stats = self._conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN indexed_at IS NOT NULL AND indexed_at != '' THEN 1 ELSE 0 END),
+                    MAX(indexed_at)
+                FROM rag_kb_files
+                WHERE kb_id = ?
+                """,
+                (kb_id,),
+            ).fetchone()
+            indexed_file_count = int((indexed_stats[0] or 0) if indexed_stats else 0)
+            legacy_index_time = indexed_stats[1] if indexed_stats else None
+            if self._table_exists("catalog_items"):
+                pending_file_count_row = self._conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM rag_kb_files kf
+                    LEFT JOIN catalog_items c ON c.file_url = kf.file_url
+                    WHERE kf.kb_id = ?
+                      AND (
+                        kf.indexed_at IS NULL
+                        OR kf.indexed_at = ''
+                        OR (
+                            c.markdown_updated_at IS NOT NULL
+                            AND c.markdown_updated_at > kf.indexed_at
+                        )
+                      )
+                    """,
+                    (kb_id,),
+                ).fetchone()
+                pending_file_count = int((pending_file_count_row[0] if pending_file_count_row else 0) or 0)
+
+        has_index = bool(latest)
+        latest_index_time = (latest[6] or latest[7]) if latest else None
+        if not has_index and (indexed_file_count > 0 or kb_chunk_count > 0):
+            has_index = True
+            latest_index_time = legacy_index_time or kb_updated_at
+        effective_file_count = max(binding_file_count, kb_file_count)
+        dirty_after_index = bool(
+            index_dirty_at
+            and (
+                not latest_index_time
+                or index_dirty_at > latest_index_time
+            )
+        )
+        needs_reindex = bool(
+            (
+                effective_file_count > 0
+                and (
+                    pending_file_count > 0
+                    or outdated_binding_count > 0
+                    or not has_index
+                    or (
+                        latest_binding_at
+                        and latest_index_time
+                        and latest_binding_at > latest_index_time
+                    )
+                )
+            )
+            or (has_index and dirty_after_index)
+        )
+        latest_index_payload = None
+        if latest:
+            latest_index_payload = {
+                "embedding_provider": latest[0] or infer_embedding_provider(latest[1], fallback="openai") or "openai",
+                "embedding_model": latest[1],
+                "embedding_dimension": latest[2] if latest[2] not in (None, "") else infer_embedding_dimension(latest[1]),
+                "index_type": latest[3],
+                "status": latest[4],
+                "chunk_count": latest[5] or 0,
+                "built_at": latest[6] or latest[7],
+            }
+        elif has_index:
+            latest_index_payload = {
+                "embedding_provider": kb_provider or "openai",
+                "embedding_model": kb_model,
+                "embedding_dimension": kb_dimension,
+                "index_type": "Flat",
+                "status": "ready",
+                "chunk_count": kb_chunk_count,
+                "built_at": latest_index_time,
+                "source": "legacy",
+            }
+        return {
+            "kb_id": kb_id,
+            "file_count": effective_file_count,
+            "binding_file_count": binding_file_count,
+            "kb_file_count": kb_file_count,
+            "indexed_file_count": indexed_file_count,
+            "pending_file_count": pending_file_count,
+            "chunk_set_count": chunk_set_count,
+            "has_index": has_index,
+            "latest_binding_at": latest_binding_at,
+            "index_dirty_at": index_dirty_at,
+            "dirty_after_index": dirty_after_index,
+            "binding_mode_counts": {
+                "follow_latest": follow_latest_count,
+                "pin": pin_count,
+            },
+            "outdated_binding_count": outdated_binding_count,
+            "new_chunk_versions_available": outdated_binding_count > 0,
+            "needs_reindex": needs_reindex,
+            "latest_index": latest_index_payload,
+        }
+
+    def _agentic_ready_publication_columns(self) -> frozenset[str]:
+        cached = self._agentic_ready_publication_columns_cache
+        if cached is None:
+            cached = self._table_columns("agentic_ready_publications")
+            self._agentic_ready_publication_columns_cache = cached
+        return cached
+
+    def _agentic_manifest_row_to_dict(self, row: Any) -> dict[str, Any]:
+        return Storage._agentic_manifest_row_to_dict(self, row)
+
+    def get_agentic_ready_manifest(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+    ) -> dict[str, Any] | None:
+        if not self._table_exists("agentic_ready_manifests"):
+            return None
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = self._conn.execute(
+            """
+            SELECT manifest_id, kb_id, profile, profile_version, status, output_dir,
+                   artifact_files_json, doc_count, section_count, built_at, source_db,
+                   schema_versions_json, error_message, created_at, updated_at,
+                   publication_id, index_version_id, source_version_kind,
+                   source_version_id, artifact_digest
+            FROM agentic_ready_manifests
+            WHERE kb_id = ? AND profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        return self._agentic_manifest_row_to_dict(row) if row else None
+
+    def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
+        if not self._table_exists("agentic_ready_publications"):
+            return None
+        publication_columns = self._agentic_ready_publication_columns()
+        attempt_disposition_sql = (
+            "p.attempt_disposition"
+            if "attempt_disposition" in publication_columns
+            else "''"
+        )
+        smoke_result_sql = (
+            "p.smoke_result_json"
+            if "smoke_result_json" in publication_columns
+            else "'{}'"
+        )
+        row = self._conn.execute(
+            f"""
+            SELECT p.publication_id, p.kb_id, p.index_version_id, p.profile,
+                   p.profile_version, p.source_version_kind, p.source_version_id,
+                   p.status, p.output_dir, p.artifact_files_json, p.doc_count,
+                   p.section_count, p.built_at, p.artifact_digest, p.source_db,
+                   p.schema_versions_json, p.error_message, p.validated_at,
+                   p.published_at, {attempt_disposition_sql}, p.created_at, p.updated_at,
+                   g.retention_class, g.state, g.marked_at, g.claim_token,
+                   g.quarantine_dir, g.claimed_at, g.lease_expires_at,
+                   g.deleted_at, g.last_error,
+                   g.updated_at, {smoke_result_sql}
+            FROM agentic_ready_publications p
+            LEFT JOIN agentic_ready_publication_gc g
+              ON g.publication_id = p.publication_id
+            WHERE p.publication_id = ?
+            LIMIT 1
+            """,
+            (publication_id,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            artifact_files = json.loads(row[9] or "[]")
+        except Exception:
+            artifact_files = []
+        try:
+            schema_versions = json.loads(row[15] or "{}")
+        except Exception:
+            schema_versions = {}
+        try:
+            smoke_result = json.loads(row[32] or "{}")
+        except Exception:
+            smoke_result = {}
+        return {
+            "publication_id": row[0],
+            "kb_id": row[1],
+            "index_version_id": row[2],
+            "source_version_kind": row[5],
+            "source_version_id": row[6],
+            "profile": row[3],
+            "profile_version": row[4],
+            "status": row[7],
+            "output_dir": row[8] or "",
+            "artifact_files": artifact_files if isinstance(artifact_files, list) else [],
+            "doc_count": row[10] or 0,
+            "section_count": row[11] or 0,
+            "built_at": row[12],
+            "artifact_digest": row[13] or "",
+            "source_db": row[14] or "",
+            "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
+            "smoke_result": smoke_result if isinstance(smoke_result, dict) else {},
+            "error_message": row[16] or "",
+            "validated_at": row[17],
+            "published_at": row[18],
+            "attempt_disposition": row[19] or "",
+            "created_at": row[20],
+            "updated_at": row[21],
+            "retention_class": row[22] or "",
+            "gc_state": row[23] or "",
+            "gc_marked_at": row[24],
+            "gc_claim_token": row[25] or "",
+            "gc_quarantine_dir": row[26] or "",
+            "gc_claimed_at": row[27],
+            "gc_lease_expires_at": row[28],
+            "gc_deleted_at": row[29],
+            "gc_last_error": row[30] or "",
+            "gc_updated_at": row[31],
+        }
+
+    def get_agentic_ready_publication_state(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+    ) -> dict[str, Any]:
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = None
+        if self._table_exists("agentic_ready_slots"):
+            row = self._conn.execute(
+                """
+                SELECT active_publication_id, previous_publication_id,
+                       automatic_build_enabled, automatic_publish_enabled,
+                       publication_revision, updated_at
+                FROM agentic_ready_slots
+                WHERE kb_id = ? AND profile = ?
+                LIMIT 1
+                """,
+                (kb_id, normalized_profile),
+            ).fetchone()
+        active_id = str(row[0]) if row and row[0] else None
+        previous_id = str(row[1]) if row and row[1] else None
+        return {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "active_publication_id": active_id,
+            "previous_publication_id": previous_id,
+            "automatic_build_enabled": bool(row[2]) if row else False,
+            "automatic_publish_enabled": bool(row[3]) if row else False,
+            "publication_revision": int(row[4] or 0) if row else 0,
+            "updated_at": row[5] if row else None,
+            "active_publication": self.get_agentic_ready_publication(active_id) if active_id else None,
+            "previous_publication": self.get_agentic_ready_publication(previous_id) if previous_id else None,
+        }
+
+    def get_agentic_ready_automation_state(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+        include_claim_token: bool = False,
+    ) -> dict[str, Any]:
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        default = {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "automation_state": "disabled",
+            "running_generation": None,
+            "last_attempted_generation": 0,
+            "claim_token": None,
+            "claimed_at": None,
+            "lease_expires_at": None,
+            "last_attempt_publication_id": None,
+            "last_success_at": None,
+            "last_error": "",
+            "updated_at": None,
+            "automatic_build_enabled": False,
+            "automatic_publish_enabled": False,
+            "event_generation": 0,
+            "pending_evaluation_generation": None,
+            "evaluated_generation": 0,
+        }
+        required_tables = {
+            "agentic_ready_slots",
+            "agentic_ready_automation",
+            "agentic_ready_source_state",
+        }
+        if not all(self._table_exists(table) for table in required_tables):
+            return default
+        row = self._conn.execute(
+            """
+            SELECT a.automation_state, a.running_generation,
+                   a.last_attempted_generation, a.claim_token,
+                   a.claimed_at, a.lease_expires_at,
+                   a.last_attempt_publication_id, a.last_success_at,
+                   a.last_error, a.updated_at,
+                   s.automatic_build_enabled, s.automatic_publish_enabled,
+                   ss.event_generation, ss.pending_evaluation_generation,
+                   ss.evaluated_generation
+            FROM agentic_ready_slots AS s
+            LEFT JOIN agentic_ready_automation AS a
+              ON a.kb_id = s.kb_id AND a.profile = s.profile
+            LEFT JOIN agentic_ready_source_state AS ss
+              ON ss.kb_id = s.kb_id AND ss.profile = s.profile
+            WHERE s.kb_id = ? AND s.profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        if not row:
+            return default
+        build_enabled = bool(row[10])
+        pending_generation = int(row[13]) if row[13] is not None else None
+        stored_state = str(row[0] or "")
+        if stored_state:
+            automation_state = stored_state
+        elif not build_enabled:
+            automation_state = "disabled"
+        elif pending_generation is not None:
+            automation_state = "pending"
+        else:
+            automation_state = "idle"
+        return {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "automation_state": automation_state,
+            "running_generation": int(row[1]) if row[1] is not None else None,
+            "last_attempted_generation": int(row[2] or 0),
+            "claim_token": str(row[3]) if include_claim_token and row[3] else None,
+            "claimed_at": row[4],
+            "lease_expires_at": row[5],
+            "last_attempt_publication_id": str(row[6]) if row[6] else None,
+            "last_success_at": row[7],
+            "last_error": str(row[8] or ""),
+            "updated_at": row[9],
+            "automatic_build_enabled": build_enabled,
+            "automatic_publish_enabled": bool(row[11]),
+            "event_generation": int(row[12] or 0),
+            "pending_evaluation_generation": pending_generation,
+            "evaluated_generation": int(row[14] or 0),
+        }
+
+    def get_agentic_ready_source_state(
+        self,
+        *,
+        kb_id: str,
+        profile: str = "general",
+    ) -> dict[str, Any]:
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = None
+        if self._table_exists("agentic_ready_source_state"):
+            row = self._conn.execute(
+                """
+                SELECT event_generation, pending_evaluation_generation,
+                       evaluated_generation, pending_severity, pending_reasons_json,
+                       evaluated_severity, evaluated_reasons_json,
+                       evaluated_source_version_kind, evaluated_source_version_id,
+                       evaluated_at, created_at, updated_at
+                FROM agentic_ready_source_state
+                WHERE kb_id = ? AND profile = ?
+                LIMIT 1
+                """,
+                (kb_id, normalized_profile),
+            ).fetchone()
+        publication_state = self.get_agentic_ready_publication_state(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+        active = publication_state.get("active_publication")
+        manifest = self.get_agentic_ready_manifest(
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+        serving_record = active or manifest
+        active_kind = str((serving_record or {}).get("source_version_kind") or "").strip().lower()
+        active_source_id = str((serving_record or {}).get("source_version_id") or "").strip()
+        source_identity_comparable = bool(active_kind and active_source_id)
+        if not row:
+            return {
+                "kb_id": kb_id,
+                "profile": normalized_profile,
+                "has_source_state": False,
+                "state": "legacy_fallback",
+                "event_generation": 0,
+                "pending_evaluation_generation": None,
+                "evaluated_generation": 0,
+                "pending_evaluation": False,
+                "pending_severity": "none",
+                "pending_reasons": [],
+                "evaluated_source_version_kind": "",
+                "evaluated_source_version_id": "",
+                "active_source_version_kind": active_kind,
+                "active_source_version_id": active_source_id,
+                "source_identity_comparable": source_identity_comparable,
+                "legacy_heuristic_required": not source_identity_comparable,
+                "legacy_hard_gate": False,
+                "stale_confirmed": False,
+                "stale_severity": "none",
+                "stale_reasons": [],
+                "serving_stale": False,
+                "serving_allowed": True,
+                "automatic_build_enabled": publication_state["automatic_build_enabled"],
+                "automatic_publish_enabled": publication_state["automatic_publish_enabled"],
+                "evaluated_at": None,
+                "updated_at": None,
+            }
+
+        event_generation = int(row[0] or 0)
+        pending_generation = int(row[1]) if row[1] is not None else None
+        evaluated_generation = int(row[2] or 0)
+        pending_evaluation = bool(
+            pending_generation is not None and pending_generation > evaluated_generation
+        )
+        pending_severity = str(row[3] or "none") if pending_evaluation else "none"
+        pending_reasons = self._agentic_ready_json_list(row[4]) if pending_evaluation else []
+        evaluated_kind = str(row[7] or "").strip().lower()
+        evaluated_source_id = str(row[8] or "").strip()
+        has_serving_record = bool(serving_record and (serving_record or {}).get("status") in {"ready", "active"})
+        confirmed_pending_content_change = bool(
+            has_serving_record
+            and pending_severity == "soft_stale"
+            and "chunk_content_updated" in pending_reasons
+        )
+        source_mismatch = bool(
+            has_serving_record
+            and source_identity_comparable
+            and evaluated_kind
+            and evaluated_source_id
+            and (
+                active_kind != evaluated_kind
+                or active_source_id != evaluated_source_id
+            )
+        )
+        evaluated_severity = str(row[5] or "none") if source_mismatch else "none"
+        if source_mismatch and evaluated_severity == "none":
+            evaluated_severity = "soft_stale"
+        legacy_hard_gate = bool(
+            has_serving_record
+            and not source_identity_comparable
+            and str(row[5] or "none") == "hard_stale"
+        )
+        if legacy_hard_gate:
+            evaluated_severity = "hard_stale"
+        effective_severity = self._agentic_ready_severity_max(
+            pending_severity
+            if pending_severity == "hard_stale" or confirmed_pending_content_change
+            else "none",
+            evaluated_severity,
+        )
+        stale_confirmed = bool(
+            (source_mismatch and evaluated_severity != "none")
+            or confirmed_pending_content_change
+        )
+        serving_stale = effective_severity in {"soft_stale", "hard_stale"}
+        state = (
+            "stale"
+            if stale_confirmed
+            else (
+                "pending_evaluation"
+                if pending_evaluation
+                else ("legacy_hard_gate" if legacy_hard_gate else "fresh")
+            )
+        )
+        reasons = (
+            self._agentic_ready_json_list(row[6])
+            if source_mismatch or legacy_hard_gate
+            else []
+        )
+        if source_mismatch and not reasons:
+            reasons = ["source_version_changed"]
+        if pending_evaluation:
+            reasons = list(dict.fromkeys([*reasons, *pending_reasons]))
+        return {
+            "kb_id": kb_id,
+            "profile": normalized_profile,
+            "has_source_state": True,
+            "state": state,
+            "event_generation": event_generation,
+            "pending_evaluation_generation": pending_generation,
+            "evaluated_generation": evaluated_generation,
+            "pending_evaluation": pending_evaluation,
+            "pending_severity": pending_severity,
+            "pending_reasons": pending_reasons,
+            "evaluated_source_version_kind": evaluated_kind,
+            "evaluated_source_version_id": evaluated_source_id,
+            "active_source_version_kind": active_kind,
+            "active_source_version_id": active_source_id,
+            "source_identity_comparable": source_identity_comparable,
+            "legacy_heuristic_required": not source_identity_comparable,
+            "legacy_hard_gate": legacy_hard_gate,
+            "stale_confirmed": stale_confirmed,
+            "stale_severity": effective_severity,
+            "stale_reasons": reasons,
+            "serving_stale": serving_stale,
+            "serving_allowed": effective_severity != "hard_stale",
+            "automatic_build_enabled": publication_state["automatic_build_enabled"],
+            "automatic_publish_enabled": publication_state["automatic_publish_enabled"],
+            "evaluated_at": row[9],
+            "updated_at": row[11],
+        }
 
 
 def _kb_list_schema_ready(conn: Any) -> bool:
@@ -1474,6 +2482,59 @@ def _kb_list_schema_ready(conn: Any) -> bool:
         row[1] for row in conn.execute("PRAGMA table_info(rag_kb_files)")
     }
     return _KB_LIST_FILE_COLUMN_DEFINITIONS.keys() <= file_columns
+
+
+def _kb_list_schema_object_type(conn: Any, name: str) -> str | None:
+    try:
+        row = conn.execute(
+            "SELECT type FROM sqlite_schema WHERE name = ? LIMIT 1",
+            (name,),
+        ).fetchone()
+    except sqlite3.Error:
+        return "probe_error"
+    return str(row[0]) if row else None
+
+
+def _kb_list_table_columns(conn: Any, table: str) -> frozenset[str] | None:
+    object_type = _kb_list_schema_object_type(conn, table)
+    if object_type is None:
+        return frozenset()
+    if object_type != "table":
+        return None
+    try:
+        return frozenset(
+            str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")
+        )
+    except sqlite3.Error:
+        return None
+
+
+def _kb_list_read_schema_problem(conn: Any) -> str | None:
+    kb_columns = _kb_list_table_columns(conn, "rag_knowledge_bases")
+    if kb_columns is None:
+        return "kb_schema_apply_required"
+    if not kb_columns:
+        return "missing_kb_table"
+    if not _KB_LIST_COLUMN_DEFINITIONS.keys() <= kb_columns:
+        return "kb_schema_apply_required"
+    file_columns = _kb_list_table_columns(conn, "rag_kb_files")
+    if file_columns is None:
+        return "kb_schema_apply_required"
+    if file_columns and not _KB_LIST_FILE_COLUMN_DEFINITIONS.keys() <= file_columns:
+        return "kb_schema_apply_required"
+    table_columns = {
+        table: _kb_list_table_columns(conn, table)
+        for table in _KB_LIST_OPTIONAL_TABLE_COLUMN_REQUIREMENTS
+    }
+    for table, required_columns in _KB_LIST_OPTIONAL_TABLE_COLUMN_REQUIREMENTS.items():
+        existing_columns = table_columns[table]
+        if existing_columns is None:
+            return "kb_schema_apply_required"
+        if existing_columns and not required_columns <= existing_columns:
+            return "kb_schema_apply_required"
+    if table_columns["agentic_ready_publications"] and not table_columns["agentic_ready_publication_gc"]:
+        return "kb_schema_apply_required"
+    return None
 
 
 def _ensure_kb_list_schema_on_connection(conn: Any) -> None:
@@ -1513,6 +2574,35 @@ def _ensure_kb_list_schema_on_connection(conn: Any) -> None:
         for name, definition in _KB_LIST_COLUMN_DEFINITIONS.items():
             if name not in existing_kb_columns:
                 conn.execute(f"ALTER TABLE rag_knowledge_bases ADD COLUMN {name} {definition}")
+        rows = conn.execute(
+            """
+            SELECT kb_id, embedding_provider, embedding_model, embedding_dimension
+            FROM rag_knowledge_bases
+            """
+        ).fetchall()
+        for kb_id, provider, model, dimension in rows:
+            resolved_provider = (
+                str(provider or "").strip().lower()
+                or infer_embedding_provider(model, fallback="openai")
+                or "openai"
+            )
+            resolved_dimension = (
+                int(dimension)
+                if dimension not in (None, "")
+                else infer_embedding_dimension(model)
+            )
+            if (
+                resolved_provider != str(provider or "").strip().lower()
+                or resolved_dimension != dimension
+            ):
+                conn.execute(
+                    """
+                    UPDATE rag_knowledge_bases
+                    SET embedding_provider = ?, embedding_dimension = ?
+                    WHERE kb_id = ?
+                    """,
+                    (resolved_provider, resolved_dimension, kb_id),
+                )
 
         conn.execute(
             """
@@ -1549,6 +2639,37 @@ def _ensure_kb_list_schema(db_path: str) -> None:
         conn.close()
 
 
+def _kb_list_db_has_user_schema_objects(db_path: str) -> bool:
+    path = Path(db_path)
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_schema
+            WHERE name NOT LIKE 'sqlite_%'
+            LIMIT 1
+            """
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def _open_kb_list_read_only_connection(db_path: str) -> sqlite3.Connection:
+    path = Path(db_path)
+    wal_path = Path(f"{path}-wal")
+    immutable = not wal_path.exists() or wal_path.stat().st_size == 0
+    uri = f"{path.resolve().as_uri()}?mode=ro"
+    if immutable:
+        uri = f"{uri}&immutable=1"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
 def _kb_list_row_payload(row: Any) -> dict[str, Any]:
     return {
         "kb_id": row[0],
@@ -1572,12 +2693,25 @@ def _kb_list_row_payload(row: Any) -> dict[str, Any]:
 
 def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
     connection_local = db_path in _KB_LIST_CONNECTION_LOCAL_PATHS
-    if not connection_local:
-        _ensure_kb_list_schema(db_path)
-    storage = Storage(db_path)
+    if connection_local or not _kb_list_db_has_user_schema_objects(db_path):
+        return {
+            "knowledge_bases": [],
+            "current_embeddings": _current_embeddings_payload(storage=None),
+        }
+    conn = _open_kb_list_read_only_connection(db_path)
+    storage = _KBListStorageView(db_path, conn)
     try:
-        if connection_local:
-            _ensure_kb_list_schema_on_connection(storage._conn)
+        read_schema_problem = _kb_list_read_schema_problem(storage._conn)
+        if read_schema_problem == "missing_kb_table":
+            return {
+                "knowledge_bases": [],
+                "current_embeddings": _current_embeddings_payload(storage=None),
+            }
+        if read_schema_problem is not None:
+            raise RagAdminError(
+                "Knowledge base list schema requires explicit schema apply",
+                status_code=409,
+            )
         kb_mode = _norm(query.get("kb_mode"))
         search = _norm(query.get("search")).lower()
         rows = storage._conn.execute(

@@ -349,12 +349,20 @@ python3 scripts/production_recovery.py release-record \
   --output /var/lib/aiinforsearch/releases/"$BUILD_GIT_SHA".json
 ```
 
-`PRAGMA user_version` is the current explicit schema-version field. It is still
-`0` on legacy databases until a reviewed migration runner assigns a version.
-Any future schema-changing deployment must therefore include an explicit,
-idempotent migration step after the backup and before application startup; do
-not treat the application's historical startup-time `CREATE/ALTER` behavior as
-a sufficient production migration plan.
+`PRAGMA user_version` is the current explicit schema-version field. Legacy
+databases may still report `0` until the reviewed migration runner assigns the
+repository baseline. A schema-changing deployment must run the explicit,
+idempotent SQLite preflight after verified backup and before application
+startup:
+
+```bash
+ai-actuarial schema status --db "$DATA_DIR/index.db" --json
+ai-actuarial schema plan --db "$DATA_DIR/index.db" --json
+ai-actuarial schema apply --db "$DATA_DIR/index.db" --json
+```
+
+Do not treat the application's historical startup-time `CREATE/ALTER` behavior
+as a sufficient production migration plan.
 
 ### Live restore and rollback
 
