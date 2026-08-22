@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -639,15 +640,17 @@ def _indexes_equivalent(
 ) -> bool:
     def normalize(
         indexes: tuple[IndexSignature, ...],
-    ) -> frozenset[tuple[int, str, int, tuple[tuple[int, str | None, int, str, int], ...]]]:
-        normalized: set[tuple[int, str, int, tuple[tuple[int, str | None, int, str, int], ...]]] = set()
+    ) -> Counter[tuple[int, str, int, tuple[tuple[int, str | None, int, str, int], ...]]]:
+        normalized: Counter[
+            tuple[int, str, int, tuple[tuple[int, str | None, int, str, int], ...]]
+        ] = Counter()
         for unique, origin, partial, columns in indexes:
             norm_columns = tuple(
                 (seqno, name, desc, coll, key)
                 for seqno, _cid, name, desc, coll, key in columns
             )
-            normalized.add((unique, origin, partial, norm_columns))
-        return frozenset(normalized)
+            normalized[(unique, origin, partial, norm_columns)] += 1
+        return normalized
 
     return normalize(left) == normalize(right)
 

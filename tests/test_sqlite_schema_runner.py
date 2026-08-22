@@ -946,3 +946,34 @@ def test_indexes_equivalent_detects_name_difference() -> None:
         (0, "c", 0, ((0, 1, "category", 0, "BINARY", 1),)),
     )
     assert not _indexes_equivalent(left, right)
+
+
+def test_indexes_equivalent_detects_duplicate_index() -> None:
+    from ai_actuarial.sqlite_schema import _indexes_equivalent
+
+    # Two redundant indexes over the same columns must not collapse to
+    # "equivalent" against a single canonical index.
+    redundant = (
+        (0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),
+        (0, "c", 0, ((0, 2, "provider", 0, "BINARY", 1),)),
+    )
+    canonical = (
+        (0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),
+    )
+    assert not _indexes_equivalent(redundant, canonical)
+
+
+def test_column_signature_equivalent_tolerates_allowlisted_notnull() -> None:
+    from ai_actuarial.sqlite_schema import _column_signature_equivalent
+
+    actual = ("instance_id", "TEXT", 0, "'default'", 0, 0)
+    expected = ("instance_id", "TEXT", 1, "'default'", 0, 0)
+    assert _column_signature_equivalent(actual, expected, "api_tokens", "instance_id")
+
+
+def test_column_signature_equivalent_rejects_non_allowlisted_notnull() -> None:
+    from ai_actuarial.sqlite_schema import _column_signature_equivalent
+
+    actual = ("url", "TEXT", 0, None, 0, 0)
+    expected = ("url", "TEXT", 1, None, 0, 0)
+    assert not _column_signature_equivalent(actual, expected, "files", "url")
