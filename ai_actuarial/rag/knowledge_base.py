@@ -1013,29 +1013,8 @@ class KnowledgeBaseManager:
         if auto_sync:
             self._sync_category_files(kb_id, categories)
     
-    def sync_category_files(self, kb_id: str, categories: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Automatically add all files from specified categories to KB.
-        
-        Args:
-            kb_id: Knowledge base ID
-            categories: List of category names. Uses the KB's mapped categories when omitted.
-        """
-        if categories is None:
-            categories = self.get_kb_categories(kb_id)
-        categories = [str(category or "").strip() for category in categories if str(category or "").strip()]
-        if not categories:
-            return {
-                "kb_id": kb_id,
-                "categories": [],
-                "file_urls": [],
-                "added_file_urls": [],
-                "added_count": 0,
-                "skipped_count": 0,
-                "total_files": self.get_kb_stats(kb_id).get("total_files", 0),
-            }
-
-        # Build query to find all files matching categories
+    def _files_for_categories(self, categories: List[str]) -> List[str]:
+        """Return distinct file URLs matching any of the given categories."""
         category_conditions = []
         params = []
         for cat in categories:
@@ -1043,9 +1022,7 @@ class KnowledgeBaseManager:
                 "(ci.category = ? OR ci.category LIKE ? OR ci.category LIKE ? OR ci.category LIKE ?)"
             )
             params.extend([cat, f"{cat};%", f"%; {cat}", f"%; {cat};%"])
-        
         placeholders = " OR ".join(category_conditions)
-        
         cursor = self.storage._conn.execute(f"""
             SELECT DISTINCT ci.file_url
             FROM catalog_items ci
@@ -1054,8 +1031,47 @@ class KnowledgeBaseManager:
             AND ci.markdown_content IS NOT NULL
             AND ci.markdown_content != ''
         """, params)
-        
-        file_urls = [row[0] for row in cursor.fetchall()]
+        return [row[0] for row in cursor.fetchall()]
+
+    def sync_category_files(self, kb_id: str, categories: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Automatically reconcile KB membership against its mapped categories.
+
+        Args:
+            kb_id: Knowledge base ID
+            categories: List of category names. Uses the KB's mapped categories when omitted.
+        """
+        if categories is None:
+            categories = self.get_kb_categories(kb_id)
+        categories = [str(category or "").strip() for category in categories if str(category or "").strip()]
+
+        # The removal expectation must cover the KB's complete mapped category
+        # set, not just the caller-supplied subset: link_kb_to_categories
+        # (auto_sync) passes only the newly-added categories, and removing
+        # against that subset would evict members belonging to other
+        # already-linked categories.
+        mapped_categories = self.get_kb_categories(kb_id)
+        removal_categories = mapped_categories or categories
+
+        if not categories:
+            return {
+                "kb_id": kb_id,
+                "categories": [],
+                "file_urls": [],
+                "added_file_urls": [],
+                "removed_file_urls": [],
+                "added_count": 0,
+                "removed_count": 0,
+                "skipped_count": 0,
+                "total_files": self.get_kb_stats(kb_id).get("total_files", 0),
+            }
+
+        file_urls = self._files_for_categories(categories)
+        removal_expected = (
+            set(self._files_for_categories(removal_categories))
+            if removal_categories
+            else set()
+        )
 
         before_urls = {
             str(row.get("file_url") or "").strip()
@@ -1063,20 +1079,27 @@ class KnowledgeBaseManager:
             if str(row.get("file_url") or "").strip()
         }
         added_file_urls = [file_url for file_url in file_urls if file_url not in before_urls]
+        removed_file_urls = sorted(file_url for file_url in before_urls if file_url not in removal_expected)
 
         # Add to KB (silently skip if already added)
-        add_result = {"added_count": 0, "skipped_count": 0, "total_files": len(before_urls)}
+        add_result = {"added_count": 0, "skipped_count": 0}
         if file_urls:
             add_result = self.add_files_to_kb(kb_id, file_urls)
+
+        removed_count = 0
+        if removed_file_urls:
+            removed_count = self.remove_files_from_kb(kb_id, removed_file_urls)
 
         return {
             "kb_id": kb_id,
             "categories": categories,
             "file_urls": file_urls,
             "added_file_urls": added_file_urls,
+            "removed_file_urls": removed_file_urls,
             "added_count": int(add_result.get("added_count") or 0),
+            "removed_count": int(removed_count),
             "skipped_count": int(add_result.get("skipped_count") or 0),
-            "total_files": int(add_result.get("total_files") or 0),
+            "total_files": len(before_urls) + len(added_file_urls) - removed_count,
         }
 
     def _sync_category_files(self, kb_id: str, categories: List[str]):
@@ -1115,25 +1138,33 @@ class KnowledgeBaseManager:
             params,
         )
         file_urls = [row[0] for row in cursor.fetchall()]
+        expected_urls = set(file_urls)
         before_urls = {
             str(row.get("file_url") or "").strip()
             for row in self.get_kb_files(kb_id)
             if str(row.get("file_url") or "").strip()
         }
         added_file_urls = [file_url for file_url in file_urls if file_url not in before_urls]
+        removed_file_urls = sorted(file_url for file_url in before_urls if file_url not in expected_urls)
 
-        add_result = {"added_count": 0, "skipped_count": 0, "total_files": len(before_urls)}
+        add_result = {"added_count": 0, "skipped_count": 0}
         if file_urls:
             add_result = self.add_files_to_kb(kb_id, file_urls)
+
+        removed_count = 0
+        if removed_file_urls:
+            removed_count = self.remove_files_from_kb(kb_id, removed_file_urls)
 
         return {
             "kb_id": kb_id,
             "profile_id": profile_id,
             "file_urls": file_urls,
             "added_file_urls": added_file_urls,
+            "removed_file_urls": removed_file_urls,
             "added_count": int(add_result.get("added_count") or 0),
+            "removed_count": int(removed_count),
             "skipped_count": int(add_result.get("skipped_count") or 0),
-            "total_files": int(add_result.get("total_files") or 0),
+            "total_files": len(before_urls) + len(added_file_urls) - removed_count,
         }
     
     def get_kb_categories(self, kb_id: str) -> List[str]:
