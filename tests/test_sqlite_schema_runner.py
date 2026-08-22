@@ -808,3 +808,141 @@ def test_schema_cli_apply_missing_database_creates_current_schema(tmp_path: Path
     assert apply_payload["state"] == "current"
     assert apply_payload["database"]["user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
+
+
+def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
+    from ai_actuarial.sqlite_schema import (
+        CURRENT_SQLITE_SCHEMA_VERSION,
+        apply_schema,
+        schema_status,
+    )
+
+    db_path = tmp_path / "legacy-missing-table.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("DROP TABLE agentic_ready_automation_lock")
+        storage._conn.execute("PRAGMA user_version=0")
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    status = schema_status(db_path)
+    assert status["state"] == "needs_migration"
+    assert status["can_apply"] is True
+    assert status["blocked"] is False
+
+    applied = apply_schema(db_path)
+    assert applied["state"] == "current"
+    assert applied["applied_migrations"] == ["baseline_storage_schema_v1"]
+    assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
+    with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "agentic_ready_automation_lock" in tables
+
+
+def test_legacy_missing_non_backfill_table_is_invalid(tmp_path: Path) -> None:
+    from ai_actuarial.sqlite_schema import schema_status
+
+    db_path = tmp_path / "legacy-missing-core-table.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("DROP TABLE pages")
+        storage._conn.execute("PRAGMA user_version=0")
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    status = schema_status(db_path)
+    assert status["state"] == "invalid"
+    assert status["blocked"] is True
+    assert "missing_required_tables" in status["problems"]
+
+
+def test_legacy_missing_backfill_column_is_migratable(tmp_path: Path) -> None:
+    from ai_actuarial.sqlite_schema import (
+        CURRENT_SQLITE_SCHEMA_VERSION,
+        apply_schema,
+        schema_status,
+    )
+
+    db_path = tmp_path / "legacy-missing-column.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("ALTER TABLE agentic_ready_manifests DROP COLUMN artifact_digest")
+        storage._conn.execute("PRAGMA user_version=0")
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    status = schema_status(db_path)
+    assert status["state"] == "needs_migration"
+    assert status["can_apply"] is True
+
+    applied = apply_schema(db_path)
+    assert applied["state"] == "current"
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(agentic_ready_manifests)")}
+    assert "artifact_digest" in columns
+    assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
+
+
+def test_legacy_missing_non_backfill_column_is_invalid(tmp_path: Path) -> None:
+    from ai_actuarial.sqlite_schema import schema_status
+
+    db_path = tmp_path / "legacy-missing-core-column.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("ALTER TABLE files DROP COLUMN sha256")
+        storage._conn.execute("PRAGMA user_version=0")
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    status = schema_status(db_path)
+    assert status["state"] == "invalid"
+    assert status["blocked"] is True
+    assert "missing_columns" in status["problems"]
+
+
+def test_indexes_equivalent_ignores_column_cid() -> None:
+    from ai_actuarial.sqlite_schema import _indexes_equivalent
+
+    left = (
+        (
+            0,
+            "c",
+            0,
+            (
+                (0, 1, "provider", 0, "BINARY", 1),
+                (1, 2, "category", 0, "BINARY", 1),
+                (2, 5, "is_default", 0, "BINARY", 1),
+                (3, -1, None, 0, "BINARY", 0),
+            ),
+        ),
+    )
+    right = (
+        (
+            0,
+            "c",
+            0,
+            (
+                (0, 1, "provider", 0, "BINARY", 1),
+                (1, 2, "category", 0, "BINARY", 1),
+                (2, 11, "is_default", 0, "BINARY", 1),
+                (3, -1, None, 0, "BINARY", 0),
+            ),
+        ),
+    )
+    assert _indexes_equivalent(left, right)
+
+
+def test_indexes_equivalent_detects_name_difference() -> None:
+    from ai_actuarial.sqlite_schema import _indexes_equivalent
+
+    left = (
+        (0, "c", 0, ((0, 1, "provider", 0, "BINARY", 1),)),
+    )
+    right = (
+        (0, "c", 0, ((0, 1, "category", 0, "BINARY", 1),)),
+    )
+    assert not _indexes_equivalent(left, right)

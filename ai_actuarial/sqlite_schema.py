@@ -18,6 +18,45 @@ _PARTIAL_MIGRATION_TABLES = frozenset(
     }
 )
 
+# Legacy databases predating the explicit schema runner can be missing a small,
+# well-understood set of ready-data tables and columns. These tables have no
+# historical rows in production and are re-created idempotently by
+# Storage._init_schema(), so a version-0 legacy database missing exactly these
+# objects is safe to auto-backfill via `schema apply` rather than fail-closed.
+_AUTO_BACKFILL_TABLES = frozenset(
+    {
+        "agentic_ready_automation",
+        "agentic_ready_automation_lock",
+        "agentic_ready_publication_gc",
+        "agentic_ready_publications",
+        "agentic_ready_slots",
+        "agentic_ready_source_state",
+        "kb_ready_index_state",
+    }
+)
+
+_AUTO_BACKFILL_COLUMNS: dict[str, frozenset[str]] = {
+    "agentic_ready_manifests": frozenset(
+        {
+            "artifact_digest",
+            "index_version_id",
+            "publication_id",
+            "source_version_id",
+            "source_version_kind",
+        }
+    ),
+}
+
+# Columns whose NOT NULL flag may legitimately differ from the canonical
+# current schema. SQLite cannot ALTER a column's NOT NULL constraint without a
+# table rebuild, and these differences are runtime-harmless (each column has a
+# DEFAULT and is always written by application code). Comparing column
+# signatures for these columns ignores the NOT NULL bit only.
+_NOTNULL_TOLERANCE_COLUMNS: dict[str, frozenset[str]] = {
+    "api_tokens": frozenset({"instance_id", "is_default"}),
+    "rag_knowledge_bases": frozenset({"embedding_provider"}),
+}
+
 ColumnSignature = tuple[str, str, int, str | None, int, int]
 IndexColumnSignature = tuple[int, int, str | None, int, str, int]
 IndexSignature = tuple[int, str, int, tuple[IndexColumnSignature, ...]]
@@ -180,7 +219,20 @@ def _set_user_version(conn: sqlite3.Connection, version: int) -> None:
     conn.execute(f"PRAGMA user_version={int(version)}")
 
 
+def _init_schema_on_connection(conn: sqlite3.Connection, db_path: str = "") -> None:
+    from ai_actuarial.storage import Storage
+
+    storage = Storage.__new__(Storage)
+    storage.db_path = db_path
+    storage._conn = conn
+    storage._tx_depth = 0
+    storage._agentic_ready_publication_columns_cache = None
+    storage._defer_schema_commits = True
+    storage._init_schema()
+
+
 def _baseline_storage_schema_v1(conn: sqlite3.Connection) -> None:
+    _init_schema_on_connection(conn)
     _set_user_version(conn, 1)
 
 
@@ -567,10 +619,66 @@ def _count_columns(groups: dict[str, list[str]]) -> int:
     return sum(len(columns) for columns in groups.values())
 
 
+def _column_signature_equivalent(
+    actual: ColumnSignature,
+    expected: ColumnSignature,
+    table: str,
+    name: str,
+) -> bool:
+    if actual == expected:
+        return True
+    if name in _NOTNULL_TOLERANCE_COLUMNS.get(table, frozenset()):
+        # Ignore the NOT NULL bit (index 2); see _NOTNULL_TOLERANCE_COLUMNS.
+        return actual[:2] == expected[:2] and actual[3:] == expected[3:]
+    return False
+
+
+def _indexes_equivalent(
+    left: tuple[IndexSignature, ...],
+    right: tuple[IndexSignature, ...],
+) -> bool:
+    def normalize(
+        indexes: tuple[IndexSignature, ...],
+    ) -> frozenset[tuple[int, str, int, tuple[tuple[int, str | None, int, str, int], ...]]]:
+        normalized: set[tuple[int, str, int, tuple[tuple[int, str | None, int, str, int], ...]]] = set()
+        for unique, origin, partial, columns in indexes:
+            norm_columns = tuple(
+                (seqno, name, desc, coll, key)
+                for seqno, _cid, name, desc, coll, key in columns
+            )
+            normalized.add((unique, origin, partial, norm_columns))
+        return frozenset(normalized)
+
+    return normalize(left) == normalize(right)
+
+
+def _table_signature_equivalent_ignoring_notnull(
+    actual: TableSignature,
+    expected: TableSignature,
+    table: str,
+) -> bool:
+    tolerance = _NOTNULL_TOLERANCE_COLUMNS.get(table, frozenset())
+    if not tolerance or _column_names(actual) != _column_names(expected):
+        return False
+    actual_by_name = {column[0]: column for column in actual.columns}
+    expected_by_name = {column[0]: column for column in expected.columns}
+    for name, actual_column in actual_by_name.items():
+        expected_column = expected_by_name[name]
+        if name in tolerance:
+            if actual_column[:2] != expected_column[:2] or actual_column[3:] != expected_column[3:]:
+                return False
+        elif actual_column != expected_column:
+            return False
+    if not _indexes_equivalent(actual.indexes, expected.indexes):
+        return False
+    return actual.foreign_keys == expected.foreign_keys
+
+
 def _schema_validation(
     tables: dict[str, TableSignature],
     *,
     unexpected_schema_objects: dict[str, int] | None = None,
+    tolerate_backfill: bool = False,
 ) -> tuple[bool, list[str], dict[str, Any]]:
     expected_core = _current_storage_signature()
     optional_table_variants = _optional_table_signature_variants()
@@ -599,6 +707,8 @@ def _schema_validation(
         details["unknown_tables"] = {"count": len(unknown_tables)}
 
     missing_core_tables = sorted(set(expected_core) - actual_tables)
+    if tolerate_backfill:
+        missing_core_tables = sorted(set(missing_core_tables) - _AUTO_BACKFILL_TABLES)
     if missing_core_tables:
         _add_problem(problems, "missing_required_tables")
         details["missing_required_tables"] = {"count": len(missing_core_tables)}
@@ -622,6 +732,8 @@ def _schema_validation(
             {},
         )
         missing = sorted(expected_columns - actual_columns)
+        if tolerate_backfill:
+            missing = sorted(set(missing) - _AUTO_BACKFILL_COLUMNS.get(table, frozenset()))
         extra = sorted(actual_columns - expected_columns - allowed_extra_columns)
         if missing:
             missing_columns[table] = missing
@@ -633,7 +745,12 @@ def _schema_validation(
             name
             for name, column in expected_by_name.items()
             if name in actual_by_name
-            and actual_by_name[name] != column
+            and not _column_signature_equivalent(
+                actual_by_name[name],
+                column,
+                table,
+                name,
+            )
         )
         mismatched_columns.extend(
             sorted(
@@ -649,7 +766,7 @@ def _schema_validation(
             column_signature_mismatch[table] = mismatched_columns
         if (
             mismatched_columns
-            or tables[table].indexes != expected_signature.indexes
+            or not _indexes_equivalent(tables[table].indexes, expected_signature.indexes)
             or tables[table].foreign_keys != expected_signature.foreign_keys
         ):
             table_signature_mismatch += 1
@@ -658,7 +775,11 @@ def _schema_validation(
         if table not in tables:
             continue
         actual_signature = tables[table]
-        if actual_signature in optional_table_variants.get(table, frozenset()):
+        table_variants = optional_table_variants.get(table, frozenset())
+        if actual_signature in table_variants or any(
+            _table_signature_equivalent_ignoring_notnull(actual_signature, variant, table)
+            for variant in table_variants
+        ):
             continue
         required_columns = _OPTIONAL_TABLE_REQUIRED_COLUMNS[table]
         actual_columns = _column_names(actual_signature)
@@ -673,7 +794,15 @@ def _schema_validation(
         mismatched = sorted(
             name
             for name in actual_columns & allowed_columns
-            if actual_by_name[name] not in allowed_by_name.get(name, frozenset())
+            if not any(
+                _column_signature_equivalent(
+                    actual_by_name[name],
+                    variant,
+                    table,
+                    name,
+                )
+                for variant in allowed_by_name.get(name, frozenset())
+            )
         )
         if mismatched:
             column_signature_mismatch[table] = mismatched
@@ -822,11 +951,26 @@ def _analyze_connection(
             problems=["database_newer_than_code"],
         )
 
+    unexpected_schema_objects = _unexpected_schema_object_counts(conn, tables)
     valid, problems, details = _schema_validation(
         tables,
-        unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
+        unexpected_schema_objects=unexpected_schema_objects,
     )
     if not valid:
+        if version == 0 and _migration_path_from(0) is not None:
+            tolerant_valid, _, _ = _schema_validation(
+                tables,
+                unexpected_schema_objects=unexpected_schema_objects,
+                tolerate_backfill=True,
+            )
+            if tolerant_valid:
+                return _base_payload(
+                    state="needs_migration",
+                    user_version=version,
+                    schema="recognized_legacy_storage_schema_pending_backfill",
+                    can_apply=True,
+                    blocked=False,
+                )
         if 0 < version < CURRENT_SQLITE_SCHEMA_VERSION and _migration_accepts_source(
             conn,
             tables,
@@ -969,15 +1113,7 @@ def schema_plan(db_path: str | Path) -> dict[str, Any]:
 
 
 def _initialize_current_schema_on_connection(conn: sqlite3.Connection, path: Path) -> None:
-    from ai_actuarial.storage import Storage
-
-    storage = Storage.__new__(Storage)
-    storage.db_path = str(path)
-    storage._conn = conn
-    storage._tx_depth = 0
-    storage._agentic_ready_publication_columns_cache = None
-    storage._defer_schema_commits = True
-    storage._init_schema()
+    _init_schema_on_connection(conn, str(path))
     conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
 
 
