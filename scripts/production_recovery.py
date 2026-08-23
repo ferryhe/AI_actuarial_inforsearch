@@ -345,7 +345,12 @@ def prune_old_backups(
         match = re.fullmatch(r"backup-(\d{8}T\d{6}Z)(?:-\d+)?", entry.name)
         if not match:
             continue
-        created = datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        try:
+            created = datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            # A directory with a malformed calendar date (e.g. backup-20260229T000000Z)
+            # is skipped so it cannot abort pruning and retention cleanup.
+            continue
         if created < cutoff:
             shutil.rmtree(entry)
             removed.append(entry.name)

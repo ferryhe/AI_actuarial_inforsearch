@@ -260,11 +260,14 @@ sudo systemctl enable --now aiinforsearch-full-backup.timer
 
 The wrapper stops only the API container, runs the quiesced snapshot, and
 restarts the API through an EXIT/INT/TERM trap even if the snapshot fails. It
-reuses the same shared lock as the daily backup and deployment snapshot, skips
-the run when a write task is active, and retains 30 days via
-`--retention-days 30`. The timer is evaluated in the host's local timezone
-(Asia/Shanghai CST on the production host); `RandomizedDelaySec=15m` shifts the
-actual start up to 15 minutes later.
+reuses the same shared lock as the daily backup and deployment snapshot and
+retains 30 days via `--retention-days 30`. The quiesced guarantee comes from
+`docker stop` halting the writer, not from an idle-task check: active tasks
+live in the in-process runtime and are not visible to a file-based gate, and
+scheduled collections run at 00:30, so the 04:00 Sunday window is normally
+idle. The timer is evaluated in the host's local timezone (Asia/Shanghai CST on
+the production host); `RandomizedDelaySec=15m` shifts the actual start up to 15
+minutes later.
 
 The scheduled job is database-plus-configuration only, so it does not stop the
 API. The service fails closed if `/etc/aiinforsearch/backup.conf` is absent, if

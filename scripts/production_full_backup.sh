@@ -28,7 +28,8 @@ recover_api() {
     docker start "$API_CONTAINER" >/dev/null 2>&1 || true
   fi
 }
-trap recover_api EXIT INT TERM
+trap recover_api EXIT
+trap 'exit 1' INT TERM
 
 # --- Lock: never overlap with another full snapshot or deployment snapshot. ---
 exec 9>"$BACKUP_LOCK_FILE"
@@ -53,11 +54,14 @@ if [[ "$(stat -c %d "$DATA_DIR")" == "$(stat -c %d "$BACKUP_ROOT")" ]]; then
   exit 1
 fi
 
-# --- Idle gate: skip if an active write task would be interrupted. ---
-if grep -qE '"status"[[:space:]]*:[[:space:]]*"(running|queued|pending)"' "$DATA_DIR/job_history.jsonl" 2>/dev/null; then
-  log "skip full snapshot: active write task detected"
-  exit 0
-fi
+# No idle-task gate here: active tasks live in the in-process
+# NativeTaskRuntime.active_tasks (only visible through the authenticated
+# /api/tasks/active endpoint), not in job_history.jsonl, so a file-based check
+# would give a false all-clear. The quiesced guarantee instead comes from
+# ``docker stop`` gracefully halting the writer before the snapshot; SQLite
+# online backup plus copytree stats verification keep the snapshot consistent
+# even if a background task is interrupted. Scheduled collections run at 00:30,
+# so the 04:00 Sunday window is normally idle.
 
 # --- Snapshot ---
 START_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
