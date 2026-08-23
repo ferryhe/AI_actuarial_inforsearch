@@ -36,7 +36,7 @@ _SEARCH_ENGINE_DISPLAY = {
 }
 
 
-def get_config_categories() -> dict[str, object]:
+def get_config_categories(storage: Storage | None = None) -> dict[str, object]:
     config_data = load_yaml(
         get_categories_config_path(),
         default={"categories": {}, "ai_filter_keywords": [], "ai_keywords": []},
@@ -46,11 +46,18 @@ def get_config_categories() -> dict[str, object]:
         categories = {}
     ai_filter_keywords = config_data.get("ai_filter_keywords") or []
     ai_keywords = config_data.get("ai_keywords") or []
-    return {
+    result: dict[str, object] = {
         "categories": categories,
         "ai_filter_keywords": ai_filter_keywords if isinstance(ai_filter_keywords, list) else [],
         "ai_keywords": ai_keywords if isinstance(ai_keywords, list) else [],
     }
+    if storage is not None:
+        current_hash = storage.current_taxonomy_hash()
+        applied_hash = storage.get_applied_taxonomy_hash()
+        result["current_hash"] = current_hash
+        result["applied_hash"] = applied_hash
+        result["needs_recategory"] = current_hash != applied_hash
+    return result
 
 
 def get_backend_settings() -> dict[str, Any]:

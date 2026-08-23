@@ -13,6 +13,7 @@ from typing import Iterable
 
 from .storage import Storage
 from .utils import load_category_config
+from .shared_runtime import get_categories_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Load category configuration
 try:
-    _category_config = load_category_config()
+    _category_config = load_category_config(get_categories_config_path())
     CATEGORY_RULES = _category_config.get("categories", {})
     AI_TERMS = _category_config.get("ai_filter_keywords", [])
     AI_KEYWORDS = _category_config.get("ai_keywords", [])

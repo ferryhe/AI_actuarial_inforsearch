@@ -284,12 +284,18 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
     assert _user_version(db_path) == 0
 
     plan = schema_plan(db_path)
-    assert [action["id"] for action in plan["plan"]["actions"]] == ["baseline_storage_schema_v1"]
+    assert [action["id"] for action in plan["plan"]["actions"]] == [
+        "baseline_storage_schema_v1",
+        "add_taxonomy_state_v2",
+    ]
     assert _user_version(db_path) == 0
 
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["baseline_storage_schema_v1"]
+    assert applied["applied_migrations"] == [
+        "baseline_storage_schema_v1",
+        "add_taxonomy_state_v2",
+    ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
 
@@ -306,37 +312,37 @@ def test_schema_runner_plans_registered_old_version_path(tmp_path: Path, monkeyp
     storage = Storage(str(db_path))
     storage.close()
 
-    def apply_v2(conn: sqlite3.Connection) -> None:
-        conn.execute("PRAGMA user_version=2")
+    def apply_v3(conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA user_version=3")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 3)
     monkeypatch.setattr(
         sqlite_schema,
         "SQLITE_SCHEMA_MIGRATIONS",
         (
             sqlite_schema.SQLITE_SCHEMA_MIGRATIONS[0],
             sqlite_schema.SQLiteSchemaMigration(
-                version=2,
-                migration_id="test_schema_v2",
-                apply=apply_v2,
+                version=3,
+                migration_id="test_schema_v3",
+                apply=apply_v3,
             ),
         ),
     )
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 1
+    assert status["database"]["user_version"] == 2
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v2", "from_version": 1, "to_version": 2}
+        {"id": "test_schema_v3", "from_version": 2, "to_version": 3}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["database"]["user_version"] == 2
-    assert applied["applied_migrations"] == ["test_schema_v2"]
-    assert _user_version(db_path) == 2
+    assert applied["database"]["user_version"] == 3
+    assert applied["applied_migrations"] == ["test_schema_v3"]
+    assert _user_version(db_path) == 3
 
 
 def test_schema_runner_accepts_registered_old_version_source_signature(
@@ -365,11 +371,11 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
     ) -> bool:
         return tables == v1_signature
 
-    def apply_v2(conn: sqlite3.Connection) -> None:
+    def apply_v3(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v2_marker TEXT")
-        conn.execute("PRAGMA user_version=2")
+        conn.execute("PRAGMA user_version=3")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 3)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v2_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -377,9 +383,9 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
         (
             sqlite_schema.SQLITE_SCHEMA_MIGRATIONS[0],
             sqlite_schema.SQLiteSchemaMigration(
-                version=2,
-                migration_id="test_schema_v2_add_marker",
-                apply=apply_v2,
+                version=3,
+                migration_id="test_schema_v3_add_marker",
+                apply=apply_v3,
                 source_validator=accepts_v1_source,
             ),
         ),
@@ -387,17 +393,17 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 1
+    assert status["database"]["user_version"] == 2
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v2_add_marker", "from_version": 1, "to_version": 2}
+        {"id": "test_schema_v3_add_marker", "from_version": 2, "to_version": 3}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["test_schema_v2_add_marker"]
-    assert _user_version(db_path) == 2
+    assert applied["applied_migrations"] == ["test_schema_v3_add_marker"]
+    assert _user_version(db_path) == 3
 
 
 def test_schema_runner_rejects_mutating_source_validator_during_apply(
@@ -437,11 +443,11 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         conn.execute("CREATE TABLE validator_mutation_leak (secret_value TEXT)")
         return True
 
-    def apply_v2(conn: sqlite3.Connection) -> None:
+    def apply_v3(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v2_marker TEXT")
-        conn.execute("PRAGMA user_version=2")
+        conn.execute("PRAGMA user_version=3")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 3)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v2_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -449,9 +455,9 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         (
             sqlite_schema.SQLITE_SCHEMA_MIGRATIONS[0],
             sqlite_schema.SQLiteSchemaMigration(
-                version=2,
-                migration_id="test_schema_v2_block_mutating_validator",
-                apply=apply_v2,
+                version=3,
+                migration_id="test_schema_v3_block_mutating_validator",
+                apply=apply_v3,
                 source_validator=mutating_validator,
             ),
         ),
@@ -465,7 +471,7 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
 
     assert validator_calls >= 2
     assert query_only_values and set(query_only_values) == {1}
-    assert _user_version(db_path) == 1
+    assert _user_version(db_path) == 2
     with sqlite3.connect(db_path) as conn:
         assert conn.execute(
             """
@@ -501,7 +507,8 @@ def test_schema_runner_accepts_exported_chat_service_optional_schema(
     legacy_plan = schema_plan(db_path)
     assert legacy_plan["state"] == "needs_migration"
     assert [action["id"] for action in legacy_plan["plan"]["actions"]] == [
-        "baseline_storage_schema_v1"
+        "baseline_storage_schema_v1",
+        "add_taxonomy_state_v2",
     ]
 
 
@@ -712,6 +719,7 @@ def test_schema_runner_rolls_back_failed_migration(tmp_path: Path, monkeypatch: 
                 migration_id="baseline_storage_schema_v1",
                 apply=fail_after_version_write,
             ),
+            *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS[1:],
         ),
     )
 
@@ -732,7 +740,7 @@ def test_schema_runner_serializes_concurrent_apply(tmp_path: Path) -> None:
         results = list(pool.map(lambda _: apply_schema(db_path), range(2)))
 
     applied = [result["applied_migrations"] for result in results]
-    assert sorted(len(item) for item in applied) == [0, 1]
+    assert sorted(len(item) for item in applied) == [0, 2]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
 
@@ -753,7 +761,7 @@ def test_schema_runner_serializes_concurrent_fresh_apply(
 
     applied = [result["applied_migrations"] for result in results]
     assert sorted(len(item) for item in applied) == [0, 1]
-    assert any(item == ["create_current_storage_schema_v1"] for item in applied)
+    assert any(item == ["create_current_storage_schema"] for item in applied)
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 0
 
@@ -786,7 +794,10 @@ def test_schema_cli_json_contract_for_status_plan_apply(tmp_path: Path) -> None:
     assert apply_result.returncode == 0, apply_result.stderr
     apply_payload = json.loads(apply_result.stdout)
     assert apply_payload["database"]["user_version"] == CURRENT_SQLITE_SCHEMA_VERSION
-    assert apply_payload["applied_migrations"] == ["baseline_storage_schema_v1"]
+    assert apply_payload["applied_migrations"] == [
+        "baseline_storage_schema_v1",
+        "add_taxonomy_state_v2",
+    ]
     assert str(db_path) not in apply_result.stdout
 
 
@@ -799,7 +810,7 @@ def test_schema_cli_apply_missing_database_creates_current_schema(tmp_path: Path
     assert plan_result.returncode == 0, plan_result.stderr
     plan_payload = json.loads(plan_result.stdout)
     assert plan_payload["state"] == "missing"
-    assert plan_payload["plan"]["actions"][0]["id"] == "create_current_storage_schema_v1"
+    assert plan_payload["plan"]["actions"][0]["id"] == "create_current_storage_schema"
     assert not db_path.exists()
 
     apply_result = _run_schema_cli("apply", "--db", str(db_path), "--json")
@@ -833,7 +844,10 @@ def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
 
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["baseline_storage_schema_v1"]
+    assert applied["applied_migrations"] == [
+        "baseline_storage_schema_v1",
+        "add_taxonomy_state_v2",
+    ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     with sqlite3.connect(db_path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}

@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 1
+CURRENT_SQLITE_SCHEMA_VERSION = 2
 
-_CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema_v1"
+_CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
 _PARTIAL_MIGRATION_TABLES = frozenset(
     {
@@ -33,6 +33,7 @@ _AUTO_BACKFILL_TABLES = frozenset(
         "agentic_ready_slots",
         "agentic_ready_source_state",
         "kb_ready_index_state",
+        "taxonomy_state",
     }
 )
 
@@ -237,11 +238,39 @@ def _baseline_storage_schema_v1(conn: sqlite3.Connection) -> None:
     _set_user_version(conn, 1)
 
 
+def _add_taxonomy_state_v2(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS taxonomy_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            applied_hash TEXT NOT NULL,
+            applied_at TEXT
+        )
+        """
+    )
+    _set_user_version(conn, 2)
+
+
+def _accept_version_1_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept a version-1 source: current schema minus the taxonomy_state table."""
+    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
         migration_id=_BASELINE_ACTION_ID,
         apply=_baseline_storage_schema_v1,
+    ),
+    SQLiteSchemaMigration(
+        version=2,
+        migration_id="add_taxonomy_state_v2",
+        apply=_add_taxonomy_state_v2,
+        source_validator=_accept_version_1_source,
     ),
 )
 
@@ -1000,7 +1029,7 @@ def _analyze_connection(
         return _base_payload(
             state="current",
             user_version=version,
-            schema="current_storage_schema_v1",
+            schema="current_storage_schema",
             can_apply=False,
             blocked=False,
         )
