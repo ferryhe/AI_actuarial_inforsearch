@@ -361,6 +361,21 @@ def test_configured_categories_raises_when_file_missing(env: dict) -> None:
         _configured_categories()
 
 
+def test_configured_categories_raises_on_malformed_yaml(env: dict) -> None:
+    """Regression: a structurally invalid categories.yaml must fail closed."""
+    from ai_actuarial.recategory import _configured_categories
+
+    # Top-level document is a list, not a mapping.
+    env["cfg"].write_text("- item1\n- item2\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="malformed"):
+        _configured_categories()
+
+    # categories is a scalar, not a mapping.
+    env["cfg"].write_text("categories: not-a-mapping\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="must be a mapping"):
+        _configured_categories()
+
+
 def test_apply_refuses_to_seal_when_taxonomy_changes_midrun(env: dict) -> None:
     """#3 regression: a mid-run taxonomy edit must refuse the seal."""
     storage = _make_storage(env, {"Finance": ["finance"]})
@@ -436,6 +451,20 @@ def test_recategory_rejects_scoped_request(env: dict) -> None:
             runtime._run_recategory(
                 "task-scope", storage, {"mode": "apply", "category": "Finance"}
             )
+    finally:
+        storage.close()
+
+
+def test_recategory_defaults_to_plan_mode(env: dict) -> None:
+    """Regression: a missing mode defaults to plan (dry-run), not apply."""
+    storage = _make_storage(env, {"Finance": ["finance"]})
+    try:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        runtime = NativeTaskRuntime()
+        result = runtime._run_recategory("task-plan-default", storage, {})
+        assert result.success is True
+        assert (result.metadata or {}).get("dry_run") is True
     finally:
         storage.close()
 

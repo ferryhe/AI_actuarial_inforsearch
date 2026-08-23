@@ -40,8 +40,9 @@ _FALLBACK_CATEGORY = "Other"
 def _configured_categories() -> dict[str, list[str]]:
     """Read the current taxonomy from disk (name -> keyword list).
 
-    Raises ``RuntimeError`` when the config file is missing so re-categorization
-    fails closed instead of treating an absent taxonomy as empty.
+    Fails closed (raises) when the config file is missing or structurally
+    invalid, so re-categorization never treats a malformed taxonomy as empty
+    (which would strip every stored category except "Other").
     """
     try:
         config = load_category_config(get_categories_config_path())
@@ -49,9 +50,18 @@ def _configured_categories() -> dict[str, list[str]]:
         raise RuntimeError(
             "categories.yaml is missing; refusing to re-categorize"
         ) from exc
-    categories = config.get("categories") if isinstance(config, dict) else {}
-    if not isinstance(categories, dict):
-        return {}
+    if not isinstance(config, dict):
+        raise RuntimeError(
+            "categories.yaml is malformed (expected a top-level mapping); "
+            "refusing to re-categorize"
+        )
+    categories = config.get("categories")
+    if categories is None:
+        categories = {}
+    elif not isinstance(categories, dict):
+        raise RuntimeError(
+            "categories.yaml 'categories' must be a mapping; refusing to re-categorize"
+        )
     return {
         str(name): [str(term) for term in (terms or [])]
         for name, terms in categories.items()

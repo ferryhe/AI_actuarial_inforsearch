@@ -592,7 +592,7 @@ class NativeTaskRuntime:
     def _run_recategory(self, task_id: str, storage: Storage, data: dict[str, Any]) -> CollectionResult:
         from ai_actuarial.recategory import apply_recategory, plan_recategory
 
-        mode = str(data.get("mode") or "apply").strip().lower() or "apply"
+        mode = str(data.get("mode") or "plan").strip().lower() or "plan"
         if mode not in {"plan", "apply"}:
             raise RuntimeError(f"Invalid recategory mode: {mode}")
 
