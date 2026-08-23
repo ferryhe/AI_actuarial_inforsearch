@@ -270,3 +270,87 @@ def catalog_with_openai(
         model=resolved_model,
         suggested_title=suggested_title,
     )
+
+
+def confirm_category_for_summary(
+    *,
+    summary: str,
+    candidate_category: str,
+    category_terms: list[str],
+    storage: Any | None = None,
+) -> bool:
+    """Ask the catalog LLM whether a document summary belongs to a candidate category.
+
+    Used by the recategory task's "add" phase: after keyword pre-filtering, this
+    makes the final per-item decision from the summary alone. It does not re-generate
+    summary/keywords. Returns True only when the model returns an explicit boolean.
+    """
+    runtime = resolve_ai_function_runtime("catalog", storage=storage)
+    resolved_provider = runtime.provider
+    resolved_model = runtime.model
+    resolved_api_key = runtime.api_key
+    resolved_base_url = runtime.base_url
+    raw_timeout = runtime.raw_config.get("timeout_seconds")
+    try:
+        timeout_seconds = (
+            float(raw_timeout)
+            if raw_timeout not in (None, "")
+            else float(str(os.getenv("OPENAI_TIMEOUT_SECONDS") or "60").strip())
+        )
+    except (TypeError, ValueError):
+        timeout_seconds = 60.0
+
+    if not is_catalog_provider_supported(resolved_provider):
+        raise RuntimeError(
+            f"Catalog provider '{resolved_provider}' is not supported by the runtime"
+        )
+    if not resolved_api_key:
+        env_var = get_provider_api_key_env_var(resolved_provider) or "API_KEY"
+        raise RuntimeError(
+            f"{env_var} missing for catalog provider '{resolved_provider}'"
+        )
+
+    try:
+        from openai import OpenAI  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("Catalog provider requires `openai` package") from exc
+
+    client_kwargs = {"api_key": resolved_api_key}
+    if resolved_base_url:
+        client_kwargs["base_url"] = resolved_base_url
+    client = OpenAI(**client_kwargs)
+
+    terms_hint = ", ".join(str(t) for t in (category_terms or [])[:12] if t)
+    system_prompt = (
+        "You are a precise document-classification assistant for an actuarial/insurance "
+        "knowledge base. Decide whether a document summary belongs to a single candidate "
+        'category. Return strict JSON with exactly one key "belongs" (boolean true/false). '
+        "Do not invent facts; when in doubt, return false."
+    )
+    user_prompt = (
+        f"Candidate category: {candidate_category}\n"
+        + (f"Category keywords: {terms_hint}\n" if terms_hint else "")
+        + f"\nSummary:\n{(summary or '').strip()}\n\n"
+        + 'Return JSON only: {"belongs": true|false}.'
+    )
+
+    completion = client.chat.completions.create(
+        model=resolved_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.0,
+        response_format={"type": "json_object"},
+        timeout=timeout_seconds,
+    )
+
+    content_text = ""
+    try:
+        content_text = (completion.choices[0].message.content or "").strip()
+    except Exception:
+        content_text = ""
+
+    payload = _parse_json_object(content_text)
+    belongs = payload.get("belongs")
+    return isinstance(belongs, bool) and belongs

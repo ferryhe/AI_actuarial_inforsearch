@@ -258,7 +258,19 @@ def cmd_export(args: argparse.Namespace) -> int:
 def cmd_catalog(args: argparse.Namespace) -> int:
     cfg = _load_config(args.config)
     db_path = cfg["paths"]["db"]
-    
+
+    # Re-categorization block: refuse to catalog after a taxonomy change so the
+    # CLI cannot silently produce stale category data (same gate as the API task).
+    guard_storage = Storage(db_path)
+    try:
+        if guard_storage.taxonomy_needs_recategory():
+            logger.error(
+                "categories.yaml taxonomy has changed; run the recategory task before catalog"
+            )
+            return 1
+    finally:
+        guard_storage.close()
+
     if args.legacy:
         # Legacy mode: full rewrite to JSON
         storage = Storage(db_path)

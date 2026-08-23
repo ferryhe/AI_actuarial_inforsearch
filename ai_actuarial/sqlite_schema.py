@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 2
+CURRENT_SQLITE_SCHEMA_VERSION = 3
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -47,6 +47,7 @@ _AUTO_BACKFILL_COLUMNS: dict[str, frozenset[str]] = {
             "source_version_kind",
         }
     ),
+    "taxonomy_state": frozenset({"applied_categories"}),
 }
 
 # Columns whose NOT NULL flag may legitimately differ from the canonical
@@ -260,6 +261,26 @@ def _accept_version_1_source(
     return valid
 
 
+def _add_taxonomy_categories_v3(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(taxonomy_state)")}
+    if "applied_categories" not in columns:
+        conn.execute(
+            "ALTER TABLE taxonomy_state ADD COLUMN applied_categories TEXT"
+        )
+    _set_user_version(conn, 3)
+
+
+def _accept_version_2_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept a version-2 source: taxonomy_state present but lacking applied_categories."""
+    if "taxonomy_state" not in tables:
+        return False
+    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -271,6 +292,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_taxonomy_state_v2",
         apply=_add_taxonomy_state_v2,
         source_validator=_accept_version_1_source,
+    ),
+    SQLiteSchemaMigration(
+        version=3,
+        migration_id="add_taxonomy_categories_v3",
+        apply=_add_taxonomy_categories_v3,
+        source_validator=_accept_version_2_source,
     ),
 )
 

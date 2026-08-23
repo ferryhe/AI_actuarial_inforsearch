@@ -492,6 +492,10 @@ class NativeTaskRuntime:
                 return result
 
             if collection_type == "catalog":
+                if storage.taxonomy_needs_recategory():
+                    raise RuntimeError(
+                        "categories.yaml taxonomy has changed; run the recategory task before catalog"
+                    )
                 category = str(data.get("category") or "").strip() or None
                 catalog_cfg = ((config.get("ai_config") or {}).get("catalog") or {})
                 if not isinstance(catalog_cfg, dict):
@@ -566,6 +570,9 @@ class NativeTaskRuntime:
                     },
                 )
 
+            if collection_type == "recategory":
+                return self._run_recategory(task_id, storage, data)
+
             if collection_type in {"rag_indexing", "kb_index_build"}:
                 return self._run_rag_indexing(task_id, storage, data)
 
@@ -581,6 +588,63 @@ class NativeTaskRuntime:
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
             storage.close()
+
+    def _run_recategory(self, task_id: str, storage: Storage, data: dict[str, Any]) -> CollectionResult:
+        from ai_actuarial.recategory import apply_recategory, plan_recategory
+
+        mode = str(data.get("mode") or "plan").strip().lower() or "plan"
+        if mode not in {"plan", "apply"}:
+            raise RuntimeError(f"Invalid recategory mode: {mode}")
+
+        # Re-categorization operates on the whole taxonomy and ignores per-run
+        # scoping. Reject scoped requests fail-closed instead of silently
+        # rewriting every catalog item.
+        for scope_field in ("site", "category", "kb_id", "file_urls"):
+            value = data.get(scope_field)
+            if value not in (None, "", [], {}):
+                raise RuntimeError(
+                    f"recategory does not support per-run scoping ({scope_field}); "
+                    "it re-classifies the entire taxonomy"
+                )
+
+        progress_callback = self._progress_callback(task_id)
+        stop_check = lambda: self._stop_requested(task_id)
+
+        if mode == "plan":
+            plan = plan_recategory(storage)
+            return CollectionResult(
+                success=True,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=[],
+                metadata=plan,
+            )
+
+        result = apply_recategory(
+            storage, progress_callback=progress_callback, stop_check=stop_check
+        )
+        if result.get("stopped"):
+            return CollectionResult(
+                success=False,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=["Task stopped by user"],
+                metadata=result,
+            )
+        changed = int(
+            sum(result.get("removed_counts", {}).values())
+            + sum(result.get("added_counts", {}).values())
+        )
+        return CollectionResult(
+            success=True,
+            items_found=changed,
+            items_downloaded=0,
+            items_skipped=0,
+            errors=[],
+            metadata=result,
+        )
 
     def _run_full_pipeline(self, task_id: str, data: dict[str, Any], db_path: str | None = None) -> CollectionResult:
         """Run collection -> markdown -> catalog -> chunks -> optional RAG indexing."""
