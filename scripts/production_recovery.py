@@ -29,6 +29,9 @@ BACKUP_FORMAT_VERSION = 1
 # captured by the online database backup, so a restore reports missing file
 # paths as an expected, re-crawlable omission rather than snapshot loss.
 SNAPSHOT_DIRECTORIES = ("agentic_ready_data", "rag")
+# Format-v1 snapshots included ``files``; keep those manifests verifiable so a
+# still-retained recovery point can be restored after the exclusion.
+VERIFIABLE_SNAPSHOT_DIRECTORIES = SNAPSHOT_DIRECTORIES + ("files",)
 RESTORE_COUNT_TABLES = ("agentic_ready_manifests", "files", "rag_knowledge_bases")
 OCI_LABELS = (
     "org.opencontainers.image.revision",
@@ -379,7 +382,7 @@ def verify_backup(backup_dir: Path) -> dict[str, Any]:
 
     included = sorted(str(value) for value in manifest.get("included_data_directories", []))
     for name in included:
-        if name not in SNAPSHOT_DIRECTORIES:
+        if name not in VERIFIABLE_SNAPSHOT_DIRECTORIES:
             raise ValueError(f"Unexpected data directory in manifest: {name!r}")
         directory = _require_directory(backup_dir / "data" / name, f"backup data directory {name}")
         if _directory_stats(directory) != manifest["data_directories"][name]:
@@ -510,6 +513,13 @@ def create_release_record(
     return record
 
 
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -520,7 +530,7 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("--backup-root", type=Path, required=True)
     backup.add_argument("--include-data", action="store_true")
     backup.add_argument("--quiesced", action="store_true")
-    backup.add_argument("--retention-days", type=int, default=None, help="Delete backups older than this many days after a successful backup")
+    backup.add_argument("--retention-days", type=_non_negative_int, default=None, help="Delete backups older than this many days after a successful backup")
     backup.add_argument("--json", action="store_true", help="Emit the machine-readable JSON result")
 
     verify = subparsers.add_parser("verify", help="Verify a published backup manifest and artifacts")

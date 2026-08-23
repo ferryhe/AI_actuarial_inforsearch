@@ -158,6 +158,59 @@ def test_prune_old_backups_removes_only_expired_backups(tmp_path: Path) -> None:
     assert newest.exists()
 
 
+def test_legacy_snapshot_with_files_remains_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+
+    # Simulate a format-v1 snapshot that still included ``files``.
+    monkeypatch.setattr(
+        production_recovery,
+        "SNAPSHOT_DIRECTORIES",
+        ("agentic_ready_data", "files", "rag"),
+    )
+    legacy = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        include_data=True,
+        quiesced=True,
+        now=lambda: datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
+    )
+
+    # The legacy manifest (includes ``files``) must still verify and restore.
+    report = production_recovery.verify_backup(legacy)
+    assert report["status"] == "ok"
+    assert report["included_data_directories"] == ["agentic_ready_data", "files", "rag"]
+
+
+def test_backup_rejects_negative_retention_before_writing(tmp_path: Path) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/production_recovery.py",
+            "backup",
+            "--data-dir",
+            str(data_dir),
+            "--config",
+            str(config_path),
+            "--backup-root",
+            str(backup_root),
+            "--retention-days",
+            "-1",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not list(backup_root.glob("backup-*/manifest.json"))
+
+
 def test_failed_backup_writes_failure_event_without_publishing_snapshot(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
