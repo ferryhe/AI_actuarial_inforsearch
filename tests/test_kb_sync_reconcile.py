@@ -200,3 +200,71 @@ def test_sync_marks_ready_data_stale_on_add_and_remove(tmp_path: Path) -> None:
         assert "membership_removed" in state["pending_reasons"]
     finally:
         storage.close()
+
+
+def test_sync_category_files_tolerates_mapping_whitespace(tmp_path: Path) -> None:
+    storage = Storage(str(tmp_path / "kb-ws.db"))
+    manager = KnowledgeBaseManager(
+        storage,
+        config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
+    )
+    try:
+        f1 = "https://example.com/one.pdf"
+        _setup_file(storage, file_url=f1, title="one", category="Finance")
+
+        manager.create_kb(kb_id="kb-fin", name="Finance KB", kb_mode="category")
+        manager.link_kb_to_categories("kb-fin", ["Finance"], auto_sync=False)
+        manager.sync_category_files("kb-fin")
+
+        # A mapping stored with surrounding whitespace must not evict members.
+        storage._conn.execute(
+            "UPDATE rag_kb_category_mappings SET category = ? WHERE kb_id = ?",
+            (" Finance ", "kb-fin"),
+        )
+        storage._conn.commit()
+
+        manager.sync_category_files("kb-fin")
+        members = {
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT file_url FROM rag_kb_files WHERE kb_id = ?",
+                ("kb-fin",),
+            )
+        }
+        assert members == {f1}
+    finally:
+        storage.close()
+
+
+def test_sync_category_files_removes_all_when_unmapped(tmp_path: Path) -> None:
+    storage = Storage(str(tmp_path / "kb-unmap.db"))
+    manager = KnowledgeBaseManager(
+        storage,
+        config=RAGConfig(data_dir=str(tmp_path / "rag-data")),
+    )
+    try:
+        f1 = "https://example.com/one.pdf"
+        _setup_file(storage, file_url=f1, title="one", category="Finance")
+
+        manager.create_kb(kb_id="kb-fin", name="Finance KB", kb_mode="category")
+        manager.link_kb_to_categories("kb-fin", ["Finance"], auto_sync=False)
+        manager.sync_category_files("kb-fin")
+
+        # Unlink every category — the next sync should clear all stale members.
+        storage._conn.execute(
+            "DELETE FROM rag_kb_category_mappings WHERE kb_id = ?",
+            ("kb-fin",),
+        )
+        storage._conn.commit()
+
+        manager.sync_category_files("kb-fin")
+        members = {
+            row[0]
+            for row in storage._conn.execute(
+                "SELECT file_url FROM rag_kb_files WHERE kb_id = ?",
+                ("kb-fin",),
+            )
+        }
+        assert members == set()
+    finally:
+        storage.close()

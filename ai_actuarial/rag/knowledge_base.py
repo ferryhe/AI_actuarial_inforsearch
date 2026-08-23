@@ -1049,24 +1049,21 @@ class KnowledgeBaseManager:
         # set, not just the caller-supplied subset: link_kb_to_categories
         # (auto_sync) passes only the newly-added categories, and removing
         # against that subset would evict members belonging to other
-        # already-linked categories.
-        mapped_categories = self.get_kb_categories(kb_id)
+        # already-linked categories. Normalize the mapped set the same way as
+        # the caller-supplied categories, since link_kb_to_categories stores
+        # raw input and surrounding whitespace must not make the removal
+        # expectation diverge from catalog_items.category.
+        mapped_categories = [
+            str(category or "").strip()
+            for category in self.get_kb_categories(kb_id)
+            if str(category or "").strip()
+        ]
         removal_categories = mapped_categories or categories
 
-        if not categories:
-            return {
-                "kb_id": kb_id,
-                "categories": [],
-                "file_urls": [],
-                "added_file_urls": [],
-                "removed_file_urls": [],
-                "added_count": 0,
-                "removed_count": 0,
-                "skipped_count": 0,
-                "total_files": self.get_kb_stats(kb_id).get("total_files", 0),
-            }
-
-        file_urls = self._files_for_categories(categories)
+        # No early return on empty categories: with zero mapped categories the
+        # expected set is empty, so any remaining members are stale and must be
+        # removed (e.g. after the admin "remove" action unlinked every category).
+        file_urls = self._files_for_categories(categories) if categories else []
         removal_expected = (
             set(self._files_for_categories(removal_categories))
             if removal_categories
