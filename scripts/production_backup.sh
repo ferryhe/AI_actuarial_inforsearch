@@ -34,4 +34,5 @@ fi
 exec "$PYTHON_BIN" "$REPO_DIR/scripts/production_recovery.py" backup \
   --data-dir "$DATA_DIR" \
   --config "$CONFIG_PATH" \
-  --backup-root "$BACKUP_ROOT"
+  --backup-root "$BACKUP_ROOT" \
+  --retention-days 30

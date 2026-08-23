@@ -52,7 +52,7 @@ python3 scripts/production_recovery.py capacity-check \
   --path / \
   --threshold "$CAPACITY_THRESHOLD"
 
-echo "[3/7] Create a quiesced database-and-files recovery point"
+echo "[3/7] Create a quiesced database-and-data recovery point"
 DATA_DIR=$(docker volume inspect "$DATA_VOLUME_NAME" --format '{{ .Mountpoint }}')
 if [[ ! -d "$BACKUP_ROOT" ]]; then
   echo "Approved backup root does not exist: $BACKUP_ROOT"
@@ -85,7 +85,8 @@ python3 scripts/production_recovery.py backup \
   --config config/sites.yaml \
   --backup-root "$BACKUP_ROOT" \
   --include-data \
-  --quiesced
+  --quiesced \
+  --retention-days 30
 
 restart_api_on_exit
 api_was_running=false

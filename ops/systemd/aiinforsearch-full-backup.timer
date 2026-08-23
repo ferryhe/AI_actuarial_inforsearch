@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the AI InfoSearch verified quiesced full snapshot weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=aiinforsearch-full-backup.service
+
+[Install]
+WantedBy=timers.target
