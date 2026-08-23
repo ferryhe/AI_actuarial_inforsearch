@@ -61,9 +61,15 @@ def _diff_categories(storage: Storage) -> tuple[set[str], set[str]]:
     """
     configured = set(_configured_categories().keys())
     existing = set(storage.get_unique_categories())
-    applied = set(storage.get_applied_taxonomy_categories() or [])
+    applied = storage.get_applied_taxonomy_categories()
     removed = {c for c in existing if c not in configured and c != _FALLBACK_CATEGORY}
-    added = {c for c in configured if c not in applied}
+    if applied is None:
+        # No recorded category set (e.g. v2->v3 upgrade with a pending change):
+        # diff added against current DB contents as a one-off transition. The next
+        # successful apply records applied_categories and restores idempotency.
+        added = {c for c in configured if c not in existing}
+    else:
+        added = {c for c in configured if c not in set(applied)}
     return removed, added
 
 

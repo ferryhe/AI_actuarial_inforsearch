@@ -273,6 +273,33 @@ def test_apply_resumes_after_partial_llm_failure(env: dict) -> None:
         storage.close()
 
 
+def test_v3_backfill_with_pending_change_falls_back_to_db(env: dict) -> None:
+    """F1 regression: a v2->v3 upgrade with a pending taxonomy change must not
+    seal the new category set as applied, or the pending adds would be dropped."""
+    storage = _make_storage(env, {"Finance": ["finance"]}, name="f1.db")
+    try:
+        _add_item(storage, "u1", "Finance", summary="insurance technology trends")
+        # Simulate a v2->v3 upgrade where applied_categories is NULL.
+        storage._conn.execute("UPDATE taxonomy_state SET applied_categories = NULL")
+        storage._conn.commit()
+        # Pending change: add Technology.
+        _write_categories(
+            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
+        )
+
+        # Re-open to trigger the backfill path (hash no longer matches current).
+        storage.close()
+        storage = Storage(str(env["tmp_path"] / "f1.db"))
+
+        assert storage.get_applied_taxonomy_categories() is None
+
+        removed, added = _diff_categories(storage)
+        assert removed == set()
+        assert added == {"Technology"}  # falls back to DB contents, not dropped
+    finally:
+        storage.close()
+
+
 def test_matches_category_keywords_word_boundary() -> None:
     assert _matches_category_keywords(
         title="", summary="We cover insurance risk.", keywords=[], terms=["insurance"]

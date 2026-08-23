@@ -2323,7 +2323,11 @@ class Storage:
             return
         if self.get_applied_taxonomy_categories() is None:
             applied_hash = self.get_applied_taxonomy_hash()
-            if applied_hash is not None:
+            # Only backfill categories when the hash matches the current taxonomy.
+            # If they differ, the applied hash predates the current taxonomy and we
+            # cannot know its category set; leave categories NULL so the recategory
+            # diff falls back to DB contents for this one-off transition.
+            if applied_hash is not None and applied_hash == self.current_taxonomy_hash():
                 self.set_applied_taxonomy_hash(applied_hash, current_categories)
 
     def taxonomy_needs_recategory(self) -> bool:
