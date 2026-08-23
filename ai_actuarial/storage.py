@@ -2170,6 +2170,56 @@ class Storage:
                 categories.add(part)
         return sorted(categories, key=lambda x: x.lower())
 
+    def get_catalog_items_for_recategory(self) -> list[dict]:
+        """Enumerate cataloged items for re-categorization.
+
+        Returns one dict per ``status='ok'`` item with ``file_url``, ``summary``,
+        ``keywords`` (parsed list), ``category`` (raw semicolon-separated string),
+        and ``title`` (from ``files`` when present). Intended for the recategory
+        task, which only touches category and never re-generates summary/keywords.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT c.file_url, c.summary, c.keywords, c.category, f.title
+            FROM catalog_items c
+            LEFT JOIN files f ON f.url = c.file_url
+            WHERE c.status = 'ok'
+            ORDER BY c.file_url
+            """
+        ).fetchall()
+        items: list[dict] = []
+        for row in rows:
+            keywords_raw = row[2] or ""
+            try:
+                keywords = json.loads(keywords_raw) if keywords_raw else []
+                if not isinstance(keywords, list):
+                    keywords = []
+            except (TypeError, ValueError):
+                keywords = []
+            items.append(
+                {
+                    "file_url": row[0] or "",
+                    "summary": row[1] or "",
+                    "keywords": keywords,
+                    "category": row[3] or "",
+                    "title": row[4] or "",
+                }
+            )
+        return items
+
+    def update_catalog_item_category(self, file_url: str, category: str) -> None:
+        """Update one catalog item's category and mark its ready-data metadata change."""
+        with self.transaction(immediate=True):
+            before = self._ready_data_builder_metadata_snapshot(file_url)
+            self._conn.execute(
+                "UPDATE catalog_items SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE file_url = ?",
+                (category, file_url),
+            )
+            self._mark_ready_data_builder_metadata_change(
+                file_url=file_url,
+                before=before,
+            )
+
     def get_applied_taxonomy_hash(self) -> str | None:
         """Return the last applied categories.yaml hash, or None if never applied."""
         row = self._conn.execute(

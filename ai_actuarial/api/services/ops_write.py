@@ -74,6 +74,7 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "weekly_summary",
     "rag_indexing",
     "kb_index_build",
+    "recategory",
 ]
 
 _VALID_INTERVALS = ["daily", "weekly", "daily at HH:MM", "every N hours", "every N minutes"]
@@ -99,6 +100,7 @@ _VALID_COLLECTION_TYPES = {
     "weekly_summary",
     "rag_indexing",
     "kb_index_build",
+    "recategory",
 }
 
 
