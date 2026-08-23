@@ -173,3 +173,30 @@ def test_sync_category_files_incremental_add_keeps_other_categories(tmp_path: Pa
         assert members == {f_finance, f_insurance}
     finally:
         storage.close()
+
+
+def test_sync_marks_ready_data_stale_on_add_and_remove(tmp_path: Path) -> None:
+    storage, manager = _category_kb(tmp_path)
+    try:
+        f1 = "https://example.com/one.pdf"
+        _setup_file(storage, file_url=f1, title="one", category="Finance")
+
+        manager.sync_category_files("kb-fin")
+        state = storage.get_agentic_ready_source_state(kb_id="kb-fin", profile="general")
+        assert state["pending_severity"] == "soft_stale"
+        assert "membership_added" in state["pending_reasons"]
+
+        # Move the file out of the category — the removal should mark the
+        # ready-data source hard_stale, mirroring the membership removal.
+        storage._conn.execute(
+            "UPDATE catalog_items SET category = ? WHERE file_url = ?",
+            ("Other", f1),
+        )
+        storage._conn.commit()
+
+        manager.sync_category_files("kb-fin")
+        state = storage.get_agentic_ready_source_state(kb_id="kb-fin", profile="general")
+        assert state["pending_severity"] == "hard_stale"
+        assert "membership_removed" in state["pending_reasons"]
+    finally:
+        storage.close()
