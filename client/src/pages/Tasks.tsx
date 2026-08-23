@@ -23,6 +23,7 @@ import { MarkdownForm } from "./tasks/MarkdownForm";
 import { WebListeningForm } from "./tasks/WebListeningForm";
 import { ChunkForm } from "./tasks/ChunkForm";
 import { RagIndexForm } from "./tasks/RagIndexForm";
+import { RecategoryForm } from "./tasks/RecategoryForm";
 import { FullPipelineForm } from "./tasks/FullPipelineForm";
 import { FilterBar } from "./tasks/FilterBar";
 import { TaskCard, statusBadge, formatDate } from "./tasks/TaskCard";
@@ -44,6 +45,7 @@ const taskTypes = [
   { type: "full_pipeline", apiType: "full_pipeline", icon: Zap, color: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400" },
   { type: "create_kb", apiType: "create_kb", route: "/knowledge?open=create", icon: FolderOpen, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
   { type: "rag_index", apiType: "rag_indexing", icon: Zap, color: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
+  { type: "recategory", apiType: "recategory", icon: RefreshCw, color: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
 ];
 
 const fadeUp = {
@@ -253,6 +255,7 @@ export default function Tasks() {
       case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "full_pipeline": return <FullPipelineForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "rag_index": return <RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "recategory": return <RecategoryForm onSubmit={handleSubmitTask} submitting={submitting} />;
       default: return null;
     }
   }

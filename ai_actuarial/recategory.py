@@ -18,7 +18,9 @@ Apply order is fixed: removals first (freeing the 3-category slot), then adds.
 - An item left with no visible category after removal falls back to "Other".
 
 The configured taxonomy is always re-read from disk (not ``catalog.CATEGORY_RULES``,
-which is frozen at import time) so the diff reflects the latest edit.
+which is frozen at import time) so the diff reflects the latest edit. A missing
+config file fails closed (raises) rather than being treated as an empty taxonomy,
+which would otherwise remove every stored category.
 """
 
 from __future__ import annotations
@@ -36,11 +38,17 @@ _FALLBACK_CATEGORY = "Other"
 
 
 def _configured_categories() -> dict[str, list[str]]:
-    """Read the current taxonomy from disk (name -> keyword list)."""
+    """Read the current taxonomy from disk (name -> keyword list).
+
+    Raises ``RuntimeError`` when the config file is missing so re-categorization
+    fails closed instead of treating an absent taxonomy as empty.
+    """
     try:
         config = load_category_config(get_categories_config_path())
-    except FileNotFoundError:
-        config = {}
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "categories.yaml is missing; refusing to re-categorize"
+        ) from exc
     categories = config.get("categories") if isinstance(config, dict) else {}
     if not isinstance(categories, dict):
         return {}
@@ -136,12 +144,15 @@ def _remove_category_from_items(
     storage: Storage,
     category: str,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> int:
     """Remove ``category`` from every item that carries it. No LLM calls."""
     items = storage.get_catalog_items_for_recategory()
     affected = 0
     total = len(items)
     for idx, item in enumerate(items):
+        if stop_check and stop_check():
+            break
         cats = _split_visible_categories(item["category"])
         if category not in cats:
             continue
@@ -159,6 +170,7 @@ def _add_category_to_items(
     category: str,
     terms: list[str],
     progress_callback: Callable[[int, int, str], None] | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> int:
     """Pre-filter by keywords, confirm via LLM from summary, then append."""
     items = storage.get_catalog_items_for_recategory()
@@ -175,6 +187,8 @@ def _add_category_to_items(
     added = 0
     total = len(candidates)
     for idx, item in enumerate(candidates):
+        if stop_check and stop_check():
+            break
         cats = _split_visible_categories(item["category"])
         if category in cats:
             continue
@@ -183,7 +197,6 @@ def _add_category_to_items(
             continue  # full: skip (removal phase already freed slots where relevant)
         if confirm_category_for_summary(
             summary=item["summary"],
-            title=item["title"],
             candidate_category=category,
             category_terms=terms,
             storage=storage,
@@ -216,28 +229,63 @@ def _sync_affected_kbs(storage: Storage, categories: set[str]) -> int:
 def apply_recategory(
     storage: Storage,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    """Apply the taxonomy change: removals, then adds, KB reconcile, then seal hash."""
+    """Apply the taxonomy change: removals, then adds, KB reconcile, then seal hash.
+
+    The starting taxonomy hash is captured up front. If ``categories.yaml``
+    changes while the (potentially long) LLM pass runs, the seal is refused so
+    catalog is not unblocked with classifications computed from a stale taxonomy.
+    A stop request interrupts the run without sealing the hash.
+    """
+    starting_hash = storage.current_taxonomy_hash()
     removed, added = _diff_categories(storage)
     configured = _configured_categories()
 
     removed_counts: dict[str, int] = {}
+    stopped = False
     for category in sorted(removed):
         removed_counts[category] = _remove_category_from_items(
-            storage, category, progress_callback
+            storage, category, progress_callback, stop_check
         )
+        if stop_check and stop_check():
+            stopped = True
+            break
 
     added_counts: dict[str, int] = {}
-    for category in sorted(added):
-        added_counts[category] = _add_category_to_items(
-            storage, category, configured.get(category, []), progress_callback
+    if not stopped:
+        for category in sorted(added):
+            added_counts[category] = _add_category_to_items(
+                storage,
+                category,
+                configured.get(category, []),
+                progress_callback,
+                stop_check,
+            )
+            if stop_check and stop_check():
+                stopped = True
+                break
+
+    if stopped:
+        return {
+            "success": False,
+            "stopped": True,
+            "removed_categories": sorted(removed),
+            "added_categories": sorted(added),
+            "removed_counts": removed_counts,
+            "added_counts": added_counts,
+            "synced_kbs": 0,
+            "applied_hash": storage.get_applied_taxonomy_hash(),
+        }
+
+    if storage.current_taxonomy_hash() != starting_hash:
+        raise RuntimeError(
+            "categories.yaml changed during re-categorization; refusing to seal "
+            "the applied taxonomy. Re-run the recategory task."
         )
 
     synced_kbs = _sync_affected_kbs(storage, removed | added)
-    storage.set_applied_taxonomy_hash(
-        storage.current_taxonomy_hash(),
-        storage.current_taxonomy_categories(),
-    )
+    storage.set_applied_taxonomy_hash(starting_hash, sorted(configured))
 
     return {
         "success": True,

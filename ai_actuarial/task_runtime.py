@@ -595,7 +595,20 @@ class NativeTaskRuntime:
         mode = str(data.get("mode") or "apply").strip().lower() or "apply"
         if mode not in {"plan", "apply"}:
             raise RuntimeError(f"Invalid recategory mode: {mode}")
+
+        # Re-categorization operates on the whole taxonomy and ignores per-run
+        # scoping. Reject scoped requests fail-closed instead of silently
+        # rewriting every catalog item.
+        for scope_field in ("site", "category", "kb_id", "file_urls"):
+            value = data.get(scope_field)
+            if value not in (None, "", [], {}):
+                raise RuntimeError(
+                    f"recategory does not support per-run scoping ({scope_field}); "
+                    "it re-classifies the entire taxonomy"
+                )
+
         progress_callback = self._progress_callback(task_id)
+        stop_check = lambda: self._stop_requested(task_id)
 
         if mode == "plan":
             plan = plan_recategory(storage)
@@ -608,7 +621,18 @@ class NativeTaskRuntime:
                 metadata=plan,
             )
 
-        result = apply_recategory(storage, progress_callback=progress_callback)
+        result = apply_recategory(
+            storage, progress_callback=progress_callback, stop_check=stop_check
+        )
+        if result.get("stopped"):
+            return CollectionResult(
+                success=False,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=["Task stopped by user"],
+                metadata=result,
+            )
         changed = int(
             sum(result.get("removed_counts", {}).values())
             + sum(result.get("added_counts", {}).values())

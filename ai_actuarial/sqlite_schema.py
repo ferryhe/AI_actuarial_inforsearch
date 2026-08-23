@@ -275,6 +275,8 @@ def _accept_version_2_source(
     tables: dict[str, TableSignature],
 ) -> bool:
     """Accept a version-2 source: taxonomy_state present but lacking applied_categories."""
+    if "taxonomy_state" not in tables:
+        return False
     valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
     return valid
 

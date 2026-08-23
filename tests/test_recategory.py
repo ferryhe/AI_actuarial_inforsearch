@@ -350,6 +350,96 @@ def test_catalog_blocked_when_taxonomy_changed(
         runtime._run_collection("task-block", "catalog", {})
 
 
+def test_configured_categories_raises_when_file_missing(env: dict) -> None:
+    """#4 regression: a missing categories.yaml must fail closed, not empty."""
+    from ai_actuarial.recategory import _configured_categories
+
+    env["monkeypatch"].setenv(
+        "CATEGORIES_CONFIG_PATH", str(env["tmp_path"] / "missing.yaml")
+    )
+    with pytest.raises(RuntimeError, match="missing"):
+        _configured_categories()
+
+
+def test_apply_refuses_to_seal_when_taxonomy_changes_midrun(env: dict) -> None:
+    """#3 regression: a mid-run taxonomy edit must refuse the seal."""
+    storage = _make_storage(env, {"Finance": ["finance"]})
+    _patch_sync(env["monkeypatch"])
+    try:
+        _add_item(storage, "u1", "Finance", summary="insurance technology trends")
+        _write_categories(
+            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
+        )
+
+        def mutating_confirm(**kwargs):
+            _write_categories(
+                env["cfg"],
+                {
+                    "Finance": ["finance"],
+                    "Technology": ["technology"],
+                    "Health": ["health"],
+                },
+            )
+            return True
+
+        env["monkeypatch"].setattr(
+            "ai_actuarial.recategory.confirm_category_for_summary",
+            mutating_confirm,
+        )
+
+        with pytest.raises(RuntimeError, match="changed during re-categorization"):
+            apply_recategory(storage)
+
+        assert storage.taxonomy_needs_recategory() is True
+    finally:
+        storage.close()
+
+
+def test_apply_stops_without_sealing(env: dict) -> None:
+    """#6 regression: a stop request interrupts apply without sealing."""
+    storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
+    _patch_sync(env["monkeypatch"])
+    try:
+        _add_item(storage, "u1", "Finance; Insurance")
+        _add_item(storage, "u2", "Finance; Insurance")
+        _write_categories(env["cfg"], {"Finance": ["finance"]})
+
+        calls = {"n": 0}
+
+        def stop_after_one():
+            calls["n"] += 1
+            return calls["n"] > 1
+
+        result = apply_recategory(storage, stop_check=stop_after_one)
+        assert result["stopped"] is True
+        assert result["success"] is False
+        assert storage.taxonomy_needs_recategory() is True
+
+        # Partial: only u1's Insurance was removed before the stop.
+        items = {
+            it["file_url"]: it for it in storage.get_catalog_items_for_recategory()
+        }
+        assert items["u1"]["category"] == "Finance"
+        assert items["u2"]["category"] == "Finance; Insurance"
+    finally:
+        storage.close()
+
+
+def test_recategory_rejects_scoped_request(env: dict) -> None:
+    """#7 regression: scoped recategory requests are rejected fail-closed."""
+    storage = _make_storage(env, {"Finance": ["finance"]})
+    try:
+        from ai_actuarial.task_runtime import NativeTaskRuntime
+
+        runtime = NativeTaskRuntime()
+        with pytest.raises(RuntimeError, match="scoping"):
+            runtime._run_recategory(
+                "task-scope", storage, {"mode": "apply", "category": "Finance"}
+            )
+    finally:
+        storage.close()
+
+
 if __name__ == "__main__":
     import sys
 

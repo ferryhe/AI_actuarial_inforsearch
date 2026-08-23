@@ -275,7 +275,6 @@ def catalog_with_openai(
 def confirm_category_for_summary(
     *,
     summary: str,
-    title: str | None = None,
     candidate_category: str,
     category_terms: list[str],
     storage: Any | None = None,
@@ -331,8 +330,7 @@ def confirm_category_for_summary(
     user_prompt = (
         f"Candidate category: {candidate_category}\n"
         + (f"Category keywords: {terms_hint}\n" if terms_hint else "")
-        + f"\nTitle:\n{(title or '').strip()}\n\n"
-        + f"Summary:\n{(summary or '').strip()}\n\n"
+        + f"\nSummary:\n{(summary or '').strip()}\n\n"
         + 'Return JSON only: {"belongs": true|false}.'
     )
 

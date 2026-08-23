@@ -996,3 +996,22 @@ def test_column_signature_equivalent_rejects_non_allowlisted_notnull() -> None:
     actual = ("url", "TEXT", 0, None, 0, 0)
     expected = ("url", "TEXT", 1, None, 0, 0)
     assert not _column_signature_equivalent(actual, expected, "files", "url")
+
+
+def test_accept_version_2_source_requires_taxonomy_state(tmp_path: Path) -> None:
+    """#5 regression: a source without taxonomy_state must not be accepted as v2."""
+    from ai_actuarial.sqlite_schema import (
+        _accept_version_2_source,
+        _schema_signature,
+    )
+
+    db_path = tmp_path / "v2-missing-taxonomy-state.db"
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute("DROP TABLE taxonomy_state")
+        storage._conn.commit()
+        tables = _schema_signature(storage._conn)
+        assert "taxonomy_state" not in tables
+        assert _accept_version_2_source(storage._conn, tables) is False
+    finally:
+        storage.close()

@@ -79,6 +79,9 @@ const scheduledParamFields: Record<string, ParamField[]> = {
     { key: "file_urls", labelKey: "tasks.sched.param.file_urls", type: "textarea", placeholder: "One URL per line" },
     { key: "force_reindex", labelKey: "tasks.sched.param.force_reindex", type: "boolean" },
   ],
+  recategory: [
+    { key: "mode", labelKey: "tasks.sched.param.mode", placeholder: "plan" },
+  ],
   search: [
     { key: "query", labelKey: "tasks.sched.param.query" },
     { key: "engine", labelKey: "tasks.sched.param.engine" },
@@ -289,6 +292,7 @@ export function ScheduledTasksSection() {
     { value: "chunk_generation", label: t("tasks.type.chunk") },
     { value: "full_pipeline", label: t("tasks.type.full_pipeline") },
     { value: "rag_indexing", label: t("tasks.type.rag_index") },
+    { value: "recategory", label: t("tasks.type.recategory") },
     { value: "weekly_summary", label: t("tasks.type.weekly_summary") },
     { value: "search", label: t("tasks.type.web_search") },
     { value: "url", label: t("tasks.type.adhoc_url") },
