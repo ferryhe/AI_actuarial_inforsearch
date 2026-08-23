@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 CURRENT_SQLITE_SCHEMA_VERSION = 2
 
-_CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema_v1"
+_CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
 _PARTIAL_MIGRATION_TABLES = frozenset(
     {
@@ -1029,7 +1029,7 @@ def _analyze_connection(
         return _base_payload(
             state="current",
             user_version=version,
-            schema="current_storage_schema_v1",
+            schema="current_storage_schema",
             can_apply=False,
             blocked=False,
         )

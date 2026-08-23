@@ -761,7 +761,7 @@ def test_schema_runner_serializes_concurrent_fresh_apply(
 
     applied = [result["applied_migrations"] for result in results]
     assert sorted(len(item) for item in applied) == [0, 1]
-    assert any(item == ["create_current_storage_schema_v1"] for item in applied)
+    assert any(item == ["create_current_storage_schema"] for item in applied)
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 0
 
@@ -810,7 +810,7 @@ def test_schema_cli_apply_missing_database_creates_current_schema(tmp_path: Path
     assert plan_result.returncode == 0, plan_result.stderr
     plan_payload = json.loads(plan_result.stdout)
     assert plan_payload["state"] == "missing"
-    assert plan_payload["plan"]["actions"][0]["id"] == "create_current_storage_schema_v1"
+    assert plan_payload["plan"]["actions"][0]["id"] == "create_current_storage_schema"
     assert not db_path.exists()
 
     apply_result = _run_schema_cli("apply", "--db", str(db_path), "--json")

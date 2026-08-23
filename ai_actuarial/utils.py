@@ -172,17 +172,30 @@ def taxonomy_hash(config: dict | None) -> str:
 
     Only the classification-relevant keys (``categories``, ``ai_filter_keywords``,
     ``ai_keywords``) affect the hash, so stray top-level keys added to the YAML do
-    not trigger a spurious re-categorization. Dict key order does not matter
-    (sort_keys), and YAML comments/whitespace are dropped by ``yaml.safe_load``.
+    not trigger a spurious re-categorization. Dict key order and keyword list
+    order do not matter (both are sorted before hashing), missing/empty keys
+    normalize to the same value, and YAML comments/whitespace are dropped by
+    ``yaml.safe_load``.
     """
     import hashlib
     import json
 
     config = config if isinstance(config, dict) else {}
+
+    def _normalize_keywords(value: object) -> list[str]:
+        return sorted(str(v) for v in value) if isinstance(value, list) else []
+
+    categories = config.get("categories")
+    normalized_categories = (
+        {str(name): _normalize_keywords(keywords) for name, keywords in categories.items()}
+        if isinstance(categories, dict)
+        else {}
+    )
+
     relevant = {
-        "categories": config.get("categories"),
-        "ai_filter_keywords": config.get("ai_filter_keywords"),
-        "ai_keywords": config.get("ai_keywords"),
+        "categories": normalized_categories,
+        "ai_filter_keywords": _normalize_keywords(config.get("ai_filter_keywords")),
+        "ai_keywords": _normalize_keywords(config.get("ai_keywords")),
     }
     canonical = json.dumps(
         relevant, sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str

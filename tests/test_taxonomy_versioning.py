@@ -9,16 +9,17 @@ from ai_actuarial.storage import Storage
 from ai_actuarial.utils import taxonomy_hash
 
 
-def test_taxonomy_hash_deterministic_and_order_insensitive() -> None:
+def test_taxonomy_hash_order_insensitive() -> None:
+    # Both dict key order and keyword list order change, but the hash is stable.
     a = {
         "categories": {"A": ["x", "y"], "B": ["z"]},
-        "ai_filter_keywords": ["k"],
+        "ai_filter_keywords": ["k1", "k2"],
         "ai_keywords": ["ai"],
     }
     b = {
         "ai_keywords": ["ai"],
-        "categories": {"B": ["z"], "A": ["x", "y"]},
-        "ai_filter_keywords": ["k"],
+        "categories": {"B": ["z"], "A": ["y", "x"]},
+        "ai_filter_keywords": ["k2", "k1"],
     }
     assert taxonomy_hash(a) == taxonomy_hash(b)
 
@@ -45,6 +46,14 @@ def test_taxonomy_hash_ignores_stray_top_level_keys() -> None:
 def test_taxonomy_hash_tolerates_none_and_non_dict() -> None:
     assert taxonomy_hash(None) == taxonomy_hash({})
     assert taxonomy_hash(None) == taxonomy_hash({"unrelated": True})
+
+
+def test_taxonomy_hash_missing_equals_explicit_empty() -> None:
+    # Missing taxonomy keys must hash the same as explicit empty defaults, so a
+    # YAML edit that drops empty keys does not spuriously flag needs_recategory.
+    missing = {}
+    explicit_empty = {"categories": {}, "ai_filter_keywords": [], "ai_keywords": []}
+    assert taxonomy_hash(missing) == taxonomy_hash(explicit_empty)
 
 
 def test_taxonomy_state_get_set_roundtrip() -> None:
