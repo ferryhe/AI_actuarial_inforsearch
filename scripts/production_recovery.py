@@ -330,17 +330,24 @@ def prune_old_backups(
     retention_days: int,
     *,
     now: Callable[[], datetime] = _utc_now,
+    exclude: Path | None = None,
 ) -> list[str]:
-    """Delete published backups older than ``retention_days``, keyed by name timestamp."""
+    """Delete published backups older than ``retention_days``, keyed by name timestamp.
+
+    ``exclude`` names a backup to always keep (normally the one just created).
+    The cutoff is truncated to whole seconds to match backup directory names.
+    """
     if retention_days < 0:
         raise ValueError("retention_days must be non-negative")
     backup_root = backup_root.expanduser().resolve()
     if not backup_root.is_dir():
         return []
-    cutoff = now() - timedelta(days=retention_days)
+    cutoff = (now() - timedelta(days=retention_days)).replace(microsecond=0)
     removed: list[str] = []
     for entry in sorted(backup_root.iterdir(), key=lambda item: item.name):
         if not entry.is_dir() or not entry.name.startswith("backup-"):
+            continue
+        if exclude is not None and entry.resolve() == exclude.resolve():
             continue
         match = re.fullmatch(r"backup-(\d{8}T\d{6}Z)(?:-\d+)?", entry.name)
         if not match:
@@ -573,7 +580,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         payload: dict[str, Any] = {"status": "success", "backup_dir": str(path)}
         if args.retention_days is not None:
-            payload["pruned"] = prune_old_backups(args.backup_root, args.retention_days)
+            payload["pruned"] = prune_old_backups(args.backup_root, args.retention_days, exclude=path)
     elif args.command == "verify":
         payload = verify_backup(args.backup_dir)
     elif args.command == "restore-smoke":

@@ -61,7 +61,10 @@ fi
 # ``docker stop`` gracefully halting the writer before the snapshot; SQLite
 # online backup plus copytree stats verification keep the snapshot consistent
 # even if a background task is interrupted. Scheduled collections run at 00:30,
-# so the 04:00 Sunday window is normally idle.
+# so the 04:00 Sunday window is deliberately offset from collection (operator
+# decision: keep this wrapper simple rather than add an authenticated
+# active-task gate). Any manual task still in flight is gracefully halted by
+# ``docker stop``.
 
 # --- Snapshot ---
 START_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)

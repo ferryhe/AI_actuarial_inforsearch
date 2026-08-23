@@ -179,6 +179,24 @@ def test_prune_skips_malformed_calendar_directory(tmp_path: Path) -> None:
     assert malformed.exists()
 
 
+def test_prune_does_not_delete_excluded_backup(tmp_path: Path) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+    clock = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
+
+    fresh = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        now=lambda: clock,
+    )
+
+    removed = production_recovery.prune_old_backups(backup_root, 0, now=lambda: clock, exclude=fresh)
+
+    assert removed == []
+    assert fresh.exists()
+
+
 def test_legacy_snapshot_with_files_remains_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_dir, config_path = _seed_data_dir(tmp_path)
     backup_root = tmp_path / "backups"

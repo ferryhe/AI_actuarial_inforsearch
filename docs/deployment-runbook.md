@@ -291,7 +291,10 @@ full artifact retention, reclassification, full indexing, or a deployment that
 needs a same-disk snapshot. Expand the disk or move immutable artifacts/backups
 to separate storage first.
 
-### Quiesced database-and-files snapshot
+### Quiesced database-and-data snapshot
+
+`--include-data` now snapshots `rag/` and `agentic_ready_data/` on top of the
+database; re-crawlable source documents under `files/` are excluded.
 
 ```bash
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
@@ -305,7 +308,8 @@ sudo python3 scripts/production_recovery.py backup \
   --config config/sites.yaml \
   --backup-root "$BACKUP_ROOT" \
   --include-data \
-  --quiesced
+  --quiesced \
+  --retention-days 30
 $COMPOSE start api
 ```
 
