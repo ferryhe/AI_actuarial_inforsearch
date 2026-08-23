@@ -280,7 +280,11 @@ def api_config_categories(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("config.read")),
 ) -> dict[str, object]:
-    return get_config_categories()
+    storage = Storage(_get_db_path(request))
+    try:
+        return get_config_categories(storage=storage)
+    finally:
+        storage.close()
 
 
 @router.get("/search")

@@ -165,3 +165,26 @@ def load_category_config(config_path: str = "config/categories.yaml") -> dict:
             return yaml.safe_load(f)
     except yaml.YAMLError:
         raise
+
+
+def taxonomy_hash(config: dict | None) -> str:
+    """Deterministic hash of the taxonomy config, used for version comparison.
+
+    Only the classification-relevant keys (``categories``, ``ai_filter_keywords``,
+    ``ai_keywords``) affect the hash, so stray top-level keys added to the YAML do
+    not trigger a spurious re-categorization. Dict key order does not matter
+    (sort_keys), and YAML comments/whitespace are dropped by ``yaml.safe_load``.
+    """
+    import hashlib
+    import json
+
+    config = config if isinstance(config, dict) else {}
+    relevant = {
+        "categories": config.get("categories"),
+        "ai_filter_keywords": config.get("ai_filter_keywords"),
+        "ai_keywords": config.get("ai_keywords"),
+    }
+    canonical = json.dumps(
+        relevant, sort_keys=True, ensure_ascii=True, separators=(",", ":"), default=str
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

@@ -159,6 +159,7 @@ class Storage:
                 self._tx_depth = 0
                 self._agentic_ready_publication_columns_cache = None
                 self._defer_schema_commits = False
+                self._seed_taxonomy_state_if_empty()
                 return
             else:
                 if user_version != 0:
@@ -173,6 +174,7 @@ class Storage:
             if fresh_schema:
                 self._conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION}")
                 self._conn.commit()
+            self._seed_taxonomy_state_if_empty()
         except sqlite3.Error:
             self._conn.close()
             raise
@@ -300,6 +302,17 @@ class Storage:
         self._conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_catalog_items_status ON catalog_items(status)
+            """
+        )
+
+        # taxonomy_state: single-row marker of the last applied categories.yaml hash
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS taxonomy_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                applied_hash TEXT NOT NULL,
+                applied_at TEXT
+            )
             """
         )
 
@@ -2156,7 +2169,61 @@ class Storage:
             for part in _split_visible_categories(row[0]):
                 categories.add(part)
         return sorted(categories, key=lambda x: x.lower())
-    
+
+    def get_applied_taxonomy_hash(self) -> str | None:
+        """Return the last applied categories.yaml hash, or None if never applied."""
+        row = self._conn.execute(
+            "SELECT applied_hash FROM taxonomy_state WHERE id = 1"
+        ).fetchone()
+        return None if row is None else row[0]
+
+    def set_applied_taxonomy_hash(self, applied_hash: str) -> None:
+        """Record the categories.yaml hash as applied (single-row upsert)."""
+        with self.transaction():
+            self._conn.execute(
+                """
+                INSERT INTO taxonomy_state (id, applied_hash, applied_at)
+                VALUES (1, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    applied_hash = excluded.applied_hash,
+                    applied_at = excluded.applied_at
+                """,
+                (applied_hash,),
+            )
+
+    def current_taxonomy_hash(self) -> str:
+        """Hash of the current categories.yaml taxonomy content.
+
+        A missing or empty config yields a stable sentinel hash rather than
+        raising, so the catalog block and the reminder never crash on a
+        misconfigured taxonomy file.
+        """
+        from ai_actuarial.shared_runtime import get_categories_config_path
+        from ai_actuarial.utils import load_category_config, taxonomy_hash
+
+        try:
+            config = load_category_config(get_categories_config_path())
+        except FileNotFoundError:
+            config = None
+        return taxonomy_hash(config if isinstance(config, dict) else {})
+
+    def _seed_taxonomy_state_if_empty(self) -> None:
+        """Establish the baseline applied hash on first run.
+
+        Before any re-categorization has ever run, the on-disk taxonomy is what
+        classified the existing catalog items, so seed applied_hash = current
+        hash. This prevents catalog from being spuriously blocked while the
+        taxonomy_state table is still empty after migration.
+        """
+        if self.db_path == ":memory:":
+            return
+        if self.get_applied_taxonomy_hash() is None:
+            self.set_applied_taxonomy_hash(self.current_taxonomy_hash())
+
+    def taxonomy_needs_recategory(self) -> bool:
+        """True when the current categories.yaml differs from the last applied hash."""
+        return self.current_taxonomy_hash() != self.get_applied_taxonomy_hash()
+
     def query_files_with_catalog(
         self,
         *,
