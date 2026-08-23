@@ -311,6 +311,7 @@ class Storage:
             CREATE TABLE IF NOT EXISTS taxonomy_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 applied_hash TEXT NOT NULL,
+                applied_categories TEXT,
                 applied_at TEXT
             )
             """
@@ -2227,18 +2228,47 @@ class Storage:
         ).fetchone()
         return None if row is None else row[0]
 
-    def set_applied_taxonomy_hash(self, applied_hash: str) -> None:
-        """Record the categories.yaml hash as applied (single-row upsert)."""
+    def get_applied_taxonomy_categories(self) -> list[str] | None:
+        """Return the category set recorded as applied, or None if never recorded."""
+        row = self._conn.execute(
+            "SELECT applied_categories FROM taxonomy_state WHERE id = 1"
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        try:
+            parsed = json.loads(row[0])
+        except (TypeError, ValueError):
+            return None
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+        return None
+
+    def set_applied_taxonomy_hash(
+        self, applied_hash: str, applied_categories: list[str] | None = None
+    ) -> None:
+        """Record the categories.yaml hash (and category set) as applied.
+
+        Single-row upsert. ``applied_categories`` records the exact category set
+        that this hash corresponds to, so re-categorization can diff the next
+        change against the *applied* taxonomy (idempotent) rather than against the
+        mutable current DB contents.
+        """
+        categories_json = (
+            json.dumps(sorted(applied_categories), ensure_ascii=False)
+            if applied_categories is not None
+            else None
+        )
         with self.transaction():
             self._conn.execute(
                 """
-                INSERT INTO taxonomy_state (id, applied_hash, applied_at)
-                VALUES (1, ?, CURRENT_TIMESTAMP)
+                INSERT INTO taxonomy_state (id, applied_hash, applied_categories, applied_at)
+                VALUES (1, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     applied_hash = excluded.applied_hash,
+                    applied_categories = excluded.applied_categories,
                     applied_at = excluded.applied_at
                 """,
-                (applied_hash,),
+                (applied_hash, categories_json),
             )
 
     def current_taxonomy_hash(self) -> str:
@@ -2257,18 +2287,44 @@ class Storage:
             config = None
         return taxonomy_hash(config if isinstance(config, dict) else {})
 
+    def current_taxonomy_categories(self) -> list[str]:
+        """Return the category names in the current categories.yaml taxonomy."""
+        from ai_actuarial.shared_runtime import get_categories_config_path
+        from ai_actuarial.utils import load_category_config
+
+        try:
+            config = load_category_config(get_categories_config_path())
+        except FileNotFoundError:
+            config = {}
+        categories = config.get("categories") if isinstance(config, dict) else {}
+        if not isinstance(categories, dict):
+            return []
+        return sorted(str(name) for name in categories)
+
     def _seed_taxonomy_state_if_empty(self) -> None:
-        """Establish the baseline applied hash on first run.
+        """Establish the baseline applied hash (and category set) on first run.
 
         Before any re-categorization has ever run, the on-disk taxonomy is what
         classified the existing catalog items, so seed applied_hash = current
-        hash. This prevents catalog from being spuriously blocked while the
-        taxonomy_state table is still empty after migration.
+        hash and applied_categories = current categories. This prevents catalog
+        from being spuriously blocked while the taxonomy_state table is still
+        empty after migration.
+
+        Also backfills applied_categories when a v2->v3 upgrade left the hash
+        present but the category set NULL (the only case where the two diverge).
         """
         if self.db_path == ":memory:":
             return
+        current_categories = self.current_taxonomy_categories()
         if self.get_applied_taxonomy_hash() is None:
-            self.set_applied_taxonomy_hash(self.current_taxonomy_hash())
+            self.set_applied_taxonomy_hash(
+                self.current_taxonomy_hash(), current_categories
+            )
+            return
+        if self.get_applied_taxonomy_categories() is None:
+            applied_hash = self.get_applied_taxonomy_hash()
+            if applied_hash is not None:
+                self.set_applied_taxonomy_hash(applied_hash, current_categories)
 
     def taxonomy_needs_recategory(self) -> bool:
         """True when the current categories.yaml differs from the last applied hash."""

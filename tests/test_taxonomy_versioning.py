@@ -120,13 +120,19 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
 
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["add_taxonomy_state_v2"]
+    assert applied["applied_migrations"] == [
+        "add_taxonomy_state_v2",
+        "add_taxonomy_categories_v3",
+    ]
 
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='taxonomy_state'"
         ).fetchone()
     assert row is not None
+    with sqlite3.connect(db_path) as conn:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(taxonomy_state)")}
+    assert "applied_categories" in columns
 
 
 def test_get_config_categories_includes_version_fields(tmp_path: Path) -> None:

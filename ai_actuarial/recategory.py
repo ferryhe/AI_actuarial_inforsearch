@@ -51,11 +51,19 @@ def _configured_categories() -> dict[str, list[str]]:
 
 
 def _diff_categories(storage: Storage) -> tuple[set[str], set[str]]:
-    """Return (removed, added) category sets relative to the on-disk taxonomy."""
+    """Return (removed, added) category sets.
+
+    ``removed`` is diffed against current DB contents (idempotent: once removed,
+    the category no longer appears). ``added`` is diffed against the *applied*
+    taxonomy recorded in ``taxonomy_state`` (idempotent: it only advances when
+    apply seals a new hash), so a partially-failed add run is resumed correctly
+    on retry instead of silently dropping the unfinished categories.
+    """
     configured = set(_configured_categories().keys())
     existing = set(storage.get_unique_categories())
+    applied = set(storage.get_applied_taxonomy_categories() or [])
     removed = {c for c in existing if c not in configured and c != _FALLBACK_CATEGORY}
-    added = {c for c in configured if c not in existing}
+    added = {c for c in configured if c not in applied}
     return removed, added
 
 
@@ -220,7 +228,10 @@ def apply_recategory(
         )
 
     synced_kbs = _sync_affected_kbs(storage, removed | added)
-    storage.set_applied_taxonomy_hash(storage.current_taxonomy_hash())
+    storage.set_applied_taxonomy_hash(
+        storage.current_taxonomy_hash(),
+        storage.current_taxonomy_categories(),
+    )
 
     return {
         "success": True,

@@ -49,6 +49,13 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     return {"cfg": cfg, "tmp_path": tmp_path, "monkeypatch": monkeypatch}
 
 
+def _make_storage(env: dict, categories: dict[str, list[str]], name: str = "test.db") -> Storage:
+    # Seed the applied taxonomy baseline against the *initial* config, then
+    # return an open Storage whose taxonomy_state.applied_categories == initial.
+    _write_categories(env["cfg"], categories)
+    return Storage(str(env["tmp_path"] / name))
+
+
 def _patch_llm(monkeypatch: pytest.MonkeyPatch, value: bool) -> None:
     monkeypatch.setattr(
         "ai_actuarial.recategory.confirm_category_for_summary",
@@ -64,27 +71,23 @@ def _patch_sync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_diff_removed_and_added(env: dict) -> None:
-    _write_categories(
-        env["cfg"],
-        {"Finance": ["finance"], "Insurance": ["insurance"], "Technology": ["technology"]},
+    storage = _make_storage(
+        env, {"Finance": ["finance"], "Insurance": ["insurance"]}
     )
-    storage = Storage(":memory:")
     try:
-        _add_item(storage, "u1", "Finance; Healthcare")
-        _add_item(storage, "u2", "Insurance")
-        _add_item(storage, "u3", "Other")
+        _add_item(storage, "u1", "Finance; Insurance")
+        _write_categories(
+            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
+        )
         removed, added = _diff_categories(storage)
-        assert removed == {"Healthcare"}
+        assert removed == {"Insurance"}
         assert added == {"Technology"}
     finally:
         storage.close()
 
 
 def test_diff_empty_when_unchanged(env: dict) -> None:
-    _write_categories(
-        env["cfg"], {"Finance": ["finance"], "Insurance": ["insurance"]}
-    )
-    storage = Storage(":memory:")
+    storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
     try:
         _add_item(storage, "u1", "Finance; Insurance")
         removed, added = _diff_categories(storage)
@@ -95,36 +98,34 @@ def test_diff_empty_when_unchanged(env: dict) -> None:
 
 
 def test_plan_is_dry_run(env: dict) -> None:
-    _write_categories(
-        env["cfg"],
-        {"Finance": ["finance"], "Technology": ["technology"]},
-    )
-    storage = Storage(":memory:")
+    storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
     try:
-        _add_item(storage, "u1", "Finance; Healthcare")
-        _add_item(storage, "u2", "Finance", summary="insurance technology trends")
+        _add_item(storage, "u1", "Finance; Insurance")
+        _write_categories(
+            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
+        )
         plan = plan_recategory(storage)
         assert plan["dry_run"] is True
         assert plan["needs_recategory"] is True
-        assert plan["removed_categories"] == ["Healthcare"]
+        assert plan["removed_categories"] == ["Insurance"]
         assert plan["added_categories"] == ["Technology"]
-        assert plan["removed_impact"]["Healthcare"] == 1
-        assert plan["added_impact"]["Technology"] == 1
+        assert plan["removed_impact"]["Insurance"] == 1
+        assert plan["added_impact"]["Technology"] == 0  # summary has no tech keyword
         # Nothing changed on disk.
-        items = storage.get_catalog_items_for_recategory()
-        assert any("Healthcare" in it["category"] for it in items)
+        items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
+        assert items["u1"]["category"] == "Finance; Insurance"
     finally:
         storage.close()
 
 
 def test_apply_removes_category(env: dict) -> None:
-    _write_categories(env["cfg"], {"Finance": ["finance"]})
+    storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
     _patch_sync(env["monkeypatch"])
-    storage = Storage(":memory:")
     try:
-        _add_item(storage, "u1", "Finance; Healthcare")
+        _add_item(storage, "u1", "Finance; Insurance")
+        _write_categories(env["cfg"], {"Finance": ["finance"]})
         result = apply_recategory(storage)
-        assert result["removed_counts"] == {"Healthcare": 1}
+        assert result["removed_counts"] == {"Insurance": 1}
         items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
         assert items["u1"]["category"] == "Finance"
     finally:
@@ -132,13 +133,13 @@ def test_apply_removes_category(env: dict) -> None:
 
 
 def test_apply_removal_falls_back_to_other(env: dict) -> None:
-    _write_categories(env["cfg"], {"Finance": ["finance"]})
+    storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
     _patch_sync(env["monkeypatch"])
-    storage = Storage(":memory:")
     try:
-        _add_item(storage, "u1", "Healthcare")
+        _add_item(storage, "u1", "Insurance")
+        _write_categories(env["cfg"], {"Finance": ["finance"]})
         result = apply_recategory(storage)
-        assert result["removed_counts"] == {"Healthcare": 1}
+        assert result["removed_counts"] == {"Insurance": 1}
         items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
         assert items["u1"]["category"] == "Other"
     finally:
@@ -146,12 +147,9 @@ def test_apply_removal_falls_back_to_other(env: dict) -> None:
 
 
 def test_apply_adds_category_via_llm(env: dict) -> None:
-    _write_categories(
-        env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-    )
+    storage = _make_storage(env, {"Finance": ["finance"]})
     _patch_sync(env["monkeypatch"])
     _patch_llm(env["monkeypatch"], True)
-    storage = Storage(":memory:")
     try:
         _add_item(
             storage,
@@ -159,8 +157,11 @@ def test_apply_adds_category_via_llm(env: dict) -> None:
             "Finance",
             summary="This document discusses insurance technology trends.",
         )
+        _write_categories(
+            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
+        )
         result = apply_recategory(storage)
-        assert result["added_counts"] == {"Technology": 1}
+        assert result["added_counts"]["Technology"] == 1
         items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
         assert "Technology" in items["u1"]["category"]
     finally:
@@ -168,18 +169,12 @@ def test_apply_adds_category_via_llm(env: dict) -> None:
 
 
 def test_apply_skips_full_item(env: dict) -> None:
-    _write_categories(
-        env["cfg"],
-        {
-            "Finance": ["finance"],
-            "Insurance": ["insurance"],
-            "AI": ["ai"],
-            "Technology": ["technology"],
-        },
+    storage = _make_storage(
+        env,
+        {"Finance": ["finance"], "Insurance": ["insurance"], "AI": ["ai"]},
     )
     _patch_sync(env["monkeypatch"])
     _patch_llm(env["monkeypatch"], True)
-    storage = Storage(":memory:")
     try:
         _add_item(
             storage,
@@ -187,9 +182,17 @@ def test_apply_skips_full_item(env: dict) -> None:
             "Finance; Insurance; AI",
             summary="insurance technology",
         )
+        _write_categories(
+            env["cfg"],
+            {
+                "Finance": ["finance"],
+                "Insurance": ["insurance"],
+                "AI": ["ai"],
+                "Technology": ["technology"],
+            },
+        )
         result = apply_recategory(storage)
-        # Item already has 3 categories; add is skipped even though LLM says yes.
-        assert result["added_counts"] == {"Technology": 0}
+        assert result["added_counts"]["Technology"] == 0
         items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
         assert items["u1"]["category"] == "Finance; Insurance; AI"
     finally:
@@ -197,14 +200,14 @@ def test_apply_skips_full_item(env: dict) -> None:
 
 
 def test_apply_replaces_other_with_new_category(env: dict) -> None:
-    _write_categories(
-        env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
-    )
+    storage = _make_storage(env, {"Finance": ["finance"]})
     _patch_sync(env["monkeypatch"])
     _patch_llm(env["monkeypatch"], True)
-    storage = Storage(":memory:")
     try:
         _add_item(storage, "u1", "Other", summary="insurance technology trends")
+        _write_categories(
+            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
+        )
         result = apply_recategory(storage)
         assert result["added_counts"]["Technology"] == 1
         items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
@@ -213,14 +216,58 @@ def test_apply_replaces_other_with_new_category(env: dict) -> None:
         storage.close()
 
 
-def test_apply_seals_applied_hash(env: dict) -> None:
-    _write_categories(env["cfg"], {"Finance": ["finance"]})
+def test_apply_seals_applied_hash_and_categories(env: dict) -> None:
+    storage = _make_storage(env, {"Finance": ["finance"], "Insurance": ["insurance"]})
     _patch_sync(env["monkeypatch"])
-    storage = Storage(":memory:")
     try:
-        _add_item(storage, "u1", "Finance; Healthcare")
+        _add_item(storage, "u1", "Finance; Insurance")
+        _write_categories(env["cfg"], {"Finance": ["finance"]})
         apply_recategory(storage)
         assert storage.get_applied_taxonomy_hash() == storage.current_taxonomy_hash()
+        assert storage.get_applied_taxonomy_categories() == ["Finance"]
+        assert storage.taxonomy_needs_recategory() is False
+    finally:
+        storage.close()
+
+
+def test_apply_resumes_after_partial_llm_failure(env: dict) -> None:
+    """C1 regression: a partially-failed add run must resume on retry."""
+    storage = _make_storage(env, {"Finance": ["finance"]}, name="resume.db")
+    _patch_sync(env["monkeypatch"])
+    try:
+        _add_item(storage, "u1", "Finance", summary="insurance technology trends")
+        _add_item(storage, "u2", "Finance", summary="technology innovation report")
+        _write_categories(
+            env["cfg"], {"Finance": ["finance"], "Technology": ["technology"]}
+        )
+
+        call_count = {"n": 0}
+
+        def flaky_confirm(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return True
+            raise RuntimeError("LLM timeout")
+
+        env["monkeypatch"].setattr(
+            "ai_actuarial.recategory.confirm_category_for_summary", flaky_confirm
+        )
+
+        with pytest.raises(RuntimeError, match="LLM timeout"):
+            apply_recategory(storage)
+
+        # Partially applied: u1 has Technology, u2 does not, hash not sealed.
+        items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
+        assert "Technology" in items["u1"]["category"]
+        assert "Technology" not in items["u2"]["category"]
+        assert storage.taxonomy_needs_recategory() is True
+
+        # Retry with a healthy LLM: u2 is completed, hash is sealed.
+        _patch_llm(env["monkeypatch"], True)
+        result = apply_recategory(storage)
+        assert result["added_counts"]["Technology"] == 1
+        items = {it["file_url"]: it for it in storage.get_catalog_items_for_recategory()}
+        assert "Technology" in items["u2"]["category"]
         assert storage.taxonomy_needs_recategory() is False
     finally:
         storage.close()
