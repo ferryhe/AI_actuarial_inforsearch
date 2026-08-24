@@ -600,11 +600,16 @@ class NativeTaskRuntime:
                 path = Path(manifest_path)
                 if not path.is_file():
                     raise RuntimeError(f"manifest file not found: {manifest_path}")
+                manifest_text = path.read_text(encoding="utf-8")
                 try:
-                    manifest = json.loads(path.read_text(encoding="utf-8"))
+                    manifest = json.loads(manifest_text)
                 except json.JSONDecodeError as exc:
                     raise RuntimeError(f"invalid manifest JSON: {manifest_path}: {exc}") from exc
-                summary = ingest_manifest(storage, manifest)
+                if not isinstance(manifest, dict):
+                    raise RuntimeError(
+                        f"manifest JSON must be an object, got {type(manifest).__name__}: {manifest_path}"
+                    )
+                summary = ingest_manifest(storage, manifest, raw_text=manifest_text)
                 imported = int(summary.get("imported", 0))
                 return CollectionResult(
                     success=True,

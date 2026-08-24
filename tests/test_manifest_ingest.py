@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from ai_actuarial.manifest_ingest import content_kind_for, ingest_manifest
@@ -250,5 +251,46 @@ def test_ingest_manifest_skips_assets_without_url_and_defaults_missing_media_typ
             ("https://example.com/doc",),
         ).fetchone()
         assert row[0] == "file"  # missing media_type -> file
+    finally:
+        storage.close()
+
+
+def test_ingest_manifest_stores_raw_text_byte_for_byte() -> None:
+    raw = '{"schema_version":"web-listening-manifest.v1","manifest_id":"m-raw",\n  "downloaded_assets": []}'
+    manifest = json.loads(raw)
+    storage = Storage(":memory:")
+    try:
+        ingest_manifest(storage, manifest, raw_text=raw)
+        row = storage._conn.execute(
+            "SELECT manifest_json FROM manifest_raw WHERE manifest_id = ?", ("m-raw",)
+        ).fetchone()
+        assert row[0] == raw  # byte-for-byte provenance
+    finally:
+        storage.close()
+
+
+def test_ingest_manifest_skips_non_dict_assets() -> None:
+    manifest = _sample_manifest()
+    manifest["downloaded_assets"] = [
+        "not-a-dict",
+        None,
+        {"url": "https://example.com/valid", "checksum": {"algorithm": "sha256", "value": "a" * 64}},
+    ]
+    storage = Storage(":memory:")
+    try:
+        result = ingest_manifest(storage, manifest)
+        assert result["imported"] == 1  # only the dict asset
+    finally:
+        storage.close()
+
+
+def test_ingest_manifest_handles_non_list_assets() -> None:
+    manifest = _sample_manifest()
+    manifest["downloaded_assets"] = "not-a-list"
+    storage = Storage(":memory:")
+    try:
+        result = ingest_manifest(storage, manifest)
+        assert result["imported"] == 0
+        assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
