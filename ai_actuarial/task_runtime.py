@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 import schedule
 
 from ai_actuarial.ai_runtime import apply_ocr_runtime_environment, get_search_runtime_credentials, resolve_ocr_runtime
+from ai_actuarial.capacity import ensure_capacity
 from ai_actuarial.markdown_conversion_config import HARD_MAX_SCAN_COUNT, candidate_chain_for_path, load_markdown_conversion_config
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
@@ -31,6 +32,8 @@ from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+_CAPACITY_GATED_TYPES = frozenset({"full_pipeline", "recategory", "rag_indexing", "kb_index_build"})
 
 _QUERY_SITE_FILTER_RE = re.compile(r"(?:^|\s)site:([^\s)]+)", re.IGNORECASE)
 
@@ -415,6 +418,9 @@ class NativeTaskRuntime:
             db_path = os.path.abspath(db_path)
         if not os.path.isabs(download_dir):
             download_dir = os.path.abspath(download_dir)
+
+        if collection_type in _CAPACITY_GATED_TYPES:
+            ensure_capacity(path="/", operation=collection_type)
 
         if collection_type == "full_pipeline":
             return self._run_full_pipeline(task_id, data, db_path)
