@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the AI InfoSearch verified quiesced full snapshot weekly
+
+[Timer]
+# Evaluated in the host's local timezone (Asia/Shanghai CST on the production
+# host); RandomizedDelaySec shifts the actual start up to 15 minutes later.
+OnCalendar=Sun *-*-* 04:00:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=aiinforsearch-full-backup.service
+
+[Install]
+WantedBy=timers.target

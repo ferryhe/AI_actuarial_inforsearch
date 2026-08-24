@@ -4,7 +4,7 @@ import json
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -108,7 +108,7 @@ def test_full_snapshot_verifies_and_restores_to_isolated_directory(tmp_path: Pat
 
     report = production_recovery.verify_backup(backup)
     assert report["status"] == "ok"
-    assert report["included_data_directories"] == ["agentic_ready_data", "files", "rag"]
+    assert report["included_data_directories"] == ["agentic_ready_data", "rag"]
 
     restored = production_recovery.restore_to_isolated_directory(backup, tmp_path / "restore")
     assert restored["status"] == "ok"
@@ -118,9 +118,136 @@ def test_full_snapshot_verifies_and_restores_to_isolated_directory(tmp_path: Pat
         "files": 1,
         "rag_knowledge_bases": 1,
     }
-    assert (tmp_path / "restore/data/files/example.pdf").read_bytes() == b"pdf"
+    # ``files`` (re-crawlable source documents) is intentionally excluded from
+    # full snapshots; the files table row therefore reports a missing path.
+    assert not (tmp_path / "restore/data/files").exists()
+    assert restored["database"]["missing_file_paths"] == 1
     assert (tmp_path / "restore/data/rag/kb-1/index.faiss").read_bytes() == b"index"
     assert (tmp_path / "restore/data/agentic_ready_data/kb-1/manifest.json").is_file()
+
+
+def test_prune_old_backups_removes_only_expired_backups(tmp_path: Path) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+    clock = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
+
+    old = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        now=lambda: clock - timedelta(days=31),
+    )
+    fresh = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        now=lambda: clock - timedelta(days=29),
+    )
+    newest = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        now=lambda: clock,
+    )
+
+    removed = production_recovery.prune_old_backups(backup_root, 30, now=lambda: clock)
+
+    assert removed == [old.name]
+    assert not old.exists()
+    assert fresh.exists()
+    assert newest.exists()
+
+
+def test_prune_skips_malformed_calendar_directory(tmp_path: Path) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+    clock = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
+
+    old = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        now=lambda: clock - timedelta(days=40),
+    )
+    malformed = backup_root / "backup-20260229T000000Z"
+    malformed.mkdir()
+
+    removed = production_recovery.prune_old_backups(backup_root, 30, now=lambda: clock)
+
+    assert removed == [old.name]
+    assert not old.exists()
+    assert malformed.exists()
+
+
+def test_prune_does_not_delete_excluded_backup(tmp_path: Path) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+    clock = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
+
+    fresh = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        now=lambda: clock,
+    )
+
+    removed = production_recovery.prune_old_backups(backup_root, 0, now=lambda: clock, exclude=fresh)
+
+    assert removed == []
+    assert fresh.exists()
+
+
+def test_legacy_snapshot_with_files_remains_verifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+
+    # Simulate a format-v1 snapshot that still included ``files``.
+    monkeypatch.setattr(
+        production_recovery,
+        "SNAPSHOT_DIRECTORIES",
+        ("agentic_ready_data", "files", "rag"),
+    )
+    legacy = production_recovery.create_backup(
+        data_dir=data_dir,
+        config_path=config_path,
+        backup_root=backup_root,
+        include_data=True,
+        quiesced=True,
+        now=lambda: datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc),
+    )
+
+    # The legacy manifest (includes ``files``) must still verify and restore.
+    report = production_recovery.verify_backup(legacy)
+    assert report["status"] == "ok"
+    assert report["included_data_directories"] == ["agentic_ready_data", "files", "rag"]
+
+
+def test_backup_rejects_negative_retention_before_writing(tmp_path: Path) -> None:
+    data_dir, config_path = _seed_data_dir(tmp_path)
+    backup_root = tmp_path / "backups"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/production_recovery.py",
+            "backup",
+            "--data-dir",
+            str(data_dir),
+            "--config",
+            str(config_path),
+            "--backup-root",
+            str(backup_root),
+            "--retention-days",
+            "-1",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not list(backup_root.glob("backup-*/manifest.json"))
 
 
 def test_failed_backup_writes_failure_event_without_publishing_snapshot(tmp_path: Path) -> None:

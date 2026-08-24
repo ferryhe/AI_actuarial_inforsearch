@@ -1,0 +1,18 @@
+[Unit]
+Description=AI InfoSearch verified quiesced full snapshot
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/opt/ai_actuarial_inforsearch/scripts/production_full_backup.sh
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/aiinforsearch/full-backup.conf
+ExecStart=/usr/bin/bash /opt/ai_actuarial_inforsearch/scripts/production_full_backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

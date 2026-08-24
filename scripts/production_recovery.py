@@ -11,19 +11,27 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 
 BACKUP_FORMAT_VERSION = 1
-SNAPSHOT_DIRECTORIES = ("agentic_ready_data", "files", "rag")
+# ``files`` holds re-crawlable source documents (PDF/PPTX/DOCX); it is excluded
+# from full snapshots. Its metadata lives in the ``files`` table and is still
+# captured by the online database backup, so a restore reports missing file
+# paths as an expected, re-crawlable omission rather than snapshot loss.
+SNAPSHOT_DIRECTORIES = ("agentic_ready_data", "rag")
+# Format-v1 snapshots included ``files``; keep those manifests verifiable so a
+# still-retained recovery point can be restored after the exclusion.
+VERIFIABLE_SNAPSHOT_DIRECTORIES = SNAPSHOT_DIRECTORIES + ("files",)
 RESTORE_COUNT_TABLES = ("agentic_ready_manifests", "files", "rag_knowledge_bases")
 OCI_LABELS = (
     "org.opencontainers.image.revision",
@@ -317,6 +325,45 @@ def create_backup(
         raise
 
 
+def prune_old_backups(
+    backup_root: Path,
+    retention_days: int,
+    *,
+    now: Callable[[], datetime] = _utc_now,
+    exclude: Path | None = None,
+) -> list[str]:
+    """Delete published backups older than ``retention_days``, keyed by name timestamp.
+
+    ``exclude`` names a backup to always keep (normally the one just created).
+    The cutoff is truncated to whole seconds to match backup directory names.
+    """
+    if retention_days < 0:
+        raise ValueError("retention_days must be non-negative")
+    backup_root = backup_root.expanduser().resolve()
+    if not backup_root.is_dir():
+        return []
+    cutoff = (now() - timedelta(days=retention_days)).replace(microsecond=0)
+    removed: list[str] = []
+    for entry in sorted(backup_root.iterdir(), key=lambda item: item.name):
+        if not entry.is_dir() or not entry.name.startswith("backup-"):
+            continue
+        if exclude is not None and entry.resolve() == exclude.resolve():
+            continue
+        match = re.fullmatch(r"backup-(\d{8}T\d{6}Z)(?:-\d+)?", entry.name)
+        if not match:
+            continue
+        try:
+            created = datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            # A directory with a malformed calendar date (e.g. backup-20260229T000000Z)
+            # is skipped so it cannot abort pruning and retention cleanup.
+            continue
+        if created < cutoff:
+            shutil.rmtree(entry)
+            removed.append(entry.name)
+    return removed
+
+
 def verify_backup(backup_dir: Path) -> dict[str, Any]:
     backup_dir = _require_directory(backup_dir, "backup directory")
     manifest_path = _require_file(backup_dir / "manifest.json", "backup manifest")
@@ -347,7 +394,7 @@ def verify_backup(backup_dir: Path) -> dict[str, Any]:
 
     included = sorted(str(value) for value in manifest.get("included_data_directories", []))
     for name in included:
-        if name not in SNAPSHOT_DIRECTORIES:
+        if name not in VERIFIABLE_SNAPSHOT_DIRECTORIES:
             raise ValueError(f"Unexpected data directory in manifest: {name!r}")
         directory = _require_directory(backup_dir / "data" / name, f"backup data directory {name}")
         if _directory_stats(directory) != manifest["data_directories"][name]:
@@ -478,6 +525,13 @@ def create_release_record(
     return record
 
 
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -488,6 +542,7 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("--backup-root", type=Path, required=True)
     backup.add_argument("--include-data", action="store_true")
     backup.add_argument("--quiesced", action="store_true")
+    backup.add_argument("--retention-days", type=_non_negative_int, default=None, help="Delete backups older than this many days after a successful backup")
     backup.add_argument("--json", action="store_true", help="Emit the machine-readable JSON result")
 
     verify = subparsers.add_parser("verify", help="Verify a published backup manifest and artifacts")
@@ -524,6 +579,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             quiesced=args.quiesced,
         )
         payload: dict[str, Any] = {"status": "success", "backup_dir": str(path)}
+        if args.retention_days is not None:
+            payload["pruned"] = prune_old_backups(args.backup_root, args.retention_days, exclude=path)
     elif args.command == "verify":
         payload = verify_backup(args.backup_dir)
     elif args.command == "restore-smoke":

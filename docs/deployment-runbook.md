@@ -211,9 +211,11 @@ The recovery tool has two scopes:
 
 - Default: online SQLite backup plus `config/sites.yaml`. This is suitable for a
   scheduled daily job and does not copy `.env` or reveal credentials.
-- `--include-data --quiesced`: SQLite plus `files/`, `rag/`, and
-  `agentic_ready_data/`. Stop application writers first so the database and file
-  artifacts share one recovery point.
+- `--include-data --quiesced`: SQLite plus `rag/` and `agentic_ready_data/`.
+  Re-crawlable source documents under `files/` are intentionally excluded from
+  full snapshots (their metadata is still captured in the database backup).
+  Stop application writers first so the database and index artifacts share one
+  recovery point.
 
 Each run appends a success or failure record to `backup-events.jsonl`. A
 successful snapshot is published only after its database passes
@@ -240,14 +242,41 @@ sudo systemctl start aiinforsearch-backup.service
 sudo systemctl status aiinforsearch-backup.service --no-pager
 ```
 
+### Weekly quiesced full snapshot
+
+A second service and timer capture `rag/` and `agentic_ready_data/` on top of
+the database by briefly stopping the API (a quiesced snapshot). Install it
+alongside the daily job with its own config and full-snapshot root:
+
+```bash
+sudo install -d -m 0700 /mnt/aiinforsearch-backup/aiinforsearch-full
+echo 'BACKUP_ROOT=/mnt/aiinforsearch-backup/aiinforsearch-full' | sudo tee /etc/aiinforsearch/full-backup.conf
+sudo chmod 0600 /etc/aiinforsearch/full-backup.conf
+sudo install -m 0644 ops/systemd/aiinforsearch-full-backup.service /etc/systemd/system/
+sudo install -m 0644 ops/systemd/aiinforsearch-full-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aiinforsearch-full-backup.timer
+```
+
+The wrapper stops only the API container, runs the quiesced snapshot, and
+restarts the API through an EXIT/INT/TERM trap even if the snapshot fails. It
+reuses the same shared lock as the daily backup and deployment snapshot and
+retains 30 days via `--retention-days 30`. The quiesced guarantee comes from
+`docker stop` halting the writer, not from an idle-task check: active tasks
+live in the in-process runtime and are not visible to a file-based gate, and
+scheduled collections run at 00:30, so the 04:00 Sunday window is normally
+idle. The timer is evaluated in the host's local timezone (Asia/Shanghai CST on
+the production host); `RandomizedDelaySec=15m` shifts the actual start up to 15
+minutes later.
+
 The scheduled job is database-plus-configuration only, so it does not stop the
 API. The service fails closed if `/etc/aiinforsearch/backup.conf` is absent, if
 the configured directory is missing, or if it is on the production data
 filesystem. The wrapper also uses a shared non-blocking lock so a daily backup
-cannot overlap a deployment snapshot. Retain at least 14 daily verified database backups and two quiesced full
-snapshots; prune only after an isolated restore has passed and an off-host copy
-is confirmed. Retention deletion is intentionally not automated by this first
-baseline. Do not configure a FUSE/object-storage mount such as COSFS until its
+cannot overlap a deployment snapshot. Every wrapper passes `--retention-days 30`,
+so published snapshots older than 30 days are pruned automatically after each
+successful backup; keep at least one off-host copy before relying on pruning.
+Do not configure a FUSE/object-storage mount such as COSFS until its
 write, rename, interruption, and read-back checksum semantics have been
 qualified in a disposable prefix.
 
@@ -262,7 +291,10 @@ full artifact retention, reclassification, full indexing, or a deployment that
 needs a same-disk snapshot. Expand the disk or move immutable artifacts/backups
 to separate storage first.
 
-### Quiesced database-and-files snapshot
+### Quiesced database-and-data snapshot
+
+`--include-data` now snapshots `rag/` and `agentic_ready_data/` on top of the
+database; re-crawlable source documents under `files/` are excluded.
 
 ```bash
 DATA_VOLUME=ai_actuarial_inforsearch_ai-data
@@ -276,7 +308,8 @@ sudo python3 scripts/production_recovery.py backup \
   --config config/sites.yaml \
   --backup-root "$BACKUP_ROOT" \
   --include-data \
-  --quiesced
+  --quiesced \
+  --retention-days 30
 $COMPOSE start api
 ```
 
