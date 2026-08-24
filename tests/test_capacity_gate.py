@@ -20,6 +20,15 @@ def test_capacity_status_blocks_at_threshold() -> None:
     assert blocked["free_bytes"] == 20
 
 
+def test_capacity_status_does_not_block_below_threshold_despite_rounding() -> None:
+    # 79.996% would round up to 80.0 under round(..., 2); the raw value is
+    # below 80% and must NOT be blocked (regression for the round-before-compare bug).
+    status = capacity_status(
+        "/", threshold_percent=80, disk_usage=(100000, 79996, 20004)
+    )
+    assert status["blocked"] is False
+
+
 def test_capacity_status_rejects_invalid_threshold() -> None:
     with pytest.raises(ValueError):
         capacity_status("/", threshold_percent=0, disk_usage=(100, 50, 50))
@@ -39,6 +48,7 @@ def test_ensure_capacity_raises_when_blocked() -> None:
     assert "[CAPACITY_BLOCKED]" in message
     assert "recategory" in message
     assert "80%" in message
+    assert "at or over" in message
     assert "disk" in message
     assert "free" in message
     assert "/data" in message

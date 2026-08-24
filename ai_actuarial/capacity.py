@@ -32,7 +32,7 @@ class CapacityBlockedError(RuntimeError):
         self.free_bytes = free_bytes
         free_gb = free_bytes / (1024**3)
         super().__init__(
-            f"[CAPACITY_BLOCKED] {path} is {used_percent:.1f}% used, over the "
+            f"[CAPACITY_BLOCKED] {path} is {used_percent:.1f}% used, at or over the "
             f"{threshold_percent:.0f}% threshold ({free_gb:.1f} GB free); blocked "
             f"'{operation}'. Free up root disk space or move cold data to /data "
             f"or object storage, then retry."
@@ -54,13 +54,13 @@ def capacity_status(
     total, used, free = int(total), int(used), int(free)
     if total <= 0:
         raise ValueError("disk usage total must be positive")
-    used_percent = round((used / total) * 100, 2)
+    used_percent = (used / total) * 100
     return {
         "path": path,
         "total_bytes": total,
         "used_bytes": used,
         "free_bytes": free,
-        "used_percent": used_percent,
+        "used_percent": round(used_percent, 2),
         "threshold_percent": float(threshold_percent),
         "blocked": used_percent >= threshold_percent,
     }
