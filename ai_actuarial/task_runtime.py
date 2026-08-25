@@ -591,6 +591,35 @@ class NativeTaskRuntime:
             if collection_type == "weekly_summary":
                 return self._run_weekly_summary(db_path, data, storage=storage)
 
+            if collection_type == "manifest_ingestion":
+                from ai_actuarial.manifest_ingest import ingest_manifest
+
+                manifest_path = str(data.get("manifest_path") or data.get("path") or "").strip()
+                if not manifest_path:
+                    raise RuntimeError("manifest_ingestion requires a manifest_path")
+                path = Path(manifest_path)
+                if not path.is_file():
+                    raise RuntimeError(f"manifest file not found: {manifest_path}")
+                manifest_text = path.read_text(encoding="utf-8")
+                try:
+                    manifest = json.loads(manifest_text)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(f"invalid manifest JSON: {manifest_path}: {exc}") from exc
+                if not isinstance(manifest, dict):
+                    raise RuntimeError(
+                        f"manifest JSON must be an object, got {type(manifest).__name__}: {manifest_path}"
+                    )
+                summary = ingest_manifest(storage, manifest, raw_text=manifest_text)
+                imported = int(summary.get("imported", 0))
+                return CollectionResult(
+                    success=True,
+                    items_found=imported,
+                    items_downloaded=imported,
+                    items_skipped=0,
+                    errors=[],
+                    metadata=summary,
+                )
+
             raise RuntimeError(f"Native runtime does not yet support collection type '{collection_type}'")
         finally:
             storage.close()

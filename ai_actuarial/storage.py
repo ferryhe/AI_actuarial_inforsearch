@@ -251,7 +251,8 @@ class Storage:
                 published_time TEXT,
                 first_seen TEXT,
                 last_seen TEXT,
-                crawl_time TEXT
+                crawl_time TEXT,
+                content_kind TEXT DEFAULT 'file'
             )
             """
         )
@@ -260,6 +261,19 @@ class Storage:
             self._conn.execute("SELECT deleted_at FROM files LIMIT 1")
         except sqlite3.OperationalError:
              self._conn.execute("ALTER TABLE files ADD COLUMN deleted_at TEXT")
+
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manifest_raw (
+                manifest_id TEXT PRIMARY KEY,
+                schema_version TEXT,
+                source_id TEXT,
+                run_id TEXT,
+                manifest_json TEXT,
+                ingested_at TEXT
+            )
+            """
+        )
 
         self._conn.execute(
             """
@@ -1794,6 +1808,7 @@ class Storage:
         last_modified: str | None,
         etag: str | None,
         published_time: str | None,
+        content_kind: str = "file",
     ) -> None:
         with self.transaction(immediate=True):
             before = self._ready_data_builder_metadata_snapshot(url)
@@ -1803,9 +1818,9 @@ class Storage:
                 INSERT INTO files (
                     url, sha256, title, source_site, source_page_url, original_filename,
                     local_path, bytes, content_type, last_modified, etag, published_time,
-                    first_seen, last_seen, crawl_time
+                    first_seen, last_seen, crawl_time, content_kind
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     sha256=excluded.sha256,
                     title=excluded.title,
@@ -1818,6 +1833,7 @@ class Storage:
                     last_modified=excluded.last_modified,
                     etag=excluded.etag,
                     published_time=excluded.published_time,
+                    content_kind=excluded.content_kind,
                     last_seen=excluded.last_seen,
                     crawl_time=excluded.crawl_time
                 """,
@@ -1837,9 +1853,37 @@ class Storage:
                     ts,
                     ts,
                     ts,
+                    content_kind,
                 ),
             )
             self._mark_ready_data_builder_metadata_change(file_url=url, before=before)
+
+    def save_manifest_raw(
+        self,
+        manifest_id: str,
+        schema_version: str,
+        source_id: str,
+        run_id: str,
+        manifest_json: str,
+    ) -> None:
+        """Store the raw manifest JSON verbatim for provenance and replay."""
+        ts = self.now()
+        self._conn.execute(
+            """
+            INSERT INTO manifest_raw (
+                manifest_id, schema_version, source_id, run_id, manifest_json, ingested_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(manifest_id) DO UPDATE SET
+                schema_version=excluded.schema_version,
+                source_id=excluded.source_id,
+                run_id=excluded.run_id,
+                manifest_json=excluded.manifest_json,
+                ingested_at=excluded.ingested_at
+            """,
+            (manifest_id, schema_version, source_id, run_id, manifest_json, ts),
+        )
+        self._maybe_commit()
 
     def mark_page_seen(self, url: str) -> None:
         ts = self.now()

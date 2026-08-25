@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 3
+CURRENT_SQLITE_SCHEMA_VERSION = 4
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -33,6 +33,7 @@ _AUTO_BACKFILL_TABLES = frozenset(
         "agentic_ready_slots",
         "agentic_ready_source_state",
         "kb_ready_index_state",
+        "manifest_raw",
         "taxonomy_state",
     }
 )
@@ -48,6 +49,7 @@ _AUTO_BACKFILL_COLUMNS: dict[str, frozenset[str]] = {
         }
     ),
     "taxonomy_state": frozenset({"applied_categories"}),
+    "files": frozenset({"content_kind"}),
 }
 
 # Columns whose NOT NULL flag may legitimately differ from the canonical
@@ -281,6 +283,41 @@ def _accept_version_2_source(
     return valid
 
 
+def _add_files_content_kind_v4(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(files)")}
+    if "content_kind" not in columns:
+        conn.execute(
+            "ALTER TABLE files ADD COLUMN content_kind TEXT DEFAULT 'file'"
+        )
+        # One-time backfill: existing HTML rows are web pages, not files.
+        conn.execute(
+            "UPDATE files SET content_kind = 'web_page' "
+            "WHERE content_type LIKE 'text/html%'"
+        )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS manifest_raw (
+            manifest_id TEXT PRIMARY KEY,
+            schema_version TEXT,
+            source_id TEXT,
+            run_id TEXT,
+            manifest_json TEXT,
+            ingested_at TEXT
+        )
+        """
+    )
+    _set_user_version(conn, 4)
+
+
+def _accept_version_3_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept a version-3 source: files lacking content_kind and/or manifest_raw."""
+    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -298,6 +335,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_taxonomy_categories_v3",
         apply=_add_taxonomy_categories_v3,
         source_validator=_accept_version_2_source,
+    ),
+    SQLiteSchemaMigration(
+        version=4,
+        migration_id="add_files_content_kind_v4",
+        apply=_add_files_content_kind_v4,
+        source_validator=_accept_version_3_source,
     ),
 )
 
