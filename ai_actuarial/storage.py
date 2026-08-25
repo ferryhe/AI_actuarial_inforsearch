@@ -857,6 +857,55 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS pipeline_run (
+                run_id TEXT PRIMARY KEY,
+                correlation_id TEXT NOT NULL DEFAULT '',
+                source_type TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                watermark TEXT NOT NULL DEFAULT '',
+                started_at TEXT,
+                finished_at TEXT,
+                error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pipeline_stage (
+                run_id TEXT NOT NULL,
+                stage_name TEXT NOT NULL,
+                stage_order INTEGER NOT NULL DEFAULT 0,
+                options_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                checkpoint_json TEXT NOT NULL DEFAULT '{}',
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                committed_artifacts_json TEXT NOT NULL DEFAULT '[]',
+                error TEXT NOT NULL DEFAULT '',
+                started_at TEXT,
+                finished_at TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(run_id, stage_name)
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS child_run (
+                child_run_id TEXT PRIMARY KEY,
+                parent_run_id TEXT NOT NULL,
+                correlation_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                partial INTEGER NOT NULL DEFAULT 0,
+                error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_file_chunk_sets_file_url
             ON file_chunk_sets(file_url)
             """
@@ -1884,6 +1933,305 @@ class Storage:
             (manifest_id, schema_version, source_id, run_id, manifest_json, ts),
         )
         self._maybe_commit()
+
+    # --- #179 pipeline state machine ---
+
+    def create_pipeline_run(
+        self,
+        run_id: str,
+        *,
+        correlation_id: str = "",
+        source_type: str = "",
+    ) -> None:
+        """Create a new pipeline run in the 'pending' state."""
+        ts = self.now()
+        self._conn.execute(
+            """
+            INSERT INTO pipeline_run (
+                run_id, correlation_id, source_type, status, watermark, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'pending', '', ?, ?)
+            """,
+            (run_id, correlation_id, source_type, ts, ts),
+        )
+        self._maybe_commit()
+
+    def start_pipeline_run(self, run_id: str) -> None:
+        """Mark a run as running, stamping started_at only the first time."""
+        ts = self.now()
+        self._conn.execute(
+            """
+            UPDATE pipeline_run
+            SET status = 'running', started_at = COALESCE(started_at, ?), updated_at = ?
+            WHERE run_id = ?
+            """,
+            (ts, ts, run_id),
+        )
+        self._maybe_commit()
+
+    def update_pipeline_run(
+        self,
+        run_id: str,
+        *,
+        status: str | None = None,
+        watermark: str | None = None,
+        error: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        """Update only the provided run fields."""
+        fields: list[str] = []
+        values: list[Any] = []
+        if status is not None:
+            fields.append("status = ?")
+            values.append(status)
+        if watermark is not None:
+            fields.append("watermark = ?")
+            values.append(watermark)
+        if error is not None:
+            fields.append("error = ?")
+            values.append(error)
+        if finished_at is not None:
+            fields.append("finished_at = ?")
+            values.append(finished_at)
+        if not fields:
+            return
+        fields.append("updated_at = ?")
+        values.append(self.now())
+        values.append(run_id)
+        self._conn.execute(
+            f"UPDATE pipeline_run SET {', '.join(fields)} WHERE run_id = ?", values
+        )
+        self._maybe_commit()
+
+    def get_pipeline_run(self, run_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT run_id, correlation_id, source_type, status, watermark,
+                   started_at, finished_at, error, created_at, updated_at
+            FROM pipeline_run WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        keys = (
+            "run_id",
+            "correlation_id",
+            "source_type",
+            "status",
+            "watermark",
+            "started_at",
+            "finished_at",
+            "error",
+            "created_at",
+            "updated_at",
+        )
+        return dict(zip(keys, row))
+
+    def list_unfinished_pipeline_runs(self) -> list[dict[str, Any]]:
+        """Return runs that have not reached a terminal state (for resume)."""
+        rows = self._conn.execute(
+            """
+            SELECT run_id, correlation_id, source_type, status, watermark,
+                   started_at, finished_at, error, created_at, updated_at
+            FROM pipeline_run
+            WHERE status IN ('pending', 'running')
+            ORDER BY created_at
+            """
+        ).fetchall()
+        keys = (
+            "run_id",
+            "correlation_id",
+            "source_type",
+            "status",
+            "watermark",
+            "started_at",
+            "finished_at",
+            "error",
+            "created_at",
+            "updated_at",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def upsert_pipeline_stage(
+        self,
+        run_id: str,
+        stage_name: str,
+        *,
+        stage_order: int,
+        options_json: str = "{}",
+        status: str = "pending",
+    ) -> None:
+        """Insert a stage row, or reset it to a clean pending state on conflict."""
+        ts = self.now()
+        self._conn.execute(
+            """
+            INSERT INTO pipeline_stage (
+                run_id, stage_name, stage_order, options_json, status,
+                checkpoint_json, retry_count, committed_artifacts_json, error, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, '{}', 0, '[]', '', ?)
+            ON CONFLICT(run_id, stage_name) DO UPDATE SET
+                stage_order = excluded.stage_order,
+                options_json = excluded.options_json,
+                status = excluded.status,
+                checkpoint_json = '{}',
+                retry_count = 0,
+                committed_artifacts_json = '[]',
+                error = '',
+                started_at = NULL,
+                finished_at = NULL,
+                updated_at = excluded.updated_at
+            """,
+            (run_id, stage_name, stage_order, options_json, status, ts),
+        )
+        self._maybe_commit()
+
+    def update_pipeline_stage(
+        self,
+        run_id: str,
+        stage_name: str,
+        *,
+        status: str | None = None,
+        checkpoint_json: str | None = None,
+        committed_artifacts_json: str | None = None,
+        error: str | None = None,
+        retry_count: int | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        """Update only the provided stage fields."""
+        fields: list[str] = []
+        values: list[Any] = []
+        if status is not None:
+            fields.append("status = ?")
+            values.append(status)
+        if checkpoint_json is not None:
+            fields.append("checkpoint_json = ?")
+            values.append(checkpoint_json)
+        if committed_artifacts_json is not None:
+            fields.append("committed_artifacts_json = ?")
+            values.append(committed_artifacts_json)
+        if error is not None:
+            fields.append("error = ?")
+            values.append(error)
+        if retry_count is not None:
+            fields.append("retry_count = ?")
+            values.append(retry_count)
+        if started_at is not None:
+            fields.append("started_at = ?")
+            values.append(started_at)
+        if finished_at is not None:
+            fields.append("finished_at = ?")
+            values.append(finished_at)
+        if not fields:
+            return
+        fields.append("updated_at = ?")
+        values.append(self.now())
+        values.extend((run_id, stage_name))
+        self._conn.execute(
+            f"UPDATE pipeline_stage SET {', '.join(fields)} "
+            "WHERE run_id = ? AND stage_name = ?",
+            values,
+        )
+        self._maybe_commit()
+
+    def get_pipeline_stages(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT run_id, stage_name, stage_order, options_json, status,
+                   checkpoint_json, retry_count, committed_artifacts_json, error,
+                   started_at, finished_at, updated_at
+            FROM pipeline_stage WHERE run_id = ? ORDER BY stage_order
+            """,
+            (run_id,),
+        ).fetchall()
+        keys = (
+            "run_id",
+            "stage_name",
+            "stage_order",
+            "options_json",
+            "status",
+            "checkpoint_json",
+            "retry_count",
+            "committed_artifacts_json",
+            "error",
+            "started_at",
+            "finished_at",
+            "updated_at",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def create_child_run(
+        self,
+        child_run_id: str,
+        parent_run_id: str,
+        *,
+        correlation_id: str = "",
+    ) -> None:
+        """Create a child run linked to a parent pipeline run."""
+        ts = self.now()
+        self._conn.execute(
+            """
+            INSERT INTO child_run (
+                child_run_id, parent_run_id, correlation_id, status, partial, error, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'pending', 0, '', ?, ?)
+            """,
+            (child_run_id, parent_run_id, correlation_id, ts, ts),
+        )
+        self._maybe_commit()
+
+    def update_child_run(
+        self,
+        child_run_id: str,
+        *,
+        status: str | None = None,
+        partial: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Update only the provided child-run fields."""
+        fields: list[str] = []
+        values: list[Any] = []
+        if status is not None:
+            fields.append("status = ?")
+            values.append(status)
+        if partial is not None:
+            fields.append("partial = ?")
+            values.append(partial)
+        if error is not None:
+            fields.append("error = ?")
+            values.append(error)
+        if not fields:
+            return
+        fields.append("updated_at = ?")
+        values.append(self.now())
+        values.append(child_run_id)
+        self._conn.execute(
+            f"UPDATE child_run SET {', '.join(fields)} WHERE child_run_id = ?", values
+        )
+        self._maybe_commit()
+
+    def get_child_runs(self, parent_run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT child_run_id, parent_run_id, correlation_id, status, partial,
+                   error, created_at, updated_at
+            FROM child_run WHERE parent_run_id = ? ORDER BY created_at
+            """,
+            (parent_run_id,),
+        ).fetchall()
+        keys = (
+            "child_run_id",
+            "parent_run_id",
+            "correlation_id",
+            "status",
+            "partial",
+            "error",
+            "created_at",
+            "updated_at",
+        )
+        return [dict(zip(keys, row)) for row in rows]
 
     def mark_page_seen(self, url: str) -> None:
         ts = self.now()
