@@ -29,6 +29,7 @@ from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.search import search_all
 from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_config_path, load_yaml, parse_int_clamped, task_log_path
+from ai_actuarial.pipeline_config import normalize_stage_options
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -691,6 +692,9 @@ class NativeTaskRuntime:
         ).strip().lower() or "scheduled"
         if source_type == "full_pipeline":
             source_type = "scheduled"
+
+        # Validate (fail fast on a malformed stage_options) before any work.
+        normalize_stage_options(data.get("stage_options"))
 
         stage_specs: list[tuple[str, str, dict[str, Any]]] = [
             ("source_collection", source_type, self._stage_payload(data, source_type)),
