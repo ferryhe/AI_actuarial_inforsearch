@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 4
+CURRENT_SQLITE_SCHEMA_VERSION = 5
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -34,6 +34,9 @@ _AUTO_BACKFILL_TABLES = frozenset(
         "agentic_ready_source_state",
         "kb_ready_index_state",
         "manifest_raw",
+        "child_run",
+        "pipeline_run",
+        "pipeline_stage",
         "taxonomy_state",
     }
 )
@@ -318,6 +321,69 @@ def _accept_version_3_source(
     return valid
 
 
+def _add_pipeline_state_v5(conn: sqlite3.Connection) -> None:
+    """Add the #179 pipeline state-machine tables (pipeline_run/stage/child_run)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_run (
+            run_id TEXT PRIMARY KEY,
+            correlation_id TEXT NOT NULL DEFAULT '',
+            source_type TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            watermark TEXT NOT NULL DEFAULT '',
+            started_at TEXT,
+            finished_at TEXT,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_stage (
+            run_id TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            stage_order INTEGER NOT NULL DEFAULT 0,
+            options_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending',
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            committed_artifacts_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT NOT NULL DEFAULT '',
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(run_id, stage_name)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS child_run (
+            child_run_id TEXT PRIMARY KEY,
+            parent_run_id TEXT NOT NULL,
+            correlation_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            partial INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    _set_user_version(conn, 5)
+
+
+def _accept_version_4_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept a version-4 source: missing the pipeline state-machine tables."""
+    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -341,6 +407,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_files_content_kind_v4",
         apply=_add_files_content_kind_v4,
         source_validator=_accept_version_3_source,
+    ),
+    SQLiteSchemaMigration(
+        version=5,
+        migration_id="add_pipeline_state_v5",
+        apply=_add_pipeline_state_v5,
+        source_validator=_accept_version_4_source,
     ),
 )
 
