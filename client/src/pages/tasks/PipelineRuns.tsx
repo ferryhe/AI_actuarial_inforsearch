@@ -27,7 +27,7 @@ function summarizeJson(raw: string | null): string | null {
   if (parsed === null) return raw;
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     const entries = Object.entries(parsed as Record<string, unknown>);
-    if (entries.length === 0) return null;
+    if (entries.length === 0) return "{}";
     const preview = entries
       .slice(0, 6)
       .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
@@ -99,8 +99,8 @@ export function PipelineRuns({ onViewLog }: PipelineRunsProps) {
   const [error, setError] = useState<string | null>(null);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, PipelineRunDetail>>({});
-  const [detailLoading, setDetailLoading] = useState<string | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState<Record<string, boolean>>({});
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
 
   const fetchRuns = useCallback(async () => {
     setLoading(true);
@@ -125,17 +125,17 @@ export function PipelineRuns({ onViewLog }: PipelineRunsProps) {
       return;
     }
     setExpandedRunId(runId);
-    setDetailError(null);
+    setDetailErrors((prev) => ({ ...prev, [runId]: "" }));
     if (details[runId]) return;
-    setDetailLoading(runId);
+    setDetailLoading((prev) => ({ ...prev, [runId]: true }));
     try {
       const detail = await apiGet<PipelineRunDetail>(`/api/pipeline/runs/${encodeURIComponent(runId)}`);
       setDetails((prev) => ({ ...prev, [runId]: detail }));
     } catch (e) {
       console.error("Failed to fetch pipeline run detail:", e);
-      setDetailError(t("tasks.pipeline.detail_error"));
+      setDetailErrors((prev) => ({ ...prev, [runId]: t("tasks.pipeline.detail_error") }));
     } finally {
-      setDetailLoading(null);
+      setDetailLoading((prev) => ({ ...prev, [runId]: false }));
     }
   };
 
@@ -176,7 +176,7 @@ export function PipelineRuns({ onViewLog }: PipelineRunsProps) {
           {runs.map((run) => {
             const isExpanded = expandedRunId === run.run_id;
             const detail = details[run.run_id];
-            const isLoading = detailLoading === run.run_id;
+            const isLoading = detailLoading[run.run_id];
             return (
               <div key={run.run_id} className="rounded-xl border border-border bg-card overflow-hidden"
                 data-testid={`pipeline-run-${run.run_id}`}>
@@ -235,8 +235,8 @@ export function PipelineRuns({ onViewLog }: PipelineRunsProps) {
                       <div className="flex items-center justify-center py-6">
                         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                       </div>
-                    ) : detailError ? (
-                      <p className="px-4 pb-3 text-xs text-red-500" data-testid="text-pipeline-detail-error">{detailError}</p>
+                    ) : detailErrors[run.run_id] ? (
+                      <p className="px-4 pb-3 text-xs text-red-500" data-testid="text-pipeline-detail-error">{detailErrors[run.run_id]}</p>
                     ) : detail && detail.stages.length === 0 ? (
                       <p className="px-4 pb-3 text-xs text-muted-foreground" data-testid="text-no-pipeline-stages">{t("tasks.pipeline.no_stages")}</p>
                     ) : detail ? (
