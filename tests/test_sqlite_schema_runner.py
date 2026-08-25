@@ -313,6 +313,83 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
     assert _files_count(db_path) == 1
 
 
+def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path) -> None:
+    from ai_actuarial.sqlite_schema import (
+        CURRENT_SQLITE_SCHEMA_VERSION,
+        _add_pipeline_state_v5,
+        apply_schema,
+        schema_status,
+    )
+
+    db_path = tmp_path / "v5-with-pipeline-data.db"
+    storage = Storage(str(db_path))
+    try:
+        conn = storage._conn
+        # Walk the fresh v6 database back to a genuine v5 state: drop the two v6
+        # indexes and rebuild the two child tables at their v5 (FK-less) shape.
+        conn.execute("DROP INDEX IF EXISTS idx_child_run_parent_run_id")
+        conn.execute("DROP INDEX IF EXISTS idx_pipeline_run_status")
+        conn.execute("DROP TABLE child_run")
+        conn.execute("DROP TABLE pipeline_stage")
+        conn.execute("DROP TABLE pipeline_run")
+        _add_pipeline_state_v5(conn)
+        conn.execute(
+            """
+            INSERT INTO pipeline_run (run_id, correlation_id, source_type, status, watermark, error, created_at, updated_at)
+            VALUES ('run-1', 'corr-1', 'scheduled', 'pending', '', '', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO pipeline_stage (run_id, stage_name, stage_order, options_json, status, checkpoint_json, retry_count, committed_artifacts_json, error, updated_at)
+            VALUES ('run-1', 'acquisition', 1, '{"sites": 2}', 'pending', '{}', 0, '[]', '', '2026-08-25T00:00:00Z')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO child_run (child_run_id, parent_run_id, correlation_id, status, partial, error, created_at, updated_at)
+            VALUES ('child-1', 'run-1', 'corr-1', 'pending', 0, '', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
+            """
+        )
+        conn.commit()
+    finally:
+        storage.close()
+
+    assert _user_version(db_path) == 5
+    assert schema_status(str(db_path))["state"] == "needs_migration"
+
+    applied = apply_schema(str(db_path))
+    assert applied["state"] == "current"
+    assert applied["applied_migrations"] == ["add_pipeline_fks_v6"]
+    assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
+
+    conn = sqlite3.connect(db_path)
+    try:
+        # Existing rows survive the table rebuild.
+        stages = conn.execute(
+            "SELECT run_id, stage_name, stage_order, options_json FROM pipeline_stage"
+        ).fetchall()
+        assert stages == [("run-1", "acquisition", 1, '{"sites": 2}')]
+        children = conn.execute(
+            "SELECT child_run_id, parent_run_id, partial FROM child_run"
+        ).fetchall()
+        assert children == [("child-1", "run-1", 0)]
+
+        # FK constraints are present after the rebuild.
+        stage_fks = conn.execute("PRAGMA foreign_key_list(pipeline_stage)").fetchall()
+        assert stage_fks and stage_fks[0][2] == "pipeline_run"
+        child_fks = conn.execute("PRAGMA foreign_key_list(child_run)").fetchall()
+        assert child_fks and child_fks[0][2] == "pipeline_run"
+
+        # The two indexes are present.
+        run_indexes = {r[1] for r in conn.execute("PRAGMA index_list(pipeline_run)").fetchall()}
+        assert "idx_pipeline_run_status" in run_indexes
+        child_indexes = {r[1] for r in conn.execute("PRAGMA index_list(child_run)").fetchall()}
+        assert "idx_child_run_parent_run_id" in child_indexes
+    finally:
+        conn.close()
+
+
 def test_schema_runner_plans_registered_old_version_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import ai_actuarial.sqlite_schema as sqlite_schema
 

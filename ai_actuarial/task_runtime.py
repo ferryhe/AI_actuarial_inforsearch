@@ -693,11 +693,12 @@ class NativeTaskRuntime:
         if source_type == "full_pipeline":
             source_type = "scheduled"
 
-        # Validate (fail fast on a malformed stage_options) before any work.
+        # Fail-fast validation only: the normalized result is consumed by the
+        # orchestration layer (PR 4), not by the current pipeline run.
         normalize_stage_options(data.get("stage_options"))
 
         stage_specs: list[tuple[str, str, dict[str, Any]]] = [
-            ("source_collection", source_type, self._stage_payload(data, source_type)),
+            ("acquisition", source_type, self._stage_payload(data, source_type)),
             ("markdown_conversion", "markdown_conversion", self._stage_payload(data, "markdown_conversion")),
             ("catalog", "catalog", self._stage_payload(data, "catalog")),
             ("chunk_generation", "chunk_generation", self._stage_payload(data, "chunk_generation")),
@@ -731,7 +732,7 @@ class NativeTaskRuntime:
 
             self._update_task(task_id, current_activity=f"Full pipeline: {stage_name}")
             append_task_log(task_id, "INFO", f"Full pipeline stage started: {stage_name} ({collection_type})")
-            if stage_name == "source_collection" and db_path:
+            if stage_name == "acquisition" and db_path:
                 source_stage_started_at = self._full_pipeline_storage_now(db_path)
             try:
                 result = self._run_collection(task_id, collection_type, payload)
@@ -765,7 +766,7 @@ class NativeTaskRuntime:
             errors.extend(f"{stage_name}: {error}" for error in stage_errors)
             append_task_log(task_id, "INFO", f"Full pipeline stage finished: {stage_name} (success={result.success})")
 
-            if stage_name == "source_collection" and db_path and source_stage_started_at:
+            if stage_name == "acquisition" and db_path and source_stage_started_at:
                 collected_file_urls = self._full_pipeline_recent_file_urls(db_path, source_stage_started_at, data)
                 if collected_file_urls:
                     for _, downstream_type, downstream_payload in stage_specs[1:]:
@@ -803,6 +804,10 @@ class NativeTaskRuntime:
 
     def _stage_payload(self, data: dict[str, Any], collection_type: str) -> dict[str, Any]:
         payload = dict(data)
+        # stage_options is validated once in _run_full_pipeline (fail-fast) and
+        # consumed by the orchestration layer (PR 4); it must not leak into
+        # individual downstream stage payloads.
+        payload.pop("stage_options", None)
         payload["type"] = collection_type
         payload.setdefault("name", str(data.get("name") or "Full Pipeline"))
         if collection_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
