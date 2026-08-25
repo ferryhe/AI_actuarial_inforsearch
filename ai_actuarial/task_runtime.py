@@ -245,7 +245,7 @@ class NativeTaskRuntime:
 
     @staticmethod
     def _new_task_id() -> str:
-        return f"task_{int(time.time() * 1000)}_{secrets.token_hex(2)}"
+        return f"task_{int(time.time() * 1000)}_{secrets.token_hex(8)}"
 
     @staticmethod
     def _resolve_db_path(config: dict[str, Any]) -> str:
@@ -758,6 +758,7 @@ class NativeTaskRuntime:
         resumed = False
         run_id: str | None = None
         lease_owner = f"{os.getpid()}:{secrets.token_hex(6)}"
+        children_enqueued_this_run = False
 
         storage = Storage(db_path)
         try:
@@ -854,6 +855,8 @@ class NativeTaskRuntime:
                     break
 
                 stage_errors = [str(error) for error in list(result.errors or [])]
+                if stage_name == "acquisition" and int((result.metadata or {}).get("search_fallback_enqueued") or 0) > 0:
+                    children_enqueued_this_run = True
                 stage_stopped = bool((result.metadata or {}).get("stopped")) or any(
                     "stopped" in error.lower() for error in stage_errors
                 )
@@ -910,11 +913,14 @@ class NativeTaskRuntime:
                         errors.append(f"{stage_name}: stage returned unsuccessful result")
                     break
 
-            # Parent-waits-for-children (#213): after the stage loop, wait (bounded)
-            # for any search-fallback child runs to reach a terminal state, then
-            # summarize them into the parent result. Hard failures surface in
-            # ``errors``; partial/timed-out children are recorded in metadata only.
-            child_summary = self._wait_and_summarize_child_runs(storage, run_id, task_id)
+            # Parent-waits-for-children (#213): only when this run actually
+            # enqueued search-fallback children. On resume acquisition is
+            # skipped, so historical terminal child rows must not be re-summarized
+            # (that would re-inject old failures and make the run unrecoverable).
+            if children_enqueued_this_run:
+                child_summary = self._wait_and_summarize_child_runs(storage, run_id, task_id)
+            else:
+                child_summary = {"children": [], "failed": [], "partial": [], "pending": []}
             child_failed = child_summary["failed"]
             child_partial = child_summary["partial"]
             child_pending = child_summary["pending"]
@@ -927,14 +933,12 @@ class NativeTaskRuntime:
                 }
                 for c in child_summary["children"]
             ]
+            # Hard child failures fail the parent; partial and timed-out
+            # (still-pending) children are best-effort and recorded in metadata only.
             for c in child_failed:
                 errors.append(
                     f"search_fallback child {c.get('child_run_id')} failed: "
                     f"{c.get('error') or 'unknown error'}"
-                )
-            for c in child_pending:
-                errors.append(
-                    f"search_fallback child {c.get('child_run_id')} did not finish in time"
                 )
 
             if errors or stopped or failed:
