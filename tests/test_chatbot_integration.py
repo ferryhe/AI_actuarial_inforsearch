@@ -369,6 +369,7 @@ class TestChatbotIntegration(unittest.TestCase):
         _, kwargs = mock_client.chat.completions.create.call_args
         self.assertEqual(kwargs["max_completion_tokens"], 321)
         self.assertNotIn("max_tokens", kwargs)
+        self.assertNotIn("temperature", kwargs)
 
     @patch('openai.OpenAI')
     def test_llm_generation_keeps_max_tokens_for_openai_compatible_providers(self, mock_openai_class):
@@ -397,6 +398,7 @@ class TestChatbotIntegration(unittest.TestCase):
         _, kwargs = mock_client.chat.completions.create.call_args
         self.assertEqual(kwargs["max_tokens"], 222)
         self.assertNotIn("max_completion_tokens", kwargs)
+        self.assertEqual(kwargs["temperature"], config.temperature)
 
     @patch('openai.OpenAI')
     def test_llm_client_uses_provider_base_url(self, mock_openai_class):

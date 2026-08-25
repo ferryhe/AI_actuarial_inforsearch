@@ -8,7 +8,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from ai_actuarial.catalog_llm import catalog_with_openai
+from ai_actuarial.catalog_llm import catalog_with_openai, confirm_category_for_summary
 
 
 class TestCatalogRuntime(unittest.TestCase):
@@ -46,6 +46,8 @@ class TestCatalogRuntime(unittest.TestCase):
         self.assertEqual(result.model, "deepseek-chat")
         self.assertEqual(result.summary, "Summary")
         self.assertEqual(result.suggested_title, "Runtime Title")
+        _, kwargs = mock_client.chat.completions.create.call_args
+        self.assertEqual(kwargs["temperature"], 0.2)
 
     def test_catalog_with_openai_uses_runtime_timeout_seconds(self):
         mock_client = MagicMock()
@@ -83,6 +85,59 @@ class TestCatalogRuntime(unittest.TestCase):
 
         _, kwargs = mock_client.chat.completions.create.call_args
         self.assertEqual(kwargs["timeout"], 12.0)
+
+    def test_catalog_omits_temperature_for_openai_gpt5(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"summary":"Summary"}'))]
+        )
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+        mock_runtime = SimpleNamespace(
+            provider="openai",
+            model="gpt-5.6-luna",
+            api_key="runtime-key",
+            base_url=None,
+            raw_config={},
+        )
+
+        with patch.dict(sys.modules, {"openai": mock_openai}), patch(
+            "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
+            return_value=mock_runtime,
+        ):
+            catalog_with_openai(title="Document", content="Sample content")
+
+        _, kwargs = mock_client.chat.completions.create.call_args
+        self.assertNotIn("temperature", kwargs)
+
+    def test_category_confirmation_omits_temperature_for_openai_gpt5(self):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"belongs":true}'))]
+        )
+        mock_openai = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+        mock_runtime = SimpleNamespace(
+            provider="openai",
+            model="gpt-5.6-luna",
+            api_key="runtime-key",
+            base_url=None,
+            raw_config={},
+        )
+
+        with patch.dict(sys.modules, {"openai": mock_openai}), patch(
+            "ai_actuarial.catalog_llm.resolve_ai_function_runtime",
+            return_value=mock_runtime,
+        ):
+            result = confirm_category_for_summary(
+                summary="Summary",
+                candidate_category="Other",
+                category_terms=[],
+            )
+
+        self.assertTrue(result)
+        _, kwargs = mock_client.chat.completions.create.call_args
+        self.assertNotIn("temperature", kwargs)
 
 
 if __name__ == "__main__":

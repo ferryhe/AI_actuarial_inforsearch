@@ -18,6 +18,12 @@ from .catalog import CATEGORY_RULES
 logger = logging.getLogger(__name__)
 
 
+def _uses_default_temperature_only(provider: str | None, model: str | None) -> bool:
+    provider_norm = str(provider or "").strip().lower()
+    model_norm = str(model or "").strip().lower().split("/")[-1]
+    return provider_norm in {"openai", "azure_openai"} and model_norm.startswith("gpt-5")
+
+
 @dataclass(frozen=True)
 class LlmCatalogResult:
     summary: str
@@ -234,16 +240,18 @@ def catalog_with_openai(
         + "Return JSON only, with keys: summary, keywords, categories, suggested_title."
     )
 
-    completion = client.chat.completions.create(
-        model=resolved_model,
-        messages=[
+    request_kwargs: dict[str, Any] = {
+        "model": resolved_model,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-        timeout=timeout_seconds,
-    )
+        "response_format": {"type": "json_object"},
+        "timeout": timeout_seconds,
+    }
+    if not _uses_default_temperature_only(resolved_provider, resolved_model):
+        request_kwargs["temperature"] = 0.2
+    completion = client.chat.completions.create(**request_kwargs)
 
     content_text = ""
     try:
@@ -334,16 +342,18 @@ def confirm_category_for_summary(
         + 'Return JSON only: {"belongs": true|false}.'
     )
 
-    completion = client.chat.completions.create(
-        model=resolved_model,
-        messages=[
+    request_kwargs: dict[str, Any] = {
+        "model": resolved_model,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.0,
-        response_format={"type": "json_object"},
-        timeout=timeout_seconds,
-    )
+        "response_format": {"type": "json_object"},
+        "timeout": timeout_seconds,
+    }
+    if not _uses_default_temperature_only(resolved_provider, resolved_model):
+        request_kwargs["temperature"] = 0.0
+    completion = client.chat.completions.create(**request_kwargs)
 
     content_text = ""
     try:

@@ -36,6 +36,13 @@ def _uses_max_completion_tokens(provider: str | None, model: str | None) -> bool
     return model_norm.startswith(_OPENAI_MAX_COMPLETION_TOKENS_PREFIXES)
 
 
+def _uses_default_temperature_only(provider: str | None, model: str | None) -> bool:
+    """Return True for OpenAI GPT-5 models that reject custom temperature values."""
+    provider_norm = str(provider or "").strip().lower()
+    model_norm = str(model or "").strip().lower().split("/")[-1]
+    return provider_norm in {"openai", "azure_openai"} and model_norm.startswith("gpt-5")
+
+
 class LLMClient:
     """
     LLM client with OpenAI integration.
@@ -148,9 +155,10 @@ class LLMClient:
                 request_kwargs: dict[str, Any] = {
                     "model": model,
                     "messages": messages,
-                    "temperature": temperature,
                     "stream": stream,
                 }
+                if not _uses_default_temperature_only(self.config.llm_provider, model):
+                    request_kwargs["temperature"] = temperature
                 if _uses_max_completion_tokens(self.config.llm_provider, model):
                     request_kwargs["max_completion_tokens"] = max_tokens
                 else:
