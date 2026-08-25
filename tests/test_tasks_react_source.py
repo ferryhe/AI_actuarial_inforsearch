@@ -5,6 +5,9 @@ ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 SCHEDULED_TASKS_TSX = ROOT / "pages" / "tasks" / "ScheduledTasksSection.tsx"
 SCHEDULE_FROM_TASK_TSX = ROOT / "pages" / "tasks" / "ScheduleFromTaskButton.tsx"
 TASKS_TSX = ROOT / "pages" / "Tasks.tsx"
+PIPELINE_RUNS_TSX = ROOT / "pages" / "tasks" / "PipelineRuns.tsx"
+TASK_CARD_TSX = ROOT / "pages" / "tasks" / "TaskCard.tsx"
+TASKS_TYPES_TS = ROOT / "pages" / "tasks" / "Tasks.types.ts"
 LAYOUT_TSX = ROOT / "components" / "Layout.tsx"
 
 
@@ -307,3 +310,94 @@ def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
     assert 'logModal.taskId === "global"' in src
     assert "void viewGlobalLogs()" in src
     assert 'data-testid="button-global-logs"' in src
+
+
+def test_pipeline_runs_view_consumes_read_only_api():
+    src = PIPELINE_RUNS_TSX.read_text(encoding="utf-8")
+    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
+
+    assert 'import { PipelineRuns } from "./tasks/PipelineRuns"' in tasks_src
+    assert "<PipelineRuns" in tasks_src
+    assert '"/api/pipeline/runs?limit=50"' in src
+    assert '`/api/pipeline/runs/${encodeURIComponent(runId)}`' in src
+    assert "toggleExpand" in src
+    assert "expandedRunId" in src
+    assert 'data-testid="pipeline-runs"' in src
+    assert 'data-testid="button-refresh-pipeline-runs"' in src
+    assert 'data-testid="text-no-pipeline-runs"' in src
+
+
+def test_pipeline_runs_renders_expandable_stage_and_child_run_view():
+    src = PIPELINE_RUNS_TSX.read_text(encoding="utf-8")
+
+    assert "aria-expanded={isExpanded}" in src
+    assert 'data-testid={`button-expand-run-${run.run_id}`}' in src
+    assert 'data-testid={`pipeline-run-${run.run_id}`}' in src
+    assert 'data-testid={`pipeline-run-detail-${run.run_id}`}' in src
+    assert 'data-testid={`pipeline-run-error-${run.run_id}`}' in src
+    assert 'data-testid={`pipeline-stages-${run.run_id}`}' in src
+    assert 'data-testid={`pipeline-stage-${stage.stage_name}`}' in src
+    assert 'data-testid={`pipeline-stage-error-${stage.stage_name}`}' in src
+    assert 'data-testid={`pipeline-child-runs-${run.run_id}`}' in src
+    assert 'data-testid={`button-pipeline-log-${run.run_id}`}' in src
+    assert 'data-testid="text-pipeline-detail-error"' in src
+    assert 'data-testid="text-no-pipeline-stages"' in src
+    assert "statusBadge(stage.status)" in src
+    assert "child_runs" in src
+
+
+def test_tasks_page_has_pipeline_runs_tab():
+    src = TASKS_TSX.read_text(encoding="utf-8")
+
+    assert 'data-testid="tab-pipeline-runs"' in src
+    assert 'taskView === "pipeline"' in src
+    assert '<PipelineRuns onViewLog={viewPipelineLog} />' in src
+    assert 'useState<"run" | "scheduled" | "pipeline">' in src
+    assert "viewPipelineLog" in src
+
+
+def test_pipeline_runs_i18n_keys_added_in_both_locales():
+    i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
+
+    for key in (
+        "tasks.pipeline.title",
+        "tasks.pipeline.no_runs",
+        "tasks.pipeline.load_error",
+        "tasks.pipeline.detail_error",
+        "tasks.pipeline.view_log",
+        "tasks.pipeline.stages",
+        "tasks.pipeline.child_runs",
+        "tasks.pipeline.no_stages",
+        "tasks.pipeline.task_id",
+        "tasks.pipeline.source",
+        "tasks.pipeline.retries",
+        "tasks.pipeline.options",
+        "tasks.pipeline.checkpoint",
+        "tasks.pipeline.artifacts",
+        "tasks.pipeline.error",
+        "tasks.pipeline.finished",
+        "tasks.pipeline.partial",
+    ):
+        assert f'"{key}":' in i18n_src, key
+    assert '"tasks.pipeline.title": "Pipeline Runs"' in i18n_src
+    assert '"tasks.pipeline.title": "流水线运行"' in i18n_src
+
+
+def test_status_badge_handles_pipeline_statuses():
+    src = TASK_CARD_TSX.read_text(encoding="utf-8")
+
+    assert 'case "succeeded":' in src
+    assert 'succeeded: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"' in src
+    assert 'pending: "bg-muted text-muted-foreground"' in src
+
+
+def test_pipeline_run_types_defined():
+    src = TASKS_TYPES_TS.read_text(encoding="utf-8")
+
+    assert "export interface PipelineRun {" in src
+    assert "export interface PipelineStage {" in src
+    assert "export interface PipelineChildRun {" in src
+    assert "export interface PipelineRunDetail {" in src
+    assert "options_json" in src
+    assert "checkpoint_json" in src
+    assert "committed_artifacts_json" in src

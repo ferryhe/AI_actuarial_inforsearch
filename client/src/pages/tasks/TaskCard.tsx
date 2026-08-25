@@ -21,6 +21,7 @@ function statusIcon(status: string) {
       return <Loader2 className="w-4 h-4 animate-spin text-blue-500" />;
     case "success":
     case "completed":
+    case "succeeded":
       return <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
     case "error":
     case "failed":
@@ -37,6 +38,8 @@ function statusBadge(status: string) {
     running: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
     success: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
     completed: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    succeeded: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    pending: "bg-muted text-muted-foreground",
     error: "bg-red-500/10 text-red-600 dark:text-red-400",
     failed: "bg-red-500/10 text-red-600 dark:text-red-400",
     stopped: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
