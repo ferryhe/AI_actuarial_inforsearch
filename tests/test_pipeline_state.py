@@ -89,11 +89,30 @@ def test_upsert_pipeline_stage_resets() -> None:
     try:
         storage.create_pipeline_run("run-1")
         storage.upsert_pipeline_stage("run-1", "catalog", stage_order=1, options_json='{"model": "a"}')
-        # Re-upsert the same stage: fields reset to the new values.
+        # Dirty the stage with in-flight progress, then re-upsert: every progress
+        # field must reset to a clean pending state (no stale checkpoint/artifacts/
+        # error/retry/timestamps leaking into the new attempt).
+        storage.update_pipeline_stage(
+            "run-1",
+            "catalog",
+            status="succeeded",
+            checkpoint_json='{"cursor": 5}',
+            committed_artifacts_json='["a", "b"]',
+            error="boom",
+            retry_count=3,
+            started_at="2026-08-25T00:00:00+00:00",
+            finished_at="2026-08-25T00:01:00+00:00",
+        )
         storage.upsert_pipeline_stage("run-1", "catalog", stage_order=1, options_json='{"model": "b"}')
-        stages = storage.get_pipeline_stages("run-1")
-        assert len(stages) == 1
-        assert stages[0]["options_json"] == '{"model": "b"}'
+        stage = storage.get_pipeline_stages("run-1")[0]
+        assert stage["options_json"] == '{"model": "b"}'
+        assert stage["status"] == "pending"
+        assert stage["checkpoint_json"] == "{}"
+        assert stage["retry_count"] == 0
+        assert stage["committed_artifacts_json"] == "[]"
+        assert stage["error"] == ""
+        assert stage["started_at"] is None
+        assert stage["finished_at"] is None
     finally:
         storage.close()
 

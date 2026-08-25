@@ -2062,7 +2062,7 @@ class Storage:
         options_json: str = "{}",
         status: str = "pending",
     ) -> None:
-        """Insert or reset a stage row for a run."""
+        """Insert a stage row, or reset it to a clean pending state on conflict."""
         ts = self.now()
         self._conn.execute(
             """
@@ -2075,6 +2075,12 @@ class Storage:
                 stage_order = excluded.stage_order,
                 options_json = excluded.options_json,
                 status = excluded.status,
+                checkpoint_json = '{}',
+                retry_count = 0,
+                committed_artifacts_json = '[]',
+                error = '',
+                started_at = NULL,
+                finished_at = NULL,
                 updated_at = excluded.updated_at
             """,
             (run_id, stage_name, stage_order, options_json, status, ts),
