@@ -6,7 +6,7 @@ import {
   Globe, Search, BookOpen, FileText, Layers, Link2, X, ArrowLeft,
   AlertCircle, Compass, ExternalLink, ChevronDown, ChevronUp, Plus,
   Pencil, Trash2, ToggleLeft, ToggleRight, Timer, Zap, Save, Download,
-  FolderOpen, FileUp, History,
+  FolderOpen, FileUp, History, Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
@@ -14,6 +14,7 @@ import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
 import { SiteConfigForm } from "./tasks/SiteConfigForm";
 import { ScheduledTasksSection } from "./tasks/ScheduledTasksSection";
+import { PipelineRuns } from "./tasks/PipelineRuns";
 import { WebCrawlForm } from "./tasks/WebCrawlForm";
 import { AdhocUrlForm } from "./tasks/AdhocUrlForm";
 import { FileImportForm } from "./tasks/FileImportForm";
@@ -70,7 +71,7 @@ export default function Tasks() {
   const [sites, setSites] = useState<SiteConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeForm, setActiveForm] = useState<string | null>(null);
-  const [taskView, setTaskView] = useState<"run" | "scheduled">("run");
+  const [taskView, setTaskView] = useState<"run" | "scheduled" | "pipeline">("run");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
@@ -184,6 +185,10 @@ export default function Tasks() {
     void viewTaskLog(logModal.taskId, logModal.taskName, logModal.task);
   };
 
+  const viewPipelineLog = (taskId: string, taskName: string) => {
+    void viewTaskLog(taskId, taskName, undefined);
+  };
+
   const stopTask = async (taskId: string) => {
     if (!canStopTasks) {
       setTaskNotice(t("tasks.run_permission_required"));
@@ -288,6 +293,18 @@ export default function Tasks() {
           <Play className="w-4 h-4" />
           {t("tasks.view.run_tasks")}
         </button>
+        <button
+          type="button"
+          onClick={() => setTaskView("pipeline")}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            taskView === "pipeline" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+          )}
+          data-testid="tab-pipeline-runs"
+        >
+          <Network className="w-4 h-4" />
+          {t("tasks.pipeline.title")}
+        </button>
         {canManageSchedules && <button
           type="button"
           onClick={() => setTaskView("scheduled")}
@@ -304,6 +321,8 @@ export default function Tasks() {
 
       {taskView === "scheduled" && canManageSchedules ? (
         <ScheduledTasksSection />
+      ) : taskView === "pipeline" ? (
+        <PipelineRuns onViewLog={viewPipelineLog} />
       ) : (
         <>
       {taskNotice && (

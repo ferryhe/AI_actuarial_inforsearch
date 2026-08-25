@@ -67,6 +67,52 @@ export interface LogModal {
   task?: HistoryTask;
 }
 
+export interface PipelineRun {
+  run_id: string;
+  correlation_id: string;
+  source_type: string;
+  status: string;
+  watermark: string | null;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PipelineStage {
+  run_id: string;
+  stage_name: string;
+  stage_order: number;
+  options_json: string | null;
+  status: string;
+  checkpoint_json: string | null;
+  retry_count: number;
+  committed_artifacts_json: string | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface PipelineChildRun {
+  child_run_id: string;
+  parent_run_id: string;
+  correlation_id: string;
+  status: string;
+  partial: number;
+  error: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PipelineRunDetail {
+  run: PipelineRun;
+  stages: PipelineStage[];
+  child_runs: PipelineChildRun[];
+}
+
 export interface TaskTableProps {
   historyTasks: HistoryTask[];
   onViewLog: (id: string | undefined, name: string | undefined, task?: HistoryTask) => void;
