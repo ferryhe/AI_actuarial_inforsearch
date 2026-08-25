@@ -44,6 +44,7 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
         seen_task_id["task_id"] = kwargs.get("task_id", "")
         seen_task_id["child_run_id"] = data.get("child_run_id", "")
         seen_task_id["parent_run_id"] = data.get("parent_run_id", "")
+        seen_task_id["db_path"] = data.get("_db_path", "")
         return kwargs.get("task_id") or "generated"
 
     monkeypatch.setattr(runtime, "start_background_task", fake_start_background_task)
@@ -65,6 +66,7 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
     assert seen_task_id["parent_run_id"] == "run-1"
     assert seen_task_id["child_run_id"] == seen_task_id["task_id"]
     assert seen_task_id["child_run_id"]
+    assert seen_task_id["db_path"]  # stable per-task db reference carried into child data
 
     storage = Storage(db)
     try:
@@ -154,6 +156,31 @@ def test_finalize_child_run_exception_marks_hard_fail(monkeypatch, tmp_path) -> 
         assert child["status"] == "failed"
         assert child["partial"] == 0
         assert child["error"] == "boom"
+    finally:
+        storage.close()
+
+
+def test_finalize_child_run_uses_carried_db_path_not_config(monkeypatch, tmp_path) -> None:
+    db_real = str(tmp_path / "real.db")
+    db_wrong = str(tmp_path / "wrong.db")
+    runtime = _make_runtime(monkeypatch, db_real)
+    storage = Storage(db_real)
+    storage.create_pipeline_run("run-1")
+    storage.create_child_run("child-1", "run-1")
+    storage.close()
+
+    # Config points to a different DB; the carried _db_path must win so the
+    # child_run row in the real DB is updated, not one in the wrong DB.
+    monkeypatch.setattr(runtime, "_load_site_config", lambda: {"paths": {"db": db_wrong}})
+    runtime._finalize_child_run(
+        {"child_run_id": "child-1", "parent_run_id": "run-1", "_db_path": db_real},
+        result=_result(success=True),
+    )
+
+    storage = Storage(db_real)
+    try:
+        child = storage.get_child_runs("run-1")[0]
+        assert child["status"] == "succeeded"
     finally:
         storage.close()
 

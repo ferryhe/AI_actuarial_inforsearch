@@ -37,9 +37,9 @@ logger = logging.getLogger(__name__)
 _CAPACITY_GATED_TYPES = frozenset({"full_pipeline", "recategory", "rag_indexing", "kb_index_build"})
 
 # Bounded wait for search-fallback child runs to reach a terminal state before
-# the parent pipeline run finalizes (#213). All child runs are treated as
-# required; a hard failure surfaces in the parent result, a partial/timed-out
-# child is recorded in metadata without failing the parent.
+# the parent pipeline run finalizes (#213). All child runs are required: a hard
+# failure or a still-pending (timed-out) child fails the parent, while a partial
+# (completed-but-unsuccessful) child is recorded in metadata without failing it.
 _CHILD_RUN_WAIT_TIMEOUT_SECONDS = 60.0
 _CHILD_RUN_POLL_INTERVAL_SECONDS = 0.2
 
@@ -933,12 +933,17 @@ class NativeTaskRuntime:
                 }
                 for c in child_summary["children"]
             ]
-            # Hard child failures fail the parent; partial and timed-out
-            # (still-pending) children are best-effort and recorded in metadata only.
+            # Hard child failures and timed-out (still-pending) required children
+            # fail the parent; partial (completed-but-unsuccessful) children are
+            # best-effort and recorded in metadata only.
             for c in child_failed:
                 errors.append(
                     f"search_fallback child {c.get('child_run_id')} failed: "
                     f"{c.get('error') or 'unknown error'}"
+                )
+            for c in child_pending:
+                errors.append(
+                    f"search_fallback child {c.get('child_run_id')} did not finish in time"
                 )
 
             if errors or stopped or failed:
@@ -1203,6 +1208,7 @@ class NativeTaskRuntime:
                         child_task_id = self._new_task_id()
                         task_data["child_run_id"] = child_task_id
                         task_data["parent_run_id"] = parent_run_id
+                        task_data["_db_path"] = self._resolve_db_path(config)
                         child_db.create_child_run(
                             child_task_id,
                             parent_run_id,
@@ -2182,8 +2188,10 @@ class NativeTaskRuntime:
         parent_run_id = str(data.get("parent_run_id") or "").strip()
         if not child_run_id or not parent_run_id:
             return
-        config = self._load_site_config()
-        storage = Storage(self._resolve_db_path(config))
+        db_path = str(data.get("_db_path") or "").strip()
+        if not db_path:
+            db_path = self._resolve_db_path(self._load_site_config())
+        storage = Storage(db_path)
         try:
             if error is not None:
                 storage.update_child_run(child_run_id, status="failed", error=error)
