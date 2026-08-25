@@ -126,7 +126,7 @@ export function PipelineRuns({ onViewLog }: PipelineRunsProps) {
     }
     setExpandedRunId(runId);
     setDetailErrors((prev) => ({ ...prev, [runId]: "" }));
-    if (details[runId]) return;
+    if (details[runId] || detailLoading[runId]) return;
     setDetailLoading((prev) => ({ ...prev, [runId]: true }));
     try {
       const detail = await apiGet<PipelineRunDetail>(`/api/pipeline/runs/${encodeURIComponent(runId)}`);
