@@ -2196,6 +2196,7 @@ class Storage:
         stage_order: int,
         options_json: str = "{}",
         status: str = "pending",
+        started_at: str | None = None,
     ) -> None:
         """Insert a stage row, or reset it to a clean pending state on conflict."""
         ts = self.now()
@@ -2203,9 +2204,10 @@ class Storage:
             """
             INSERT INTO pipeline_stage (
                 run_id, stage_name, stage_order, options_json, status,
-                checkpoint_json, retry_count, committed_artifacts_json, error, updated_at
+                checkpoint_json, retry_count, committed_artifacts_json, error,
+                started_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, '{}', 0, '[]', '', ?)
+            VALUES (?, ?, ?, ?, ?, '{}', 0, '[]', '', ?, ?)
             ON CONFLICT(run_id, stage_name) DO UPDATE SET
                 stage_order = excluded.stage_order,
                 options_json = excluded.options_json,
@@ -2214,11 +2216,11 @@ class Storage:
                 retry_count = 0,
                 committed_artifacts_json = '[]',
                 error = '',
-                started_at = NULL,
+                started_at = excluded.started_at,
                 finished_at = NULL,
                 updated_at = excluded.updated_at
             """,
-            (run_id, stage_name, stage_order, options_json, status, ts),
+            (run_id, stage_name, stage_order, options_json, status, started_at, ts),
         )
         self._maybe_commit()
 

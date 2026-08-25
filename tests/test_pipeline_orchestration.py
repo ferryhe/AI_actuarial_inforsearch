@@ -76,6 +76,8 @@ def test_full_pipeline_records_run_and_effective_options(monkeypatch, tmp_path) 
         assert set(stages) == {"acquisition", "markdown_conversion", "catalog", "chunk_generation"}
         for name in ("acquisition", "markdown_conversion", "catalog", "chunk_generation"):
             assert stages[name]["status"] == "succeeded"
+            assert stages[name]["started_at"] is not None
+            assert stages[name]["finished_at"] is not None
 
         # Effective options: catalog override merged onto module defaults, recorded.
         catalog_options = json.loads(stages["catalog"]["options_json"])
@@ -227,6 +229,16 @@ def test_full_pipeline_immutable_config_change_fails_closed_on_resume(monkeypatc
         runtime._run_full_pipeline(
             "task-1", {"chunk_size": 400, "kb_id": "kb-1", "run_rag_indexing": True}, db
         )
+
+    # The run must be persisted as 'failed' (not left stuck in 'running').
+    storage = Storage(db)
+    try:
+        run = storage.get_pipeline_run(first.metadata["run_id"])
+        assert run is not None
+        assert run["status"] == "failed"
+        assert "immutable stage chunk_generation" in (run["error"] or "")
+    finally:
+        storage.close()
 
 
 def test_full_pipeline_resume_same_effective_chunk_config_does_not_fail_closed(monkeypatch, tmp_path) -> None:

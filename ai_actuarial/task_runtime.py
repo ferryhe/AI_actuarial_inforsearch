@@ -781,10 +781,14 @@ class NativeTaskRuntime:
                     if stage_name in IMMUTABLE_STAGES:
                         recorded = str(prior_stages[stage_name].get("options_json") or "{}")
                         if self._canonical_json(recorded) != self._canonical_json(effective):
-                            raise RuntimeError(
+                            message = (
                                 f"immutable stage {stage_name}: effective config changed since the "
                                 "committed run; start a new pipeline run (fresh correlation_id) instead of resuming"
                             )
+                            storage.update_pipeline_run(
+                                run_id, status="failed", error=message, finished_at=storage.now()
+                            )
+                            raise RuntimeError(message)
                     if stage_name == "acquisition":
                         # Re-inject the already-discovered file URLs so downstream
                         # stages still see them on resume even though acquisition
@@ -813,7 +817,8 @@ class NativeTaskRuntime:
                     )
 
                 storage.upsert_pipeline_stage(
-                    run_id, stage_name, stage_order=order, options_json=effective_json, status="running"
+                    run_id, stage_name, stage_order=order, options_json=effective_json,
+                    status="running", started_at=storage.now(),
                 )
                 try:
                     result = self._run_collection(task_id, collection_type, payload)
