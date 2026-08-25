@@ -20,6 +20,18 @@ def _result(stage: str, *, success: bool = True, errors: list[str] | None = None
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_full_pipeline_db(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route the default pipeline DB to a per-test temp file so persisted
+    run/stage state never leaks between tests."""
+    db = str(tmp_path / "pipeline.db")
+
+    def _config(self) -> dict[str, Any]:
+        return {"paths": {"db": db, "download_dir": str(tmp_path / "files")}}
+
+    monkeypatch.setattr(NativeTaskRuntime, "_load_site_config", _config)
+
+
 def test_full_pipeline_chains_source_markdown_catalog_chunk_and_rag(monkeypatch) -> None:
     runtime = NativeTaskRuntime()
     calls: list[tuple[str, dict[str, Any]]] = []
@@ -73,7 +85,7 @@ def test_full_pipeline_chains_source_markdown_catalog_chunk_and_rag(monkeypatch)
     ]
 
 
-def test_full_pipeline_uses_recently_collected_file_urls_for_downstream_stages(monkeypatch) -> None:
+def test_full_pipeline_uses_recently_collected_file_urls_for_downstream_stages(monkeypatch, tmp_path) -> None:
     runtime = NativeTaskRuntime()
     calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -94,7 +106,7 @@ def test_full_pipeline_uses_recently_collected_file_urls_for_downstream_stages(m
     result = runtime._run_full_pipeline(
         "task-full",
         {"source_collection_type": "quick_check", "url": "https://example.com/page"},
-        "data/test.db",
+        str(tmp_path / "test.db"),
     )
 
     assert result.success is True

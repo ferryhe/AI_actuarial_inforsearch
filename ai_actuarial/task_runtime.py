@@ -29,7 +29,7 @@ from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.search import search_all
 from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_config_path, load_yaml, parse_int_clamped, task_log_path
-from ai_actuarial.pipeline_config import normalize_stage_options
+from ai_actuarial.pipeline_config import IMMUTABLE_STAGES, normalize_stage_options, resolve_effective_options
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -683,7 +683,20 @@ class NativeTaskRuntime:
         )
 
     def _run_full_pipeline(self, task_id: str, data: dict[str, Any], db_path: str | None = None) -> CollectionResult:
-        """Run collection -> markdown -> catalog -> chunks -> optional RAG indexing."""
+        """Run collection -> markdown -> catalog -> chunks -> optional RAG indexing.
+
+        The run is recorded as a resumable persisted pipeline run (#179
+        orchestration): each stage's effective options, status, checkpoint and
+        committed artifacts are written to ``pipeline_run``/``pipeline_stage``,
+        a run-level watermark only advances on success, and a lease fences
+        concurrent execution of the same run.
+        """
+        config = self._load_site_config()
+        if not db_path:
+            db_path = str((config.get("paths") or {}).get("db") or "data/index.db")
+            if not os.path.isabs(db_path):
+                db_path = os.path.abspath(db_path)
+
         source_type = str(
             data.get("source_collection_type")
             or data.get("source_type")
@@ -693,9 +706,9 @@ class NativeTaskRuntime:
         if source_type == "full_pipeline":
             source_type = "scheduled"
 
-        # Fail-fast validation only: the normalized result is consumed by the
-        # orchestration layer (PR 4), not by the current pipeline run.
-        normalize_stage_options(data.get("stage_options"))
+        # Fail-fast on a malformed stage_options, and keep the normalized result
+        # for per-stage effective-option recording.
+        stage_options = normalize_stage_options(data.get("stage_options"))
 
         stage_specs: list[tuple[str, str, dict[str, Any]]] = [
             ("acquisition", source_type, self._stage_payload(data, source_type)),
@@ -711,6 +724,8 @@ class NativeTaskRuntime:
             rag_payload["kb_id"] = kb_id
             stage_specs.append(("rag_indexing", "rag_indexing", rag_payload))
 
+        correlation_id = str(data.get("correlation_id") or task_id).strip() or task_id
+
         stage_results: list[dict[str, Any]] = []
         errors: list[str] = []
         items_found = 0
@@ -719,70 +734,162 @@ class NativeTaskRuntime:
         stopped = False
         failed = False
         source_stage_started_at: str | None = None
-        append_task_log(task_id, "INFO", f"Full pipeline source stage: {source_type}")
+        resumed = False
+        run_id: str | None = None
+        lease_owner = f"{os.getpid()}:{secrets.token_hex(6)}"
 
-        for stage_name, collection_type, payload in stage_specs:
-            if self._stop_requested(task_id):
-                stopped = True
-                errors.append("Task stopped by user")
-                break
-            if collection_type == "rag_indexing" and not str(payload.get("kb_id") or "").strip():
-                errors.append("rag_indexing: kb_id is required for RAG indexing")
-                break
+        storage = Storage(db_path)
+        try:
+            # find-or-create + claim + start must be atomic: two workers cold-starting
+            # the same correlation must serialize on the write lock, so only one run
+            # is ever created and claimed for that correlation.
+            with storage.transaction(immediate=True):
+                existing_run = storage.get_pipeline_run_by_correlation(correlation_id)
+                if existing_run is not None:
+                    run_id = str(existing_run["run_id"])
+                    resumed = True
+                    watermark = self._parse_json_string_list(str(existing_run.get("watermark") or ""))
+                else:
+                    run_id = secrets.token_hex(16)
+                    storage.create_pipeline_run(run_id, correlation_id=correlation_id, source_type=source_type)
+                    watermark: list[str] = []
 
-            self._update_task(task_id, current_activity=f"Full pipeline: {stage_name}")
-            append_task_log(task_id, "INFO", f"Full pipeline stage started: {stage_name} ({collection_type})")
-            if stage_name == "acquisition" and db_path:
-                source_stage_started_at = self._full_pipeline_storage_now(db_path)
-            try:
-                result = self._run_collection(task_id, collection_type, payload)
-            except Exception as exc:  # noqa: BLE001
-                message = f"{stage_name}: {exc}"
-                errors.append(message)
-                stage_results.append({"stage": stage_name, "type": collection_type, "success": False, "errors": [str(exc)]})
-                append_task_log(task_id, "ERROR", f"Full pipeline stage failed: {message}")
-                break
+                if not storage.claim_pipeline_run(run_id, lease_owner=lease_owner):
+                    raise RuntimeError(
+                        f"pipeline run {run_id} (correlation={correlation_id}) is already leased by another worker"
+                    )
+                storage.start_pipeline_run(run_id)
 
-            stage_errors = [str(error) for error in list(result.errors or [])]
-            stage_stopped = bool((result.metadata or {}).get("stopped")) or any(
-                "stopped" in error.lower() for error in stage_errors
-            )
-            stage_results.append(
-                {
-                    "stage": stage_name,
-                    "type": collection_type,
-                    "success": bool(result.success),
-                    "items_found": int(result.items_found or 0),
-                    "items_downloaded": int(result.items_downloaded or 0),
-                    "items_skipped": int(result.items_skipped or 0),
-                    "errors": stage_errors,
-                    "metadata": dict(result.metadata or {}),
-                    "stopped": stage_stopped,
-                }
-            )
-            items_found += int(result.items_found or 0)
-            items_downloaded += int(result.items_downloaded or 0)
-            items_skipped += int(result.items_skipped or 0)
-            errors.extend(f"{stage_name}: {error}" for error in stage_errors)
-            append_task_log(task_id, "INFO", f"Full pipeline stage finished: {stage_name} (success={result.success})")
+            prior_stages = {s["stage_name"]: s for s in storage.get_pipeline_stages(run_id)}
+            succeeded_stages = {name for name, s in prior_stages.items() if s["status"] == "succeeded"}
+            append_task_log(task_id, "INFO", f"Full pipeline source stage: {source_type}"
+                           + (" (resumed run {})".format(run_id) if resumed else ""))
 
-            if stage_name == "acquisition" and db_path and source_stage_started_at:
-                collected_file_urls = self._full_pipeline_recent_file_urls(db_path, source_stage_started_at, data)
-                if collected_file_urls:
-                    for _, downstream_type, downstream_payload in stage_specs[1:]:
-                        if downstream_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
-                            downstream_payload["file_urls"] = collected_file_urls
-
-            if stage_stopped or self._stop_requested(task_id):
-                stopped = True
-                if not errors:
+            for order, (stage_name, collection_type, payload) in enumerate(stage_specs, start=1):
+                if self._stop_requested(task_id):
+                    stopped = True
                     errors.append("Task stopped by user")
-                break
-            if not result.success:
-                failed = True
-                if not stage_errors:
-                    errors.append(f"{stage_name}: stage returned unsuccessful result")
-                break
+                    break
+                if collection_type == "rag_indexing" and not str(payload.get("kb_id") or "").strip():
+                    errors.append("rag_indexing: kb_id is required for RAG indexing")
+                    break
+
+                effective = self._stage_effective_options(stage_name, stage_options, config, data, source_type)
+                effective_json = json.dumps(effective, sort_keys=True, default=str)
+
+                if stage_name in succeeded_stages:
+                    if stage_name in IMMUTABLE_STAGES:
+                        recorded = str(prior_stages[stage_name].get("options_json") or "{}")
+                        if self._canonical_json(recorded) != self._canonical_json(effective):
+                            raise RuntimeError(
+                                f"immutable stage {stage_name}: effective config changed since the "
+                                "committed run; start a new pipeline run (fresh correlation_id) instead of resuming"
+                            )
+                    if stage_name == "acquisition":
+                        # Re-inject the already-discovered file URLs so downstream
+                        # stages still see them on resume even though acquisition
+                        # itself is skipped.
+                        prior_urls = self._parse_json_string_list(
+                            str(prior_stages["acquisition"].get("committed_artifacts_json") or "[]")
+                        )
+                        if prior_urls:
+                            for _, downstream_type, downstream_payload in stage_specs[1:]:
+                                if downstream_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
+                                    downstream_payload["file_urls"] = list(prior_urls)
+                    stage_results.append(
+                        {"stage": stage_name, "type": collection_type, "success": True, "resumed": True, "errors": []}
+                    )
+                    append_task_log(task_id, "INFO", f"Full pipeline stage resumed (already committed): {stage_name}")
+                    continue
+
+                self._update_task(task_id, current_activity=f"Full pipeline: {stage_name}")
+                append_task_log(task_id, "INFO", f"Full pipeline stage started: {stage_name} ({collection_type})")
+                if stage_name == "acquisition" and db_path:
+                    source_stage_started_at = self._full_pipeline_storage_now(db_path)
+
+                if not storage.renew_pipeline_lease(run_id, lease_owner=lease_owner):
+                    raise RuntimeError(
+                        f"pipeline run {run_id} lost its lease to another worker; aborting stage {stage_name}"
+                    )
+
+                storage.upsert_pipeline_stage(
+                    run_id, stage_name, stage_order=order, options_json=effective_json, status="running"
+                )
+                try:
+                    result = self._run_collection(task_id, collection_type, payload)
+                except Exception as exc:  # noqa: BLE001
+                    storage.update_pipeline_stage(run_id, stage_name, status="failed", error=str(exc))
+                    message = f"{stage_name}: {exc}"
+                    errors.append(message)
+                    stage_results.append({"stage": stage_name, "type": collection_type, "success": False, "errors": [str(exc)]})
+                    append_task_log(task_id, "ERROR", f"Full pipeline stage failed: {message}")
+                    break
+
+                stage_errors = [str(error) for error in list(result.errors or [])]
+                stage_stopped = bool((result.metadata or {}).get("stopped")) or any(
+                    "stopped" in error.lower() for error in stage_errors
+                )
+                collected_file_urls: list[str] = []
+                if stage_name == "acquisition" and db_path and source_stage_started_at:
+                    collected_file_urls = self._full_pipeline_recent_file_urls(db_path, source_stage_started_at, data)
+                    if collected_file_urls:
+                        for _, downstream_type, downstream_payload in stage_specs[1:]:
+                            if downstream_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
+                                downstream_payload["file_urls"] = list(collected_file_urls)
+                committed_artifacts = collected_file_urls if stage_name == "acquisition" else self._stage_committed_artifacts(payload, result)
+                checkpoint = {"stage": stage_name, "committed": bool(result.success),
+                              "items_found": int(result.items_found or 0)}
+                storage.update_pipeline_stage(
+                    run_id,
+                    stage_name,
+                    status="succeeded" if result.success else "failed",
+                    checkpoint_json=json.dumps(checkpoint, sort_keys=True, default=str),
+                    committed_artifacts_json=json.dumps(committed_artifacts, sort_keys=True, default=str),
+                    error="; ".join(stage_errors) if stage_errors else "",
+                    finished_at=storage.now(),
+                )
+                stage_results.append(
+                    {
+                        "stage": stage_name,
+                        "type": collection_type,
+                        "success": bool(result.success),
+                        "items_found": int(result.items_found or 0),
+                        "items_downloaded": int(result.items_downloaded or 0),
+                        "items_skipped": int(result.items_skipped or 0),
+                        "errors": stage_errors,
+                        "metadata": dict(result.metadata or {}),
+                        "stopped": stage_stopped,
+                    }
+                )
+                items_found += int(result.items_found or 0)
+                items_downloaded += int(result.items_downloaded or 0)
+                items_skipped += int(result.items_skipped or 0)
+                errors.extend(f"{stage_name}: {error}" for error in stage_errors)
+                append_task_log(task_id, "INFO", f"Full pipeline stage finished: {stage_name} (success={result.success})")
+
+                if result.success and stage_name not in watermark:
+                    watermark.append(stage_name)
+                    storage.update_pipeline_run(run_id, watermark=json.dumps(watermark, sort_keys=True))
+
+                if stage_stopped or self._stop_requested(task_id):
+                    stopped = True
+                    if not errors:
+                        errors.append("Task stopped by user")
+                    break
+                if not result.success:
+                    failed = True
+                    if not stage_errors:
+                        errors.append(f"{stage_name}: stage returned unsuccessful result")
+                    break
+
+            if errors or stopped or failed:
+                storage.update_pipeline_run(run_id, status="failed", error="; ".join(errors[:5]), finished_at=storage.now())
+            else:
+                storage.update_pipeline_run(run_id, status="succeeded", finished_at=storage.now())
+        finally:
+            if run_id is not None:
+                storage.release_pipeline_lease(run_id, lease_owner=lease_owner)
+            storage.close()
 
         return CollectionResult(
             success=not errors and not stopped and not failed,
@@ -799,8 +906,80 @@ class NativeTaskRuntime:
                 "stopped": stopped,
                 "kb_id": kb_id or None,
                 "run_rag_indexing": run_rag_indexing,
+                "run_id": run_id,
+                "resumed": resumed,
             },
         )
+
+    def _stage_module_defaults(
+        self, stage: str, config: dict[str, Any], data: dict[str, Any], source_type: str
+    ) -> dict[str, Any]:
+        """Best-effort module defaults for a stage, sourced from the same config each stage reads."""
+        ai_config = config.get("ai_config") or {}
+        if stage == "acquisition":
+            return {"source_type": source_type}
+        if stage == "markdown_conversion":
+            try:
+                md = load_markdown_conversion_config()
+                return dict(md) if isinstance(md, dict) else {}
+            except Exception:  # noqa: BLE001 - best-effort defaults only
+                return {}
+        if stage == "catalog":
+            c = ai_config.get("catalog")
+            return dict(c) if isinstance(c, dict) else {}
+        if stage == "kb_reconciliation":
+            return {"kb_mode": str(data.get("kb_mode") or "").strip()}
+        if stage == "chunk_generation":
+            # Mirror _run_chunk_generation's defaults exactly so the recorded
+            # effective options match what the stage actually uses (avoids a
+            # false immutable fail-closed on resume).
+            chunk_size = self._positive_int(data.get("chunk_size"), 800)
+            chunk_overlap = self._positive_int(data.get("chunk_overlap"), 100, min_value=0)
+            if chunk_overlap >= chunk_size:
+                chunk_overlap = max(0, chunk_size - 1)
+            return {
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "splitter": str(data.get("splitter") or "semantic").strip(),
+                "tokenizer": str(data.get("tokenizer") or "cl100k_base").strip(),
+            }
+        if stage == "rag_indexing":
+            e = ai_config.get("embeddings")
+            defaults = dict(e) if isinstance(e, dict) else {}
+            defaults.setdefault("kb_id", str(data.get("kb_id") or "").strip())
+            return defaults
+        return {}
+
+    def _stage_effective_options(
+        self, stage: str, stage_options: dict[str, dict[str, Any]], config: dict[str, Any],
+        data: dict[str, Any], source_type: str,
+    ) -> dict[str, Any]:
+        return resolve_effective_options(stage, stage_options, self._stage_module_defaults(stage, config, data, source_type))
+
+    @staticmethod
+    def _stage_committed_artifacts(payload: dict[str, Any], result: CollectionResult) -> list[str]:
+        """Best-effort list of artifact identifiers a stage committed (its file URLs)."""
+        urls = list(payload.get("file_urls") or [])
+        if not urls:
+            urls = list((result.metadata or {}).get("file_urls") or [])
+        return [str(u) for u in urls if u][:1000]
+
+    @staticmethod
+    def _canonical_json(value: object) -> str:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (ValueError, TypeError):
+                pass
+        return json.dumps(value, sort_keys=True, default=str)
+
+    @staticmethod
+    def _parse_json_string_list(raw: str) -> list[str]:
+        try:
+            val = json.loads(raw or "[]")
+            return [str(x) for x in val] if isinstance(val, list) else []
+        except (ValueError, TypeError):
+            return []
 
     def _stage_payload(self, data: dict[str, Any], collection_type: str) -> dict[str, Any]:
         payload = dict(data)
