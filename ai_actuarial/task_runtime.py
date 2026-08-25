@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 _CAPACITY_GATED_TYPES = frozenset({"full_pipeline", "recategory", "rag_indexing", "kb_index_build"})
 
+# Bounded wait for search-fallback child runs to reach a terminal state before
+# the parent pipeline run finalizes (#213). All child runs are required: a hard
+# failure or a still-pending (timed-out) child fails the parent, while a partial
+# (completed-but-unsuccessful) child is recorded in metadata without failing it.
+_CHILD_RUN_WAIT_TIMEOUT_SECONDS = 60.0
+_CHILD_RUN_POLL_INTERVAL_SECONDS = 0.2
+
 _QUERY_SITE_FILTER_RE = re.compile(r"(?:^|\s)site:([^\s)]+)", re.IGNORECASE)
 
 _CONVERTIBLE_MARKDOWN_PREDICATE = """
@@ -236,6 +243,17 @@ class NativeTaskRuntime:
             return dict(self._site_config_override)
         return load_yaml(get_sites_config_path(), default={})
 
+    @staticmethod
+    def _new_task_id() -> str:
+        return f"task_{int(time.time() * 1000)}_{secrets.token_hex(8)}"
+
+    @staticmethod
+    def _resolve_db_path(config: dict[str, Any]) -> str:
+        db_path = str((config.get("paths") or {}).get("db") or "data/index.db")
+        if not os.path.isabs(db_path):
+            db_path = os.path.abspath(db_path)
+        return db_path
+
     def start_background_task(
         self,
         collection_type: str,
@@ -243,8 +261,9 @@ class NativeTaskRuntime:
         *,
         task_name: str | None = None,
         extra_fields: dict[str, Any] | None = None,
+        task_id: str | None = None,
     ) -> str:
-        task_id = f"task_{int(time.time() * 1000)}_{secrets.token_hex(2)}"
+        task_id = task_id or self._new_task_id()
         name = task_name or str(data.get("name") or f"{collection_type.capitalize()} Collection")
         task_data: dict[str, Any] = {
             "id": task_id,
@@ -407,9 +426,11 @@ class NativeTaskRuntime:
         try:
             result = self._run_collection(task_id, collection_type, data)
             self._finalize_task_success(task_id, collection_type, result)
+            self._finalize_child_run(data, result=result)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Task %s failed", task_id)
             self._finalize_task_error(task_id, str(exc))
+            self._finalize_child_run(data, error=str(exc))
 
     def _run_collection(self, task_id: str, collection_type: str, data: dict[str, Any]) -> CollectionResult:
         config = self._load_site_config()
@@ -737,6 +758,7 @@ class NativeTaskRuntime:
         resumed = False
         run_id: str | None = None
         lease_owner = f"{os.getpid()}:{secrets.token_hex(6)}"
+        children_enqueued_this_run = False
 
         storage = Storage(db_path)
         try:
@@ -821,6 +843,8 @@ class NativeTaskRuntime:
                     status="running", started_at=storage.now(),
                 )
                 try:
+                    if stage_name == "acquisition" and run_id:
+                        payload["_pipeline_run_id"] = run_id
                     result = self._run_collection(task_id, collection_type, payload)
                 except Exception as exc:  # noqa: BLE001
                     storage.update_pipeline_stage(run_id, stage_name, status="failed", error=str(exc))
@@ -831,6 +855,8 @@ class NativeTaskRuntime:
                     break
 
                 stage_errors = [str(error) for error in list(result.errors or [])]
+                if stage_name == "acquisition" and int((result.metadata or {}).get("search_fallback_enqueued") or 0) > 0:
+                    children_enqueued_this_run = True
                 stage_stopped = bool((result.metadata or {}).get("stopped")) or any(
                     "stopped" in error.lower() for error in stage_errors
                 )
@@ -887,6 +913,39 @@ class NativeTaskRuntime:
                         errors.append(f"{stage_name}: stage returned unsuccessful result")
                     break
 
+            # Parent-waits-for-children (#213): only when this run actually
+            # enqueued search-fallback children. On resume acquisition is
+            # skipped, so historical terminal child rows must not be re-summarized
+            # (that would re-inject old failures and make the run unrecoverable).
+            if children_enqueued_this_run:
+                child_summary = self._wait_and_summarize_child_runs(storage, run_id, task_id)
+            else:
+                child_summary = {"children": [], "failed": [], "partial": [], "pending": []}
+            child_failed = child_summary["failed"]
+            child_partial = child_summary["partial"]
+            child_pending = child_summary["pending"]
+            child_metadata = [
+                {
+                    "child_run_id": c.get("child_run_id"),
+                    "status": c.get("status"),
+                    "partial": int(c.get("partial") or 0),
+                    "error": c.get("error") or "",
+                }
+                for c in child_summary["children"]
+            ]
+            # Hard child failures and timed-out (still-pending) required children
+            # fail the parent; partial (completed-but-unsuccessful) children are
+            # best-effort and recorded in metadata only.
+            for c in child_failed:
+                errors.append(
+                    f"search_fallback child {c.get('child_run_id')} failed: "
+                    f"{c.get('error') or 'unknown error'}"
+                )
+            for c in child_pending:
+                errors.append(
+                    f"search_fallback child {c.get('child_run_id')} did not finish in time"
+                )
+
             if errors or stopped or failed:
                 storage.update_pipeline_run(run_id, status="failed", error="; ".join(errors[:5]), finished_at=storage.now())
             else:
@@ -913,6 +972,10 @@ class NativeTaskRuntime:
                 "run_rag_indexing": run_rag_indexing,
                 "run_id": run_id,
                 "resumed": resumed,
+                "search_fallback_children": child_metadata,
+                "search_fallback_failed": len(child_failed),
+                "search_fallback_partial": len(child_partial),
+                "search_fallback_pending": len(child_pending),
             },
         )
 
@@ -1114,43 +1177,66 @@ class NativeTaskRuntime:
         enqueued = 0
         child_task_ids: list[str] = []
 
-        for site_config in site_configs:
-            tools = {
-                str(tool).strip().lower()
-                for tool in (site_config.acquisition_tools or [])
-                if str(tool).strip()
-            }
-            if tools and "search" not in tools:
-                continue
-            queries = [str(query).strip() for query in (site_config.queries or []) if str(query).strip()]
-            if not queries:
-                continue
-            fallback_reason = self._site_search_fallback_reason(site_config, site_outcomes)
-            if not fallback_reason:
-                continue
+        # Only track children under a parent pipeline run (#213). For standalone
+        # scheduled/adhoc tasks there is no parent run to link or wait on.
+        parent_run_id = str(data.get("_pipeline_run_id") or "").strip()
+        child_db: Storage | None = None
+        try:
+            for site_config in site_configs:
+                tools = {
+                    str(tool).strip().lower()
+                    for tool in (site_config.acquisition_tools or [])
+                    if str(tool).strip()
+                }
+                if tools and "search" not in tools:
+                    continue
+                queries = [str(query).strip() for query in (site_config.queries or []) if str(query).strip()]
+                if not queries:
+                    continue
+                fallback_reason = self._site_search_fallback_reason(site_config, site_outcomes)
+                if not fallback_reason:
+                    continue
 
-            total_queries = len(queries)
-            for query_index, query in enumerate(queries, start=1):
-                task_data = self._site_query_search_task_data(site_config, query, config, data)
-                query_label = query if len(query) <= 80 else f"{query[:77]}..."
-                child_task_id = self.start_background_task(
-                    "search",
-                    task_data,
-                    task_name=f"Search fallback: {site_config.name} ({query_index}/{total_queries}): {query_label}",
-                    extra_fields={
-                        "parent_task_id": task_id,
-                        "trigger": "crawler_fallback",
-                        "fallback_reason": fallback_reason,
-                    },
-                )
-                enqueued += 1
-                child_task_ids.append(child_task_id)
-                message = (
-                    f"{site_config.name}: enqueued search fallback task {child_task_id} "
-                    f"(reason={fallback_reason}, query={query})"
-                )
-                logger.info(message)
-                append_task_log(task_id, "INFO", message)
+                total_queries = len(queries)
+                for query_index, query in enumerate(queries, start=1):
+                    task_data = self._site_query_search_task_data(site_config, query, config, data)
+                    query_label = query if len(query) <= 80 else f"{query[:77]}..."
+                    task_id_kwargs: dict[str, Any] = {}
+                    if parent_run_id:
+                        if child_db is None:
+                            child_db = Storage(self._resolve_db_path(config))
+                        child_task_id = self._new_task_id()
+                        task_data["child_run_id"] = child_task_id
+                        task_data["parent_run_id"] = parent_run_id
+                        task_data["_db_path"] = self._resolve_db_path(config)
+                        child_db.create_child_run(
+                            child_task_id,
+                            parent_run_id,
+                            correlation_id=str(data.get("correlation_id") or ""),
+                        )
+                        task_id_kwargs["task_id"] = child_task_id
+                    child_task_id = self.start_background_task(
+                        "search",
+                        task_data,
+                        task_name=f"Search fallback: {site_config.name} ({query_index}/{total_queries}): {query_label}",
+                        extra_fields={
+                            "parent_task_id": task_id,
+                            "trigger": "crawler_fallback",
+                            "fallback_reason": fallback_reason,
+                        },
+                        **task_id_kwargs,
+                    )
+                    enqueued += 1
+                    child_task_ids.append(child_task_id)
+                    message = (
+                        f"{site_config.name}: enqueued search fallback task {child_task_id} "
+                        f"(reason={fallback_reason}, query={query})"
+                    )
+                    logger.info(message)
+                    append_task_log(task_id, "INFO", message)
+        finally:
+            if child_db is not None:
+                child_db.close()
 
         result.metadata["search_fallback_enqueued"] = enqueued
         result.metadata["search_fallback_task_ids"] = child_task_ids
@@ -2083,6 +2169,72 @@ class NativeTaskRuntime:
         append_task_log(task_id, "ERROR", f"Task failed: {error}")
         self.task_history.append(task_data)
         self._append_history_to_disk(task_data)
+
+    def _finalize_child_run(
+        self,
+        data: dict[str, Any],
+        *,
+        result: CollectionResult | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Persist a search-fallback child task's terminal state to ``child_run``.
+
+        Only runs for children enqueued under a pipeline run (``parent_run_id``
+        present). An exception is a hard failure (partial=0); a non-fatal
+        unsuccessful result is recorded as partial=1 so the parent can surface
+        it without treating it as a refusal.
+        """
+        child_run_id = str(data.get("child_run_id") or "").strip()
+        parent_run_id = str(data.get("parent_run_id") or "").strip()
+        if not child_run_id or not parent_run_id:
+            return
+        db_path = str(data.get("_db_path") or "").strip()
+        if not db_path:
+            db_path = self._resolve_db_path(self._load_site_config())
+        storage = Storage(db_path)
+        try:
+            if error is not None:
+                storage.update_child_run(child_run_id, status="failed", error=error)
+                return
+            if result is None:
+                return
+            stopped = bool((result.metadata or {}).get("stopped"))
+            if result.success and not stopped:
+                storage.update_child_run(child_run_id, status="succeeded", error="")
+                return
+            message = "stopped" if stopped else ("; ".join(list(result.errors or [])) or "unsuccessful result")
+            storage.update_child_run(child_run_id, status="failed", partial=1, error=message)
+        finally:
+            storage.close()
+
+    def _wait_and_summarize_child_runs(
+        self,
+        storage: Storage,
+        run_id: str,
+        task_id: str,
+    ) -> dict[str, Any]:
+        """Bounded wait for pending child runs, then bucket them by terminal state."""
+        children = storage.get_child_runs(run_id)
+        if not children:
+            return {"children": [], "failed": [], "partial": [], "pending": []}
+
+        deadline = time.time() + _CHILD_RUN_WAIT_TIMEOUT_SECONDS
+        while True:
+            children = storage.get_child_runs(run_id)
+            pending = [c for c in children if c.get("status") == "pending"]
+            if not pending:
+                break
+            if self._stop_requested(task_id):
+                break
+            if time.time() >= deadline:
+                break
+            time.sleep(_CHILD_RUN_POLL_INTERVAL_SECONDS)
+
+        children = storage.get_child_runs(run_id)
+        failed = [c for c in children if c.get("status") == "failed" and not c.get("partial")]
+        partial = [c for c in children if c.get("status") == "failed" and c.get("partial")]
+        pending = [c for c in children if c.get("status") == "pending"]
+        return {"children": children, "failed": failed, "partial": partial, "pending": pending}
 
     def _append_history_to_disk(self, task_data: dict[str, Any]) -> None:
         path = Path("data/job_history.jsonl")
