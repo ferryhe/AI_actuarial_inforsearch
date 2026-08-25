@@ -2149,6 +2149,36 @@ class Storage:
         )
         return [dict(zip(keys, row)) for row in rows]
 
+    def list_pipeline_runs(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Return the most recent pipeline runs across all statuses, newest first."""
+        limit = min(500, max(1, int(limit)))
+        rows = self._conn.execute(
+            """
+            SELECT run_id, correlation_id, source_type, status, watermark,
+                   lease_owner, lease_expires_at, started_at, finished_at, error,
+                   created_at, updated_at
+            FROM pipeline_run
+            ORDER BY created_at DESC, run_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        keys = (
+            "run_id",
+            "correlation_id",
+            "source_type",
+            "status",
+            "watermark",
+            "lease_owner",
+            "lease_expires_at",
+            "started_at",
+            "finished_at",
+            "error",
+            "created_at",
+            "updated_at",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
     def get_pipeline_run_by_correlation(self, correlation_id: str) -> dict[str, Any] | None:
         """Return the most recent resumable run for a correlation.
 
