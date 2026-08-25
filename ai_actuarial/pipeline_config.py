@@ -39,13 +39,22 @@ PIPELINE_STAGES: tuple[str, ...] = (
 # mutability   the stage's config mutability class (§1.1).
 _STAGE_CONFIG: dict[str, dict[str, Any]] = {
     "acquisition": {
-        "source": "config/sites.yaml",
-        "option_keys": ("sites", "queries", "robots", "schedule"),
+        "source": "config/sites.yaml (crawler.SiteConfig)",
+        "option_keys": (
+            "max_pages",
+            "max_depth",
+            "keywords",
+            "acquisition_tools",
+            "content_selector",
+            "allow_url_patterns",
+            "queries",
+            "check_database",
+        ),
         "mutability": MUTABLE,
     },
     "manifest_ingestion": {
-        "source": "manifest_version + idempotency keys",
-        "option_keys": ("manifest_version",),
+        "source": "manifest schema_version + idempotency keys",
+        "option_keys": ("schema_version",),
         "mutability": VERSIONED,
     },
     "markdown_conversion": {
@@ -78,8 +87,8 @@ _STAGE_CONFIG: dict[str, dict[str, Any]] = {
         "mutability": IMMUTABLE,
     },
     "rag_indexing": {
-        "source": "ai_config.embeddings",
-        "option_keys": ("provider", "model", "batch_size", "similarity_threshold"),
+        "source": "ai_config.embeddings + rag_config.index_type",
+        "option_keys": ("provider", "model", "batch_size", "similarity_threshold", "index_type"),
         "mutability": IMMUTABLE,
     },
     "ready_data_publish": {

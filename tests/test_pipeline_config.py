@@ -162,13 +162,24 @@ def test_immutable_stage_option_keys() -> None:
         "model",
         "batch_size",
         "similarity_threshold",
+        "index_type",
     )
 
 
 def test_mutable_and_versioned_option_keys() -> None:
+    assert STAGE_OPTION_KEYS["acquisition"] == (
+        "max_pages",
+        "max_depth",
+        "keywords",
+        "acquisition_tools",
+        "content_selector",
+        "allow_url_patterns",
+        "queries",
+        "check_database",
+    )
     assert STAGE_OPTION_KEYS["catalog"] == ("provider", "model", "temperature")
     assert STAGE_OPTION_KEYS["markdown_conversion"] == ("default_tool", "tools", "ocr")
-    assert STAGE_OPTION_KEYS["manifest_ingestion"] == ("manifest_version",)
+    assert STAGE_OPTION_KEYS["manifest_ingestion"] == ("schema_version",)
     assert STAGE_OPTION_KEYS["kb_reconciliation"] == ("kb_mode", "rag_kb_category_mappings")
 
 

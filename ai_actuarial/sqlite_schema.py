@@ -354,7 +354,8 @@ def _add_pipeline_state_v5(conn: sqlite3.Connection) -> None:
             started_at TEXT,
             finished_at TEXT,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY(run_id, stage_name)
+            PRIMARY KEY(run_id, stage_name),
+            FOREIGN KEY(run_id) REFERENCES pipeline_run(run_id)
         )
         """
     )
@@ -368,8 +369,21 @@ def _add_pipeline_state_v5(conn: sqlite3.Connection) -> None:
             partial INTEGER NOT NULL DEFAULT 0,
             error TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(parent_run_id) REFERENCES pipeline_run(run_id)
         )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_run_status
+        ON pipeline_run(status)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_child_run_parent_run_id
+        ON child_run(parent_run_id)
         """
     )
     _set_user_version(conn, 5)
