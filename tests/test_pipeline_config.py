@@ -70,6 +70,19 @@ def test_deep_merge_nested_and_scalar() -> None:
     assert base == {"a": 1, "nested": {"x": 1, "y": 2}}
 
 
+def test_deep_merge_returns_fresh_nested_values() -> None:
+    base = {"nested": {"x": 1}, "items": [1, 2]}
+    override = {"extra": {"y": 2}}
+    merged = deep_merge(base, override)
+
+    merged["nested"]["x"] = 99
+    merged["items"].append(3)
+    merged["extra"]["y"] = 42
+
+    assert base == {"nested": {"x": 1}, "items": [1, 2]}
+    assert override == {"extra": {"y": 2}}
+
+
 def test_normalize_stage_options_none_and_empty() -> None:
     assert normalize_stage_options(None) == {}
     assert normalize_stage_options({}) == {}
@@ -112,6 +125,11 @@ def test_resolve_effective_options_without_override_returns_defaults() -> None:
     effective = resolve_effective_options("catalog", {}, defaults)
     assert effective == defaults
     assert effective is not defaults  # fresh dict
+
+
+def test_resolve_effective_options_rejects_unknown_stage() -> None:
+    with pytest.raises(ValueError, match="unknown pipeline stage"):
+        resolve_effective_options("bogus", {}, {"a": 1})
 
 
 def test_stage_config_covers_all_stages() -> None:

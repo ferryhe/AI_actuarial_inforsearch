@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
@@ -247,3 +249,35 @@ def test_full_pipeline_surfaces_stopped_state(monkeypatch) -> None:
     assert result.metadata["stopped"] is True
     assert result.metadata["stages"][-1]["stopped"] is True
     assert result.errors == ["markdown_conversion: Task stopped by user"]
+
+
+def test_full_pipeline_rejects_malformed_stage_options_before_work(monkeypatch) -> None:
+    runtime = NativeTaskRuntime()
+    collected: list[str] = []
+
+    def fake_run_collection(task_id: str, collection_type: str, data: dict[str, Any]) -> CollectionResult:
+        collected.append(collection_type)
+        return _result(collection_type)
+
+    monkeypatch.setattr(runtime, "_run_collection", fake_run_collection)
+
+    with pytest.raises(ValueError, match="unknown pipeline stage"):
+        runtime._run_full_pipeline("task-full", {"stage_options": {"bogus_stage": {}}})
+
+    assert collected == []
+
+
+def test_full_pipeline_rejects_non_mapping_stage_options_before_work(monkeypatch) -> None:
+    runtime = NativeTaskRuntime()
+    collected: list[str] = []
+
+    def fake_run_collection(task_id: str, collection_type: str, data: dict[str, Any]) -> CollectionResult:
+        collected.append(collection_type)
+        return _result(collection_type)
+
+    monkeypatch.setattr(runtime, "_run_collection", fake_run_collection)
+
+    with pytest.raises(TypeError, match="mapping"):
+        runtime._run_full_pipeline("task-full", {"stage_options": "not-a-mapping"})
+
+    assert collected == []

@@ -10,6 +10,7 @@ resolution of a task's ``stage_options`` overrides (v3 §2).
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 # --- Mutability classes (v3 §1.1) --------------------------------------------
@@ -143,14 +144,15 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     """Recursively merge ``override`` onto ``base``.
 
     Nested dicts are merged recursively; scalar values are replaced. Neither
-    input is mutated.
+    input is mutated, and nested dict/list values are deep-copied so the result
+    does not alias the inputs.
     """
-    merged = dict(base)
+    merged = copy.deepcopy(base)
     for key, value in override.items():
         if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = deep_merge(merged[key], value)
         else:
-            merged[key] = value
+            merged[key] = copy.deepcopy(value)
     return merged
 
 
@@ -185,7 +187,9 @@ def resolve_effective_options(
     """Return the effective options for ``stage``.
 
     ``defaults`` are deep-merged with the stage's override
-    (``stage_options[stage]``), if any. The result is a fresh dict.
+    (``stage_options[stage]``), if any. The result is a fresh dict. Raises
+    ``ValueError`` for an unknown stage.
     """
+    _require_known_stage(stage)
     overrides = (stage_options or {}).get(stage) or {}
     return deep_merge(dict(defaults), dict(overrides))
