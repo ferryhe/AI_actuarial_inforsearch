@@ -259,6 +259,38 @@ class NativeTaskRuntime:
             return dict(self._site_config_override)
         return load_yaml(get_sites_config_path(), default={})
 
+    def _ensure_chunk_config_compatible(
+        self,
+        storage: Any,
+        kb_id: str,
+        *,
+        chunk_size: int,
+        chunk_overlap: int,
+        splitter: str,
+        tokenizer: str,
+    ) -> None:
+        """Fail closed when a KB's committed chunk config would change.
+
+        If the KB already has committed chunk profiles (bound chunk sets with
+        chunk data), a chunking config that differs from every committed profile
+        would silently produce incompatible artifacts; require a full_reindex
+        instead.
+        """
+        committed = storage.kb_committed_chunk_profiles(kb_id)
+        if not committed:
+            return
+        for profile in committed:
+            if (
+                int(profile.get("chunk_size")) == int(chunk_size)
+                and int(profile.get("chunk_overlap")) == int(chunk_overlap)
+                and str(profile.get("splitter") or "") == str(splitter or "")
+                and str(profile.get("tokenizer") or "") == str(tokenizer or "")
+            ):
+                return
+        raise RuntimeError(
+            "Chunk configuration changed; full_reindex is required before incremental indexing"
+        )
+
     @staticmethod
     def _new_task_id() -> str:
         return f"task_{int(time.time() * 1000)}_{secrets.token_hex(8)}"
@@ -1799,6 +1831,22 @@ class NativeTaskRuntime:
             kb_manager = KnowledgeBaseManager(storage)
             if not kb_manager.get_kb(kb_id):
                 raise RuntimeError(f"Knowledge base '{kb_id}' not found")
+
+        # Fail closed before generating chunks when the KB already holds
+        # committed chunk data whose immutable config differs from this run's
+        # (#220). An explicit full_reindex is the atomic rebuild signal that
+        # bypasses the guard. overwrite_same_profile only replaces the chunk set
+        # for the same profile and does NOT rebuild the RAG index, so it is not
+        # a bypass signal.
+        if kb_manager is not None and not coerce_bool(data.get("full_reindex"), default=False):
+            self._ensure_chunk_config_compatible(
+                storage,
+                kb_id,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                splitter=payload["splitter"],
+                tokenizer=payload["tokenizer"],
+            )
 
         progress = self._progress_callback(task_id)
         errors: list[str] = []

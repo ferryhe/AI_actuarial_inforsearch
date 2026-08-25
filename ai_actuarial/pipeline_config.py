@@ -202,3 +202,31 @@ def resolve_effective_options(
     _require_known_stage(stage)
     overrides = (stage_options or {}).get(stage) or {}
     return deep_merge(dict(defaults), dict(overrides))
+
+
+def detect_versioned_change(
+    stage: str,
+    old_version: str | None,
+    new_version: str | None,
+) -> dict[str, Any]:
+    """Detect a version change for a versioned stage and record old -> new.
+
+    Returns a traceable dict with the old/new versions, whether they differ, and
+    the required action. A versioned-stage change is always ``migrate`` (the
+    versioned contract is expand/backfill/switch/contract — never an in-place
+    edit); ``noop`` otherwise. This is the minimal traceability hook for #220;
+    the full migration state machine is out of scope.
+    """
+    _require_known_stage(stage)
+    if stage_mutability(stage) != VERSIONED:
+        raise ValueError(f"stage {stage!r} is not a versioned stage")
+    old_norm = str(old_version or "").strip() or None
+    new_norm = str(new_version or "").strip() or None
+    changed = old_norm != new_norm
+    return {
+        "stage": stage,
+        "old_version": old_norm,
+        "new_version": new_norm,
+        "changed": changed,
+        "action": "migrate" if changed else "noop",
+    }
