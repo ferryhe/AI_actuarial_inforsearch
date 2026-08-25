@@ -399,14 +399,21 @@ def _accept_version_5_source(
 
 def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
     """Add FK constraints + indexes to the #179 pipeline state-machine tables.
+
     SQLite cannot add a FOREIGN KEY via ALTER TABLE, so the two child tables are
-    rebuilt. They are empty at this point (the state machine is not yet released),
-    so drop/recreate is lossless.
+    rebuilt with the safe create→copy→drop→rename procedure, preserving any
+    existing rows instead of assuming the tables are empty.
+
+    The migration runner applies this inside its own BEGIN IMMEDIATE transaction
+    with PRAGMA foreign_keys=ON already set before the transaction opened; since
+    PRAGMA foreign_keys is a no-op inside a transaction, the rebuild runs under
+    FK enforcement. That is safe here: pipeline_stage/child_run are child tables
+    that no other table references, and existing rows are copied before the old
+    table is dropped, so no data is lost.
     """
-    conn.execute("DROP TABLE IF EXISTS pipeline_stage")
     conn.execute(
         """
-        CREATE TABLE pipeline_stage (
+        CREATE TABLE pipeline_stage_new (
             run_id TEXT NOT NULL,
             stage_name TEXT NOT NULL,
             stage_order INTEGER NOT NULL DEFAULT 0,
@@ -424,10 +431,26 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    conn.execute("DROP TABLE IF EXISTS child_run")
     conn.execute(
         """
-        CREATE TABLE child_run (
+        INSERT INTO pipeline_stage_new (
+            run_id, stage_name, stage_order, options_json, status, checkpoint_json,
+            retry_count, committed_artifacts_json, error, started_at, finished_at,
+            updated_at
+        )
+        SELECT
+            run_id, stage_name, stage_order, options_json, status, checkpoint_json,
+            retry_count, committed_artifacts_json, error, started_at, finished_at,
+            updated_at
+        FROM pipeline_stage
+        """
+    )
+    conn.execute("DROP TABLE pipeline_stage")
+    conn.execute("ALTER TABLE pipeline_stage_new RENAME TO pipeline_stage")
+
+    conn.execute(
+        """
+        CREATE TABLE child_run_new (
             child_run_id TEXT PRIMARY KEY,
             parent_run_id TEXT NOT NULL,
             correlation_id TEXT NOT NULL DEFAULT '',
@@ -440,6 +463,21 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        INSERT INTO child_run_new (
+            child_run_id, parent_run_id, correlation_id, status, partial, error,
+            created_at, updated_at
+        )
+        SELECT
+            child_run_id, parent_run_id, correlation_id, status, partial, error,
+            created_at, updated_at
+        FROM child_run
+        """
+    )
+    conn.execute("DROP TABLE child_run")
+    conn.execute("ALTER TABLE child_run_new RENAME TO child_run")
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_pipeline_run_status ON pipeline_run(status)"
     )

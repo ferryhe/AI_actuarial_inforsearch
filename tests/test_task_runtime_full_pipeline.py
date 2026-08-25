@@ -65,7 +65,7 @@ def test_full_pipeline_chains_source_markdown_catalog_chunk_and_rag(monkeypatch)
             "https://example.com/reports",
         ]
     assert [stage["stage"] for stage in result.metadata["stages"]] == [
-        "source_collection",
+        "acquisition",
         "markdown_conversion",
         "catalog",
         "chunk_generation",
@@ -281,3 +281,52 @@ def test_full_pipeline_rejects_non_mapping_stage_options_before_work(monkeypatch
         runtime._run_full_pipeline("task-full", {"stage_options": "not-a-mapping"})
 
     assert collected == []
+
+
+def test_stage_payload_omits_stage_options_for_each_collection_type() -> None:
+    runtime = NativeTaskRuntime()
+    data = {
+        "name": "Nightly Full",
+        "kb_id": "kb-1",
+        "stage_options": {"catalog": {"model": "gpt-5.4-mini"}},
+        "url": "https://example.com/reports",
+    }
+    for collection_type in (
+        "quick_check",
+        "markdown_conversion",
+        "catalog",
+        "chunk_generation",
+        "rag_indexing",
+    ):
+        payload = runtime._stage_payload(data, collection_type)
+        assert "stage_options" not in payload
+        assert payload["type"] == collection_type
+        # Other fields (e.g. kb_id, consumed by rag_indexing) must be preserved.
+        assert payload["kb_id"] == "kb-1"
+
+
+def test_full_pipeline_does_not_leak_stage_options_into_stage_payloads(monkeypatch) -> None:
+    runtime = NativeTaskRuntime()
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_run_collection(task_id: str, collection_type: str, data: dict[str, Any]) -> CollectionResult:
+        calls.append((collection_type, dict(data)))
+        return _result(collection_type)
+
+    monkeypatch.setattr(runtime, "_run_collection", fake_run_collection)
+    monkeypatch.setattr(runtime, "_stop_requested", lambda task_id: False)
+    monkeypatch.setattr(runtime, "_update_task", lambda task_id, **fields: None)
+
+    result = runtime._run_full_pipeline(
+        "task-full",
+        {
+            "kb_id": "kb-1",
+            "run_rag_indexing": True,
+            "stage_options": {"catalog": {"model": "gpt-5.4-mini"}},
+        },
+    )
+
+    assert result.success is True
+    assert calls
+    for _collection_type, payload in calls:
+        assert "stage_options" not in payload
