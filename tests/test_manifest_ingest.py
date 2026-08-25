@@ -128,6 +128,48 @@ def test_v4_migration_adds_content_kind_and_manifest_raw(tmp_path) -> None:
         conn.close()
 
 
+def test_v4_migration_backfills_html_rows_as_web_page(tmp_path) -> None:
+    from ai_actuarial.sqlite_schema import apply_schema
+
+    db_path = str(tmp_path / "backfill.db")
+    storage = Storage(db_path)
+    try:
+        storage._conn.execute(
+            "INSERT INTO files (url, sha256, title, content_type, first_seen, last_seen) "
+            "VALUES ('https://example.com/page.html', 'a1', 'Page', 'text/html', "
+            "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        )
+        storage._conn.execute(
+            "INSERT INTO files (url, sha256, title, content_type, first_seen, last_seen) "
+            "VALUES ('https://example.com/doc.pdf', 'b2', 'Doc', 'application/pdf', "
+            "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        )
+        storage._conn.commit()
+        # Downgrade to v3 (drop content_kind + manifest_raw, rewind version),
+        # then let apply_schema re-run the v4 migration with its backfill.
+        storage._conn.execute("ALTER TABLE files DROP COLUMN content_kind")
+        storage._conn.execute("DROP TABLE manifest_raw")
+        storage._conn.execute("PRAGMA user_version=3")
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    result = apply_schema(db_path)
+    assert result["state"] == "current"
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT content_type, content_kind FROM files ORDER BY content_type"
+        ).fetchall()
+        assert rows == [
+            ("application/pdf", "file"),
+            ("text/html", "web_page"),
+        ]
+    finally:
+        conn.close()
+
+
 def test_ingest_manifest_stores_raw() -> None:
     storage = Storage(":memory:")
     try:

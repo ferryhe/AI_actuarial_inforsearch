@@ -289,6 +289,11 @@ def _add_files_content_kind_v4(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE files ADD COLUMN content_kind TEXT DEFAULT 'file'"
         )
+        # One-time backfill: existing HTML rows are web pages, not files.
+        conn.execute(
+            "UPDATE files SET content_kind = 'web_page' "
+            "WHERE content_type LIKE 'text/html%'"
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS manifest_raw (
