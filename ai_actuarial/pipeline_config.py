@@ -1,22 +1,21 @@
 """Per-stage pipeline configuration model (#179).
 
-Defines the canonical stage taxonomy, the mutability class of each stage's
-configuration (mutable / immutable / versioned), and the resolution of a task's
-``stage_options`` overrides onto each module's existing defaults.
+Encodes the canonical stage taxonomy, each stage's config source + option keys
+(reusing each module's existing options — no new schema), and the three-class
+mutability model (mutable / immutable / versioned).
 
-This is the config layer that the state machine records per stage. It reuses
-each module's existing option keys and does NOT introduce a new schema.
+This is the config layer the state machine records per stage (v3 §1), plus the
+resolution of a task's ``stage_options`` overrides (v3 §2).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# --- Mutability classes -------------------------------------------------------
-# 可变 (mutable):     old output stays valid; a change only affects future runs.
-# 不可变 (immutable):  old output is incompatible; a change requires full rebuild.
-# 版本化 (versioned):  migrate via expand/backfill/switch/contract, never in-place.
-
+# --- Mutability classes (v3 §1.1) --------------------------------------------
+# 可变 (mutable):    old output stays valid; a change only affects future runs.
+# 不可变 (immutable): old output is incompatible; a change requires full rebuild.
+# 版本化 (versioned): migrate via expand/backfill/switch/contract, never in-place.
 MUTABLE = "mutable"
 IMMUTABLE = "immutable"
 VERSIONED = "versioned"
@@ -33,18 +32,75 @@ PIPELINE_STAGES: tuple[str, ...] = (
     "ready_data_publish",
 )
 
-# Mutability class per stage. ``catalog``'s *model* choice is mutable while its
-# *taxonomy* (category set) is versioned via ``CATEGORY_RULES`` (#178); the
-# stage is classified mutable here, with taxonomy versioning handled separately.
+# --- Per-stage config (v3 §1.2) ----------------------------------------------
+# source       where the stage's config lives (existing module/file/DB).
+# option_keys  the option keys the state machine records for the stage.
+# mutability   the stage's config mutability class (§1.1).
+_STAGE_CONFIG: dict[str, dict[str, Any]] = {
+    "acquisition": {
+        "source": "config/sites.yaml",
+        "option_keys": ("sites", "queries", "robots", "schedule"),
+        "mutability": MUTABLE,
+    },
+    "manifest_ingestion": {
+        "source": "manifest_version + idempotency keys",
+        "option_keys": ("manifest_version",),
+        "mutability": VERSIONED,
+    },
+    "markdown_conversion": {
+        "source": "config/markdown_conversion.yaml + ai_config.ocr",
+        "option_keys": ("default_tool", "tools", "ocr"),
+        "mutability": MUTABLE,
+    },
+    "catalog": {
+        # The *model* (provider/model/temperature) is mutable; the *taxonomy*
+        # (category set, CATEGORY_RULES) is versioned via #178's mechanism.
+        "source": "ai_config.catalog + CATEGORY_RULES",
+        "option_keys": ("provider", "model", "temperature"),
+        "mutability": MUTABLE,
+    },
+    "kb_reconciliation": {
+        "source": "kb_mode + rag_kb_category_mappings (DB)",
+        "option_keys": ("kb_mode", "rag_kb_category_mappings"),
+        "mutability": MUTABLE,
+    },
+    "chunk_generation": {
+        "source": "rag_config",
+        "option_keys": (
+            "chunk_strategy",
+            "max_chunk_tokens",
+            "min_chunk_tokens",
+            "preserve_headers",
+            "preserve_citations",
+            "include_hierarchy",
+        ),
+        "mutability": IMMUTABLE,
+    },
+    "rag_indexing": {
+        "source": "ai_config.embeddings",
+        "option_keys": ("provider", "model", "batch_size", "similarity_threshold"),
+        "mutability": IMMUTABLE,
+    },
+    "ready_data_publish": {
+        "source": "staging / active·previous slot / publication pointer (DB)",
+        "option_keys": ("staging", "active_publication_id", "previous_publication_id"),
+        "mutability": MUTABLE,
+    },
+}
+
+# Public views.
+STAGE_CONFIG: dict[str, dict[str, Any]] = _STAGE_CONFIG
+
 STAGE_MUTABILITY: dict[str, str] = {
-    "acquisition": MUTABLE,
-    "manifest_ingestion": VERSIONED,
-    "markdown_conversion": MUTABLE,
-    "catalog": MUTABLE,
-    "kb_reconciliation": MUTABLE,
-    "chunk_generation": IMMUTABLE,
-    "rag_indexing": IMMUTABLE,
-    "ready_data_publish": MUTABLE,
+    stage: cfg["mutability"] for stage, cfg in _STAGE_CONFIG.items()
+}
+
+STAGE_CONFIG_SOURCE: dict[str, str] = {
+    stage: cfg["source"] for stage, cfg in _STAGE_CONFIG.items()
+}
+
+STAGE_OPTION_KEYS: dict[str, tuple[str, ...]] = {
+    stage: tuple(cfg["option_keys"]) for stage, cfg in _STAGE_CONFIG.items()
 }
 
 IMMUTABLE_STAGES = frozenset(
@@ -58,13 +114,29 @@ MUTABLE_STAGES = frozenset(
 )
 
 
-def stage_mutability(stage: str) -> str:
-    """Return the mutability class for ``stage`` (raises for an unknown stage)."""
+def _require_known_stage(stage: str) -> None:
     if stage not in STAGE_MUTABILITY:
         raise ValueError(
             f"unknown pipeline stage: {stage!r} (valid: {', '.join(PIPELINE_STAGES)})"
         )
+
+
+def stage_mutability(stage: str) -> str:
+    """Return the mutability class for ``stage`` (raises for an unknown stage)."""
+    _require_known_stage(stage)
     return STAGE_MUTABILITY[stage]
+
+
+def stage_config_source(stage: str) -> str:
+    """Return the config source description for ``stage``."""
+    _require_known_stage(stage)
+    return STAGE_CONFIG_SOURCE[stage]
+
+
+def stage_option_keys(stage: str) -> tuple[str, ...]:
+    """Return the option keys the state machine records for ``stage``."""
+    _require_known_stage(stage)
+    return STAGE_OPTION_KEYS[stage]
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -98,11 +170,7 @@ def normalize_stage_options(stage_options: Any) -> dict[str, dict[str, Any]]:
     normalized: dict[str, dict[str, Any]] = {}
     for stage, options in stage_options.items():
         stage_name = str(stage)
-        if stage_name not in STAGE_MUTABILITY:
-            raise ValueError(
-                f"unknown pipeline stage {stage_name!r} in stage_options "
-                f"(valid: {', '.join(PIPELINE_STAGES)})"
-            )
+        _require_known_stage(stage_name)
         if not isinstance(options, dict):
             raise TypeError(f"stage_options[{stage_name!r}] must be a mapping")
         normalized[stage_name] = dict(options)

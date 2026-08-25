@@ -8,12 +8,16 @@ from ai_actuarial.pipeline_config import (
     MUTABLE,
     MUTABLE_STAGES,
     PIPELINE_STAGES,
+    STAGE_CONFIG,
+    STAGE_OPTION_KEYS,
     VERSIONED,
     VERSIONED_STAGES,
     deep_merge,
     normalize_stage_options,
     resolve_effective_options,
+    stage_config_source,
     stage_mutability,
+    stage_option_keys,
 )
 
 
@@ -108,3 +112,50 @@ def test_resolve_effective_options_without_override_returns_defaults() -> None:
     effective = resolve_effective_options("catalog", {}, defaults)
     assert effective == defaults
     assert effective is not defaults  # fresh dict
+
+
+def test_stage_config_covers_all_stages() -> None:
+    assert set(STAGE_CONFIG.keys()) == set(PIPELINE_STAGES)
+    for stage in PIPELINE_STAGES:
+        cfg = STAGE_CONFIG[stage]
+        assert {"source", "option_keys", "mutability"} <= set(cfg)
+        assert isinstance(cfg["source"], str) and cfg["source"]
+        assert isinstance(cfg["option_keys"], tuple) and cfg["option_keys"]
+
+
+def test_mutability_is_derived_from_config() -> None:
+    for stage in PIPELINE_STAGES:
+        assert stage_mutability(stage) == STAGE_CONFIG[stage]["mutability"]
+        assert stage_option_keys(stage) == STAGE_CONFIG[stage]["option_keys"]
+        assert stage_config_source(stage) == STAGE_CONFIG[stage]["source"]
+
+
+def test_immutable_stage_option_keys() -> None:
+    assert STAGE_OPTION_KEYS["chunk_generation"] == (
+        "chunk_strategy",
+        "max_chunk_tokens",
+        "min_chunk_tokens",
+        "preserve_headers",
+        "preserve_citations",
+        "include_hierarchy",
+    )
+    assert STAGE_OPTION_KEYS["rag_indexing"] == (
+        "provider",
+        "model",
+        "batch_size",
+        "similarity_threshold",
+    )
+
+
+def test_mutable_and_versioned_option_keys() -> None:
+    assert STAGE_OPTION_KEYS["catalog"] == ("provider", "model", "temperature")
+    assert STAGE_OPTION_KEYS["markdown_conversion"] == ("default_tool", "tools", "ocr")
+    assert STAGE_OPTION_KEYS["manifest_ingestion"] == ("manifest_version",)
+    assert STAGE_OPTION_KEYS["kb_reconciliation"] == ("kb_mode", "rag_kb_category_mappings")
+
+
+def test_stage_helpers_reject_unknown_stage() -> None:
+    with pytest.raises(ValueError, match="unknown pipeline stage"):
+        stage_config_source("bogus")
+    with pytest.raises(ValueError, match="unknown pipeline stage"):
+        stage_option_keys("bogus")
