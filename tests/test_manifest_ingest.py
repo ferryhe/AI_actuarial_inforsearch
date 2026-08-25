@@ -294,3 +294,20 @@ def test_ingest_manifest_handles_non_list_assets() -> None:
         assert storage._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
     finally:
         storage.close()
+
+
+def test_ingest_manifest_non_string_media_type_defaults_to_file() -> None:
+    manifest = _sample_manifest()
+    manifest["downloaded_assets"][0]["media_type"] = 12345  # non-string
+    storage = Storage(":memory:")
+    try:
+        result = ingest_manifest(storage, manifest)
+        assert result["imported"] == 2
+        row = storage._conn.execute(
+            "SELECT content_kind, content_type FROM files WHERE url = ?",
+            ("https://www.soa.org/sample-report.pdf",),
+        ).fetchone()
+        assert row[0] == "file"
+        assert row[1] is None
+    finally:
+        storage.close()

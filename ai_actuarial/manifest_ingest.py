@@ -72,7 +72,9 @@ def ingest_manifest(
                 algorithm = str(checksum.get("algorithm") or "").lower()
                 if algorithm in ("", "sha256", "sha-256"):
                     sha256 = str(checksum.get("value") or "")
-            media_type = asset.get("media_type") or None
+            media_type = asset.get("media_type")
+            if not isinstance(media_type, str):
+                media_type = None
             local_path = str(
                 asset.get("canonical_blob_path")
                 or asset.get("tracked_path")
