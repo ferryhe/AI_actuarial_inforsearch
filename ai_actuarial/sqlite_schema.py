@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 5
+CURRENT_SQLITE_SCHEMA_VERSION = 6
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -384,6 +384,71 @@ def _accept_version_4_source(
     return valid
 
 
+def _accept_version_5_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept a version-5 source: pipeline tables present without the v6 FK/index additions."""
+    pipeline_tables = ("pipeline_run", "pipeline_stage", "child_run")
+    if any(t not in tables for t in pipeline_tables):
+        return False
+    filtered = {k: v for k, v in tables.items() if k not in pipeline_tables}
+    valid, _, _ = _schema_validation(filtered, tolerate_backfill=True)
+    return valid
+
+
+def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
+    """Add FK constraints + indexes to the #179 pipeline state-machine tables.
+    SQLite cannot add a FOREIGN KEY via ALTER TABLE, so the two child tables are
+    rebuilt. They are empty at this point (the state machine is not yet released),
+    so drop/recreate is lossless.
+    """
+    conn.execute("DROP TABLE IF EXISTS pipeline_stage")
+    conn.execute(
+        """
+        CREATE TABLE pipeline_stage (
+            run_id TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            stage_order INTEGER NOT NULL DEFAULT 0,
+            options_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending',
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            committed_artifacts_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT NOT NULL DEFAULT '',
+            started_at TEXT,
+            finished_at TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(run_id, stage_name),
+            FOREIGN KEY(run_id) REFERENCES pipeline_run(run_id)
+        )
+        """
+    )
+    conn.execute("DROP TABLE IF EXISTS child_run")
+    conn.execute(
+        """
+        CREATE TABLE child_run (
+            child_run_id TEXT PRIMARY KEY,
+            parent_run_id TEXT NOT NULL,
+            correlation_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            partial INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(parent_run_id) REFERENCES pipeline_run(run_id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pipeline_run_status ON pipeline_run(status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_child_run_parent_run_id ON child_run(parent_run_id)"
+    )
+    _set_user_version(conn, 6)
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -413,6 +478,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_pipeline_state_v5",
         apply=_add_pipeline_state_v5,
         source_validator=_accept_version_4_source,
+    ),
+    SQLiteSchemaMigration(
+        version=6,
+        migration_id="add_pipeline_fks_v6",
+        apply=_add_pipeline_fks_v6,
+        source_validator=_accept_version_5_source,
     ),
 )
 
