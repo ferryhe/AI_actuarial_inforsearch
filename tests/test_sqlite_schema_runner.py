@@ -291,6 +291,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_files_content_kind_v4",
         "add_pipeline_state_v5",
         "add_pipeline_fks_v6",
+        "add_pipeline_lease_v7",
     ]
     assert _user_version(db_path) == 0
 
@@ -303,6 +304,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_files_content_kind_v4",
         "add_pipeline_state_v5",
         "add_pipeline_fks_v6",
+        "add_pipeline_lease_v7",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
@@ -360,7 +362,7 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
 
     applied = apply_schema(str(db_path))
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["add_pipeline_fks_v6"]
+    assert applied["applied_migrations"] == ["add_pipeline_fks_v6", "add_pipeline_lease_v7"]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
 
     conn = sqlite3.connect(db_path)
@@ -397,37 +399,37 @@ def test_schema_runner_plans_registered_old_version_path(tmp_path: Path, monkeyp
     storage = Storage(str(db_path))
     storage.close()
 
-    def apply_v7(conn: sqlite3.Connection) -> None:
-        conn.execute("PRAGMA user_version=7")
+    def apply_v8(conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA user_version=8")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 7)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 8)
     monkeypatch.setattr(
         sqlite_schema,
         "SQLITE_SCHEMA_MIGRATIONS",
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=7,
-                migration_id="test_schema_v7",
-                apply=apply_v7,
+                version=8,
+                migration_id="test_schema_v8",
+                apply=apply_v8,
             ),
         ),
     )
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 6
+    assert status["database"]["user_version"] == 7
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v7", "from_version": 6, "to_version": 7}
+        {"id": "test_schema_v8", "from_version": 7, "to_version": 8}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["database"]["user_version"] == 7
-    assert applied["applied_migrations"] == ["test_schema_v7"]
-    assert _user_version(db_path) == 7
+    assert applied["database"]["user_version"] == 8
+    assert applied["applied_migrations"] == ["test_schema_v8"]
+    assert _user_version(db_path) == 8
 
 
 def test_schema_runner_accepts_registered_old_version_source_signature(
@@ -456,11 +458,11 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
     ) -> bool:
         return tables == v6_signature
 
-    def apply_v7(conn: sqlite3.Connection) -> None:
+    def apply_v8(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=7")
+        conn.execute("PRAGMA user_version=8")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 7)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 8)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -468,9 +470,9 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=7,
-                migration_id="test_schema_v7_add_marker",
-                apply=apply_v7,
+                version=8,
+                migration_id="test_schema_v8_add_marker",
+                apply=apply_v8,
                 source_validator=accepts_v6_source,
             ),
         ),
@@ -478,17 +480,17 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 6
+    assert status["database"]["user_version"] == 7
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v7_add_marker", "from_version": 6, "to_version": 7}
+        {"id": "test_schema_v8_add_marker", "from_version": 7, "to_version": 8}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["test_schema_v7_add_marker"]
-    assert _user_version(db_path) == 7
+    assert applied["applied_migrations"] == ["test_schema_v8_add_marker"]
+    assert _user_version(db_path) == 8
 
 
 def test_schema_runner_rejects_mutating_source_validator_during_apply(
@@ -528,11 +530,11 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         conn.execute("CREATE TABLE validator_mutation_leak (secret_value TEXT)")
         return True
 
-    def apply_v7(conn: sqlite3.Connection) -> None:
+    def apply_v8(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=7")
+        conn.execute("PRAGMA user_version=8")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 7)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 8)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -540,9 +542,9 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=7,
-                migration_id="test_schema_v7_block_mutating_validator",
-                apply=apply_v7,
+                version=8,
+                migration_id="test_schema_v8_block_mutating_validator",
+                apply=apply_v8,
                 source_validator=mutating_validator,
             ),
         ),
@@ -556,7 +558,7 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
 
     assert validator_calls >= 2
     assert query_only_values and set(query_only_values) == {1}
-    assert _user_version(db_path) == 6
+    assert _user_version(db_path) == 7
     with sqlite3.connect(db_path) as conn:
         assert conn.execute(
             """
@@ -598,6 +600,7 @@ def test_schema_runner_accepts_exported_chat_service_optional_schema(
         "add_files_content_kind_v4",
         "add_pipeline_state_v5",
         "add_pipeline_fks_v6",
+        "add_pipeline_lease_v7",
     ]
 
 
@@ -829,7 +832,7 @@ def test_schema_runner_serializes_concurrent_apply(tmp_path: Path) -> None:
         results = list(pool.map(lambda _: apply_schema(db_path), range(2)))
 
     applied = [result["applied_migrations"] for result in results]
-    assert sorted(len(item) for item in applied) == [0, 6]
+    assert sorted(len(item) for item in applied) == [0, 7]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
 
@@ -890,6 +893,7 @@ def test_schema_cli_json_contract_for_status_plan_apply(tmp_path: Path) -> None:
         "add_files_content_kind_v4",
         "add_pipeline_state_v5",
         "add_pipeline_fks_v6",
+        "add_pipeline_lease_v7",
     ]
     assert str(db_path) not in apply_result.stdout
 
@@ -944,6 +948,7 @@ def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
         "add_files_content_kind_v4",
         "add_pipeline_state_v5",
         "add_pipeline_fks_v6",
+        "add_pipeline_lease_v7",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     with sqlite3.connect(db_path) as conn:

@@ -863,6 +863,8 @@ class Storage:
                 source_type TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
                 watermark TEXT NOT NULL DEFAULT '',
+                lease_owner TEXT,
+                lease_expires_at TEXT,
                 started_at TEXT,
                 finished_at TEXT,
                 error TEXT NOT NULL DEFAULT '',
@@ -1983,6 +1985,80 @@ class Storage:
         )
         self._maybe_commit()
 
+    def claim_pipeline_run(
+        self,
+        run_id: str,
+        *,
+        lease_owner: str,
+        lease_ttl_seconds: int = 3600,
+    ) -> bool:
+        """Atomically claim the run-level lease for ``lease_owner``.
+
+        The claim succeeds only when the run is resumable (any non-'succeeded'
+        status, including a prior 'failed' attempt) and not currently held by a
+        live owner (its lease is absent or expired). Uses a single conditional
+        UPDATE for claim fencing: two concurrent claims for the same run can
+        only produce one row update. Returns True on a successful claim.
+        """
+        now = self.now()
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=lease_ttl_seconds)
+        ).isoformat()
+        cursor = self._conn.execute(
+            """
+            UPDATE pipeline_run
+            SET lease_owner = ?, lease_expires_at = ?, updated_at = ?
+            WHERE run_id = ?
+              AND status != 'succeeded'
+              AND (
+                  lease_owner IS NULL OR lease_owner = ''
+                  OR lease_expires_at IS NULL OR lease_expires_at < ?
+              )
+            """,
+            (lease_owner, expires_at, now, run_id, now),
+        )
+        self._maybe_commit()
+        return cursor.rowcount == 1
+
+    def release_pipeline_lease(self, run_id: str, *, lease_owner: str) -> None:
+        """Clear the run-level lease, but only if it is still held by ``lease_owner``."""
+        self._conn.execute(
+            """
+            UPDATE pipeline_run
+            SET lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+            WHERE run_id = ? AND lease_owner = ?
+            """,
+            (self.now(), run_id, lease_owner),
+        )
+        self._maybe_commit()
+
+    def renew_pipeline_lease(
+        self,
+        run_id: str,
+        *,
+        lease_owner: str,
+        lease_ttl_seconds: int = 3600,
+    ) -> bool:
+        """Extend the run-level lease, only if still held by ``lease_owner``.
+
+        Returns True when the lease was still ours and was extended; False when
+        another worker took it (so the caller should stop rather than run
+        concurrently).
+        """
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=lease_ttl_seconds)
+        ).isoformat()
+        cursor = self._conn.execute(
+            """
+            UPDATE pipeline_run
+            SET lease_expires_at = ?, updated_at = ?
+            WHERE run_id = ? AND lease_owner = ?
+            """,
+            (expires_at, self.now(), run_id, lease_owner),
+        )
+        self._maybe_commit()
+        return cursor.rowcount == 1
+
     def update_pipeline_run(
         self,
         run_id: str,
@@ -2021,7 +2097,8 @@ class Storage:
         row = self._conn.execute(
             """
             SELECT run_id, correlation_id, source_type, status, watermark,
-                   started_at, finished_at, error, created_at, updated_at
+                   lease_owner, lease_expires_at, started_at, finished_at, error,
+                   created_at, updated_at
             FROM pipeline_run WHERE run_id = ?
             """,
             (run_id,),
@@ -2034,6 +2111,8 @@ class Storage:
             "source_type",
             "status",
             "watermark",
+            "lease_owner",
+            "lease_expires_at",
             "started_at",
             "finished_at",
             "error",
@@ -2047,7 +2126,8 @@ class Storage:
         rows = self._conn.execute(
             """
             SELECT run_id, correlation_id, source_type, status, watermark,
-                   started_at, finished_at, error, created_at, updated_at
+                   lease_owner, lease_expires_at, started_at, finished_at, error,
+                   created_at, updated_at
             FROM pipeline_run
             WHERE status IN ('pending', 'running')
             ORDER BY created_at
@@ -2059,6 +2139,8 @@ class Storage:
             "source_type",
             "status",
             "watermark",
+            "lease_owner",
+            "lease_expires_at",
             "started_at",
             "finished_at",
             "error",
@@ -2066,6 +2148,45 @@ class Storage:
             "updated_at",
         )
         return [dict(zip(keys, row)) for row in rows]
+
+    def get_pipeline_run_by_correlation(self, correlation_id: str) -> dict[str, Any] | None:
+        """Return the most recent resumable run for a correlation.
+
+        A run is resumable until it reaches the terminal 'succeeded' state, so a
+        'pending', 'running', or 'failed' run for the same correlation is reused
+        (its committed stages are skipped on resume).
+        """
+        if not correlation_id:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT run_id, correlation_id, source_type, status, watermark,
+                   lease_owner, lease_expires_at, started_at, finished_at, error,
+                   created_at, updated_at
+            FROM pipeline_run
+            WHERE correlation_id = ? AND status != 'succeeded'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (correlation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        keys = (
+            "run_id",
+            "correlation_id",
+            "source_type",
+            "status",
+            "watermark",
+            "lease_owner",
+            "lease_expires_at",
+            "started_at",
+            "finished_at",
+            "error",
+            "created_at",
+            "updated_at",
+        )
+        return dict(zip(keys, row))
 
     def upsert_pipeline_stage(
         self,
@@ -2075,6 +2196,7 @@ class Storage:
         stage_order: int,
         options_json: str = "{}",
         status: str = "pending",
+        started_at: str | None = None,
     ) -> None:
         """Insert a stage row, or reset it to a clean pending state on conflict."""
         ts = self.now()
@@ -2082,9 +2204,10 @@ class Storage:
             """
             INSERT INTO pipeline_stage (
                 run_id, stage_name, stage_order, options_json, status,
-                checkpoint_json, retry_count, committed_artifacts_json, error, updated_at
+                checkpoint_json, retry_count, committed_artifacts_json, error,
+                started_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, '{}', 0, '[]', '', ?)
+            VALUES (?, ?, ?, ?, ?, '{}', 0, '[]', '', ?, ?)
             ON CONFLICT(run_id, stage_name) DO UPDATE SET
                 stage_order = excluded.stage_order,
                 options_json = excluded.options_json,
@@ -2093,11 +2216,11 @@ class Storage:
                 retry_count = 0,
                 committed_artifacts_json = '[]',
                 error = '',
-                started_at = NULL,
+                started_at = excluded.started_at,
                 finished_at = NULL,
                 updated_at = excluded.updated_at
             """,
-            (run_id, stage_name, stage_order, options_json, status, ts),
+            (run_id, stage_name, stage_order, options_json, status, started_at, ts),
         )
         self._maybe_commit()
 

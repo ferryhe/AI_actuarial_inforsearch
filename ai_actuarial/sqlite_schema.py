@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 6
+CURRENT_SQLITE_SCHEMA_VERSION = 7
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -487,6 +487,28 @@ def _add_pipeline_fks_v6(conn: sqlite3.Connection) -> None:
     _set_user_version(conn, 6)
 
 
+def _accept_version_6_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept a version-6 source: pipeline_run present without the v7 lease columns."""
+    if "pipeline_run" not in tables:
+        return False
+    filtered = {k: v for k, v in tables.items() if k != "pipeline_run"}
+    valid, _, _ = _schema_validation(filtered, tolerate_backfill=True)
+    return valid
+
+
+def _add_pipeline_lease_v7(conn: sqlite3.Connection) -> None:
+    """Add run-level lease columns to pipeline_run for single-run concurrency fencing."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(pipeline_run)")}
+    if "lease_owner" not in columns:
+        conn.execute("ALTER TABLE pipeline_run ADD COLUMN lease_owner TEXT")
+    if "lease_expires_at" not in columns:
+        conn.execute("ALTER TABLE pipeline_run ADD COLUMN lease_expires_at TEXT")
+    _set_user_version(conn, 7)
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -522,6 +544,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_pipeline_fks_v6",
         apply=_add_pipeline_fks_v6,
         source_validator=_accept_version_5_source,
+    ),
+    SQLiteSchemaMigration(
+        version=7,
+        migration_id="add_pipeline_lease_v7",
+        apply=_add_pipeline_lease_v7,
+        source_validator=_accept_version_6_source,
     ),
 )
 
