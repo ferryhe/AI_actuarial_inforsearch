@@ -22,7 +22,6 @@ This directory keeps maintained documentation first. Historical implementation r
 - [RAG Embeddings Runtime](guides/RAG_EMBEDDINGS_RUNTIME.md): embeddings runtime resolution and diagnostics.
 - [Troubleshooting Model Fetching](guides/TROUBLESHOOTING_MODEL_FETCHING.md): model registry troubleshooting.
 - [Database Backend Guide](guides/DATABASE_BACKEND_GUIDE.md): database backend notes.
-- [Gitee Mirror Sync](guides/GITEE_MIRROR_SYNC.md): optional mirror synchronization notes.
 
 ## Current Product Milestones
 
