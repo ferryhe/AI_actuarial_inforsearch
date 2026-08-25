@@ -1325,8 +1325,19 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
         if not profile:
             raise RagAdminError("chunk profile not found", status_code=404)
 
-        new_chunk_size = int(payload["chunk_size"]) if "chunk_size" in payload else profile["chunk_size"]
-        new_chunk_overlap = int(payload["chunk_overlap"]) if "chunk_overlap" in payload else profile["chunk_overlap"]
+        def _strict_int(value: Any, field: str) -> int:
+            # bool is an int subclass but is never a valid chunk size/overlap;
+            # floats/None/other types are rejected outright instead of being
+            # silently truncated or coerced.
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                raise RagAdminError(f"{field} must be an integer", status_code=400)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                raise RagAdminError(f"{field} must be an integer", status_code=400) from None
+
+        new_chunk_size = _strict_int(payload["chunk_size"], "chunk_size") if "chunk_size" in payload else profile["chunk_size"]
+        new_chunk_overlap = _strict_int(payload["chunk_overlap"], "chunk_overlap") if "chunk_overlap" in payload else profile["chunk_overlap"]
         immutable_changed = (
             ("chunk_size" in payload and new_chunk_size != profile["chunk_size"])
             or ("chunk_overlap" in payload and new_chunk_overlap != profile["chunk_overlap"])

@@ -9,7 +9,9 @@ Covers the acceptance criteria:
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -132,6 +134,58 @@ def test_embeddings_same_model_knob_update_is_not_blocked(monkeypatch: pytest.Mo
         db_path=":memory:",
     )
     assert result["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# A.1 _has_indexed_knowledge_bases fail-closed semantics (#220 review)
+# ---------------------------------------------------------------------------
+
+class _RaisingConnection:
+    """Stand-in for ``Storage._conn`` whose ``execute`` raises on demand."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def execute(self, *args: Any, **kwargs: Any) -> None:
+        raise self._exc
+
+
+class _FakeStorage:
+    def __init__(self, db_path: str) -> None:
+        self._conn = _RaisingConnection(self._execute_exc)
+
+    def close(self) -> None:
+        pass
+
+
+def _patch_storage_raise(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    _FakeStorage._execute_exc = exc
+    monkeypatch.setattr(ops_write, "Storage", _FakeStorage)
+
+
+def test_has_indexed_knowledge_bases_fails_closed_on_generic_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_storage_raise(monkeypatch, RuntimeError("database is locked"))
+    # A transient/unknown failure must NOT be treated as "nothing indexed".
+    assert ops_write._has_indexed_knowledge_bases(":memory:") is True
+
+
+def test_has_indexed_knowledge_bases_fails_closed_on_operational_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_storage_raise(monkeypatch, sqlite3.OperationalError("database is locked"))
+    assert ops_write._has_indexed_knowledge_bases(":memory:") is True
+
+
+def test_has_indexed_knowledge_bases_allows_missing_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_storage_raise(
+        monkeypatch, sqlite3.OperationalError("no such table: rag_knowledge_bases")
+    )
+    # A fresh/empty DB (no such table) is the one safe fail-open case.
+    assert ops_write._has_indexed_knowledge_bases(":memory:") is False
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +346,37 @@ def test_chunk_profile_update_resulting_in_duplicate_config_hash_is_conflict(
             headers={},
         )
     assert excinfo.value.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("chunk_size", "300.5"),
+        ("chunk_size", ""),
+        ("chunk_size", None),
+        ("chunk_size", True),
+        ("chunk_size", 300.5),
+        ("chunk_overlap", "100.5"),
+        ("chunk_overlap", None),
+    ],
+)
+def test_chunk_profile_update_rejects_non_integer_immutable_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    bad_value: Any,
+) -> None:
+    monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
+    db_path = str(tmp_path / "index.db")
+    profile = _make_profile(db_path)
+    with pytest.raises(RagAdminError, match=f"{field} must be an integer") as excinfo:
+        update_chunk_profile(
+            db_path=db_path,
+            profile_id=profile["profile_id"],
+            payload={field: bad_value},
+            headers={},
+        )
+    assert excinfo.value.status_code == 400
 
 
 # ---------------------------------------------------------------------------

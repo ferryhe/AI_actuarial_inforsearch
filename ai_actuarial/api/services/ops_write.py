@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
@@ -1509,8 +1510,13 @@ def _has_indexed_knowledge_bases(db_path: str) -> bool:
     embeddings provider/model change would invalidate (#220).
 
     Mirrors the affected-KB enumeration in ``update_ai_routing``: a KB counts
-    as indexed when it has files or chunks. Missing table / query errors are
-    treated as "nothing indexed" (fail-open), consistent with that logic.
+    as indexed when it has files or chunks. A missing table (a
+    ``sqlite3.OperationalError`` whose message contains "no such table") means
+    a fresh/empty database with nothing indexed yet, so we safely return
+    False (first-time configuration). Any other query failure (transient lock,
+    corrupt schema, partial migration) is treated as "indexed KBs exist"
+    (fail-closed), so a failure never silently allows an embeddings change
+    without a full reindex.
     """
     kb_storage = Storage(db_path)
     try:
@@ -1524,9 +1530,14 @@ def _has_indexed_knowledge_bases(db_path: str) -> bool:
             """
         ).fetchone()
         return row is not None
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return False
+        logger.warning("Failed to check for indexed KBs before embeddings config change", exc_info=True)
+        return True
     except Exception:
         logger.warning("Failed to check for indexed KBs before embeddings config change", exc_info=True)
-        return False
+        return True
     finally:
         kb_storage.close()
 
