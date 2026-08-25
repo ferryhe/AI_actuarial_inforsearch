@@ -22,6 +22,9 @@ from ..services.ops_read import (
     get_search_engines,
     get_task_log,
     list_active_tasks,
+    list_pipeline_runs,
+    get_pipeline_run_detail,
+    parse_pipeline_runs_limit,
     list_task_history,
     parse_task_history_limit,
     parse_task_log_tail,
@@ -160,6 +163,41 @@ def api_task_log(
         return get_task_log(task_id, tail)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@router.get("/pipeline/runs")
+def api_pipeline_runs(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.view")),
+) -> dict[str, object]:
+    """List recent pipeline runs (all statuses) for the frontend expand view.
+
+    Query params:
+        limit: Maximum number of runs to return (default 50, max 500).
+
+    Returns:
+        A dict with a ``runs`` list (newest first) and a ``count``.
+    """
+    limit = parse_pipeline_runs_limit(request.query_params.get("limit"))
+    return list_pipeline_runs(db_path=_get_db_path(request), limit=limit)
+
+
+@router.get("/pipeline/runs/{run_id}")
+def api_pipeline_run_detail(
+    run_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.view")),
+) -> dict[str, object]:
+    """Return a single pipeline run with its stage and child-run detail.
+
+    The ``stages`` list includes each stage's ``status``, ``options_json``,
+    ``checkpoint_json``, ``error`` and ``started_at``/``finished_at`` timestamps
+    so the frontend can render a per-stage expand view without a schema change.
+    """
+    detail = get_pipeline_run_detail(db_path=_get_db_path(request), run_id=run_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Pipeline run not found")
+    return detail
 
 
 @router.get("/logs/global")

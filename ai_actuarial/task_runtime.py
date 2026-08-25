@@ -171,6 +171,22 @@ def _new_scheduler() -> Any:
     return _FallbackScheduler()
 
 
+def pipeline_mode_for_site(site: dict[str, Any] | None, global_config: dict[str, Any] | None) -> str:
+    """Decide a site's scheduled pipeline mode: ``"full"`` or ``"legacy"``.
+
+    The global fallback switch wins: when ``defaults.full_pipeline_fallback`` is
+    truthy, every site runs the legacy ``scheduled`` pipeline even if the site
+    itself opted into ``full_pipeline``. Otherwise a site whose ``full_pipeline``
+    flag is truthy runs the full pipeline; the default is legacy.
+    """
+    global_config = global_config or {}
+    if coerce_bool(global_config.get("full_pipeline_fallback"), default=False):
+        return "legacy"
+    if coerce_bool((site or {}).get("full_pipeline"), default=False):
+        return "full"
+    return "legacy"
+
+
 @dataclass(slots=True)
 class RuntimeRefs:
     active_tasks_ref: dict[str, dict[str, Any]]
@@ -311,17 +327,32 @@ class NativeTaskRuntime:
             )
 
         def make_site_job(site: dict[str, Any]) -> Callable[[], None]:
+            mode = pipeline_mode_for_site(site, site_config.get("defaults") or {})
+
             def job_wrapper() -> None:
-                self.start_background_task(
-                    "scheduled",
-                    {
-                        "site": site.get("name"),
-                        "name": f"Scheduled: {site.get('name')}",
-                        "max_pages": site.get("max_pages"),
-                        "max_depth": site.get("max_depth"),
-                    },
-                    task_name=f"Scheduled: {site.get('name')}",
-                )
+                if mode == "full":
+                    self.start_background_task(
+                        "full_pipeline",
+                        {
+                            "source_collection_type": "scheduled",
+                            "site": site.get("name"),
+                            "name": f"Scheduled: {site.get('name')}",
+                            "max_pages": site.get("max_pages"),
+                            "max_depth": site.get("max_depth"),
+                        },
+                        task_name=f"Scheduled: {site.get('name')}",
+                    )
+                else:
+                    self.start_background_task(
+                        "scheduled",
+                        {
+                            "site": site.get("name"),
+                            "name": f"Scheduled: {site.get('name')}",
+                            "max_pages": site.get("max_pages"),
+                            "max_depth": site.get("max_depth"),
+                        },
+                        task_name=f"Scheduled: {site.get('name')}",
+                    )
 
             return job_wrapper
 
