@@ -4655,6 +4655,50 @@ class Storage:
             )
         return out
 
+    def kb_committed_chunk_profiles(self, kb_id: str) -> list[dict[str, Any]]:
+        """Return chunk profiles committed to a KB (bound chunk sets with chunk
+        data), deduplicated by profile.
+
+        Joins kb_chunk_bindings -> file_chunk_sets -> chunk_profiles. A profile
+        only counts as "committed" when its bound chunk set actually holds chunk
+        data (chunk_count > 0).
+        """
+        cur = self._conn.execute(
+            """
+            SELECT DISTINCT
+                p.profile_id,
+                p.name,
+                p.chunk_size,
+                p.chunk_overlap,
+                p.splitter,
+                p.tokenizer,
+                p.version,
+                p.config_hash,
+                p.config_json
+            FROM kb_chunk_bindings b
+            JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+            JOIN chunk_profiles p ON p.profile_id = s.profile_id
+            WHERE b.kb_id = ? AND s.chunk_count > 0
+            """,
+            (kb_id,),
+        )
+        out: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            out.append(
+                {
+                    "profile_id": row[0],
+                    "name": row[1],
+                    "chunk_size": row[2],
+                    "chunk_overlap": row[3],
+                    "splitter": row[4],
+                    "tokenizer": row[5],
+                    "version": row[6],
+                    "config_hash": row[7],
+                    "config_json": row[8],
+                }
+            )
+        return out
+
     def upsert_agentic_ready_manifest(
         self,
         *,

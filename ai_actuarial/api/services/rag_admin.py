@@ -18,7 +18,7 @@ from ai_actuarial.agentic_rag.staging_smoke import (
     run_staging_smoke,
 )
 from ai_actuarial.config import settings
-from ai_actuarial.shared_runtime import parse_int_clamped
+from ai_actuarial.shared_runtime import coerce_bool, parse_int_clamped
 from ai_actuarial.storage import Storage, _split_visible_categories
 
 
@@ -1324,6 +1324,26 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
         profile = storage.get_chunk_profile(normalized_profile_id)
         if not profile:
             raise RagAdminError("chunk profile not found", status_code=404)
+
+        new_chunk_size = int(payload["chunk_size"]) if "chunk_size" in payload else profile["chunk_size"]
+        new_chunk_overlap = int(payload["chunk_overlap"]) if "chunk_overlap" in payload else profile["chunk_overlap"]
+        immutable_changed = (
+            ("chunk_size" in payload and new_chunk_size != profile["chunk_size"])
+            or ("chunk_overlap" in payload and new_chunk_overlap != profile["chunk_overlap"])
+        )
+        if immutable_changed:
+            in_use = (
+                storage._conn.execute(
+                    "SELECT 1 FROM file_chunk_sets WHERE profile_id = ? AND chunk_count > 0 LIMIT 1",
+                    (normalized_profile_id,),
+                ).fetchone()
+                is not None
+            )
+            if in_use and not coerce_bool(payload.get("full_reindex")):
+                raise RagAdminError(
+                    "chunk profile immutable fields (chunk_size/chunk_overlap) are in use; full_reindex is required"
+                )
+
         updates = []
         values = []
         if "name" in payload:
@@ -1331,10 +1351,33 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
             values.append(_norm(payload["name"]))
         if "chunk_size" in payload:
             updates.append("chunk_size = ?")
-            values.append(int(payload["chunk_size"]))
+            values.append(new_chunk_size)
         if "chunk_overlap" in payload:
             updates.append("chunk_overlap = ?")
-            values.append(int(payload["chunk_overlap"]))
+            values.append(new_chunk_overlap)
+        if immutable_changed:
+            config = json.loads(profile["config_json"] or "{}")
+            config["chunk_size"] = new_chunk_size
+            config["chunk_overlap"] = new_chunk_overlap
+            config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            config_hash = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+            # config_hash is UNIQUE; a recomputed hash colliding with another
+            # profile would raise a raw sqlite3.IntegrityError (500). Surface a
+            # clear 409 conflict instead.
+            conflict = storage._conn.execute(
+                "SELECT profile_id FROM chunk_profiles WHERE config_hash = ? AND profile_id != ? LIMIT 1",
+                (config_hash, normalized_profile_id),
+            ).fetchone()
+            if conflict:
+                raise RagAdminError(
+                    "resulting chunk config already exists as profile "
+                    f"{conflict[0]}; reuse that profile instead",
+                    status_code=409,
+                )
+            updates.append("config_json = ?")
+            values.append(config_json)
+            updates.append("config_hash = ?")
+            values.append(config_hash)
         if updates:
             import time as time_module
             updates.append("updated_at = ?")

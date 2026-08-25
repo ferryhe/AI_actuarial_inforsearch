@@ -1055,6 +1055,7 @@ def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(tmp_pat
     routing_update = client.post(
         "/api/config/ai-routing",
         json={
+            "full_reindex": True,
             "bindings": [
                 {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"},
             ]
@@ -1074,6 +1075,41 @@ def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(tmp_pat
     assert kb["needs_reindex"] is True
     assert kb["availability"] == "needs_reindex"
     assert kb["usable"] is False
+
+
+def test_ai_routing_embedding_change_with_indexed_kb_requires_full_reindex(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    headers = {"X-Auth-Token": seed["admin_token"]}
+
+    create_kb = client.post(
+        "/api/rag/knowledge-bases",
+        json={"kb_id": "kb-embedding-guard", "name": "Embedding Guard", "kb_mode": "manual"},
+        headers=headers,
+    )
+    assert create_kb.status_code == 201, create_kb.text
+
+    storage = Storage(str(app.state.db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_count = 1 WHERE kb_id = ?",
+            ("kb-embedding-guard",),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    routing_update = client.post(
+        "/api/config/ai-routing",
+        json={
+            "bindings": [
+                {"function_name": "embeddings", "provider": "openai", "model": "text-embedding-3-small"},
+            ]
+        },
+        headers=headers,
+    )
+    assert routing_update.status_code == 400, routing_update.text
+    assert "full_reindex" in routing_update.text
 
 
 def test_ai_routing_embedding_model_selection_persists_model_defaults(tmp_path: Path, monkeypatch) -> None:

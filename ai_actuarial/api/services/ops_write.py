@@ -1504,6 +1504,33 @@ def delete_provider_credential(provider_id: str, *, db_path: str, category: str 
     return {"success": True}
 
 
+def _has_indexed_knowledge_bases(db_path: str) -> bool:
+    """Return True when at least one KB holds indexed content that an
+    embeddings provider/model change would invalidate (#220).
+
+    Mirrors the affected-KB enumeration in ``update_ai_routing``: a KB counts
+    as indexed when it has files or chunks. Missing table / query errors are
+    treated as "nothing indexed" (fail-open), consistent with that logic.
+    """
+    kb_storage = Storage(db_path)
+    try:
+        row = kb_storage._conn.execute(
+            """
+            SELECT 1
+            FROM rag_knowledge_bases
+            WHERE COALESCE(file_count, 0) > 0
+               OR COALESCE(chunk_count, 0) > 0
+            LIMIT 1
+            """
+        ).fetchone()
+        return row is not None
+    except Exception:
+        logger.warning("Failed to check for indexed KBs before embeddings config change", exc_info=True)
+        return False
+    finally:
+        kb_storage.close()
+
+
 def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState | None = None) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     config_data = _load_config_data()
@@ -1605,6 +1632,19 @@ def update_ai_routing(data: dict[str, Any], *, db_path: str, bridge: BridgeState
             defaults = get_embedding_model_defaults(provider_norm, model)
             section["batch_size"] = defaults.batch_size
             section["similarity_threshold"] = defaults.similarity_threshold
+            # Immutable-stage write-entry guard (#220): changing the embedding
+            # provider/model changes the embedding fingerprint/dimension and
+            # invalidates every already-indexed KB. Reject a "config-only" save
+            # only when there are already-indexed KBs that would be invalidated;
+            # a first-time / empty-KB write is allowed. full_reindex (the change
+            # + full rebuild) is treated as one atomic action and bypasses it.
+            if not coerce_bool(payload.get("full_reindex")) and _has_indexed_knowledge_bases(db_path):
+                raise OpsWriteError(
+                    "Embeddings provider/model change is an immutable config change: "
+                    "existing knowledge-base indexes would become incompatible. "
+                    "Pass full_reindex: true to rebuild affected knowledge bases "
+                    "atomically, or revert the change."
+                )
         if binding_name in {"chat", "catalog"}:
             for field in ["temperature", "max_tokens", "timeout_seconds"]:
                 if field in item and item.get(field) not in (None, ""):
