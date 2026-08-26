@@ -312,6 +312,13 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert "setScheduledEnabled(source?.enabled ?? true)" in form_src
     assert "interval: scheduledInterval.trim()" in form_src
     assert "enabled: scheduledEnabled" in form_src
+    assert 'chunk_generation: ["binding_mode", "full_reindex", "kb_id"]' in form_src
+    assert 'rag_indexing: ["incremental", "force_reindex", "kb_id"]' in form_src
+    assert "forbiddenFields.has(key)" in form_src
+    assert "Number.isFinite(numericValue)" in form_src
+    assert 'throw new Error(`${key} must be a finite number`)' in form_src
+    assert 'setError(caught instanceof Error ? caught.message : t("tasks.sched.save_fail"))' in form_src
+    assert form_src.index("Number.isFinite(numericValue)") < form_src.index('apiPost("/api/scheduled-tasks/update"')
     assert "advanced" not in form_src.lower()
 
 

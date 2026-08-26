@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
+from typing import Any
 
 import pytest
 
@@ -37,6 +39,42 @@ def test_pipeline_cli_status_start_tick_and_config_use_same_http_contract(monkey
 
     with pytest.raises(SystemExit):
         parser.parse_args(["pipeline", "config", "--overrides", "{}"])
+
+
+def test_pipeline_api_request_preserves_bearer_token_and_uses_finite_timeout(
+    monkeypatch, capsys
+) -> None:
+    captured: dict[str, Any] = {}
+    token = "real-secret-token"
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self) -> bytes:
+            return b'{"success": true}'
+
+    def urlopen(request, *, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", urlopen)
+
+    assert cli.pipeline_api_request(
+        "https://api.example", "status", method="GET", token=token
+    ) == {"success": True}
+    request = captured["request"]
+    assert request.get_header("Authorization") == f"Bearer {token}"
+    assert isinstance(captured["timeout"], (int, float))
+    assert math.isfinite(captured["timeout"])
+    assert captured["timeout"] > 0
+    output = capsys.readouterr()
+    assert token not in output.out
+    assert token not in output.err
 
 
 @pytest.mark.parametrize(

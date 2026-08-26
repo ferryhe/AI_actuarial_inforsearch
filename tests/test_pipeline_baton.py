@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,23 @@ def test_chunk_baton_configuration_rejects_kb_binding_fields(tmp_path: Path, fie
 
     with pytest.raises(ValueError, match=field):
         baton.configure({"chunk_generation": {field: False}})
+
+
+def test_unknown_current_step_persists_error_terminal_state(tmp_path: Path) -> None:
+    tasks = FakeTasks()
+    tasks.statuses["scheduled-1"] = "running"
+    state_path = tmp_path / "pipeline-baton.json"
+    baton = _service(tmp_path, tasks, [])
+    baton.start("scheduled-1")
+    document = json.loads(state_path.read_text(encoding="utf-8"))
+    document["state"]["current_step"] = "corrupt-step"
+    state_path.write_text(json.dumps(document), encoding="utf-8")
+
+    state = baton.tick()["state"]
+
+    assert state["round_status"] == "error"
+    assert _service(tmp_path, tasks, []).status()["state"]["round_status"] == "error"
+    assert tasks.started == []
 
 
 def test_baton_terminal_task_status_stops_round_without_starting_next(tmp_path: Path) -> None:

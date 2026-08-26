@@ -39,6 +39,11 @@ const steps: Array<{ step: StepName; label: string; testId: string }> = [
   { step: "rag_indexing", label: "RAG Index", testId: "pipeline-step-rag_indexing" },
 ];
 
+const batonOwnedFields: Partial<Record<StepName, string[]>> = {
+  chunk_generation: ["binding_mode", "full_reindex", "kb_id"],
+  rag_indexing: ["incremental", "force_reindex", "kb_id"],
+};
+
 export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskName: string) => void }) {
   const { t } = useTranslation();
   const { permissions } = useAuth();
@@ -90,8 +95,9 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
     if (!view) return;
     setBusy(step);
     try {
+      const forbiddenFields = new Set(["type", "name", "file_urls", ...(batonOwnedFields[step] || [])]);
       const payload = Object.fromEntries(
-        Object.entries(task).filter(([key, value]) => !["type", "name", "kb_id", "file_urls", "force_reindex"].includes(key) && value !== undefined)
+        Object.entries(task).filter(([key, value]) => !forbiddenFields.has(key) && value !== undefined)
       );
       const overrides = { ...view.config.overrides };
       if (Object.keys(payload).length > 0) overrides[step] = payload;
@@ -111,8 +117,15 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
     try {
       const params = { ...scheduledTask.params };
       for (const [key, value] of [["site", scheduledSite], ["max_pages", scheduledMaxPages], ["max_depth", scheduledMaxDepth]]) {
-        if (value.trim()) params[key] = key === "site" ? value.trim() : Number(value);
-        else delete params[key];
+        if (!value.trim()) {
+          delete params[key];
+        } else if (key === "site") {
+          params[key] = value.trim();
+        } else {
+          const numericValue = Number(value);
+          if (!Number.isFinite(numericValue)) throw new Error(`${key} must be a finite number`);
+          params[key] = numericValue;
+        }
       }
       await apiPost("/api/scheduled-tasks/update", {
         original_name: scheduledTask.name,
