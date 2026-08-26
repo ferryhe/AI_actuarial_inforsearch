@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,7 @@ FILE_PREVIEW_TSX = ROOT / "pages" / "FilePreview.tsx"
 NATIVE_FILE_DETAIL_TSX = ROOT / "pages" / "NativeFileDetail.tsx"
 LATEST_REQUEST_HOOK_TS = ROOT / "hooks" / "use-latest-request.ts"
 REPO_ROOT = Path(__file__).resolve().parents[1]
+NPM_COMMAND = "npm.cmd" if os.name == "nt" else "npm"
 
 
 def test_file_detail_ai_explain_passes_loaded_markdown_to_chat():
@@ -49,16 +51,17 @@ def test_file_detail_uses_permission_gates_for_mutating_actions():
     assert 'permissions.includes("rag.write")' not in src
 
 
-def test_file_detail_chunk_modal_can_bind_generated_chunks_to_kb():
+def test_file_detail_chunk_modal_runs_fixed_chunk_embedding_pair_without_kb_options():
     src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
 
     assert "body.profile_id = chunkProfileId" in src
-    assert "body.kb_id = selectedKbId" in src
-    assert "binding_mode: bindingMode" in src
+    assert 'type: "embedding_generation"' in src
+    assert "chunk_set_ids" in src
     assert 'data-testid="select-file-chunk-profile"' in src
-    assert 'data-testid="checkbox-file-bind-kb"' in src
-    assert 'data-testid="select-file-bind-kb"' in src
-    assert 'data-testid="select-file-binding-mode"' in src
+    assert "body.kb_id" not in src
+    assert "binding_mode" not in src
+    assert "overwrite_same_profile" not in src
+    assert '.filter((chunkSet) => chunkSet.status === "ready"' in src
 
 
 def test_file_detail_chunk_generation_does_not_prompt_for_legacy_auth_token():
@@ -100,7 +103,7 @@ for (const fileUrl of fileUrls) {
 """
 
     result = subprocess.run(
-        ["npm", "exec", "--", "tsx", "-e", script, json.dumps(file_urls)],
+        [NPM_COMMAND, "exec", "--", "tsx", "-e", script, json.dumps(file_urls)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -172,7 +175,7 @@ verifySamePathQueryNavigation('/file-preview', 'file_url');
 """
 
     result = subprocess.run(
-        ["npm", "exec", "--", "tsx", "-e", script, file_url_a, file_url_b],
+        [NPM_COMMAND, "exec", "--", "tsx", "-e", script, file_url_a, file_url_b],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -281,7 +284,7 @@ if (JSON.stringify(staleErrorState) !== JSON.stringify({ value: 'B', error: null
 """
 
     result = subprocess.run(
-        ["npm", "exec", "--", "tsx", "-e", script],
+        [NPM_COMMAND, "exec", "--", "tsx", "-e", script],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -348,7 +351,7 @@ if (JSON.stringify(state) !== afterB) {
 """
 
     result = subprocess.run(
-        ["npm", "exec", "--", "tsx", "-e", script],
+        [NPM_COMMAND, "exec", "--", "tsx", "-e", script],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

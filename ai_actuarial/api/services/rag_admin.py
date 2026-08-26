@@ -18,7 +18,7 @@ from ai_actuarial.agentic_rag.staging_smoke import (
     run_staging_smoke,
 )
 from ai_actuarial.config import settings
-from ai_actuarial.shared_runtime import coerce_bool, parse_int_clamped
+from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage, _split_visible_categories
 
 
@@ -1350,9 +1350,10 @@ def update_chunk_profile(*, db_path: str, profile_id: str, payload: dict[str, An
                 ).fetchone()
                 is not None
             )
-            if in_use and not coerce_bool(payload.get("full_reindex")):
+            if in_use:
                 raise RagAdminError(
-                    "chunk profile immutable fields (chunk_size/chunk_overlap) are in use; full_reindex is required"
+                    "chunk profile immutable fields (chunk_size/chunk_overlap) are in use; "
+                    "full_reindex cannot override this; create a new profile instead"
                 )
 
         updates = []

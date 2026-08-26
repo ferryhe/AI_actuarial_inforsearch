@@ -12,6 +12,7 @@ from ..services.ops_read import (
     get_backend_settings,
     get_config_categories,
     get_config_sites,
+    get_embedding_coverage,
     get_global_logs,
     get_llm_providers,
     get_markdown_conversion_config,
@@ -134,6 +135,23 @@ def api_tasks_active(
     active_tasks_ref = getattr(request.app.state, "active_tasks_ref", {}) or {}
     task_lock = getattr(request.app.state, "task_lock", None)
     return list_active_tasks(active_tasks_ref, task_lock)
+
+
+@router.get("/embeddings/coverage")
+def api_embedding_coverage(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.view")),
+) -> dict[str, object]:
+    try:
+        return get_embedding_coverage(
+            db_path=_get_db_path(request),
+            chunk_set_ids=request.query_params.getlist("chunk_set_id"),
+            file_urls=request.query_params.getlist("file_url"),
+            profile_id=request.query_params.get("profile_id"),
+            embedding_identity_key=request.query_params.get("embedding_identity_key"),
+        )
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
 @router.get("/tasks/history")

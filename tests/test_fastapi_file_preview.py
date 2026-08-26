@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from pathlib import Path
 
 import yaml
@@ -111,6 +112,23 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     return client, app, seed
 
 
+def _wait_for_task(app: object, task_id: str) -> dict[str, object]:
+    runtime = app.state.native_task_runtime
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with runtime.task_lock:
+            task = runtime.active_tasks.get(task_id)
+            if task is None:
+                task = next(
+                    (row for row in reversed(runtime.task_history) if row.get("id") == task_id),
+                    None,
+                )
+            if task is not None and task.get("status") in {"completed", "error", "stopped"}:
+                return dict(task)
+        time.sleep(0.01)
+    raise AssertionError(f"task did not finish: {task_id}")
+
+
 
 def test_fastapi_file_preview_routes_are_listed_in_native_inventory(tmp_path: Path, monkeypatch) -> None:
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
@@ -125,7 +143,7 @@ def test_fastapi_file_preview_routes_are_listed_in_native_inventory(tmp_path: Pa
 
 
 def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypatch) -> None:
-    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
     headers = {"Authorization": f"Bearer {seed['operator_token']}"}
 
@@ -152,10 +170,34 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
         },
         headers=headers,
     )
-    assert generate_response.status_code in {200, 201}, generate_response.text
+    assert generate_response.status_code == 202, generate_response.text
     generate_body = generate_response.json()
-    assert generate_body["chunk_set_id"]
-    assert generate_body["chunk_count"] >= 1
+    assert generate_body["job_id"]
+    first_task = _wait_for_task(app, generate_body["job_id"])
+    assert first_task["status"] == "completed", first_task
+    first_result = first_task["result"]
+    assert first_result["contract_version"] == 1
+    assert len(first_result["chunk_sets"]) == 1
+    assert first_result["chunk_sets"][0]["file_url"] == file_url
+    assert first_result["chunk_sets"][0]["reused_existing"] is False
+
+    first_list = client.get(f"/api/files/{file_url}/chunk-sets", headers=headers).json()
+    first_preview = client.get(
+        "/api/rag/files/preview", params={"file_url": file_url}, headers=headers
+    ).json()
+    assert len(first_list["chunk_sets"]) == 1
+    assert first_preview["active_chunk_set_id"] == first_result["chunk_sets"][0]["chunk_set_id"]
+    assert len(first_preview["chunks"]) == first_list["chunk_sets"][0]["chunk_count"] > 0
+    first_snapshot = {
+        "chunk_set_id": first_list["chunk_sets"][0]["chunk_set_id"],
+        "chunk_count": first_list["chunk_sets"][0]["chunk_count"],
+        "created_at": first_list["chunk_sets"][0]["created_at"],
+        "updated_at": first_list["chunk_sets"][0]["updated_at"],
+        "chunks": [
+            (row["chunk_id"], row["content"], row["created_at"])
+            for row in first_preview["chunks"]
+        ],
+    }
 
     identical_response = client.post(
         f"/api/files/{file_url}/chunk-sets/generate",
@@ -169,26 +211,35 @@ def test_fastapi_file_preview_and_chunk_generation_work(tmp_path: Path, monkeypa
         },
         headers=headers,
     )
-    assert identical_response.status_code in {200, 201}, identical_response.text
+    assert identical_response.status_code == 202, identical_response.text
     identical_body = identical_response.json()
-    assert identical_body["chunk_set_id"] == generate_body["chunk_set_id"]
-    assert identical_body["chunk_count"] == generate_body["chunk_count"]
-    assert identical_body["reused_existing"] is True
-    assert identical_body["overwrote_existing"] is False
+    assert identical_body["job_id"]
+    second_task = _wait_for_task(app, identical_body["job_id"])
+    assert second_task["status"] == "completed", second_task
+    second_result = second_task["result"]
+    assert second_result["contract_version"] == 1
+    assert second_result["chunk_sets"][0]["chunk_set_id"] == first_snapshot["chunk_set_id"]
+    assert second_result["chunk_sets"][0]["chunk_count"] == first_snapshot["chunk_count"]
+    assert second_result["chunk_sets"][0]["reused_existing"] is True
 
-    list_after = client.get(f"/api/files/{file_url}/chunk-sets", headers=headers)
-    assert list_after.status_code == 200, list_after.text
-    list_body = list_after.json()
-    assert list_body["count"] >= 1
+    second_list = client.get(f"/api/files/{file_url}/chunk-sets", headers=headers).json()
+    second_preview = client.get(
+        "/api/rag/files/preview", params={"file_url": file_url}, headers=headers
+    ).json()
+    assert len(second_list["chunk_sets"]) == 1
+    assert {
+        "chunk_set_id": second_list["chunk_sets"][0]["chunk_set_id"],
+        "chunk_count": second_list["chunk_sets"][0]["chunk_count"],
+        "created_at": second_list["chunk_sets"][0]["created_at"],
+        "updated_at": second_list["chunk_sets"][0]["updated_at"],
+        "chunks": [
+            (row["chunk_id"], row["content"], row["created_at"])
+            for row in second_preview["chunks"]
+        ],
+    } == first_snapshot
 
-    preview_after = client.get("/api/rag/files/preview", params={"file_url": file_url}, headers=headers)
-    assert preview_after.status_code == 200, preview_after.text
-    preview_body = preview_after.json()
-    assert preview_body["active_chunk_set_id"] == generate_body["chunk_set_id"]
-    assert len(preview_body["chunks"]) >= 1
 
-
-def test_fastapi_file_chunk_generation_can_bind_generated_chunk_to_kb(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_file_chunk_generation_rejects_removed_kb_binding_options(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
     headers = {"Authorization": f"Bearer {seed['admin_token']}"}
@@ -220,37 +271,15 @@ def test_fastapi_file_chunk_generation_can_bind_generated_chunk_to_kb(tmp_path: 
         },
         headers=headers,
     )
-    assert generate_response.status_code in {200, 201}, generate_response.text
+    assert generate_response.status_code == 400, generate_response.text
     generate_body = generate_response.json()
-    assert generate_body["chunk_set_id"]
-    assert generate_body["kb_binding"]["kb_id"] == "kb-file-bind"
-    assert generate_body["kb_binding"]["chunk_set_id"] == generate_body["chunk_set_id"]
-    assert generate_body["kb_binding"]["binding_mode"] == "follow_latest"
-
-    files = client.get("/api/rag/knowledge-bases/kb-file-bind/files", headers=headers)
-    assert files.status_code == 200, files.text
-    assert [item["file_url"] for item in files.json()["files"]] == [file_url]
+    assert generate_body["code"] == "unsupported_option"
+    assert generate_body["unsupported_options"] == ["binding_mode", "kb_id"]
+    assert "KB Binding" in generate_body["guidance"]
 
     bindings = client.get("/api/rag/knowledge-bases/kb-file-bind/bindings", headers=headers)
     assert bindings.status_code == 200, bindings.text
-    binding = bindings.json()["bindings"][0]
-    assert binding["file_url"] == file_url
-    assert binding["chunk_set_id"] == generate_body["chunk_set_id"]
-
-    storage = Storage(str(tmp_path / "index.db"))
-    try:
-        source_state = storage.get_agentic_ready_source_state(
-            kb_id="kb-file-bind",
-            profile="general",
-        )
-    finally:
-        storage.close()
-    assert source_state["event_generation"] == 2
-    assert source_state["pending_severity"] == "hard_stale"
-    assert source_state["pending_reasons"] == [
-        "membership_added",
-        "access_scope_restricted",
-    ]
+    assert bindings.json()["bindings"] == []
 
 
 def test_fastapi_chunk_generation_uses_tasks_run_auth_when_legacy_token_is_configured(
@@ -276,4 +305,5 @@ def test_fastapi_chunk_generation_uses_tasks_run_auth_when_legacy_token_is_confi
         json=payload,
         headers=auth_headers,
     )
-    assert allowed.status_code in {200, 201}, allowed.text
+    assert allowed.status_code == 202, allowed.text
+    assert allowed.json()["job_id"]

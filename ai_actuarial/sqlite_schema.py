@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections import Counter
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 7
+CURRENT_SQLITE_SCHEMA_VERSION = 8
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -509,6 +510,301 @@ def _add_pipeline_lease_v7(conn: sqlite3.Connection) -> None:
     _set_user_version(conn, 7)
 
 
+def _require_migration_columns(
+    tables: dict[str, TableSignature],
+    table: str,
+    required: frozenset[str],
+) -> None:
+    signature = tables.get(table)
+    if signature is None or not required.issubset(_column_names(signature)):
+        raise SchemaMigrationError(
+            f"embedding identity migration requires {table} columns: "
+            f"{', '.join(sorted(required))}"
+        )
+
+
+def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
+    """Make chunk contracts immutable and embeddings identity-addressed."""
+    tables = _schema_signature(conn)
+    current_chunk_columns = {
+        "chunk_set_id",
+        "file_url",
+        "profile_id",
+        "markdown_hash",
+        "profile_config_hash",
+    }
+    current_embedding_columns = {
+        "chunk_id",
+        "embedding_identity_key",
+        "embedding_provider",
+        "embedding_model",
+        "dimension",
+        "config_fingerprint",
+        "vector_json",
+        "status",
+        "created_at",
+        "updated_at",
+    }
+    if (
+        "file_chunk_sets" in tables
+        and current_chunk_columns.issubset(_column_names(tables["file_chunk_sets"]))
+        and "chunk_embeddings" in tables
+        and current_embedding_columns.issubset(_column_names(tables["chunk_embeddings"]))
+    ):
+        _set_user_version(conn, 8)
+        return
+    prerequisites = {
+        "files": frozenset({"url"}),
+        "chunk_profiles": frozenset({"profile_id", "config_hash"}),
+        "file_chunk_sets": frozenset(
+            {
+                "chunk_set_id",
+                "file_url",
+                "profile_id",
+                "markdown_hash",
+                "status",
+                "chunk_count",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "global_chunks": frozenset(
+            {
+                "chunk_id",
+                "chunk_set_id",
+                "chunk_index",
+                "content",
+                "token_count",
+                "section_hierarchy",
+                "content_hash",
+                "created_at",
+            }
+        ),
+        "chunk_embeddings": frozenset(
+            {"chunk_id", "embedding_model", "dim", "vector_json", "created_at"}
+        ),
+        "kb_chunk_bindings": frozenset(
+            {
+                "kb_id",
+                "file_url",
+                "chunk_set_id",
+                "bound_at",
+                "bound_by",
+                "binding_mode",
+                "target_profile_id",
+            }
+        ),
+        "kb_index_items": frozenset({"index_version_id", "chunk_id"}),
+    }
+    for table, columns in prerequisites.items():
+        _require_migration_columns(tables, table, columns)
+
+    conn.execute(
+        """
+        CREATE TABLE file_chunk_sets_v8 (
+            chunk_set_id TEXT PRIMARY KEY,
+            file_url TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            markdown_hash TEXT NOT NULL,
+            profile_config_hash TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'ready',
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(file_url, markdown_hash, profile_id, profile_config_hash),
+            FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
+            FOREIGN KEY(profile_id) REFERENCES chunk_profiles(profile_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO file_chunk_sets_v8 (
+            chunk_set_id, file_url, profile_id, markdown_hash, profile_config_hash,
+            status, chunk_count, created_at, updated_at
+        )
+        SELECT
+            s.chunk_set_id, s.file_url, s.profile_id, s.markdown_hash, p.config_hash,
+            s.status, s.chunk_count, s.created_at, s.updated_at
+        FROM file_chunk_sets s
+        JOIN chunk_profiles p ON p.profile_id = s.profile_id
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE global_chunks_v8 (
+            chunk_id TEXT PRIMARY KEY,
+            chunk_set_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            token_count INTEGER NOT NULL DEFAULT 0,
+            section_hierarchy TEXT,
+            content_hash TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(chunk_set_id, chunk_index),
+            FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets_v8(chunk_set_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("INSERT INTO global_chunks_v8 SELECT * FROM global_chunks")
+    conn.execute(
+        """
+        CREATE TABLE chunk_embeddings_v8 (
+            chunk_id TEXT NOT NULL,
+            embedding_identity_key TEXT NOT NULL,
+            embedding_provider TEXT NOT NULL,
+            embedding_model TEXT NOT NULL,
+            dimension INTEGER NOT NULL,
+            config_fingerprint TEXT NOT NULL,
+            vector_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            validated_at TEXT,
+            failure_reason TEXT,
+            PRIMARY KEY (chunk_id, embedding_identity_key),
+            FOREIGN KEY(chunk_id) REFERENCES global_chunks_v8(chunk_id) ON DELETE CASCADE
+        )
+        """
+    )
+    rows = conn.execute(
+        "SELECT chunk_id, embedding_model, dim, vector_json, created_at FROM chunk_embeddings"
+    ).fetchall()
+    for chunk_id, model, dimension, vector_json, created_at in rows:
+        legacy_key = "legacy:" + hashlib.sha256(
+            f"{model or ''}\0{int(dimension or 0)}".encode("utf-8")
+        ).hexdigest()
+        conn.execute(
+            """
+            INSERT INTO chunk_embeddings_v8 (
+                chunk_id, embedding_identity_key, embedding_provider, embedding_model,
+                dimension, config_fingerprint, vector_json, status, created_at,
+                updated_at, validated_at, failure_reason
+            ) VALUES (?, ?, 'legacy', ?, ?, 'legacy-unusable', ?,
+                      'legacy_unusable', ?, ?, NULL, 'legacy_identity_unavailable')
+            """,
+            (
+                chunk_id,
+                legacy_key,
+                str(model or "legacy"),
+                int(dimension or 0),
+                vector_json,
+                created_at,
+                created_at,
+            ),
+        )
+    conn.execute(
+        """
+        CREATE TABLE kb_chunk_bindings_v8 (
+            kb_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            chunk_set_id TEXT NOT NULL,
+            bound_at TEXT NOT NULL,
+            bound_by TEXT,
+            binding_mode TEXT NOT NULL DEFAULT 'pin',
+            target_profile_id TEXT,
+            PRIMARY KEY (kb_id, file_url, chunk_set_id),
+            FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
+            FOREIGN KEY(chunk_set_id) REFERENCES file_chunk_sets_v8(chunk_set_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("INSERT INTO kb_chunk_bindings_v8 SELECT * FROM kb_chunk_bindings")
+    conn.execute(
+        """
+        CREATE TABLE kb_index_items_v8 (
+            index_version_id TEXT NOT NULL,
+            chunk_id TEXT NOT NULL,
+            PRIMARY KEY (index_version_id, chunk_id),
+            FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
+            FOREIGN KEY(chunk_id) REFERENCES global_chunks_v8(chunk_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute("INSERT INTO kb_index_items_v8 SELECT * FROM kb_index_items")
+
+    for table in (
+        "chunk_embeddings",
+        "kb_index_items",
+        "kb_chunk_bindings",
+        "global_chunks",
+        "file_chunk_sets",
+    ):
+        conn.execute(f"DROP TABLE {table}")
+    for source, target in (
+        ("file_chunk_sets_v8", "file_chunk_sets"),
+        ("global_chunks_v8", "global_chunks"),
+        ("chunk_embeddings_v8", "chunk_embeddings"),
+        ("kb_chunk_bindings_v8", "kb_chunk_bindings"),
+        ("kb_index_items_v8", "kb_index_items"),
+    ):
+        conn.execute(f"ALTER TABLE {source} RENAME TO {target}")
+    conn.execute(
+        "CREATE INDEX idx_file_chunk_sets_file_url ON file_chunk_sets(file_url)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_file_chunk_sets_profile_id ON file_chunk_sets(profile_id)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_global_chunks_chunk_set_id ON global_chunks(chunk_set_id)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_chunk_embeddings_identity ON chunk_embeddings(embedding_identity_key)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_kb_chunk_bindings_kb_id ON kb_chunk_bindings(kb_id)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_kb_chunk_bindings_file_url ON kb_chunk_bindings(file_url)"
+    )
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise SchemaMigrationError("embedding identity migration broke foreign-key references")
+    _set_user_version(conn, 8)
+
+
+def _accept_version_7_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    old_columns = {
+        "file_chunk_sets": frozenset(
+            {
+                "chunk_set_id",
+                "file_url",
+                "profile_id",
+                "markdown_hash",
+                "status",
+                "chunk_count",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "chunk_embeddings": frozenset(
+            {"chunk_id", "embedding_model", "dim", "vector_json", "created_at"}
+        ),
+    }
+    if any(
+        table not in tables or _column_names(tables[table]) != columns
+        for table, columns in old_columns.items()
+    ):
+        return False
+    for table, columns in {
+        "chunk_profiles": frozenset({"profile_id", "config_hash"}),
+        "global_chunks": frozenset({"chunk_id", "chunk_set_id"}),
+        "kb_chunk_bindings": frozenset({"chunk_set_id"}),
+        "kb_index_items": frozenset({"chunk_id"}),
+    }.items():
+        if table not in tables or not columns.issubset(_column_names(tables[table])):
+            return False
+    adjusted = dict(tables)
+    expected = _current_storage_signature()
+    adjusted["file_chunk_sets"] = expected["file_chunk_sets"]
+    adjusted["chunk_embeddings"] = expected["chunk_embeddings"]
+    valid, _, _ = _schema_validation(adjusted, tolerate_backfill=True)
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -550,6 +846,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_pipeline_lease_v7",
         apply=_add_pipeline_lease_v7,
         source_validator=_accept_version_6_source,
+    ),
+    SQLiteSchemaMigration(
+        version=8,
+        migration_id="add_chunk_embedding_identity_v8",
+        apply=_add_chunk_embedding_identity_v8,
+        source_validator=_accept_version_7_source,
     ),
 )
 

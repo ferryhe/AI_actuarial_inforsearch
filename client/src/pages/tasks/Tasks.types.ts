@@ -1,3 +1,19 @@
+export interface TaskContractResult {
+  contract_version?: number;
+  chunk_sets?: Array<{
+    chunk_set_id?: string;
+    chunk_count?: number;
+    reused_existing?: boolean;
+  }>;
+  provider?: string;
+  model?: string;
+  dimension?: number;
+  generated?: number;
+  reused?: number;
+  invalid_regenerated?: number;
+  failed?: number;
+}
+
 export interface Task {
   id: string;
   name: string;
@@ -8,6 +24,8 @@ export interface Task {
   current_activity: string;
   items_processed: number;
   items_total: number;
+  errors?: string[];
+  result?: TaskContractResult;
 }
 
 export interface SiteConfig {
@@ -58,6 +76,7 @@ export interface HistoryTask {
   catalog_skipped?: number;
   catalog_errors?: number;
   errors?: string[];
+  result?: TaskContractResult;
 }
 
 export interface LogModal {

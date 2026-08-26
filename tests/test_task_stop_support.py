@@ -11,6 +11,7 @@ from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionResult
 from ai_actuarial.crawler import Crawler, SiteConfig
+from ai_actuarial.embedding_service import UnsupportedOptionsError
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import RAGException
 from ai_actuarial.rag.indexing import IndexingPipeline
@@ -1696,7 +1697,7 @@ def test_native_task_runtime_chunk_generation_uses_existing_service(tmp_path, mo
     assert kwargs["payload"]["chunk_overlap"] == 20
 
 
-def test_native_task_runtime_chunk_binding_updates_ready_source_state(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_chunk_generation_rejects_removed_binding_options(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-chunk-binding.db"
     download_dir = tmp_path / "files"
@@ -1753,7 +1754,7 @@ def test_native_task_runtime_chunk_binding_updates_ready_source_state(tmp_path, 
             file_url=file_url,
             profile_id=str(profile["profile_id"]),
             markdown_hash="runtime-binding-hash",
-            status="ready",
+            status="building",
         )
         storage.replace_global_chunks(
             chunk_set_id=str(chunk_set["chunk_set_id"]),
@@ -1780,35 +1781,32 @@ def test_native_task_runtime_chunk_binding_updates_ready_source_state(tmp_path, 
             "chunk_count": 1,
             "reused_existing": False,
         },
-    ):
-        result = runtime._run_collection(
-            "task-runtime-binding",
-            "chunk_generation",
-            {
-                "file_urls": [file_url],
-                "profile_id": str(profile["profile_id"]),
-                "kb_id": "kb-runtime-binding",
-                "binding_mode": "follow_latest",
-                "overwrite_same_profile": True,
-            },
-        )
-
-    assert result.success is True
-    assert result.metadata["bound_to_kb"] == 1
+    ) as generate:
+        with pytest.raises(
+            UnsupportedOptionsError,
+            match="unsupported_option: binding_mode, kb_id",
+        ):
+            runtime._run_collection(
+                "task-runtime-binding",
+                "chunk_generation",
+                {
+                    "file_urls": [file_url],
+                    "profile_id": str(profile["profile_id"]),
+                    "kb_id": "kb-runtime-binding",
+                    "binding_mode": "follow_latest",
+                    "overwrite_same_profile": True,
+                },
+            )
+    generate.assert_not_called()
     storage = Storage(str(db_path))
     try:
-        source_state = storage.get_agentic_ready_source_state(
-            kb_id="kb-runtime-binding",
-            profile="general",
-        )
+        binding_count = storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-runtime-binding",),
+        ).fetchone()[0]
     finally:
         storage.close()
-    assert source_state["event_generation"] == 2
-    assert source_state["pending_severity"] == "hard_stale"
-    assert source_state["pending_reasons"] == [
-        "membership_added",
-        "access_scope_restricted",
-    ]
+    assert binding_count == 0
 
 
 def test_native_task_runtime_chunk_generation_filters_existing_chunks_by_selected_profile(tmp_path, monkeypatch) -> None:
@@ -1956,7 +1954,7 @@ def test_native_task_runtime_chunk_generation_resolves_custom_profile_before_fil
     assert payload["name"] == "New Custom Profile"
 
 
-def test_native_task_runtime_chunk_generation_rejects_invalid_binding_mode(tmp_path, monkeypatch) -> None:
+def test_native_task_runtime_chunk_generation_rejects_removed_binding_mode(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-chunk-binding-mode.db"
     download_dir = tmp_path / "files"
@@ -1993,7 +1991,10 @@ def test_native_task_runtime_chunk_generation_rejects_invalid_binding_mode(tmp_p
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
     runtime = NativeTaskRuntime()
-    with pytest.raises(RuntimeError, match="binding_mode must be one of"):
+    with pytest.raises(
+        UnsupportedOptionsError,
+        match="unsupported_option: binding_mode, kb_id",
+    ):
         runtime._run_collection(
             "task-chunk-binding-mode",
             "chunk_generation",

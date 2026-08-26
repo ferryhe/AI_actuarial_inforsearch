@@ -60,7 +60,11 @@ def _db_path(request: Request) -> str:
 
 
 def _handle_ops_error(exc: OpsWriteError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+    content: dict[str, object] = {"error": exc.message}
+    if exc.code:
+        content["code"] = exc.code
+    content.update(exc.details)
+    return JSONResponse(status_code=exc.status_code, content=content)
 
 
 @router.post("/web-listening/rules/explore")

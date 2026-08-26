@@ -56,6 +56,36 @@ const fadeUp = {
   }),
 };
 
+type TaskResult = {
+  id?: string;
+  status?: string;
+  result?: {
+    chunk_sets?: Array<{ chunk_set_id?: string }>;
+    provider?: string;
+    model?: string;
+    dimension?: number;
+  };
+  errors?: string[];
+};
+
+async function waitForTaskResult(taskId: string): Promise<TaskResult> {
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const [active, history] = await Promise.all([
+      apiGet<{ tasks?: TaskResult[] }>("/api/tasks/active"),
+      apiGet<{ tasks?: TaskResult[]; history?: TaskResult[] }>("/api/tasks/history?limit=200"),
+    ]);
+    const task = [...(active.tasks || []), ...(history.tasks || history.history || [])]
+      .find((candidate) => candidate.id === taskId);
+    if (task && ["completed", "success"].includes(String(task.status))) return task;
+    if (task && ["error", "failed", "stopped"].includes(String(task.status))) {
+      throw new Error(task.errors?.[0] || `Task ${taskId} ${task.status}`);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  throw new Error(`Task ${taskId} timed out`);
+}
+
 export default function Tasks() {
   const { t } = useTranslation();
   const [, navigate] = useLocation();
@@ -215,6 +245,28 @@ export default function Tasks() {
     try {
       const res = await apiPost<{ success?: boolean; job_id?: string; error?: string }>("/api/collections/run", data);
       if (res.error) { setSubmitError(res.error); return; }
+      if (data.type === "chunk_generation" && res.job_id) {
+        const chunkTask = await waitForTaskResult(res.job_id);
+        const chunk_set_ids = (chunkTask.result?.chunk_sets || [])
+          .map((item) => item.chunk_set_id)
+          .filter((id): id is string => Boolean(id));
+        if (chunk_set_ids.length === 0) throw new Error("Chunk task returned no stable chunk_set_ids");
+        const embedding = await apiPost<{ job_id?: string; error?: string }>("/api/collections/run", {
+          type: "embedding_generation",
+          name: "Chunk & Embedding",
+          chunk_set_ids,
+        });
+        if (embedding.error || !embedding.job_id) throw new Error(embedding.error || "Embedding task did not start");
+        const embeddingTask = await waitForTaskResult(embedding.job_id);
+        const identity = embeddingTask.result;
+        const identityText = identity
+          ? ` — ${identity.provider || "?"} / ${identity.model || "?"} / ${identity.dimension || "?"}`
+          : "";
+        setSubmitSuccess(`${t("tasks.form.started")} (${res.job_id}, ${embedding.job_id})${identityText}`);
+        await Promise.all([fetchTasks(), fetchHistory()]);
+        setTimeout(() => { setActiveForm(null); setSubmitSuccess(null); }, 4000);
+        return;
+      }
       setSubmitSuccess(res.job_id ? `${t("tasks.form.started")} (${res.job_id})` : t("tasks.form.started"));
       await fetchTasks();
       setTimeout(() => { setActiveForm(null); setSubmitSuccess(null); }, 2000);
@@ -404,7 +456,7 @@ export default function Tasks() {
         ) : (
           <div className="space-y-3">
             {activeTasks.map((task, i) => (
-              <TaskCard key={task.id} task={task} index={i} onStop={canStopTasks ? stopTask : undefined} />
+              <TaskCard key={task.id} task={task} index={i} onStop={canStopTasks ? stopTask : undefined} onViewLog={viewTaskLog} />
             ))}
           </div>
         )}

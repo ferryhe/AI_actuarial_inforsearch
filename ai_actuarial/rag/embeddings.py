@@ -248,8 +248,15 @@ class EmbeddingGenerator:
                     input=texts
                 )
                 
-                # Extract embeddings in order
-                embeddings = [item.embedding for item in response.data]
+                items = list(response.data)
+                if len(items) != len(texts):
+                    raise EmbeddingException("provider_count_mismatch")
+                embeddings = []
+                for expected_index, item in enumerate(items):
+                    item_index = getattr(item, "index", None)
+                    if type(item_index) is not int or item_index != expected_index:
+                        raise EmbeddingException("provider_item_order_mismatch")
+                    embeddings.append(item.embedding)
                 return embeddings
                 
             except RateLimitError as e:

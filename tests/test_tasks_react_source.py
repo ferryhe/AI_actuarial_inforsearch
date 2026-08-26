@@ -184,10 +184,11 @@ def test_chunk_form_uses_existing_or_custom_chunk_profiles():
     assert "task.profile_id = profileSelection" in src
     assert 'profileSelection === "__custom__"' in src
     assert 'testId="input-chunk-profile"' in src
-    assert 'testId="select-bind-kb"' in src
-    assert "binding_mode: bindingMode" in src
-    assert "kb_id: bindToKb ? selectedKbId : undefined" in src
-    assert "useState(Boolean(initialTask.overwrite_same_profile))" in src
+    assert 'testId="select-bind-kb"' not in src
+    assert "binding_mode" not in src
+    assert "kb_id" not in src
+    assert "overwrite_same_profile" not in src
+    assert 'name: "Chunk & Embedding"' in src
 
 
 def test_markdown_settings_wait_for_async_options_before_replacing_saved_tool():
@@ -312,7 +313,9 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert "setScheduledEnabled(source?.enabled ?? true)" in form_src
     assert "interval: scheduledInterval.trim()" in form_src
     assert "enabled: scheduledEnabled" in form_src
-    assert 'chunk_generation: ["binding_mode", "full_reindex", "kb_id"]' in form_src
+    assert 'label: "Chunk & Embedding"' in form_src
+    assert "binding_mode" not in form_src
+    assert "full_reindex" not in form_src
     assert 'rag_indexing: ["incremental", "force_reindex", "kb_id"]' in form_src
     assert "forbiddenFields.has(key)" in form_src
     assert "Number.isFinite(numericValue)" in form_src

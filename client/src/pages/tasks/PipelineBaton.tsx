@@ -35,12 +35,11 @@ const steps: Array<{ step: StepName; label: string; testId: string }> = [
   { step: "scheduled", label: "Scheduled Collection", testId: "pipeline-step-scheduled" },
   { step: "markdown_conversion", label: "Markdown", testId: "pipeline-step-markdown_conversion" },
   { step: "catalog", label: "Catalog", testId: "pipeline-step-catalog" },
-  { step: "chunk_generation", label: "Chunk", testId: "pipeline-step-chunk_generation" },
+  { step: "chunk_generation", label: "Chunk & Embedding", testId: "pipeline-step-chunk_generation" },
   { step: "rag_indexing", label: "RAG Index", testId: "pipeline-step-rag_indexing" },
 ];
 
 const batonOwnedFields: Partial<Record<StepName, string[]>> = {
-  chunk_generation: ["binding_mode", "full_reindex", "kb_id"],
   rag_indexing: ["incremental", "force_reindex", "kb_id"],
 };
 
@@ -221,7 +220,7 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
                   {stage.tasks.map((task) => (
                     <button key={task.task_id} type="button" onClick={() => onViewLog(task.task_id, `${step.label}${task.kb_id ? `: ${task.kb_id}` : ""}`)}
                       className="text-xs text-primary underline" data-testid={`button-pipeline-task-log-${task.task_id}`}>
-                      {task.status}{task.kb_id ? ` · ${task.kb_id}` : ""} · {t("tasks.pipeline.view_log")}
+                      {task.status} · {task.task_id}{task.kb_id ? ` · ${task.kb_id}` : ""} · {t("tasks.pipeline.view_log")}
                     </button>
                   ))}
                 </div>

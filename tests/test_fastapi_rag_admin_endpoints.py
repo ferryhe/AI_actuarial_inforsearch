@@ -354,7 +354,7 @@ def _seed_ready_chunk_set(db_path: Path, file_url: str, profile_id: str, *, text
             file_url=file_url,
             profile_id=profile_id,
             markdown_hash=f"{file_url}:{profile_id}",
-            status="ready",
+            status="building",
         )
         storage.replace_global_chunks(
             chunk_set_id=chunk_set["chunk_set_id"],
@@ -5510,7 +5510,7 @@ def test_fastapi_rag_admin_create_kb_uses_existing_chunk_profile_bindings(tmp_pa
             file_url=alpha_url,
             profile_id=profile_id,
             markdown_hash="alpha-markdown-hash",
-            status="ready",
+            status="building",
         )
         storage.replace_global_chunks(
             chunk_set_id=chunk_set["chunk_set_id"],

@@ -1,7 +1,7 @@
 import { Zap, History } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { TaskTableProps } from "./Tasks.types";
-import { statusBadge, formatDate } from "./TaskCard";
+import { statusBadge, formatDate, TaskResultSummary } from "./TaskCard";
 
 export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
   const { t } = useTranslation();
@@ -34,7 +34,10 @@ export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
           <div key={i} className="border-t border-border hover:bg-muted/20 transition-colors"
             data-testid={`row-history-task-${i}`}>
             <div className="grid md:grid-cols-[1fr_90px_110px_120px_120px_80px] gap-1 md:gap-3 px-4 py-3 items-center">
-              <div className="font-medium text-sm truncate max-w-full">{task.name || "-"}</div>
+              <div className="min-w-0">
+                <div className="font-medium text-sm truncate max-w-full">{task.name || "-"}</div>
+                <div className="text-[10px] font-mono text-muted-foreground truncate" data-testid={`text-history-task-id-${i}`}>ID: {task.id || "-"}</div>
+              </div>
               <div className="text-xs text-muted-foreground hidden md:block">{task.type || "-"}</div>
               <div className="hidden md:block">{task.status ? statusBadge(task.status) : "-"}</div>
               <div className="text-xs text-muted-foreground hidden md:block">{task.started_at ? formatDate(task.started_at) : "-"}</div>
@@ -50,6 +53,7 @@ export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
                 )}
               </div>
             </div>
+            <div className="px-4 pb-2"><TaskResultSummary type={task.type} result={task.result} /></div>
             {/* Extra stats row for catalog tasks */}
             {task.type === "catalog" && (task.catalog_scanned != null || task.catalog_ok != null) && (
               <div className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">

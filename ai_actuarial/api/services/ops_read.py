@@ -14,6 +14,12 @@ from ai_actuarial.ai_runtime import (
     resolve_search_engine_credentials,
 )
 from ai_actuarial.markdown_conversion_config import get_markdown_conversion_options
+from ai_actuarial.embedding_service import (
+    embedding_coverage_for_selection,
+    resolve_embedding_selection,
+    resolve_server_embedding_identity,
+    sanitize_legacy_chunk_generation_payload,
+)
 from ai_actuarial.config import settings
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.shared_runtime import (
@@ -164,7 +170,44 @@ def get_scheduled_tasks() -> dict[str, list[dict[str, Any]]]:
     config_path = get_sites_config_path()
     config_data = load_yaml(config_path, default={})
     tasks = config_data.get("scheduled_tasks") or []
-    return {"tasks": tasks if isinstance(tasks, list) else []}
+    sanitized: list[dict[str, Any]] = []
+    for raw in tasks if isinstance(tasks, list) else []:
+        task = dict(raw)
+        params = dict(task.get("params") or {})
+        if str(task.get("type") or "") == "chunk_generation":
+            params = sanitize_legacy_chunk_generation_payload(params)
+        task["params"] = params
+        sanitized.append(task)
+    return {"tasks": sanitized}
+
+
+def get_embedding_coverage(
+    *,
+    db_path: str,
+    chunk_set_ids: list[str],
+    file_urls: list[str],
+    profile_id: str | None,
+    embedding_identity_key: str | None,
+) -> dict[str, Any]:
+    storage = Storage(db_path)
+    try:
+        selection = resolve_embedding_selection(
+            storage,
+            chunk_set_ids=chunk_set_ids,
+            file_urls=file_urls,
+            profile_id=profile_id,
+        )
+        identity = resolve_server_embedding_identity(
+            storage,
+            embedding_identity_key,
+        )
+        return embedding_coverage_for_selection(
+            storage=storage,
+            selection=selection,
+            identity=identity,
+        )
+    finally:
+        storage.close()
 
 
 def get_pipeline_baton_status(status_fn: Any) -> dict[str, Any]:

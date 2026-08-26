@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { useTaskOptions } from "@/hooks/use-task-options";
 import { apiGet } from "@/lib/api";
-import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
+import { FormField, InputField, SelectField, StatsBanner, RunButton } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 interface ChunkProfile {
@@ -11,12 +11,6 @@ interface ChunkProfile {
   name: string;
   chunk_size?: number;
   chunk_overlap?: number;
-}
-
-interface KnowledgeBaseOption {
-  kb_id: string;
-  name?: string;
-  file_count?: number;
 }
 
 export function ChunkForm({
@@ -43,11 +37,6 @@ export function ChunkForm({
   const [profileName, setProfileName] = useState(String(initialTask.profile_name || ""));
   const [profiles, setProfiles] = useState<ChunkProfile[]>([]);
   const [profileSelection, setProfileSelection] = useState(String(initialTask.profile_id || "__custom__"));
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
-  const [bindToKb, setBindToKb] = useState(false);
-  const [selectedKbId, setSelectedKbId] = useState("");
-  const [bindingMode, setBindingMode] = useState("follow_latest");
-  const [overwriteSameProfile, setOverwriteSameProfile] = useState(Boolean(initialTask.overwrite_same_profile));
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const categoryOptions = [
@@ -68,16 +57,10 @@ export function ChunkForm({
   useEffect(() => { loadStats(); }, [loadStats]);
 
   useEffect(() => {
-    Promise.all([
-      apiGet<{ profiles?: ChunkProfile[]; data?: { profiles?: ChunkProfile[] } }>("/api/chunk/profiles").catch(() => null),
-      apiGet<{ knowledge_bases?: KnowledgeBaseOption[]; data?: { knowledge_bases?: KnowledgeBaseOption[] } }>("/api/rag/knowledge-bases").catch(() => null),
-    ]).then(([profileRes, kbRes]) => {
+    apiGet<{ profiles?: ChunkProfile[]; data?: { profiles?: ChunkProfile[] } }>("/api/chunk/profiles").catch(() => null).then((profileRes) => {
       const nextProfiles = profileRes?.profiles || profileRes?.data?.profiles || [];
       setProfiles(nextProfiles);
       setProfileSelection((current) => settingsMode || current !== "__custom__" ? current : (nextProfiles[0]?.profile_id || "__custom__"));
-      const nextKbs = kbRes?.knowledge_bases || kbRes?.data?.knowledge_bases || [];
-      setKnowledgeBases(nextKbs);
-      setSelectedKbId((current) => current || nextKbs[0]?.kb_id || "");
     });
   }, [settingsMode]);
 
@@ -97,18 +80,14 @@ export function ChunkForm({
 
   const buildTask = (): Record<string, unknown> | null => {
     if (scopeMode === "category" && !category.trim()) return null;
-    if (bindToKb && !selectedKbId) return null;
     if (!usingCustomProfile && !profileSelection) return null;
     const task: Record<string, unknown> = {
       type: "chunk_generation",
-      name: "Chunk Generation",
+      name: "Chunk & Embedding",
       scope_mode: scopeMode,
       category: scopeMode === "category" ? category : undefined,
       scan_count: parseInt(scanCount) || 50,
       scan_start_index: startIndex ? parseInt(startIndex) : undefined,
-      kb_id: bindToKb ? selectedKbId : undefined,
-      binding_mode: bindingMode,
-      overwrite_same_profile: overwriteSameProfile,
     };
     if (usingCustomProfile) {
       task.chunk_size = parseInt(chunkSize) || 800;
@@ -124,8 +103,7 @@ export function ChunkForm({
 
   const formDisabled = submitting
     || (scopeMode === "category" && !category.trim())
-    || (!usingCustomProfile && !profileSelection)
-    || (bindToKb && !selectedKbId);
+    || (!usingCustomProfile && !profileSelection);
 
   return (
     <div className="space-y-4">
@@ -133,11 +111,19 @@ export function ChunkForm({
       {statsLoading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" />{t("tasks.form.loading_stats")}</div>
       ) : stats && (
-        <StatsBanner items={[
-          { label: t("tasks.form.stat_with_markdown"), value: stats.total_with_markdown as number },
-          { label: t("tasks.form.stat_with_chunks"), value: stats.total_with_chunks as number },
-          { label: t("tasks.form.stat_first_no_chunk"), value: stats.first_without_chunks_index as number },
-        ]} />
+        <div className="space-y-2">
+          <StatsBanner items={[
+            { label: t("tasks.form.stat_with_markdown"), value: stats.total_with_markdown as number },
+            { label: t("tasks.form.stat_chunks_ready"), value: stats.chunks_ready as number },
+            { label: t("tasks.form.stat_embeddings_ready"), value: stats.embeddings_ready as number },
+            { label: t("tasks.form.stat_embeddings_missing"), value: stats.embeddings_missing as number },
+            { label: t("tasks.form.stat_embeddings_invalid"), value: stats.embeddings_invalid as number },
+            { label: t("tasks.form.stat_first_no_chunk"), value: stats.first_without_chunks_index as number },
+          ]} />
+          <p className="text-xs text-muted-foreground">
+            {String(stats.embedding_provider || "?")} / {String(stats.embedding_model || "?")} / {String(stats.embedding_dimension || "?")}
+          </p>
+        </div>
       )}
       <div className="grid grid-cols-2 gap-3">
         <FormField label={t("tasks.form.scan_count")} hint={t("tasks.form.max_hint") + " 2000"}>
@@ -203,40 +189,6 @@ export function ChunkForm({
           </div>
         )}
       </div>
-      {!settingsMode && <div className="border-t border-border pt-3 mt-1 space-y-3">
-        <CheckboxField checked={bindToKb} onChange={setBindToKb}
-          label={t("tasks.form.bind_to_kb")} testId="checkbox-bind-to-kb" />
-        {bindToKb && (
-          <div className="grid grid-cols-2 gap-3" data-testid="chunk-kb-binding-fields">
-            <FormField label={t("tasks.form.kb_binding")}>
-              <SelectField
-                value={selectedKbId}
-                onChange={setSelectedKbId}
-                testId="select-bind-kb"
-                options={knowledgeBases.length === 0
-                  ? [{ value: "", label: t("tasks.form.no_knowledge_bases") }]
-                  : knowledgeBases.map((kb) => ({
-                    value: kb.kb_id,
-                    label: `${kb.name || kb.kb_id}${kb.file_count != null ? ` (${kb.file_count})` : ""}`,
-                  }))}
-              />
-            </FormField>
-            <FormField label={t("kb.binding_mode")}>
-              <SelectField
-                value={bindingMode}
-                onChange={setBindingMode}
-                testId="select-binding-mode"
-                options={[
-                  { value: "follow_latest", label: t("kb.follow_latest") },
-                  { value: "pin", label: t("kb.pinned") },
-                ]}
-              />
-            </FormField>
-          </div>
-        )}
-      </div>}
-      <CheckboxField checked={overwriteSameProfile} onChange={setOverwriteSameProfile}
-        label={t("tasks.form.overwrite_same_profile")} testId="checkbox-overwrite-profile" />
       <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={formDisabled}
         onClick={() => {
           const task = buildTask();

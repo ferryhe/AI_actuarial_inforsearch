@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import sqlite3
 import uuid
@@ -8,7 +10,6 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
-import hashlib
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
 from ai_actuarial.sqlite_schema import (
@@ -21,6 +22,8 @@ from ai_actuarial.sqlite_schema import (
 AGENTIC_READY_PUBLICATION_PROFILES = frozenset(
     {"general", "regulation", "formula"}
 )
+
+MAX_EMBEDDING_VECTOR_JSON_BYTES = 2_000_000
 
 
 def agentic_ready_publication_matches_scope(
@@ -591,11 +594,12 @@ class Storage:
                 file_url TEXT NOT NULL,
                 profile_id TEXT NOT NULL,
                 markdown_hash TEXT NOT NULL,
+                profile_config_hash TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'ready',
                 chunk_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                UNIQUE(file_url, profile_id, markdown_hash),
+                UNIQUE(file_url, markdown_hash, profile_id, profile_config_hash),
                 FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
                 FOREIGN KEY(profile_id) REFERENCES chunk_profiles(profile_id) ON DELETE CASCADE
             )
@@ -621,11 +625,18 @@ class Storage:
             """
             CREATE TABLE IF NOT EXISTS chunk_embeddings (
                 chunk_id TEXT NOT NULL,
+                embedding_identity_key TEXT NOT NULL,
+                embedding_provider TEXT NOT NULL,
                 embedding_model TEXT NOT NULL,
-                dim INTEGER NOT NULL DEFAULT 0,
+                dimension INTEGER NOT NULL,
+                config_fingerprint TEXT NOT NULL,
                 vector_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ready',
                 created_at TEXT NOT NULL,
-                PRIMARY KEY (chunk_id, embedding_model),
+                updated_at TEXT NOT NULL,
+                validated_at TEXT,
+                failure_reason TEXT,
+                PRIMARY KEY (chunk_id, embedding_identity_key),
                 FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
             )
             """
@@ -936,6 +947,12 @@ class Storage:
             """
             CREATE INDEX IF NOT EXISTS idx_global_chunks_chunk_set_id
             ON global_chunks(chunk_set_id)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_identity
+            ON chunk_embeddings(embedding_identity_key)
             """
         )
         self._conn.execute(
@@ -3717,16 +3734,25 @@ class Storage:
         file_url: str,
         profile_id: str,
         markdown_hash: str,
-        status: str = "ready",
+        profile_config_hash: str | None = None,
+        status: str = "building",
     ) -> dict[str, Any]:
+        actual_profile_config_hash = str(profile_config_hash or "").strip()
+        if not actual_profile_config_hash:
+            profile = self.get_chunk_profile(profile_id)
+            actual_profile_config_hash = str((profile or {}).get("config_hash") or "")
+        if not actual_profile_config_hash:
+            raise ValueError("profile_config_hash is required")
         existing = self._conn.execute(
             """
-            SELECT chunk_set_id, file_url, profile_id, markdown_hash, status, chunk_count, created_at, updated_at
+            SELECT chunk_set_id, file_url, profile_id, markdown_hash, profile_config_hash,
+                   status, chunk_count, created_at, updated_at
             FROM file_chunk_sets
-            WHERE file_url = ? AND profile_id = ? AND markdown_hash = ?
+            WHERE file_url = ? AND markdown_hash = ? AND profile_id = ?
+              AND profile_config_hash = ?
             LIMIT 1
             """,
-            (file_url, profile_id, markdown_hash),
+            (file_url, markdown_hash, profile_id, actual_profile_config_hash),
         ).fetchone()
         if existing:
             return {
@@ -3734,10 +3760,11 @@ class Storage:
                 "file_url": existing[1],
                 "profile_id": existing[2],
                 "markdown_hash": existing[3],
-                "status": existing[4],
-                "chunk_count": existing[5],
-                "created_at": existing[6],
-                "updated_at": existing[7],
+                "profile_config_hash": existing[4],
+                "status": existing[5],
+                "chunk_count": existing[6],
+                "created_at": existing[7],
+                "updated_at": existing[8],
                 "created": False,
             }
 
@@ -3746,11 +3773,21 @@ class Storage:
         self._conn.execute(
             """
             INSERT INTO file_chunk_sets (
-                chunk_set_id, file_url, profile_id, markdown_hash, status, chunk_count, created_at, updated_at
+                chunk_set_id, file_url, profile_id, markdown_hash, profile_config_hash,
+                status, chunk_count, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
             """,
-            (chunk_set_id, file_url, profile_id, markdown_hash, status, now, now),
+            (
+                chunk_set_id,
+                file_url,
+                profile_id,
+                markdown_hash,
+                actual_profile_config_hash,
+                status,
+                now,
+                now,
+            ),
         )
         self._maybe_commit()
         return {
@@ -3758,6 +3795,7 @@ class Storage:
             "file_url": file_url,
             "profile_id": profile_id,
             "markdown_hash": markdown_hash,
+            "profile_config_hash": actual_profile_config_hash,
             "status": status,
             "chunk_count": 0,
             "created_at": now,
@@ -3778,6 +3816,12 @@ class Storage:
         records and returns current counts without modification.
         """
         with self.transaction(immediate=True):
+            parent = self._conn.execute(
+                "SELECT status FROM file_chunk_sets WHERE chunk_set_id = ?",
+                (chunk_set_id,),
+            ).fetchone()
+            if parent is None:
+                raise ValueError("chunk set not found")
             current_rows = self._conn.execute(
                 """
                 SELECT chunk_index, chunk_id, content, token_count, section_hierarchy
@@ -3798,7 +3842,18 @@ class Storage:
                 for row in current_rows
             )
             current_n = len(current_chunks)
-            if current_n > 0 and not overwrite:
+            if str(parent[0] or "") == "ready":
+                if current_n == 0:
+                    raise ValueError(
+                        "ready chunk set has no persisted chunks and is immutable"
+                    )
+                return {
+                    "chunk_set_id": chunk_set_id,
+                    "chunk_count": current_n,
+                    "replaced": False,
+                    "inserted": 0,
+                }
+            if current_n > 0:
                 return {
                     "chunk_set_id": chunk_set_id,
                     "chunk_count": current_n,
@@ -3966,6 +4021,7 @@ class Storage:
                 p.tokenizer,
                 p.version,
                 s.markdown_hash,
+                s.profile_config_hash,
                 s.status,
                 s.chunk_count,
                 s.created_at,
@@ -3996,14 +4052,231 @@ class Storage:
                     "tokenizer": row[7],
                     "version": row[8],
                     "markdown_hash": row[9],
-                    "status": row[10],
-                    "chunk_count": row[11],
-                    "created_at": row[12],
-                    "updated_at": row[13],
-                    "bound_kb_count": row[14] or 0,
+                    "profile_config_hash": row[10],
+                    "status": row[11],
+                    "chunk_count": row[12],
+                    "created_at": row[13],
+                    "updated_at": row[14],
+                    "bound_kb_count": row[15] or 0,
                 }
             )
         return out
+
+    def list_chunks_for_embedding(
+        self,
+        chunk_set_ids: Iterable[str],
+    ) -> list[dict[str, Any]]:
+        ids = list(dict.fromkeys(str(value).strip() for value in chunk_set_ids if str(value).strip()))
+        if not ids:
+            return []
+        rows = self._conn.execute(
+            f"""
+            SELECT
+                g.chunk_id, g.chunk_set_id, g.chunk_index, g.content, g.content_hash,
+                s.file_url, s.profile_id, s.markdown_hash, s.profile_config_hash
+            FROM global_chunks g
+            JOIN file_chunk_sets s ON s.chunk_set_id = g.chunk_set_id
+            WHERE g.chunk_set_id IN ({','.join('?' for _ in ids)})
+              AND s.status = 'ready'
+            ORDER BY s.file_url, g.chunk_set_id, g.chunk_index
+            """,
+            tuple(ids),
+        ).fetchall()
+        return [
+            {
+                "chunk_id": row[0],
+                "chunk_set_id": row[1],
+                "chunk_index": int(row[2]),
+                "content": row[3],
+                "content_hash": row[4],
+                "file_url": row[5],
+                "profile_id": row[6],
+                "markdown_hash": row[7],
+                "profile_config_hash": row[8],
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _valid_embedding_vector(value: Any, dimension: int) -> bool:
+        return bool(
+            isinstance(value, list)
+            and value
+            and len(value) == dimension
+            and all(
+                isinstance(item, (int, float))
+                and not isinstance(item, bool)
+                and math.isfinite(float(item))
+                for item in value
+            )
+        )
+
+    def read_valid_chunk_embeddings(
+        self,
+        chunk_ids: Iterable[str],
+        *,
+        identity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        ids = list(dict.fromkeys(str(value).strip() for value in chunk_ids if str(value).strip()))
+        if not ids:
+            return {"valid": {}, "invalid_chunk_ids": [], "missing_chunk_ids": []}
+        key = str(identity.get("embedding_identity_key") or "")
+        provider = str(identity.get("provider") or "")
+        model = str(identity.get("model") or "")
+        dimension = int(identity.get("dimension") or 0)
+        config_fingerprint = str(identity.get("config_fingerprint") or "")
+        rows = self._conn.execute(
+            f"""
+            SELECT chunk_id, embedding_provider, embedding_model, dimension,
+                   config_fingerprint,
+                   CASE
+                       WHEN length(CAST(vector_json AS BLOB)) <= ? THEN vector_json
+                       ELSE NULL
+                   END AS bounded_vector_json,
+                   length(CAST(vector_json AS BLOB)) AS vector_json_bytes,
+                   status
+            FROM chunk_embeddings
+            WHERE embedding_identity_key = ?
+              AND chunk_id IN ({','.join('?' for _ in ids)})
+            """,
+            (MAX_EMBEDDING_VECTOR_JSON_BYTES, key, *ids),
+        ).fetchall()
+        by_id = {str(row[0]): row for row in rows}
+        valid: dict[str, list[float]] = {}
+        invalid: list[str] = []
+        missing: list[str] = []
+        for chunk_id in ids:
+            row = by_id.get(chunk_id)
+            if row is None:
+                missing.append(chunk_id)
+                continue
+            vector_json = row[5]
+            vector_json_bytes = int(row[6] or 0)
+            metadata_valid = (
+                str(row[1]) == provider
+                and str(row[2]) == model
+                and int(row[3] or 0) == dimension
+                and str(row[4]) == config_fingerprint
+                and str(row[7]) == "ready"
+            )
+            if (
+                not metadata_valid
+                or vector_json is None
+                or vector_json_bytes > MAX_EMBEDDING_VECTOR_JSON_BYTES
+            ):
+                invalid.append(chunk_id)
+                continue
+            try:
+                vector = json.loads(str(vector_json))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                invalid.append(chunk_id)
+                continue
+            if not self._valid_embedding_vector(vector, dimension):
+                invalid.append(chunk_id)
+                continue
+            valid[chunk_id] = [float(item) for item in vector]
+        return {
+            "valid": valid,
+            "invalid_chunk_ids": invalid,
+            "missing_chunk_ids": missing,
+        }
+
+    def batch_upsert_chunk_embeddings(
+        self,
+        rows: Iterable[Mapping[str, Any]],
+        *,
+        identity: Mapping[str, Any],
+    ) -> int:
+        prepared: list[tuple[Any, ...]] = []
+        now = self._utcnow_iso()
+        dimension = int(identity.get("dimension") or 0)
+        for row in rows:
+            chunk_id = str(row.get("chunk_id") or "").strip()
+            vector = row.get("vector")
+            if not chunk_id or not self._valid_embedding_vector(vector, dimension):
+                raise ValueError("invalid embedding row")
+            vector_json = json.dumps(
+                [float(item) for item in vector],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            if len(vector_json.encode("utf-8")) > MAX_EMBEDDING_VECTOR_JSON_BYTES:
+                raise ValueError("embedding vector exceeds storage size limit")
+            prepared.append(
+                (
+                    chunk_id,
+                    str(identity.get("embedding_identity_key") or ""),
+                    str(identity.get("provider") or ""),
+                    str(identity.get("model") or ""),
+                    dimension,
+                    str(identity.get("config_fingerprint") or ""),
+                    vector_json,
+                    now,
+                    now,
+                    now,
+                )
+            )
+        if not prepared:
+            return 0
+        with self.transaction(immediate=True):
+            self._conn.executemany(
+                """
+                INSERT INTO chunk_embeddings (
+                    chunk_id, embedding_identity_key, embedding_provider,
+                    embedding_model, dimension, config_fingerprint, vector_json,
+                    status, created_at, updated_at, validated_at, failure_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, NULL)
+                ON CONFLICT(chunk_id, embedding_identity_key) DO UPDATE SET
+                    embedding_provider = excluded.embedding_provider,
+                    embedding_model = excluded.embedding_model,
+                    dimension = excluded.dimension,
+                    config_fingerprint = excluded.config_fingerprint,
+                    vector_json = excluded.vector_json,
+                    status = 'ready',
+                    updated_at = excluded.updated_at,
+                    validated_at = excluded.validated_at,
+                    failure_reason = NULL
+                """,
+                prepared,
+            )
+        return len(prepared)
+
+    def embedding_coverage(
+        self,
+        *,
+        chunk_set_ids: Iterable[str],
+        identity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        chunks = self.list_chunks_for_embedding(chunk_set_ids)
+        validation = self.read_valid_chunk_embeddings(
+            [str(chunk["chunk_id"]) for chunk in chunks],
+            identity=identity,
+        )
+        invalid = set(validation["invalid_chunk_ids"])
+        missing = set(validation["missing_chunk_ids"])
+        per_file: dict[str, dict[str, Any]] = {}
+        for chunk in chunks:
+            file_url = str(chunk["file_url"])
+            row = per_file.setdefault(
+                file_url,
+                {"file_url": file_url, "expected_count": 0, "ready_count": 0, "missing": 0, "invalid": 0},
+            )
+            row["expected_count"] += 1
+            chunk_id = str(chunk["chunk_id"])
+            if chunk_id in invalid:
+                row["invalid"] += 1
+            elif chunk_id in missing:
+                row["missing"] += 1
+            else:
+                row["ready_count"] += 1
+        return {
+            "expected_count": len(chunks),
+            "ready_count": len(validation["valid"]),
+            "missing": len(missing),
+            "invalid": len(invalid),
+            "per_file": list(per_file.values()),
+        }
 
     def bind_chunk_set_to_kb(
         self,
