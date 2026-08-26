@@ -103,7 +103,6 @@ Set production secrets before using the override:
 
 ```bash
 export FASTAPI_SESSION_SECRET=<strong-random-key>
-export LOGS_READ_AUTH_TOKEN=<strong-random-token>
 export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
 export TOKEN_ENCRYPTION_KEY=<fernet-key>
 export FASTAPI_CORS_ORIGINS=https://<public-app-host>

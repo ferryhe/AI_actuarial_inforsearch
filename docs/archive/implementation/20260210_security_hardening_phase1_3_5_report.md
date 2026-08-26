@@ -18,7 +18,7 @@ Branch: `copilot/review-code-for-standards`
   - added allowlist for tables used by schema migration helpers in `ai_actuarial/storage.py`.
 - Protected global log API endpoint:
   - `/api/logs/global` now requires `ENABLE_GLOBAL_LOGS_API=true`.
-  - if `LOGS_READ_AUTH_TOKEN` is set, it also requires `X-Auth-Token` header.
+  - current runtime authorization is provided by the `logs.system.read` permission.
 
 ### Phase 3: Optional Rate Limiting
 
@@ -41,7 +41,7 @@ Branch: `copilot/review-code-for-standards`
 Updated `.env.example`:
 
 - `EXPOSE_ERROR_DETAILS`
-- `ENABLE_GLOBAL_LOGS_API`, `LOGS_READ_AUTH_TOKEN`
+- `ENABLE_GLOBAL_LOGS_API`
 - `ENABLE_RATE_LIMITING`, `RATE_LIMIT_DEFAULTS`, `RATE_LIMIT_STORAGE_URI`
 
 Updated `requirements.txt`:
@@ -66,7 +66,7 @@ python -m pytest
    - Trigger a known error and confirm 500 JSON does not include internal details.
 3. Global logs protection:
    - With `ENABLE_GLOBAL_LOGS_API=false`, `GET /api/logs/global` should return 403.
-   - With `ENABLE_GLOBAL_LOGS_API=true` and `LOGS_READ_AUTH_TOKEN` set, missing/incorrect `X-Auth-Token` should return 403.
+   - With `ENABLE_GLOBAL_LOGS_API=true`, callers with `logs.system.read` should succeed and other callers should return 401/403.
 4. Rate limiting (optional):
    - With `ENABLE_RATE_LIMITING=true`, repeated calls should eventually get 429 responses on limited endpoints.
 

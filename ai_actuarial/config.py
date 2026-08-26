@@ -99,8 +99,6 @@ class Settings:
     # API Auth Tokens
     # -------------------------------------------------------------------------
     CONFIG_WRITE_AUTH_TOKEN: str = os.getenv("CONFIG_WRITE_AUTH_TOKEN", "")
-    LOGS_READ_AUTH_TOKEN: str = os.getenv("LOGS_READ_AUTH_TOKEN", "")
-    FILE_DELETION_AUTH_TOKEN: str = os.getenv("FILE_DELETION_AUTH_TOKEN", "")
     ENABLE_FILE_DELETION: bool = _env_bool("ENABLE_FILE_DELETION", False)
 
     # -------------------------------------------------------------------------

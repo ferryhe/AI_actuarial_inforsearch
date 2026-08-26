@@ -32,8 +32,6 @@ AUTH_SECRET_KEYS = (
     "BOOTSTRAP_ADMIN_TOKEN",
     "BOOTSTRAP_ADMIN_SUBJECT",
     "CONFIG_WRITE_AUTH_TOKEN",
-    "LOGS_READ_AUTH_TOKEN",
-    "FILE_DELETION_AUTH_TOKEN",
 )
 
 
@@ -231,10 +229,6 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "auth_token_alignment": {
             "bootstrap_matches_config_write": bool(env_values.get("BOOTSTRAP_ADMIN_TOKEN"))
             and env_values.get("BOOTSTRAP_ADMIN_TOKEN") == env_values.get("CONFIG_WRITE_AUTH_TOKEN"),
-            "logs_matches_config_write": bool(env_values.get("LOGS_READ_AUTH_TOKEN"))
-            and env_values.get("LOGS_READ_AUTH_TOKEN") == env_values.get("CONFIG_WRITE_AUTH_TOKEN"),
-            "file_delete_matches_config_write": bool(env_values.get("FILE_DELETION_AUTH_TOKEN"))
-            and env_values.get("FILE_DELETION_AUTH_TOKEN") == env_values.get("CONFIG_WRITE_AUTH_TOKEN"),
         },
         "provider_env_keys": _provider_env_status(env_values),
         "database": db_summary,

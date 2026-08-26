@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import os
 import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ai_actuarial.ai_runtime import get_ai_routing, get_model_catalog, list_provider_credentials, list_provider_registry
-from ai_actuarial.config import settings
 from ai_actuarial.storage import Storage
 from ..deps import AuthContext, require_permissions
 from ..services.ops_read import (
@@ -187,11 +185,6 @@ def api_logs_global(
     rate_limited = _enforce_global_logs_rate_limit(request, _auth)
     if rate_limited is not None:
         return rate_limited
-    expected_token = os.getenv("LOGS_READ_AUTH_TOKEN") or settings.LOGS_READ_AUTH_TOKEN
-    if expected_token:
-        provided_token = request.headers.get("X-Auth-Token")
-        if not provided_token or provided_token != expected_token:
-            return JSONResponse(status_code=403, content={"error": "Forbidden"})
     result = get_global_logs(enabled=bool(getattr(request.app.state, "enable_global_logs_api", False)))
     if result.get("error") == "Forbidden":
         return JSONResponse(status_code=403, content={"error": "Forbidden"})

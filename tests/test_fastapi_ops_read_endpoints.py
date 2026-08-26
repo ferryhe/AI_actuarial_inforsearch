@@ -419,6 +419,8 @@ def test_fastapi_ops_read_routes_are_native_and_return_expected_shapes(tmp_path:
             assert body["features"]["enable_file_deletion"] is True
             assert body["features"]["enable_security_headers"] is True
             assert body["runtime"]["file_deletion_enabled"] is True
+            assert "file_deletion_auth_required" not in body["runtime"]
+            assert "logs_read_auth_required" not in body["runtime"]
             assert body["runtime"]["enable_security_headers"] is True
             assert body["runtime"]["feature_sources"]["enable_security_headers"] == "yaml"
         elif endpoint == "/api/config/llm-providers":
@@ -525,6 +527,7 @@ def test_fastapi_ai_config_registry_credentials_and_routing_read_endpoints(tmp_p
 
 def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
+    monkeypatch.setenv("LOGS_READ_AUTH_TOKEN", "legacy-log-token")
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
     monkeypatch.chdir(tmp_path)
     app.state.enable_global_logs_api = True
@@ -535,6 +538,15 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
         encoding="utf-8",
     )
 
+    unauthorized = client.get("/api/logs/global")
+    assert unauthorized.status_code == 401
+
+    forbidden = client.get(
+        "/api/logs/global",
+        headers={"Authorization": f"Bearer {seed['reader_token']}"},
+    )
+    assert forbidden.status_code == 403
+
     cookie_name = app.state.fastapi_session_cookie_name
     session_cookie = _make_session_cookie(app, {"email_user_id": seed["admin_user_id"]})
     client.cookies.set(cookie_name, session_cookie)
@@ -544,6 +556,26 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
     body = response.json()
     assert body["logs"].splitlines()[0].endswith("ERROR second")
     assert body["logs"].splitlines()[1].endswith("INFO first")
+
+    app.state.enable_global_logs_api = False
+    disabled = client.get("/api/logs/global")
+    assert disabled.status_code == 403
+
+
+def test_fastapi_global_logs_read_endpoint_keeps_rate_limit(tmp_path: Path, monkeypatch) -> None:
+    import ai_actuarial.api.routers.ops_read as ops_read_router
+
+    _patch_available_models(monkeypatch)
+    monkeypatch.setattr(ops_read_router, "_GLOBAL_LOGS_RATE_LIMIT", 1)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
+    app.state.enable_global_logs_api = True
+    headers = {"Authorization": f"Bearer {seed['admin_token']}"}
+
+    first = client.get("/api/logs/global", headers=headers)
+    limited = client.get("/api/logs/global", headers=headers)
+
+    assert first.status_code == 200, first.text
+    assert limited.status_code == 429, limited.text
 
 
 def test_rate_limit_defaults_are_enforced_from_runtime_features(tmp_path: Path, monkeypatch) -> None:

@@ -4,7 +4,6 @@
 # Set required environment variables:
 #   export FASTAPI_SESSION_SECRET=<strong-random-key>
 #   export TOKEN_ENCRYPTION_KEY=<fernet-key>
-#   export LOGS_READ_AUTH_TOKEN=<strong-random-token>
 #   export CONFIG_WRITE_AUTH_TOKEN=<strong-random-token>
 #   export FASTAPI_CORS_ORIGINS=https://<public-app-host>
 #   export VITE_API_BASE_URL=https://<public-app-host>/api
@@ -22,7 +21,6 @@ services:
     environment:
       - FASTAPI_ENV=production
       - FASTAPI_SESSION_SECRET=${FASTAPI_SESSION_SECRET:?FASTAPI_SESSION_SECRET is required in production}
-      - LOGS_READ_AUTH_TOKEN=${LOGS_READ_AUTH_TOKEN:?LOGS_READ_AUTH_TOKEN is required}
       - CONFIG_WRITE_AUTH_TOKEN=${CONFIG_WRITE_AUTH_TOKEN:?CONFIG_WRITE_AUTH_TOKEN is required}
       - FASTAPI_CORS_ORIGINS=${FASTAPI_CORS_ORIGINS:?FASTAPI_CORS_ORIGINS is required in production}
       - ENABLE_CSRF=${ENABLE_CSRF:-true}
