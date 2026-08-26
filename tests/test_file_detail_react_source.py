@@ -58,6 +58,14 @@ def test_file_detail_chunk_modal_can_bind_generated_chunks_to_kb():
     assert 'data-testid="select-file-binding-mode"' in src
 
 
+def test_file_detail_chunk_generation_does_not_prompt_for_legacy_auth_token():
+    src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
+
+    assert "chunk_auth_token_prompt" not in src
+    assert "setStoredAuthToken" not in src
+    assert "window.prompt" not in src
+
+
 def test_file_preview_passes_download_permission_to_original_pane():
     src = FILE_PREVIEW_TSX.read_text(encoding="utf-8")
 

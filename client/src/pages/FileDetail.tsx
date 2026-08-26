@@ -28,7 +28,7 @@ import {
 import { buildFileDetailPath, buildFilePreviewPath, sanitizeReturnPath, useRawSearchParams } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { ApiError, apiGet, apiPost, setStoredAuthToken } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { useTaskOptions } from "@/hooks/use-task-options";
 import { useLatestRequestGuard } from "@/hooks/use-latest-request";
 import { useAuth } from "@/context/AuthContext";
@@ -706,24 +706,7 @@ export default function FileDetail() {
       if (!isLatest()) return;
       setShowChunkModal(false);
       await refreshChunks();
-    } catch (error) {
-      if (!isLatest()) return;
-      if (error instanceof ApiError && error.status === 403) {
-        const token = window.prompt(t("fv.chunk_auth_token_prompt"), "") || "";
-        if (token.trim()) {
-          try {
-            setStoredAuthToken(token, false);
-            await apiPost(`/api/files/${encodeURIComponent(requestIdentity)}/chunk-sets/generate`, body);
-            if (!isLatest()) return;
-            setShowChunkModal(false);
-            await refreshChunks();
-            return;
-          } catch {
-            window.alert(t("fv.chunk_auth_token_failed"));
-          }
-        }
-      }
-    } finally {
+    } catch { /* permission and request errors are handled by the authenticated API boundary */ } finally {
       if (isLatest()) setChunkSubmitting(false);
     }
   }

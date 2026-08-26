@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import os
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from ai_actuarial.config import settings
 from ..deps import AuthContext, require_permissions
 from ..services.import_batches import ImportBatchError, create_import_batch
 from ..services.files_write import (
@@ -57,16 +55,6 @@ def _decode_file_url_path(request: Request, file_url: str, *, suffix: str) -> st
 
 def _json_error(exc: FileWriteError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
-
-
-def _require_config_write_token(request: Request) -> JSONResponse | None:
-    expected_token = os.getenv("CONFIG_WRITE_AUTH_TOKEN") or settings.CONFIG_WRITE_AUTH_TOKEN
-    if not expected_token:
-        return None
-    provided_token = request.headers.get("X-Auth-Token")
-    if not provided_token or provided_token != expected_token:
-        return JSONResponse(status_code=403, content={"error": "Forbidden"})
-    return None
 
 
 @router.post("/files/import-batches")
@@ -180,8 +168,6 @@ def api_file_chunk_sets_generate(
     request: Request,
     _auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
-    if (auth_error := _require_config_write_token(request)) is not None:
-        return auth_error
     decoded_url = _decode_file_url_path(request, file_url, suffix="/chunk-sets/generate")
     try:
         result = generate_file_chunk_sets(db_path=_db_path(request), file_url=decoded_url, payload=payload)
