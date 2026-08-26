@@ -114,12 +114,15 @@ type EmbeddingCoverage = {
 async function waitForChunkEmbeddingTask(taskId: string): Promise<ChunkEmbeddingTask> {
   const deadline = Date.now() + 10 * 60 * 1000;
   while (Date.now() < deadline) {
-    const [active, history] = await Promise.all([
-      apiGet<{ tasks?: ChunkEmbeddingTask[] }>("/api/tasks/active"),
-      apiGet<{ tasks?: ChunkEmbeddingTask[]; history?: ChunkEmbeddingTask[] }>("/api/tasks/history?limit=200"),
-    ]);
-    const task = [...(active.tasks || []), ...(history.tasks || history.history || [])]
-      .find((candidate) => candidate.id === taskId);
+    const active = await apiGet<{ tasks?: ChunkEmbeddingTask[] }>("/api/tasks/active");
+    const activeTask = (active.tasks || []).find((candidate) => candidate.id === taskId);
+    let task = activeTask;
+    if (!activeTask) {
+      const history = await apiGet<{ tasks?: ChunkEmbeddingTask[]; history?: ChunkEmbeddingTask[] }>(
+        "/api/tasks/history?limit=200",
+      );
+      task = (history.tasks || history.history || []).find((candidate) => candidate.id === taskId);
+    }
     if (task && ["completed", "success"].includes(String(task.status))) return task;
     if (task && ["error", "failed", "stopped"].includes(String(task.status))) {
       throw new Error(task.errors?.[0] || `Task ${taskId} ${task.status}`);

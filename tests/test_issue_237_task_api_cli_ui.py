@@ -740,3 +740,78 @@ def test_tasks_ui_persistently_displays_ids_logs_and_chunk_embedding_results() -
     assert "provider" in card
     assert "TaskResultSummary" in table
     assert "onViewLog={viewTaskLog}" in tasks
+
+
+def test_chunk_embedding_waiters_only_load_history_after_task_leaves_active() -> None:
+    root = Path(__file__).resolve().parents[1] / "client/src/pages"
+
+    for path, function_name in (
+        (root / "Tasks.tsx", "waitForTaskResult"),
+        (root / "FileDetail.tsx", "waitForChunkEmbeddingTask"),
+    ):
+        src = path.read_text(encoding="utf-8")
+        function = src[src.index(f"async function {function_name}") :]
+        function = function[: function.index("\n}") + 2]
+
+        active_lookup = function.index('apiGet<{ tasks?:')
+        active_match = function.index("activeTask")
+        history_lookup = function.index('"/api/tasks/history?limit=200"')
+        assert active_lookup < active_match < history_lookup
+        assert "Promise.all" not in function
+
+
+def test_embedding_failure_result_status_matches_terminal_task_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+    runtime._progress_callback = lambda _task_id: lambda *_args: None
+    runtime._stop_requested = lambda _task_id: False
+    identity = SimpleNamespace(
+        config=SimpleNamespace(embedding_batch_size=10),
+        as_dict=lambda: {"provider": "test", "model": "test", "dimension": 2},
+    )
+    selection = {
+        "chunks": [{"chunk_id": "chunk-1"}],
+        "chunk_sets": [{"file_url": "https://example.test/a"}],
+        "requested_file_urls": ["https://example.test/a"],
+        "requested_chunk_set_ids": [],
+        "chunk_set_ids": ["cs-1"],
+    }
+    ensured = SimpleNamespace(
+        ready_count=0,
+        stopped=False,
+        failed=1,
+        expected_count=1,
+        generated=0,
+        reused=0,
+        invalid_regenerated=0,
+        persisted_record_count=0,
+        errors=[{"code": "embedding_failed"}],
+        started_at="2026-08-26T00:00:00+00:00",
+        completed_at="2026-08-26T00:00:01+00:00",
+    )
+    monkeypatch.setattr(
+        "ai_actuarial.task_runtime.resolve_embedding_selection",
+        lambda *_args, **_kwargs: selection,
+    )
+    monkeypatch.setattr(
+        "ai_actuarial.task_runtime.resolve_server_embedding_identity",
+        lambda *_args, **_kwargs: identity,
+    )
+    monkeypatch.setattr(
+        "ai_actuarial.task_runtime.ensure_chunk_embeddings",
+        lambda **_kwargs: ensured,
+    )
+    monkeypatch.setattr(
+        "ai_actuarial.task_runtime.embedding_coverage_for_selection",
+        lambda **_kwargs: {"per_file": []},
+    )
+
+    result = runtime._run_embedding_generation(
+        "embedding-task",
+        SimpleNamespace(),
+        {"chunk_set_ids": ["cs-1"]},
+    )
+
+    assert result.success is False
+    assert result.metadata["result"]["status"] == "error"

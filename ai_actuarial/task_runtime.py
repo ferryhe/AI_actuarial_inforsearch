@@ -1713,7 +1713,7 @@ class NativeTaskRuntime:
         )
         progress(ensured.ready_count, len(chunks), "Embedding persistence complete")
         status = "stopped" if ensured.stopped else (
-            "completed" if not ensured.failed else "failed"
+            "completed" if not ensured.failed else "error"
         )
         result = {
             "contract_version": 1,
