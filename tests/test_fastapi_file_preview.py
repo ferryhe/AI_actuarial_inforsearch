@@ -253,7 +253,10 @@ def test_fastapi_file_chunk_generation_can_bind_generated_chunk_to_kb(tmp_path: 
     ]
 
 
-def test_fastapi_chunk_generation_requires_config_write_token_when_configured(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_chunk_generation_uses_tasks_run_auth_when_legacy_token_is_configured(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("CONFIG_WRITE_AUTH_TOKEN", "secret-token")
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     file_url = seed["file_url"]
@@ -268,12 +271,9 @@ def test_fastapi_chunk_generation_requires_config_write_token_when_configured(tm
         "overwrite_same_profile": True,
     }
 
-    forbidden = client.post(f"/api/files/{file_url}/chunk-sets/generate", json=payload, headers=auth_headers)
-    assert forbidden.status_code == 403, forbidden.text
-
     allowed = client.post(
         f"/api/files/{file_url}/chunk-sets/generate",
         json=payload,
-        headers={**auth_headers, "X-Auth-Token": "secret-token"},
+        headers=auth_headers,
     )
     assert allowed.status_code in {200, 201}, allowed.text
