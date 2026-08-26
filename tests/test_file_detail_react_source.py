@@ -37,6 +37,9 @@ def test_file_detail_renders_markdown_with_local_renderer():
 def test_file_detail_uses_permission_gates_for_mutating_actions():
     src = FILE_DETAIL_TSX.read_text(encoding="utf-8")
 
+    assert "FILE_DELETION_AUTH_TOKEN" not in src
+    assert "setStoredAuthToken" not in src
+    assert "window.prompt" not in src
     assert "const { permissions } = useAuth()" in src
     assert 'permissions.includes("files.download")' in src
     assert 'permissions.includes("files.delete")' in src

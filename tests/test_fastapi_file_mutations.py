@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
+from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.storage import Storage
@@ -48,7 +50,7 @@ def _write_config_files(base_dir: Path) -> tuple[Path, Path, Path, Path]:
 
 
 
-def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
+def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
     alpha_path = files_dir / "alpha.pdf"
     alpha_path.write_bytes(PDF_BYTES)
     beta_path = files_dir / "beta.docx"
@@ -113,6 +115,19 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
             is_active=True,
         )
+        reader_token = "reader-token"
+        storage.upsert_auth_token_by_hash(
+            subject="reader-token",
+            group_name="reader",
+            token_hash=hashlib.sha256(reader_token.encode("utf-8")).hexdigest(),
+            is_active=True,
+        )
+        operator_user_id = storage.create_user(
+            "operator@example.com",
+            "operator-password-hash",
+            role="operator",
+            display_name="Operator",
+        )
     finally:
         storage.close()
 
@@ -121,11 +136,13 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
         "beta_url": "https://beta.example/doc-b.docx",
         "alpha_path": str(alpha_path),
         "operator_token": operator_token,
+        "reader_token": reader_token,
+        "operator_user_id": operator_user_id,
     }
 
 
 
-def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, str]]:
+def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
@@ -135,6 +152,11 @@ def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object,
     app = create_app()
     client = TestClient(app)
     return client, app, seed
+
+
+def _make_session_cookie(app, payload: dict[str, object]) -> str:
+    serializer = URLSafeSerializer(app.state.fastapi_session_secret, salt="fastapi-session")
+    return serializer.dumps(payload)
 
 
 
@@ -193,3 +215,56 @@ def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeyp
     files_after_delete = client.get("/api/files?include_deleted=true", headers=headers)
     deleted = next(item for item in files_after_delete.json()["files"] if item["url"] == seed["beta_url"])
     assert deleted["deleted_at"]
+
+
+@pytest.mark.parametrize("auth_mode", ["bearer", "x-api-token", "session"])
+def test_fastapi_file_delete_ignores_legacy_service_token(
+    tmp_path: Path,
+    monkeypatch,
+    auth_mode: str,
+) -> None:
+    monkeypatch.setenv("FILE_DELETION_AUTH_TOKEN", "legacy-delete-token")
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    headers: dict[str, str] = {}
+    if auth_mode == "bearer":
+        headers["Authorization"] = f"Bearer {seed['operator_token']}"
+    elif auth_mode == "x-api-token":
+        headers["X-API-Token"] = str(seed["operator_token"])
+    else:
+        session_cookie = _make_session_cookie(app, {"email_user_id": seed["operator_user_id"]})
+        client.cookies.set(app.state.fastapi_session_cookie_name, session_cookie)
+
+    response = client.post(
+        "/api/files/delete",
+        json={"url": seed["beta_url"], "confirm": "DELETE"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_fastapi_file_delete_keeps_permission_feature_and_confirmation_checks(tmp_path: Path, monkeypatch) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    payload = {"url": seed["beta_url"], "confirm": "DELETE"}
+
+    unauthorized = client.post("/api/files/delete", json=payload)
+    forbidden = client.post(
+        "/api/files/delete",
+        json=payload,
+        headers={"Authorization": f"Bearer {seed['reader_token']}"},
+    )
+
+    headers = {"Authorization": f"Bearer {seed['operator_token']}"}
+    monkeypatch.setenv("ENABLE_FILE_DELETION", "false")
+    disabled = client.post("/api/files/delete", json=payload, headers=headers)
+    monkeypatch.setenv("ENABLE_FILE_DELETION", "true")
+    missing_confirmation = client.post(
+        "/api/files/delete",
+        json={"url": seed["beta_url"]},
+        headers=headers,
+    )
+
+    assert unauthorized.status_code == 401
+    assert forbidden.status_code == 403
+    assert disabled.status_code == 403
+    assert missing_confirmation.status_code == 400

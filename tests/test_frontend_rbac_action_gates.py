@@ -40,6 +40,9 @@ def test_kb_detail_admin_controls_are_permission_gated():
 def test_database_sensitive_controls_are_permission_gated():
     src = DATABASE_TSX.read_text(encoding="utf-8")
 
+    assert "FILE_DELETION_AUTH_TOKEN" not in src
+    assert "setStoredAuthToken" not in src
+    assert "window.prompt" not in src
     assert 'import { useAuth } from "@/context/AuthContext";' in src
     assert 'const canDeleteFiles = permissions.includes("files.delete");' in src
     assert 'const canDownloadFiles = permissions.includes("files.download");' in src

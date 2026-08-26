@@ -101,7 +101,7 @@ Important variables:
 - `BOOTSTRAP_ADMIN_TOKEN`: optional local/admin recovery token.
 - `FASTAPI_CORS_ORIGINS`: allowed browser origins for deployed API access.
 - `TRUST_PROXY`: set `true` only when direct API access is restricted to trusted reverse proxy traffic.
-- `CONFIG_WRITE_AUTH_TOKEN`, `LOGS_READ_AUTH_TOKEN`, `FILE_DELETION_AUTH_TOKEN`: optional compatibility tokens. Leave unset unless intentionally requiring matching `X-Auth-Token`.
+- `CONFIG_WRITE_AUTH_TOKEN`: optional compatibility token. Leave unset unless intentionally requiring matching `X-Auth-Token`.
 
 Feature switches such as authentication, global logs, file deletion, rate limiting, CSRF protection, error-detail exposure, and security headers live in `config/sites.yaml -> features` and can be changed from Settings. Matching environment variables are deployment overrides and are shown as locked in Settings.
 

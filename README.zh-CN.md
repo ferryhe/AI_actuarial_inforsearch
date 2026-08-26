@@ -101,7 +101,7 @@ npm run dev
 - `BOOTSTRAP_ADMIN_TOKEN`：可选的本地/admin 恢复 token。
 - `FASTAPI_CORS_ORIGINS`：部署后允许访问 API 的浏览器 origin。
 - `TRUST_PROXY`：只有当 API 只能被可信反向代理直连时才设为 `true`。
-- `CONFIG_WRITE_AUTH_TOKEN`、`LOGS_READ_AUTH_TOKEN`、`FILE_DELETION_AUTH_TOKEN`：兼容 token，除非明确需要 `X-Auth-Token`，否则可不启用。
+- `CONFIG_WRITE_AUTH_TOKEN`：兼容 token，除非明确需要 `X-Auth-Token`，否则可不启用。
 
 鉴权、全局日志、文件删除、限流、CSRF、错误详情和安全响应头等功能开关在 `config/sites.yaml -> features` 中，也可以从 Settings 修改。如果进程环境变量设置了同名部署覆盖，Settings 会将该值标记为 locked。
 

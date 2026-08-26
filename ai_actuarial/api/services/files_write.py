@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ai_actuarial.config import settings
 from ai_actuarial.rag.exceptions import ChunkingException
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, parse_int_clamped, resolve_runtime_features
 from ai_actuarial.storage import Storage
@@ -60,16 +59,6 @@ def _query_files_for_export(storage: Storage) -> list[dict[str, Any]]:
 def _is_file_deletion_enabled() -> bool:
     config = _config_data()
     return bool(resolve_runtime_features(config).get("enable_file_deletion"))
-
-
-
-def _check_file_deletion_token(headers: dict[str, str]) -> None:
-    expected_token = os.getenv("FILE_DELETION_AUTH_TOKEN") or settings.FILE_DELETION_AUTH_TOKEN
-    if not expected_token:
-        return
-    provided = headers.get("x-auth-token") or headers.get("X-Auth-Token")
-    if provided != expected_token:
-        raise FileWriteError("Forbidden", status_code=403)
 
 
 
@@ -193,13 +182,12 @@ def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
 
 
 
-def delete_file_record(*, db_path: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+def delete_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not _is_file_deletion_enabled():
         raise FileWriteError(
             "File deletion is disabled. Enable it via Settings > System or set ENABLE_FILE_DELETION=true in environment.",
             status_code=403,
         )
-    _check_file_deletion_token(headers)
     if not isinstance(payload, dict):
         raise FileWriteError("Invalid or missing JSON body")
 
