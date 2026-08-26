@@ -69,6 +69,7 @@ interface MarkdownData {
 
 interface ChunkSet {
   chunk_set_id: string;
+  status?: string;
   profile_name?: string;
   profile_id?: string;
   chunk_count?: number;
@@ -85,17 +86,51 @@ interface ChunkProfile {
   chunk_overlap?: number;
 }
 
-interface KnowledgeBaseOption {
-  kb_id: string;
-  name?: string;
-  file_count?: number;
-}
-
 interface CategoriesConfig {
   categories: Record<string, unknown>;
 }
 
 type TaskStatus = "idle" | "submitted" | "polling" | "completed" | "failed" | "stopped" | "timeout";
+
+type ChunkEmbeddingTask = {
+  id?: string;
+  status?: string;
+  result?: {
+    chunk_sets?: Array<{ chunk_set_id?: string }>;
+  };
+  errors?: string[];
+};
+
+type EmbeddingCoverage = {
+  provider?: string;
+  model?: string;
+  dimension?: number;
+  expected_count?: number;
+  ready_count?: number;
+  missing?: number;
+  invalid?: number;
+};
+
+async function waitForChunkEmbeddingTask(taskId: string): Promise<ChunkEmbeddingTask> {
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const active = await apiGet<{ tasks?: ChunkEmbeddingTask[] }>("/api/tasks/active");
+    const activeTask = (active.tasks || []).find((candidate) => candidate.id === taskId);
+    let task = activeTask;
+    if (!activeTask) {
+      const history = await apiGet<{ tasks?: ChunkEmbeddingTask[]; history?: ChunkEmbeddingTask[] }>(
+        "/api/tasks/history?limit=200",
+      );
+      task = (history.tasks || history.history || []).find((candidate) => candidate.id === taskId);
+    }
+    if (task && ["completed", "success"].includes(String(task.status))) return task;
+    if (task && ["error", "failed", "stopped"].includes(String(task.status))) {
+      throw new Error(task.errors?.[0] || `Task ${taskId} ${task.status}`);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  throw new Error(`Task ${taskId} timed out`);
+}
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -451,10 +486,9 @@ export default function FileDetail() {
   const [chunkSetsLoading, setChunkSetsLoading] = useState(false);
   const [chunkProfiles, setChunkProfiles] = useState<ChunkProfile[]>([]);
   const [chunkProfileId, setChunkProfileId] = useState("");
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
-  const [bindToKb, setBindToKb] = useState(false);
-  const [selectedKbId, setSelectedKbId] = useState("");
-  const [bindingMode, setBindingMode] = useState("follow_latest");
+  const [embeddingCoverage, setEmbeddingCoverage] = useState<EmbeddingCoverage | null>(null);
+  const [chunkEmbeddingTaskIds, setChunkEmbeddingTaskIds] = useState<string[]>([]);
+  const [chunkEmbeddingError, setChunkEmbeddingError] = useState("");
 
   const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [catalogSource, setCatalogSource] = useState("markdown");
@@ -466,7 +500,6 @@ export default function FileDetail() {
   const taskOptions = useTaskOptions();
 
   const [showChunkModal, setShowChunkModal] = useState(false);
-  const [chunkOverwrite, setChunkOverwrite] = useState(false);
   const [chunkSubmitting, setChunkSubmitting] = useState(false);
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -525,7 +558,18 @@ export default function FileDetail() {
     try {
       const res = await apiGet<{ data?: { chunk_sets?: ChunkSet[] }; chunk_sets?: ChunkSet[] }>(`/api/files/${encodeURIComponent(requestIdentity)}/chunk-sets`);
       if (!isLatest()) return;
-      setChunkSets(res.data?.chunk_sets || res.chunk_sets || []);
+      const nextChunkSets = res.data?.chunk_sets || res.chunk_sets || [];
+      setChunkSets(nextChunkSets);
+      const query = nextChunkSets
+        .filter((chunkSet) => chunkSet.status === "ready" && Number(chunkSet.chunk_count || 0) > 0)
+        .map((chunkSet) => `chunk_set_id=${encodeURIComponent(chunkSet.chunk_set_id)}`)
+        .join("&");
+      if (query) {
+        const coverage = await apiGet<EmbeddingCoverage>(`/api/embeddings/coverage?${query}`).catch(() => null);
+        if (isLatest()) setEmbeddingCoverage(coverage);
+      } else {
+        setEmbeddingCoverage(null);
+      }
     } catch {
       if (isLatest()) setChunkSets([]);
     } finally {
@@ -566,16 +610,10 @@ export default function FileDetail() {
   }, [fileUrl, refreshChunks]);
 
   useEffect(() => {
-    Promise.all([
-      apiGet<{ profiles?: ChunkProfile[]; data?: { profiles?: ChunkProfile[] } }>("/api/chunk/profiles").catch(() => null),
-      apiGet<{ knowledge_bases?: KnowledgeBaseOption[]; data?: { knowledge_bases?: KnowledgeBaseOption[] } }>("/api/rag/knowledge-bases").catch(() => null),
-    ]).then(([profileRes, kbRes]) => {
+    apiGet<{ profiles?: ChunkProfile[]; data?: { profiles?: ChunkProfile[] } }>("/api/chunk/profiles").catch(() => null).then((profileRes) => {
       const profiles = profileRes?.profiles || profileRes?.data?.profiles || [];
       setChunkProfiles(profiles);
       setChunkProfileId((current) => current || profiles[0]?.profile_id || "");
-      const kbs = kbRes?.knowledge_bases || kbRes?.data?.knowledge_bases || [];
-      setKnowledgeBases(kbs);
-      setSelectedKbId((current) => current || kbs[0]?.kb_id || "");
     });
   }, []);
 
@@ -686,9 +724,12 @@ export default function FileDetail() {
     const isLatest = beginChunkSubmission(requestIdentity);
     if (!isLatest()) return;
     setChunkSubmitting(true);
+    setChunkEmbeddingError("");
+    setChunkEmbeddingTaskIds([]);
     const body: Record<string, unknown> = {
-      overwrite_same_profile: chunkOverwrite,
-      binding_mode: bindingMode,
+      type: "chunk_generation",
+      name: `Chunk & Embedding: ${file.title || file.original_filename}`,
+      file_urls: [requestIdentity],
     };
     if (chunkProfileId) {
       body.profile_id = chunkProfileId;
@@ -698,15 +739,29 @@ export default function FileDetail() {
       body.splitter = "semantic";
       body.tokenizer = "cl100k_base";
     }
-    if (bindToKb && selectedKbId) {
-      body.kb_id = selectedKbId;
-    }
     try {
-      await apiPost(`/api/files/${encodeURIComponent(requestIdentity)}/chunk-sets/generate`, body);
+      const chunk = await apiPost<{ job_id?: string }>("/api/collections/run", body);
+      if (!chunk.job_id) throw new Error("Chunk task did not start");
+      setChunkEmbeddingTaskIds([chunk.job_id]);
+      const chunkTask = await waitForChunkEmbeddingTask(chunk.job_id);
+      const chunk_set_ids = (chunkTask.result?.chunk_sets || [])
+        .map((item) => item.chunk_set_id)
+        .filter((id): id is string => Boolean(id));
+      if (chunk_set_ids.length === 0) throw new Error("Chunk task returned no stable chunk_set_ids");
+      const embedding = await apiPost<{ job_id?: string }>("/api/collections/run", {
+        type: "embedding_generation",
+        name: `Chunk & Embedding: ${file.title || file.original_filename}`,
+        chunk_set_ids,
+      });
+      if (!embedding.job_id) throw new Error("Embedding task did not start");
+      setChunkEmbeddingTaskIds([chunk.job_id, embedding.job_id]);
+      await waitForChunkEmbeddingTask(embedding.job_id);
       if (!isLatest()) return;
       setShowChunkModal(false);
       await refreshChunks();
-    } catch { /* permission and request errors are handled by the authenticated API boundary */ } finally {
+    } catch (caught) {
+      if (isLatest()) setChunkEmbeddingError(caught instanceof Error ? caught.message : "Chunk & Embedding failed");
+    } finally {
       if (isLatest()) setChunkSubmitting(false);
     }
   }
@@ -883,6 +938,19 @@ export default function FileDetail() {
           <h3 className="text-sm font-semibold">{t("fv.metadata")}</h3>
         </div>
         <div className="p-4">
+          {embeddingCoverage && (
+            <div className="mb-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-5">
+              <span>{t("tasks.form.stat_chunks_ready")}: {embeddingCoverage.expected_count ?? 0}</span>
+              <span>{t("tasks.form.stat_embeddings_ready")}: {embeddingCoverage.ready_count ?? 0}</span>
+              <span>{t("tasks.form.stat_embeddings_missing")}: {embeddingCoverage.missing ?? 0}</span>
+              <span>{t("tasks.form.stat_embeddings_invalid")}: {embeddingCoverage.invalid ?? 0}</span>
+              <span>{embeddingCoverage.provider} / {embeddingCoverage.model} / {embeddingCoverage.dimension}</span>
+            </div>
+          )}
+          {chunkEmbeddingTaskIds.length > 0 && (
+            <p className="mb-3 text-xs text-muted-foreground">Task IDs: {chunkEmbeddingTaskIds.join(" → ")}</p>
+          )}
+          {chunkEmbeddingError && <p className="mb-3 text-xs text-destructive">{chunkEmbeddingError}</p>}
           <table className="w-full text-sm">
             <tbody className="divide-y divide-border">
               <MetaRow label={t("fv.source_site")} testId="text-source">
@@ -1249,48 +1317,8 @@ export default function FileDetail() {
                   ))}
                 </select>
               </div>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={bindToKb} onChange={(e) => setBindToKb(e.target.checked)} className="rounded" data-testid="checkbox-file-bind-kb" />
-                {t("tasks.form.bind_to_kb")}
-              </label>
-              {bindToKb && (
-                <div className="grid grid-cols-2 gap-3" data-testid="file-kb-binding-fields">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("tasks.form.kb_binding")}</label>
-                    <select
-                      value={selectedKbId}
-                      onChange={(e) => setSelectedKbId(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                      data-testid="select-file-bind-kb"
-                    >
-                      {knowledgeBases.length === 0 ? (
-                        <option value="">{t("tasks.form.no_knowledge_bases")}</option>
-                      ) : knowledgeBases.map((kb) => (
-                        <option key={kb.kb_id} value={kb.kb_id}>
-                          {kb.name || kb.kb_id}{kb.file_count != null ? ` (${kb.file_count})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">{t("kb.binding_mode")}</label>
-                    <select
-                      value={bindingMode}
-                      onChange={(e) => setBindingMode(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                      data-testid="select-file-binding-mode"
-                    >
-                      <option value="follow_latest">{t("kb.follow_latest")}</option>
-                      <option value="pin">{t("kb.pinned")}</option>
-                    </select>
-                  </div>
-                </div>
-              )}
             </div>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={chunkOverwrite} onChange={(e) => setChunkOverwrite(e.target.checked)} className="rounded" />
-              {t("fv.overwrite_recompute")}
-            </label>
+            {chunkEmbeddingError && <p className="text-xs text-destructive">{chunkEmbeddingError}</p>}
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <button onClick={() => setShowChunkModal(false)} className="text-sm px-3 py-2 rounded-lg border border-border hover:bg-muted transition-colors">
                 {t("fv.cancel")}

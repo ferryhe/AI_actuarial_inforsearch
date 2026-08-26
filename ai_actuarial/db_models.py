@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, Text, Index, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, Integer, Text, Index, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -102,16 +102,27 @@ class FileChunkSet(Base):
     __tablename__ = "file_chunk_sets"
     
     chunk_set_id = Column(Text, primary_key=True)
-    file_url = Column(Text, nullable=False)
-    profile_id = Column(Text, nullable=False)
+    file_url = Column(Text, ForeignKey("files.url", ondelete="CASCADE"), nullable=False)
+    profile_id = Column(
+        Text,
+        ForeignKey("chunk_profiles.profile_id", ondelete="CASCADE"),
+        nullable=False,
+    )
     markdown_hash = Column(Text, nullable=False)
-    status = Column(Text, nullable=False, default="ready")
+    profile_config_hash = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="building")
     chunk_count = Column(Integer, nullable=False, default=0)
     created_at = Column(Text, nullable=False)
     updated_at = Column(Text, nullable=False)
     
     __table_args__ = (
-        UniqueConstraint('file_url', 'profile_id', 'markdown_hash', name='uq_file_profile_hash'),
+        UniqueConstraint(
+            'file_url',
+            'markdown_hash',
+            'profile_id',
+            'profile_config_hash',
+            name='uq_file_markdown_profile_contract',
+        ),
         Index('idx_file_chunk_sets_file_url', 'file_url'),
         Index('idx_file_chunk_sets_profile_id', 'profile_id'),
     )
@@ -143,10 +154,21 @@ class ChunkEmbedding(Base):
     __tablename__ = "chunk_embeddings"
     
     chunk_id = Column(Text, primary_key=True)
-    embedding_model = Column(Text, primary_key=True)
-    dim = Column(Integer, default=0)
+    embedding_identity_key = Column(Text, primary_key=True)
+    embedding_provider = Column(Text, nullable=False)
+    embedding_model = Column(Text, nullable=False)
+    dimension = Column(Integer, nullable=False)
+    config_fingerprint = Column(Text, nullable=False)
     vector_json = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="ready")
     created_at = Column(Text, nullable=False)
+    updated_at = Column(Text, nullable=False)
+    validated_at = Column(Text)
+    failure_reason = Column(Text)
+
+    __table_args__ = (
+        Index('idx_chunk_embeddings_identity', 'embedding_identity_key'),
+    )
 
 
 class KBChunkBinding(Base):

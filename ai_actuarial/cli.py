@@ -5,7 +5,9 @@ import csv
 import json
 import logging
 import os
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -436,6 +438,163 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _api_json_request(
+    api_url: str,
+    path: str,
+    *,
+    method: str,
+    token: str | None,
+    payload: dict | None = None,
+    timeout: float = 30,
+) -> dict:
+    headers = {"Accept": "application/json"}
+    body = None
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        f"{api_url.rstrip('/')}{path}",
+        data=body,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=max(0.1, float(timeout))) as response:
+            decoded = json.loads(response.read().decode("utf-8"))
+            if not isinstance(decoded, dict):
+                raise RuntimeError("API returned a non-object JSON response")
+            return decoded
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"API returned HTTP {exc.code}: {detail}") from exc
+
+
+def _print_cli_payload(payload: dict, *, as_json: bool) -> None:
+    print(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=None if as_json else 2,
+        )
+    )
+
+
+def _wait_for_api_task(args: argparse.Namespace, job_id: str) -> dict:
+    deadline = time.monotonic() + max(0.0, float(args.timeout))
+    while True:
+        active = _api_json_request(
+            args.api_url,
+            "/api/tasks/active",
+            method="GET",
+            token=args.token,
+            timeout=args.timeout,
+        )
+        for task in active.get("tasks") or []:
+            if str(task.get("id") or "") == job_id:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"task wait timed out after {args.timeout} seconds")
+                time.sleep(0.2)
+                break
+        else:
+            history = _api_json_request(
+                args.api_url,
+                "/api/tasks/history?limit=200",
+                method="GET",
+                token=args.token,
+                timeout=args.timeout,
+            )
+            match = next(
+                (
+                    task
+                    for task in history.get("tasks") or []
+                    if str(task.get("id") or "") == job_id
+                ),
+                None,
+            )
+            if match is not None:
+                return dict(match)
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"task wait timed out after {args.timeout} seconds")
+            time.sleep(0.2)
+
+
+def cmd_task_run(args: argparse.Namespace) -> int:
+    payload: dict = {}
+    if args.payload_json:
+        try:
+            decoded = json.loads(args.payload_json)
+        except json.JSONDecodeError as exc:
+            _print_cli_payload({"success": False, "error": f"invalid --payload-json: {exc}"}, as_json=args.json)
+            return 2
+        if not isinstance(decoded, dict):
+            _print_cli_payload({"success": False, "error": "--payload-json must be an object"}, as_json=args.json)
+            return 2
+        payload.update(decoded)
+    payload["type"] = args.task_type
+    if args.file_url:
+        payload["file_urls"] = list(args.file_url)
+    if args.chunk_set_id:
+        payload["chunk_set_ids"] = list(args.chunk_set_id)
+    if args.profile_id:
+        payload["profile_id"] = args.profile_id
+    if args.embedding_identity_key:
+        payload["embedding_identity_key"] = args.embedding_identity_key
+    try:
+        started = _api_json_request(
+            args.api_url,
+            "/api/collections/run",
+            method="POST",
+            token=args.token,
+            payload=payload,
+            timeout=args.timeout,
+        )
+        job_id = str(started.get("job_id") or "")
+        if not job_id:
+            raise RuntimeError("task launch did not return a real job_id")
+        if not args.wait:
+            _print_cli_payload(started, as_json=args.json)
+            return 0
+        task = _wait_for_api_task(args, job_id)
+        result = {**started, "task": task}
+        _print_cli_payload(result, as_json=args.json)
+        return 0 if str(task.get("status") or "") in {"completed", "success", "succeeded"} else 1
+    except TimeoutError as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+        return 124
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+        return 2
+
+
+def cmd_embedding_coverage(args: argparse.Namespace) -> int:
+    params: list[tuple[str, str]] = []
+    params.extend(("chunk_set_id", value) for value in args.chunk_set_id)
+    params.extend(("file_url", value) for value in args.file_url)
+    if args.profile_id:
+        params.append(("profile_id", args.profile_id))
+    if args.embedding_identity_key:
+        params.append(("embedding_identity_key", args.embedding_identity_key))
+    path = "/api/embeddings/coverage"
+    if params:
+        path += "?" + urllib.parse.urlencode(params)
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method="GET",
+            token=args.token,
+            timeout=args.timeout,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+        return 2
+    _print_cli_payload(result, as_json=args.json)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ai-actuarial")
     p.add_argument(
@@ -554,6 +713,35 @@ def build_parser() -> argparse.ArgumentParser:
             help="Emit the stable machine-readable JSON response",
         )
         p_pipeline_action.set_defaults(func=cmd_pipeline)
+
+    p_task = sub.add_parser("task", help="Run a task through the FastAPI gateway")
+    p_task_sub = p_task.add_subparsers(dest="task_cmd", required=True)
+    p_task_run = p_task_sub.add_parser("run", help="Launch a generic background task")
+    p_task_run.add_argument("--type", dest="task_type", required=True, help="Task type")
+    p_task_run.add_argument("--file-url", action="append", default=[], help="Stable file URL selector (repeatable)")
+    p_task_run.add_argument("--chunk-set-id", action="append", default=[], help="Stable chunk set selector (repeatable)")
+    p_task_run.add_argument("--profile-id", default=None, help="Chunk profile selector")
+    p_task_run.add_argument("--embedding-identity-key", default=None, help="Server-allowed embedding identity")
+    p_task_run.add_argument("--payload-json", default=None, help="Additional task payload as a JSON object")
+    p_task_run.add_argument("--api-url", default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"), help="FastAPI base URL")
+    p_task_run.add_argument("--token", default=os.getenv("AI_ACTUARIAL_API_TOKEN"), help="Bearer token")
+    p_task_run.add_argument("--wait", action="store_true", help="Wait for terminal task status")
+    p_task_run.add_argument("--timeout", type=float, default=300, help="Request/wait timeout in seconds")
+    p_task_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_task_run.set_defaults(func=cmd_task_run)
+
+    p_embedding = sub.add_parser("embedding", help="Inspect persisted embedding coverage")
+    p_embedding_sub = p_embedding.add_subparsers(dest="embedding_cmd", required=True)
+    p_embedding_coverage = p_embedding_sub.add_parser("coverage", help="Query embedding coverage")
+    p_embedding_coverage.add_argument("--chunk-set-id", action="append", default=[], help="Stable chunk set selector (repeatable)")
+    p_embedding_coverage.add_argument("--file-url", action="append", default=[], help="Stable file URL selector (repeatable)")
+    p_embedding_coverage.add_argument("--profile-id", default=None, help="Chunk profile selector")
+    p_embedding_coverage.add_argument("--embedding-identity-key", default=None, help="Server-allowed embedding identity")
+    p_embedding_coverage.add_argument("--api-url", default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"), help="FastAPI base URL")
+    p_embedding_coverage.add_argument("--token", default=os.getenv("AI_ACTUARIAL_API_TOKEN"), help="Bearer token")
+    p_embedding_coverage.add_argument("--timeout", type=float, default=30, help="Request timeout in seconds")
+    p_embedding_coverage.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_embedding_coverage.set_defaults(func=cmd_embedding_coverage)
 
     # Collection commands using new modular structure
     p_collect = sub.add_parser("collect", help="Run specific collection workflow")

@@ -62,22 +62,27 @@ def _seed_stats_data(db_path: Path) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO file_chunk_sets (
-                chunk_set_id, file_url, profile_id, markdown_hash, status, chunk_count,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                chunk_set_id, file_url, profile_id, markdown_hash, profile_config_hash,
+                status, chunk_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "chunkset-1",
                 "https://alpha.example/doc-a.pdf",
                 "profile-default",
                 "md-hash-1",
-                "ready",
-                2,
+                "cfg-hash",
+                "building",
+                0,
                 now,
                 now,
             ),
         )
         conn.commit()
+        storage.replace_global_chunks(
+            chunk_set_id="chunkset-1",
+            chunks=[{"content": "alpha"}, {"content": "beta"}],
+        )
     finally:
         storage.close()
 
@@ -609,6 +614,21 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
     assert add_response.status_code == 200, add_response.text
     written_task = next(task for task in _read_scheduled_tasks(config_path) if task["name"] == "Weekly Chunk")
     assert written_task["interval"] == "daily at 02:00"
+    assert written_task["composition"] == "chunk_embedding"
+
+    removed_option_response = client.post(
+        "/api/scheduled-tasks/add",
+        json={
+            "name": "Invalid Chunk Binding",
+            "type": "chunk_generation",
+            "interval": "daily",
+            "enabled": True,
+            "params": {"kb_id": "kb-old"},
+        },
+        headers=headers,
+    )
+    assert removed_option_response.status_code == 400
+    assert removed_option_response.json()["code"] == "unsupported_option"
 
     weekly_summary_response = client.post(
         "/api/scheduled-tasks/add",
@@ -736,6 +756,18 @@ def test_browse_folder_and_stats_endpoints_return_real_values(tmp_path: Path, mo
     assert chunk_stats.status_code == 200, chunk_stats.text
     assert chunk_stats.json()["total_with_markdown"] >= 1
     assert chunk_stats.json()["total_with_chunks"] >= 1
+    assert chunk_stats.json()["chunks_ready"] == 2
+    assert chunk_stats.json()["embeddings_missing"] == 2
+
+    coverage = client.get(
+        "/api/embeddings/coverage?chunk_set_id=chunkset-1",
+        headers=headers,
+    )
+    assert coverage.status_code == 200, coverage.text
+    assert coverage.json()["contract_version"] == 1
+    assert coverage.json()["chunk_set_ids"] == ["chunkset-1"]
+    assert coverage.json()["expected_count"] == 2
+    assert coverage.json()["missing"] == 2
 
 
 

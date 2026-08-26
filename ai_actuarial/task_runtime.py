@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -19,6 +20,15 @@ import schedule
 
 from ai_actuarial.ai_runtime import apply_ocr_runtime_environment, get_search_runtime_credentials, resolve_ocr_runtime
 from ai_actuarial.capacity import ensure_capacity
+from ai_actuarial.embedding_service import (
+    embedding_coverage_for_selection,
+    ensure_chunk_embeddings,
+    resolve_embedding_selection,
+    resolve_server_embedding_identity,
+    sanitize_legacy_chunk_generation_payload,
+    validate_chunk_generation_payload,
+    validate_embedding_generation_payload,
+)
 from ai_actuarial.markdown_conversion_config import HARD_MAX_SCAN_COUNT, candidate_chain_for_path, load_markdown_conversion_config
 from ai_actuarial.catalog_incremental import run_catalog_for_urls, run_incremental_catalog
 from ai_actuarial.collectors.base import CollectionConfig, CollectionResult
@@ -68,10 +78,21 @@ _CONVERTIBLE_MARKDOWN_PREDICATE = """
 """
 
 
-def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+def generate_file_chunk_sets(
+    *,
+    db_path: str,
+    file_url: str,
+    payload: dict[str, Any],
+    expected_markdown_hash: str | None = None,
+) -> dict[str, Any]:
     from ai_actuarial.api.services.files_write import generate_file_chunk_sets as _generate_file_chunk_sets
 
-    return _generate_file_chunk_sets(db_path=db_path, file_url=file_url, payload=payload)
+    return _generate_file_chunk_sets(
+        db_path=db_path,
+        file_url=file_url,
+        payload=payload,
+        expected_markdown_hash=expected_markdown_hash,
+    )
 
 
 def _convert_document_path(path: Path, **kwargs: Any) -> Any:
@@ -216,6 +237,7 @@ class NativeTaskRuntime:
                 task_type, payload, **kwargs
             ),
             task_status=self._pipeline_task_status,
+            task_result=self._pipeline_task_result,
             category_kb_ids=self._category_kb_ids,
         )
 
@@ -261,6 +283,16 @@ class NativeTaskRuntime:
             for task in reversed(self.task_history):
                 if str(task.get("id") or "") == task_id:
                     return str(task.get("status") or "") or None
+        return None
+
+    def _pipeline_task_result(self, task_id: str) -> dict[str, Any] | None:
+        with self.task_lock:
+            active = self.active_tasks.get(task_id)
+            if active is not None:
+                return dict(active)
+            for task in reversed(self.task_history):
+                if str(task.get("id") or "") == task_id:
+                    return dict(task)
         return None
 
     def _category_kb_ids(self) -> list[str]:
@@ -475,6 +507,8 @@ class NativeTaskRuntime:
                 params = dict(task_cfg.get("params") or {})
                 task_name = str(task_cfg.get("name") or "Generic Task")
                 task_type = str(task_cfg.get("type") or "catalog")
+                if task_type == "chunk_generation":
+                    params = sanitize_legacy_chunk_generation_payload(params)
                 is_pipeline_source = task_name == "Scheduled Collection" and task_type == "scheduled"
                 if is_pipeline_source and self._pipeline_baton.status()["state"]["round_status"] == "running":
                     return
@@ -482,6 +516,15 @@ class NativeTaskRuntime:
                 task_id = self.start_background_task(task_type, params, task_name=f"Scheduled: {task_name}")
                 if is_pipeline_source:
                     self._pipeline_baton.start(task_id)
+                elif (
+                    task_type == "chunk_generation"
+                    and task_cfg.get("composition") == "chunk_embedding"
+                ):
+                    threading.Thread(
+                        target=self._complete_scheduled_chunk_embedding,
+                        args=(task_id, task_name),
+                        daemon=True,
+                    ).start()
 
             return job_wrapper
 
@@ -509,6 +552,39 @@ class NativeTaskRuntime:
             thread = threading.Thread(target=self._scheduler_loop, daemon=True)
             thread.start()
             self._scheduler_loop_started = True
+
+    def _complete_scheduled_chunk_embedding(
+        self,
+        chunk_task_id: str,
+        scheduled_name: str,
+    ) -> str | None:
+        while True:
+            status = self._pipeline_task_status(chunk_task_id)
+            if status == "completed":
+                break
+            if status in {None, "error", "stopped"}:
+                return None
+            time.sleep(1)
+        task = self._pipeline_task_result(chunk_task_id) or {}
+        result = task.get("result") if isinstance(task, dict) else None
+        chunk_sets = result.get("chunk_sets") if isinstance(result, dict) else None
+        chunk_set_ids = [
+            str(row.get("chunk_set_id") or "")
+            for row in chunk_sets or []
+            if isinstance(row, dict) and str(row.get("chunk_set_id") or "")
+        ]
+        if not chunk_set_ids:
+            append_task_log(
+                chunk_task_id,
+                "ERROR",
+                "Scheduled Chunk & Embedding stopped: chunk task returned no stable chunk_set_ids",
+            )
+            return None
+        return self.start_background_task(
+            "embedding_generation",
+            {"chunk_set_ids": chunk_set_ids},
+            task_name=f"Scheduled: {scheduled_name} (Embedding)",
+        )
 
     def _scheduler_loop(self) -> None:
         logger.info("Native FastAPI scheduler loop started")
@@ -763,6 +839,9 @@ class NativeTaskRuntime:
             if collection_type == "chunk_generation":
                 return self._run_chunk_generation(task_id, storage, db_path, data)
 
+            if collection_type == "embedding_generation":
+                return self._run_embedding_generation(task_id, storage, data)
+
             if collection_type == "weekly_summary":
                 return self._run_weekly_summary(db_path, data, storage=storage)
 
@@ -818,7 +897,8 @@ class NativeTaskRuntime:
                 )
 
         progress_callback = self._progress_callback(task_id)
-        stop_check = lambda: self._stop_requested(task_id)
+        def stop_check() -> bool:
+            return self._stop_requested(task_id)
 
         if mode == "plan":
             plan = plan_recategory(storage)
@@ -1293,7 +1373,11 @@ class NativeTaskRuntime:
                 items_downloaded=0,
                 items_skipped=0,
                 errors=[],
-                metadata={"source_type": "markdown_conversion"},
+                metadata={
+                    "source_type": "markdown_conversion",
+                    "stopped": False,
+                    "result": {"contract_version": 1, "files": []},
+                },
             )
 
         md_config = load_markdown_conversion_config()
@@ -1319,19 +1403,37 @@ class NativeTaskRuntime:
         errors: list[str] = []
         converted = 0
         skipped = 0
+        stopped = False
         total = len(file_rows)
         progress(0, total, "Starting markdown conversion")
         last_resolved_engine = explicit_runtime.engine if explicit_runtime is not None else "auto"
         last_provider = explicit_runtime.provider if explicit_runtime is not None else "auto"
+        result_files: list[dict[str, Any]] = []
 
         for index, row in enumerate(file_rows, start=1):
             file_url = str(row.get("url") or "").strip()
             if self._stop_requested(task_id):
+                stopped = True
                 errors.append("Task stopped by user")
                 break
             if skip_existing and str(row.get("markdown_content") or "").strip():
                 skipped += 1
+                markdown_hash = hashlib.sha256(
+                    str(row["markdown_content"]).encode("utf-8")
+                ).hexdigest()
+                result_files.append(
+                    {
+                        "file_url": file_url,
+                        "markdown_hash": markdown_hash,
+                        "markdown_version": markdown_hash,
+                        "status": "ready",
+                    }
+                )
                 progress(index, total, f"Skipped existing markdown {index}/{total}")
+                if self._stop_requested(task_id):
+                    stopped = True
+                    errors.append("Task stopped by user")
+                    break
                 continue
             local_path = self._resolve_file_path(row.get("local_path"), download_dir)
             if not local_path.exists():
@@ -1357,14 +1459,29 @@ class NativeTaskRuntime:
                 if ok:
                     converted += 1
                     last_provider = provider
+                    markdown_hash = hashlib.sha256(
+                        output.markdown.encode("utf-8")
+                    ).hexdigest()
+                    result_files.append(
+                        {
+                            "file_url": file_url,
+                            "markdown_hash": markdown_hash,
+                            "markdown_version": markdown_hash,
+                            "status": "ready",
+                        }
+                    )
                 else:
                     errors.append(f"{file_url}: {reason or 'markdown update failed'}")
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{file_url}: {exc}")
             progress(index, total, f"Converted markdown {index}/{total}")
+            if self._stop_requested(task_id):
+                stopped = True
+                errors.append("Task stopped by user")
+                break
 
         return CollectionResult(
-            success=(not errors or converted > 0),
+            success=not errors and not stopped,
             items_found=total,
             items_downloaded=converted,
             items_skipped=skipped,
@@ -1374,6 +1491,8 @@ class NativeTaskRuntime:
                 "conversion_tool": conversion_tool,
                 "resolved_engine": last_resolved_engine,
                 "provider": last_provider,
+                "stopped": stopped,
+                "result": {"contract_version": 1, "files": result_files},
             },
         )
 
@@ -1441,6 +1560,7 @@ class NativeTaskRuntime:
         db_path: str,
         data: dict[str, Any],
     ) -> CollectionResult:
+        warnings = validate_chunk_generation_payload(data)
         chunk_size = self._positive_int(data.get("chunk_size"), 800)
         chunk_overlap = self._positive_int(data.get("chunk_overlap"), 100, min_value=0)
         if chunk_overlap >= chunk_size:
@@ -1454,9 +1574,9 @@ class NativeTaskRuntime:
             "splitter": str(data.get("splitter") or "semantic").strip(),
             "tokenizer": str(data.get("tokenizer") or "cl100k_base").strip(),
             "version": str(data.get("version") or "v1").strip(),
-            "overwrite_same_profile": bool(data.get("overwrite_same_profile", False)),
+            "overwrite_same_profile": False,
         }
-        if not payload["profile_id"] and not payload["overwrite_same_profile"]:
+        if not payload["profile_id"]:
             try:
                 profile = storage.create_chunk_profile(
                     name=payload["name"],
@@ -1474,6 +1594,13 @@ class NativeTaskRuntime:
 
         candidate_data = {**data, "profile_id": payload["profile_id"]}
         file_urls = self._chunk_candidate_file_urls(storage, candidate_data)
+        expected_hashes = {
+            str(item.get("file_url") or "").strip(): str(
+                item.get("markdown_hash") or ""
+            ).strip()
+            for item in (data.get("files") or [])
+            if isinstance(item, dict)
+        }
         if not file_urls:
             return CollectionResult(
                 success=True,
@@ -1481,70 +1608,61 @@ class NativeTaskRuntime:
                 items_downloaded=0,
                 items_skipped=0,
                 errors=[],
-                metadata={"source_type": "chunk_generation"},
-            )
-
-        kb_id = str(data.get("kb_id") or "").strip()
-        binding_mode = str(data.get("binding_mode") or "follow_latest").strip().lower() or "follow_latest"
-        if kb_id and binding_mode not in {"pin", "follow_latest"}:
-            raise RuntimeError("binding_mode must be one of: pin, follow_latest")
-        kb_manager = None
-        if kb_id:
-            kb_manager = KnowledgeBaseManager(storage)
-            if not kb_manager.get_kb(kb_id):
-                raise RuntimeError(f"Knowledge base '{kb_id}' not found")
-
-        # Fail closed before generating chunks when the KB already holds
-        # committed chunk data whose immutable config differs from this run's
-        # (#220). An explicit full_reindex is the atomic rebuild signal that
-        # bypasses the guard. overwrite_same_profile only replaces the chunk set
-        # for the same profile and does NOT rebuild the RAG index, so it is not
-        # a bypass signal.
-        if kb_manager is not None and not coerce_bool(data.get("full_reindex"), default=False):
-            self._ensure_chunk_config_compatible(
-                storage,
-                kb_id,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                splitter=payload["splitter"],
-                tokenizer=payload["tokenizer"],
+                metadata={
+                    "source_type": "chunk_generation",
+                    "stopped": False,
+                    "warnings": warnings,
+                    "result": {"contract_version": 1, "chunk_sets": []},
+                },
             )
 
         progress = self._progress_callback(task_id)
         errors: list[str] = []
         generated = 0
         skipped = 0
-        bound_to_kb = 0
+        stopped = False
         total_chunks = 0
+        chunk_sets: list[dict[str, Any]] = []
         total = len(file_urls)
         progress(0, total, "Starting chunk generation")
         for index, file_url in enumerate(file_urls, start=1):
             if self._stop_requested(task_id):
+                stopped = True
                 errors.append("Task stopped by user")
                 break
             try:
-                result = generate_file_chunk_sets(db_path=db_path, file_url=file_url, payload=payload)
+                result = generate_file_chunk_sets(
+                    db_path=db_path,
+                    file_url=file_url,
+                    payload=payload,
+                    expected_markdown_hash=expected_hashes.get(file_url) or None,
+                )
                 if result.get("reused_existing") and not result.get("overwrote_existing"):
                     skipped += 1
                 else:
                     generated += 1
-                if kb_manager is not None and result.get("chunk_set_id"):
-                    kb_manager.add_files_to_kb(kb_id, [file_url])
-                    storage.bind_chunk_set_to_kb(
-                        kb_id=kb_id,
-                        file_url=file_url,
-                        chunk_set_id=str(result["chunk_set_id"]),
-                        bound_by="chunk_generation",
-                        binding_mode=binding_mode,
-                    )
-                    bound_to_kb += 1
                 total_chunks += int(result.get("chunk_count") or 0)
+                chunk_sets.append(
+                    {
+                        "file_url": file_url,
+                        "markdown_hash": str(result.get("markdown_hash") or ""),
+                        "profile_id": str(result.get("profile_id") or ""),
+                        "profile_config_hash": str(result.get("profile_config_hash") or ""),
+                        "chunk_set_id": str(result.get("chunk_set_id") or ""),
+                        "chunk_count": int(result.get("chunk_count") or 0),
+                        "reused_existing": bool(result.get("reused_existing", False)),
+                    }
+                )
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{file_url}: {exc}")
             progress(index, total, f"Generated chunks {index}/{total}")
+            if self._stop_requested(task_id):
+                stopped = True
+                errors.append("Task stopped by user")
+                break
 
         return CollectionResult(
-            success=(not errors or generated > 0),
+            success=not errors and not stopped,
             items_found=total,
             items_downloaded=generated,
             items_skipped=skipped,
@@ -1555,8 +1673,84 @@ class NativeTaskRuntime:
                 "chunk_size": chunk_size,
                 "chunk_overlap": chunk_overlap,
                 "total_chunks": total_chunks,
-                "kb_id": kb_id or None,
-                "bound_to_kb": bound_to_kb,
+                "stopped": stopped,
+                "warnings": warnings,
+                "result": {"contract_version": 1, "chunk_sets": chunk_sets},
+            },
+        )
+
+    def _run_embedding_generation(
+        self,
+        task_id: str,
+        storage: Storage,
+        data: dict[str, Any],
+    ) -> CollectionResult:
+        validate_embedding_generation_payload(data)
+        selection = resolve_embedding_selection(
+            storage,
+            chunk_set_ids=self._coerce_list(data.get("chunk_set_ids")),
+            file_urls=self._coerce_list(data.get("file_urls")),
+            profile_id=str(data.get("profile_id") or "").strip() or None,
+        )
+        identity = resolve_server_embedding_identity(
+            storage,
+            str(data.get("embedding_identity_key") or "").strip() or None,
+        )
+        progress = self._progress_callback(task_id)
+        chunks = list(selection["chunks"])
+        progress(0, len(chunks), "Ensuring persisted embeddings")
+        ensured = ensure_chunk_embeddings(
+            storage=storage,
+            chunks=chunks,
+            identity=identity,
+            batch_size=identity.config.embedding_batch_size,
+            stop_check=lambda: self._stop_requested(task_id),
+        )
+        coverage = embedding_coverage_for_selection(
+            storage=storage,
+            selection=selection,
+            identity=identity,
+        )
+        progress(ensured.ready_count, len(chunks), "Embedding persistence complete")
+        status = "stopped" if ensured.stopped else (
+            "completed" if not ensured.failed else "error"
+        )
+        result = {
+            "contract_version": 1,
+            "job_id": task_id,
+            "status": status,
+            **identity.as_dict(),
+            "requested_file_urls": selection["requested_file_urls"],
+            "requested_chunk_set_ids": selection["requested_chunk_set_ids"],
+            "resolved_file_urls": list(
+                dict.fromkeys(str(row["file_url"]) for row in selection["chunk_sets"])
+            ),
+            "chunk_set_ids": selection["chunk_set_ids"],
+            "requested_count": len(selection["requested_file_urls"])
+            + len(selection["requested_chunk_set_ids"]),
+            "resolved_count": len(selection["chunk_set_ids"]),
+            "expected_count": ensured.expected_count,
+            "ready_count": ensured.ready_count,
+            "generated": ensured.generated,
+            "reused": ensured.reused,
+            "invalid_regenerated": ensured.invalid_regenerated,
+            "failed": ensured.failed,
+            "persisted_record_count": ensured.persisted_record_count,
+            "per_file": coverage["per_file"],
+            "errors": ensured.errors,
+            "started_at": ensured.started_at,
+            "completed_at": ensured.completed_at,
+        }
+        return CollectionResult(
+            success=not ensured.failed and not ensured.stopped,
+            items_found=ensured.expected_count,
+            items_downloaded=ensured.generated + ensured.invalid_regenerated,
+            items_skipped=ensured.reused,
+            errors=[str(error["code"]) for error in ensured.errors],
+            metadata={
+                "source_type": "embedding_generation",
+                "stopped": ensured.stopped,
+                "result": result,
             },
         )
 
@@ -1694,6 +1888,42 @@ class NativeTaskRuntime:
         ]
 
     def _chunk_candidate_file_urls(self, storage: Storage, data: dict[str, Any]) -> list[str]:
+        if "files" in data:
+            raw_files = data.get("files")
+            if not isinstance(raw_files, list):
+                raise RuntimeError("chunk files selector must be a list")
+            selectors: list[tuple[str, str]] = []
+            seen: set[str] = set()
+            for raw in raw_files:
+                if not isinstance(raw, dict):
+                    raise RuntimeError("chunk files selector entries must be objects")
+                file_url = str(raw.get("file_url") or "").strip()
+                expected_hash = str(raw.get("markdown_hash") or "").strip()
+                markdown_version = str(raw.get("markdown_version") or expected_hash).strip()
+                if not file_url or not expected_hash or markdown_version != expected_hash:
+                    raise RuntimeError("chunk files selector requires a stable Markdown hash/version")
+                if file_url in seen:
+                    raise RuntimeError(f"duplicate chunk file selector: {file_url}")
+                seen.add(file_url)
+                selectors.append((file_url, expected_hash))
+            for file_url, expected_hash in selectors:
+                row = storage._conn.execute(
+                    """
+                    SELECT c.markdown_content
+                    FROM files f
+                    JOIN catalog_items c ON c.file_url = f.url
+                    WHERE f.url = ? AND f.deleted_at IS NULL
+                    """,
+                    (file_url,),
+                ).fetchone()
+                markdown_content = str((row or [""])[0] or "")
+                current_hash = hashlib.sha256(markdown_content.encode("utf-8")).hexdigest()
+                if not markdown_content or current_hash != expected_hash:
+                    raise RuntimeError(
+                        f"Markdown changed for {file_url}; rerun Markdown conversion"
+                    )
+            return [file_url for file_url, _expected_hash in selectors]
+
         explicit_urls = self._explicit_file_urls(data)
         if explicit_urls:
             return [
@@ -1718,13 +1948,6 @@ class NativeTaskRuntime:
             AND c.markdown_content IS NOT NULL
             AND c.markdown_content != ''
         """ + category_sql
-        if not bool(data.get("overwrite_same_profile", False)):
-            profile_id = str(data.get("profile_id") or "").strip()
-            if profile_id:
-                where += " AND NOT EXISTS (SELECT 1 FROM file_chunk_sets s WHERE s.file_url = f.url AND s.profile_id = ?)"
-                params.append(profile_id)
-            else:
-                where += " AND NOT EXISTS (SELECT 1 FROM file_chunk_sets s WHERE s.file_url = f.url)"
         limit = self._positive_int(data.get("scan_count"), 50)
         offset = max(0, self._positive_int(data.get("scan_start_index"), 1) - 1)
         rows = storage._conn.execute(
@@ -1872,43 +2095,46 @@ class NativeTaskRuntime:
     def _finalize_task_success(self, task_id: str, collection_type: str, result: CollectionResult) -> None:
         with self.task_lock:
             task_data = self.active_tasks.pop(task_id, None)
-        if task_data is None:
-            return
-        stopped = bool((result.metadata or {}).get("stopped"))
-        task_data.update(
-            {
-                "status": "stopped" if stopped else ("completed" if result.success else "error"),
-                "progress": 100,
-                "completed_at": datetime.now().isoformat(),
-                "current_activity": "Stopped" if stopped else ("Completed" if result.success else "Completed with errors"),
-                "items_processed": result.items_found,
-                "items_total": result.items_found,
-                "items_downloaded": result.items_downloaded,
-                "items_skipped": result.items_skipped,
-                "errors": list(result.errors or []),
-                "metadata": dict(result.metadata or {}),
-            }
-        )
+            if task_data is None:
+                return
+            stopped = bool((result.metadata or {}).get("stopped"))
+            task_data.update(
+                {
+                    "status": "stopped" if stopped else ("completed" if result.success else "error"),
+                    "progress": 100,
+                    "completed_at": datetime.now().isoformat(),
+                    "current_activity": "Stopped" if stopped else ("Completed" if result.success else "Completed with errors"),
+                    "items_processed": result.items_found,
+                    "items_total": result.items_found,
+                    "items_downloaded": result.items_downloaded,
+                    "items_skipped": result.items_skipped,
+                    "errors": list(result.errors or []),
+                    "metadata": dict(result.metadata or {}),
+                }
+            )
+            canonical_result = (result.metadata or {}).get("result")
+            if isinstance(canonical_result, dict):
+                task_data["result"] = canonical_result
+            self.task_history.append(task_data)
         append_task_log(task_id, "INFO", f"Task finished (type={collection_type}, success={result.success})")
-        self.task_history.append(task_data)
         self._append_history_to_disk(task_data)
 
     def _finalize_task_error(self, task_id: str, error: str) -> None:
         with self.task_lock:
             task_data = self.active_tasks.pop(task_id, None)
-        if task_data is None:
-            return
-        task_data.update(
-            {
-                "status": "error",
-                "progress": 100,
-                "completed_at": datetime.now().isoformat(),
-                "current_activity": "Failed",
-                "errors": [error],
-            }
-        )
+            if task_data is None:
+                return
+            task_data.update(
+                {
+                    "status": "error",
+                    "progress": 100,
+                    "completed_at": datetime.now().isoformat(),
+                    "current_activity": "Failed",
+                    "errors": [error],
+                }
+            )
+            self.task_history.append(task_data)
         append_task_log(task_id, "ERROR", f"Task failed: {error}")
-        self.task_history.append(task_data)
         self._append_history_to_disk(task_data)
 
     def _finalize_child_run(

@@ -20,7 +20,6 @@ from ai_actuarial.ai_runtime import (
     FUNCTION_BINDING_TO_SECTION,
     KNOWN_LLM_PROVIDERS,
     OPTIONAL_API_KEY_SENTINEL,
-    PROVIDER_ENV_VARS,
     PROVIDER_STARTUP_ENV_MAP,
     SECTION_TO_FUNCTION_BINDING,
     binding_to_section_name,
@@ -50,6 +49,12 @@ from ai_actuarial.markdown_conversion_config import list_conversion_tools, write
 from ai_actuarial.rag.defaults import get_embedding_model_defaults
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
 from ai_actuarial.crawler import DEFAULT_FILE_EXTS, Crawler
+from ai_actuarial.embedding_service import (
+    UnsupportedOptionsError,
+    resolve_server_embedding_identity,
+    validate_chunk_generation_payload,
+    validate_embedding_generation_payload,
+)
 from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
 from ai_actuarial.web_listening_rule import (
@@ -71,6 +76,7 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "catalog",
     "markdown_conversion",
     "chunk_generation",
+    "embedding_generation",
     "weekly_summary",
     "rag_indexing",
     "kb_index_build",
@@ -96,6 +102,7 @@ _VALID_COLLECTION_TYPES = {
     "quick_check",
     "markdown_conversion",
     "chunk_generation",
+    "embedding_generation",
     "weekly_summary",
     "rag_indexing",
     "kb_index_build",
@@ -194,10 +201,19 @@ sites:
 
 
 class OpsWriteError(Exception):
-    def __init__(self, message: str, *, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 400,
+        code: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.code = code
+        self.details = dict(details or {})
 
 
 class BridgeState:
@@ -1725,13 +1741,28 @@ def add_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = Non
     tasks = list(config_data.get("scheduled_tasks") or [])
     if any(str(task.get("name") or "") == name for task in tasks):
         raise OpsWriteError("Task name already exists")
+    params = dict(data.get("params") or {})
+    if task_type == "chunk_generation":
+        try:
+            validate_chunk_generation_payload(params)
+        except UnsupportedOptionsError as exc:
+            raise OpsWriteError(
+                str(exc),
+                code="unsupported_option",
+                details={
+                    "unsupported_options": exc.options,
+                    "guidance": exc.guidance,
+                },
+            ) from exc
+        params.pop("overwrite_same_profile", None)
     tasks.append(
         {
             "name": name,
             "type": task_type,
             "interval": interval,
             "enabled": bool(data.get("enabled", True)),
-            "params": data.get("params") or {},
+            "params": params,
+            **({"composition": "chunk_embedding"} if task_type == "chunk_generation" else {}),
         }
     )
     config_data["scheduled_tasks"] = tasks
@@ -1754,10 +1785,15 @@ def update_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = 
             continue
         task["name"] = name
         if "type" in data:
+            previous_type = str(task.get("type") or "")
             new_type = str(data.get("type") or "").strip()
             if new_type not in _VALID_SCHEDULED_TASK_TYPES:
                 raise OpsWriteError(f"Invalid task type: {new_type}")
             task["type"] = new_type
+            if previous_type != "chunk_generation" and new_type == "chunk_generation":
+                task["composition"] = "chunk_embedding"
+            elif new_type != "chunk_generation":
+                task.pop("composition", None)
         if "interval" in data:
             new_interval = str(data.get("interval") or "").strip()
             if not _is_valid_schedule_interval(new_interval):
@@ -1766,7 +1802,21 @@ def update_scheduled_task(data: dict[str, Any], *, bridge: BridgeState | None = 
         if "enabled" in data:
             task["enabled"] = bool(data.get("enabled"))
         if "params" in data:
-            task["params"] = data.get("params") or {}
+            params = dict(data.get("params") or {})
+            if str(task.get("type") or "") == "chunk_generation":
+                try:
+                    validate_chunk_generation_payload(params)
+                except UnsupportedOptionsError as exc:
+                    raise OpsWriteError(
+                        str(exc),
+                        code="unsupported_option",
+                        details={
+                            "unsupported_options": exc.options,
+                            "guidance": exc.guidance,
+                        },
+                    ) from exc
+                params.pop("overwrite_same_profile", None)
+            task["params"] = params
         found = True
         break
     if not found:
@@ -1915,13 +1965,50 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
         if not has_urls and not has_scan:
             _reject_request("No files selected for markdown conversion", collection_type=collection_type, data=data, bridge=bridge)
     if collection_type == "chunk_generation":
+        try:
+            validate_chunk_generation_payload(data)
+        except UnsupportedOptionsError as exc:
+            raise OpsWriteError(
+                str(exc),
+                code="unsupported_option",
+                details={
+                    "unsupported_options": exc.options,
+                    "guidance": exc.guidance,
+                },
+            ) from exc
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
             _reject_request("Category is required for category-scoped chunk generation", collection_type=collection_type, data=data, bridge=bridge)
-        has_urls = bool(data.get("file_urls"))
+        has_urls = bool(data.get("file_urls")) or bool(data.get("files"))
         has_scan = data.get("scan_count") not in (None, "", "null")
         if not has_urls and not has_scan:
             _reject_request("No files selected for chunk generation", collection_type=collection_type, data=data, bridge=bridge)
+    if collection_type == "embedding_generation":
+        try:
+            validate_embedding_generation_payload(data)
+        except UnsupportedOptionsError as exc:
+            raise OpsWriteError(
+                str(exc),
+                code="unsupported_option",
+                details={
+                    "unsupported_options": exc.options,
+                    "guidance": exc.guidance,
+                },
+            ) from exc
+        if bool(data.get("chunk_set_ids")) == bool(data.get("file_urls")):
+            _reject_request(
+                "Provide exactly one embedding selector: chunk_set_ids or file_urls",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
+        if data.get("file_urls") and not str(data.get("profile_id") or "").strip():
+            _reject_request(
+                "profile_id is required with file_urls",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
     if collection_type in {"rag_indexing", "kb_index_build"} and not str(data.get("kb_id") or "").strip():
         _reject_request(f"kb_id is required for {collection_type}", collection_type=collection_type, data=data, bridge=bridge)
 
@@ -2238,12 +2325,35 @@ def get_chunk_generation_stats(*, db_path: str, category: str | None = None) -> 
         except Exception:
             first_without_chunks = None
 
+        chunk_set_rows = conn.execute(
+            f"""
+            SELECT s.chunk_set_id
+            FROM file_chunk_sets s
+            JOIN files f ON f.url = s.file_url
+            JOIN catalog_items c ON c.file_url = f.url
+            WHERE {where} AND s.status = 'ready'
+            """,
+            tuple(params),
+        ).fetchall()
+        identity = resolve_server_embedding_identity(storage)
+        embedding_stats = storage.embedding_coverage(
+            chunk_set_ids=[str(row[0]) for row in chunk_set_rows],
+            identity=identity.as_dict(),
+        ) if chunk_set_rows else {"expected_count": 0, "ready_count": 0, "missing": 0, "invalid": 0}
+
         return {
             "success": True,
             "order": "id_desc",
             "category": category_filter or "",
             "total_with_markdown": int(total_with_markdown),
             "total_with_chunks": int(total_with_chunks),
+            "chunks_ready": int(embedding_stats["expected_count"]),
+            "embeddings_ready": int(embedding_stats["ready_count"]),
+            "embeddings_missing": int(embedding_stats["missing"]),
+            "embeddings_invalid": int(embedding_stats["invalid"]),
+            "embedding_provider": identity.provider,
+            "embedding_model": identity.model,
+            "embedding_dimension": identity.dimension,
             "first_without_chunks_index": first_without_chunks,
         }
     finally:

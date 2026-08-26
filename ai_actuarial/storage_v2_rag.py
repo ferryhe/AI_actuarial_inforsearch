@@ -124,50 +124,96 @@ class StorageV2RAGMixin:
                 "config_hash": profile.config_hash, "config_json": profile.config_json,
                 "created_at": profile.created_at, "updated_at": profile.updated_at}
 
-    def get_or_create_file_chunk_set(self, *, file_url: str, profile_id: str,
-                                   markdown_hash: str, status: str = "ready") -> dict:
+    def get_or_create_file_chunk_set(
+        self,
+        *,
+        file_url: str,
+        profile_id: str,
+        markdown_hash: str,
+        profile_config_hash: str | None = None,
+        status: str = "building",
+    ) -> dict:
+        actual_profile_config_hash = str(profile_config_hash or "").strip()
+        if not actual_profile_config_hash:
+            profile = self._session.query(ChunkProfile).filter(
+                ChunkProfile.profile_id == profile_id
+            ).first()
+            actual_profile_config_hash = str(
+                profile.config_hash if profile is not None else ""
+            ).strip()
+        if not actual_profile_config_hash:
+            raise ValueError("profile_config_hash is required")
         existing = self._session.query(FileChunkSet).filter(
             and_(FileChunkSet.file_url == file_url, FileChunkSet.profile_id == profile_id,
-                 FileChunkSet.markdown_hash == markdown_hash)
+                 FileChunkSet.markdown_hash == markdown_hash,
+                 FileChunkSet.profile_config_hash == actual_profile_config_hash)
         ).first()
         
         if existing:
             return {"chunk_set_id": existing.chunk_set_id, "file_url": existing.file_url,
                     "profile_id": existing.profile_id, "markdown_hash": existing.markdown_hash,
+                    "profile_config_hash": existing.profile_config_hash,
                     "status": existing.status, "chunk_count": existing.chunk_count,
                     "created_at": existing.created_at, "updated_at": existing.updated_at, "created": False}
 
         now = self._utcnow_iso()
         chunk_set_id = f"cs_{uuid.uuid4().hex}"
         chunk_set = FileChunkSet(chunk_set_id=chunk_set_id, file_url=file_url, profile_id=profile_id,
-                                 markdown_hash=markdown_hash, status=status, chunk_count=0,
+                                 markdown_hash=markdown_hash,
+                                 profile_config_hash=actual_profile_config_hash,
+                                 status=status, chunk_count=0,
                                  created_at=now, updated_at=now)
         self._session.add(chunk_set)
         self.backend._maybe_commit()
         
         return {"chunk_set_id": chunk_set_id, "file_url": file_url, "profile_id": profile_id,
-                "markdown_hash": markdown_hash, "status": status, "chunk_count": 0,
+                "markdown_hash": markdown_hash,
+                "profile_config_hash": actual_profile_config_hash,
+                "status": status, "chunk_count": 0,
                 "created_at": now, "updated_at": now, "created": True}
 
     def replace_global_chunks(self, *, chunk_set_id: str, chunks: list[dict],
                              overwrite: bool = False) -> dict:
+        chunk_set = self._session.query(FileChunkSet).filter(
+            FileChunkSet.chunk_set_id == chunk_set_id
+        ).first()
+        if chunk_set is None:
+            raise ValueError("chunk set not found")
         current_n = self._session.query(func.count(GlobalChunk.chunk_id)).filter(
             GlobalChunk.chunk_set_id == chunk_set_id).scalar() or 0
-        
-        if current_n > 0 and not overwrite:
+
+        if chunk_set.status == "ready":
+            if current_n == 0:
+                raise ValueError(
+                    "ready chunk set has no persisted chunks and is immutable"
+                )
+            return {"chunk_set_id": chunk_set_id, "chunk_count": current_n, "replaced": False, "inserted": 0}
+        if current_n > 0:
             return {"chunk_set_id": chunk_set_id, "chunk_count": current_n, "replaced": False, "inserted": 0}
 
-        with self.backend.transaction():
-            if current_n > 0:
-                self._session.query(GlobalChunk).filter(GlobalChunk.chunk_set_id == chunk_set_id).delete()
+        final_chunks_by_index: dict[int, dict[str, Any]] = {}
+        for idx, chunk in enumerate(chunks):
+            chunk_data = chunk or {}
+            chunk_index = int(
+                chunk_data.get("chunk_index")
+                if chunk_data.get("chunk_index") is not None
+                else idx
+            )
+            final_chunks_by_index[chunk_index] = chunk_data
+        final_chunks = [
+            (chunk_index, final_chunks_by_index[chunk_index])
+            for chunk_index in sorted(final_chunks_by_index)
+        ]
+        if not final_chunks:
+            return {"chunk_set_id": chunk_set_id, "chunk_count": 0, "replaced": False, "inserted": 0}
 
+        with self.backend.transaction():
             now = self._utcnow_iso()
             inserted = 0
-            for idx, chunk in enumerate(chunks):
-                content = str((chunk or {}).get("content") or "")
-                token_count = int((chunk or {}).get("token_count") or 0)
-                section_hierarchy = (chunk or {}).get("section_hierarchy")
-                chunk_index = int((chunk or {}).get("chunk_index") if (chunk or {}).get("chunk_index") is not None else idx)
+            for chunk_index, chunk in final_chunks:
+                content = str(chunk.get("content") or "")
+                token_count = int(chunk.get("token_count") or 0)
+                section_hierarchy = chunk.get("section_hierarchy")
                 chunk_id = f"{chunk_set_id}:{chunk_index}"
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 
@@ -180,7 +226,7 @@ class StorageV2RAGMixin:
             self._session.query(FileChunkSet).filter(FileChunkSet.chunk_set_id == chunk_set_id).update(
                 {"chunk_count": inserted, "status": "ready", "updated_at": now})
 
-        return {"chunk_set_id": chunk_set_id, "chunk_count": inserted, "replaced": current_n > 0, "inserted": inserted}
+        return {"chunk_set_id": chunk_set_id, "chunk_count": inserted, "replaced": False, "inserted": inserted}
 
     def list_file_chunk_sets(self, file_url: str) -> list[dict]:
         results = (
@@ -203,7 +249,9 @@ class StorageV2RAGMixin:
                        "profile_id": chunk_set.profile_id, "profile_name": profile.name,
                        "chunk_size": profile.chunk_size, "chunk_overlap": profile.chunk_overlap,
                        "splitter": profile.splitter, "tokenizer": profile.tokenizer, "version": profile.version,
-                       "markdown_hash": chunk_set.markdown_hash, "status": chunk_set.status,
+                       "markdown_hash": chunk_set.markdown_hash,
+                       "profile_config_hash": chunk_set.profile_config_hash,
+                       "status": chunk_set.status,
                        "chunk_count": chunk_set.chunk_count, "created_at": chunk_set.created_at,
                        "updated_at": chunk_set.updated_at, "bound_kb_count": kb_count or 0})
         return out

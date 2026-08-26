@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_actuarial.rag.exceptions import ChunkingException
+from ai_actuarial.embedding_service import validate_chunk_generation_payload
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, parse_int_clamped, resolve_runtime_features
 from ai_actuarial.storage import Storage
 
@@ -242,15 +243,17 @@ def get_file_chunk_sets(*, db_path: str, file_url: str) -> dict[str, Any]:
 
 
 
-def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+def generate_file_chunk_sets(
+    *,
+    db_path: str,
+    file_url: str,
+    payload: dict[str, Any],
+    expected_markdown_hash: str | None = None,
+) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise FileWriteError("Invalid JSON body")
+    warnings = validate_chunk_generation_payload(payload)
     profile_id = str(payload.get("profile_id") or "").strip()
-    overwrite_same_profile = bool(payload.get("overwrite_same_profile", False))
-    kb_id = str(payload.get("kb_id") or "").strip()
-    binding_mode = str(payload.get("binding_mode") or "follow_latest").strip().lower() or "follow_latest"
-    if kb_id and binding_mode not in {"pin", "follow_latest"}:
-        raise FileWriteError("binding_mode must be one of: pin, follow_latest")
     chunk_size = parse_int_clamped(payload.get("chunk_size") or 800, default=800, min_value=1, max_value=10000)
     chunk_overlap = parse_int_clamped(payload.get("chunk_overlap") or 100, default=100, min_value=0, max_value=10000)
     if chunk_overlap >= chunk_size:
@@ -264,30 +267,6 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
 
     storage = Storage(db_path)
     try:
-        def bind_requested_kb(chunk_set_id: str) -> dict[str, Any] | None:
-            if not kb_id:
-                return None
-            try:
-                from ai_actuarial.rag.exceptions import KnowledgeBaseException
-                from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
-            except ImportError as exc:  # noqa: BLE001
-                raise FileWriteError("RAG functionality not available", status_code=503) from exc
-
-            manager = KnowledgeBaseManager(storage)
-            if not manager.get_kb(kb_id):
-                raise FileWriteError(f"Knowledge base '{kb_id}' not found", status_code=404)
-            try:
-                manager.add_files_to_kb(kb_id, [file_url])
-                return storage.bind_chunk_set_to_kb(
-                    kb_id=kb_id,
-                    file_url=file_url,
-                    chunk_set_id=chunk_set_id,
-                    bound_by="file_chunk_generation",
-                    binding_mode=binding_mode,
-                )
-            except KnowledgeBaseException as exc:
-                raise FileWriteError(str(exc), status_code=404) from exc
-
         file_info = storage.get_file_by_url(file_url)
         if not file_info:
             raise FileWriteError("File not found", status_code=404)
@@ -295,6 +274,12 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
         markdown_content = (markdown_data or {}).get("markdown_content") or ""
         if not markdown_content.strip():
             raise FileWriteError("No markdown content available for this file")
+        markdown_hash = hashlib.sha256(markdown_content.encode("utf-8")).hexdigest()
+        expected_hash = str(expected_markdown_hash or "").strip()
+        if expected_hash and markdown_hash != expected_hash:
+            raise FileWriteError(
+                f"Markdown changed for {file_url}; rerun Markdown conversion"
+            )
 
         if profile_id:
             profile = storage.get_chunk_profile(profile_id)
@@ -312,26 +297,31 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
                 upsert=True,
             )
 
-        markdown_hash = hashlib.sha256(markdown_content.encode("utf-8")).hexdigest()
         chunk_set = storage.get_or_create_file_chunk_set(
             file_url=file_url,
             profile_id=profile["profile_id"],
             markdown_hash=markdown_hash,
-            status="ready",
+            profile_config_hash=str(profile["config_hash"]),
+            status="building",
         )
-        if not chunk_set.get("created") and not overwrite_same_profile:
-            response = {
+        if not chunk_set.get("created") and str(chunk_set.get("status") or "") == "ready":
+            if int(chunk_set.get("chunk_count") or 0) <= 0:
+                raise FileWriteError(
+                    "ready chunk set has no persisted chunks and is immutable"
+                )
+            return {
+                "contract_version": 1,
                 "file_url": file_url,
                 "chunk_set_id": chunk_set["chunk_set_id"],
                 "profile": profile,
+                "profile_id": profile["profile_id"],
+                "profile_config_hash": profile["config_hash"],
+                "markdown_hash": markdown_hash,
                 "chunk_count": chunk_set.get("chunk_count", 0),
                 "reused_existing": True,
                 "overwrote_existing": False,
+                "warnings": warnings,
             }
-            kb_binding = bind_requested_kb(str(chunk_set["chunk_set_id"]))
-            if kb_binding:
-                response["kb_binding"] = kb_binding
-            return response
 
         max_tokens = int(profile.get("chunk_size") or 800)
         min_tokens = max(20, min(100, max_tokens // 4))
@@ -353,27 +343,26 @@ def generate_file_chunk_sets(*, db_path: str, file_url: str, payload: dict[str, 
             }
             for chunk in chunks
         ]
-        write_res = storage.replace_global_chunks(chunk_set_id=chunk_set["chunk_set_id"], chunks=payload_chunks, overwrite=True)
-        sync_res = storage.sync_follow_latest_bindings_for_chunk_set(
-            file_url=file_url,
-            profile_id=str(profile.get("profile_id") or ""),
+        if not payload_chunks:
+            raise FileWriteError("Chunk generation returned no chunks")
+        write_res = storage.replace_global_chunks(
             chunk_set_id=chunk_set["chunk_set_id"],
-            bound_by="chunk_generation_auto_sync",
+            chunks=payload_chunks,
+            overwrite=False,
         )
-        response = {
+        return {
+            "contract_version": 1,
             "file_url": file_url,
             "chunk_set_id": chunk_set["chunk_set_id"],
             "profile": profile,
+            "profile_id": profile["profile_id"],
+            "profile_config_hash": profile["config_hash"],
+            "markdown_hash": markdown_hash,
             "chunk_count": write_res.get("chunk_count", 0),
-            "reused_existing": not chunk_set.get("created", False),
-            "overwrote_existing": write_res.get("replaced", False),
-            "auto_synced_kb_bindings": sync_res.get("synced_bindings", 0),
-            "auto_synced_kb_ids": sync_res.get("affected_kb_ids", []),
+            "reused_existing": False,
+            "overwrote_existing": False,
+            "warnings": warnings,
         }
-        kb_binding = bind_requested_kb(str(chunk_set["chunk_set_id"]))
-        if kb_binding:
-            response["kb_binding"] = kb_binding
-        return response
     except ChunkingException as exc:
         raise FileWriteError(str(exc), status_code=400) from exc
     except ValueError as exc:

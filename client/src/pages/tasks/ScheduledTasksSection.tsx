@@ -58,7 +58,6 @@ const scheduledParamFields: Record<string, ParamField[]> = {
   chunk_generation: [
     { key: "category", labelKey: "tasks.sched.param.category", placeholder: "AI" },
     { key: "profile_id", labelKey: "tasks.sched.param.profile_id" },
-    { key: "kb_id", labelKey: "tasks.sched.param.kb_id" },
   ],
   rag_indexing: [
     { key: "kb_id", labelKey: "tasks.sched.param.kb_id" },

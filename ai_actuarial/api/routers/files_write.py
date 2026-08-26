@@ -11,13 +11,13 @@ from ..services.files_write import (
     FileWriteError,
     delete_file_record,
     export_catalog,
-    generate_file_chunk_sets,
     get_downloadable_file,
     get_file_chunk_sets,
     get_rag_file_preview,
     update_file_markdown_content,
     update_file_record,
 )
+from ..services.ops_write import BridgeState, OpsWriteError, start_collection
 
 router = APIRouter()
 
@@ -170,8 +170,21 @@ def api_file_chunk_sets_generate(
 ):
     decoded_url = _decode_file_url_path(request, file_url, suffix="/chunk-sets/generate")
     try:
-        result = generate_file_chunk_sets(db_path=_db_path(request), file_url=decoded_url, payload=payload)
-        status_code = 201 if not result.get("reused_existing") else 200
-        return JSONResponse(status_code=status_code, content=result)
+        task_payload = dict(payload)
+        task_payload.update(
+            {
+                "type": "chunk_generation",
+                "file_urls": [decoded_url],
+                "name": str(payload.get("name") or "Chunk & Embedding: file chunk step"),
+            }
+        )
+        result = start_collection(task_payload, bridge=BridgeState(request.app.state))
+        return JSONResponse(status_code=202, content=result)
     except FileWriteError as exc:
         return _json_error(exc)
+    except OpsWriteError as exc:
+        content: dict[str, object] = {"error": exc.message}
+        if exc.code:
+            content["code"] = exc.code
+        content.update(exc.details)
+        return JSONResponse(status_code=exc.status_code, content=content)

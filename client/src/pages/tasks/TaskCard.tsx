@@ -1,19 +1,8 @@
 import { motion } from "framer-motion";
-import { Square, CheckCircle2, XCircle, Loader2, Clock } from "lucide-react";
+import { Square, CheckCircle2, XCircle, Loader2, Clock, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-
-interface Task {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  progress: number;
-  started_at: string;
-  current_activity: string;
-  items_processed: number;
-  items_total: number;
-}
+import type { HistoryTask, Task, TaskContractResult } from "./Tasks.types";
 
 function statusIcon(status: string) {
   switch (status) {
@@ -72,9 +61,37 @@ interface TaskCardProps {
   task: Task;
   index: number;
   onStop?: (id: string) => void;
+  onViewLog?: (id: string | undefined, name: string | undefined, task?: HistoryTask) => void;
 }
 
-export function TaskCard({ task, index, onStop }: TaskCardProps) {
+export function TaskResultSummary({ type, result }: { type?: string; result?: TaskContractResult }) {
+  const { t } = useTranslation();
+  if (!result) return null;
+  if (type === "chunk_generation") {
+    const chunkSets = result.chunk_sets || [];
+    const chunks = chunkSets.reduce((total, row) => total + Number(row.chunk_count || 0), 0);
+    return (
+      <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground" data-testid="task-chunk-result">
+        <span>{t("tasks.stats.chunk_sets")}: {chunkSets.length}</span>
+        <span>{t("tasks.stats.chunks")}: {chunks}</span>
+      </div>
+    );
+  }
+  if (type === "embedding_generation") {
+    return (
+      <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground" data-testid="task-embedding-result">
+        <span>{result.provider || "?"} / {result.model || "?"} / {result.dimension ?? "?"}</span>
+        <span>{t("tasks.stats.generated")}: {result.generated ?? 0}</span>
+        <span>{t("tasks.stats.reused")}: {result.reused ?? 0}</span>
+        <span>{t("tasks.stats.invalid_regenerated")}: {result.invalid_regenerated ?? 0}</span>
+        <span>{t("tasks.stats.failed")}: {result.failed ?? 0}</span>
+      </div>
+    );
+  }
+  return null;
+}
+
+export function TaskCard({ task, index, onStop, onViewLog }: TaskCardProps) {
   const { t } = useTranslation();
   return (
     <motion.div
@@ -94,12 +111,20 @@ export function TaskCard({ task, index, onStop }: TaskCardProps) {
           {task.current_activity && (
             <p className="text-xs text-muted-foreground mt-1 truncate" data-testid={`text-activity-${task.id}`}>{task.current_activity}</p>
           )}
+          <p className="text-[11px] font-mono text-muted-foreground mt-1" data-testid={`text-task-id-${task.id}`}>ID: {task.id}</p>
         </div>
+        <div className="flex items-center gap-1">
+        {onViewLog && (
+          <button onClick={() => onViewLog(task.id, task.name, task)}
+            className="shrink-0 p-2 rounded-lg border border-border hover:bg-muted transition-colors"
+            data-testid={`button-active-task-log-${task.id}`} title={t("tasks.log")}><Zap className="w-4 h-4" /></button>
+        )}
         {onStop && (
           <button onClick={() => onStop(task.id)}
             className="shrink-0 p-2 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500/20 transition-colors"
             data-testid={`button-stop-task-${task.id}`} title={t("tasks.stop")}><Square className="w-4 h-4" /></button>
         )}
+        </div>
       </div>
       <div className="mt-3">
         <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
@@ -111,6 +136,7 @@ export function TaskCard({ task, index, onStop }: TaskCardProps) {
             animate={{ width: `${Math.min(task.progress, 100)}%` }} transition={{ duration: 0.5 }} />
         </div>
       </div>
+      <div className="mt-2"><TaskResultSummary type={task.type} result={task.result} /></div>
       <p className="text-[11px] text-muted-foreground mt-2">{t("tasks.started")}: {formatDate(task.started_at)}</p>
     </motion.div>
   );

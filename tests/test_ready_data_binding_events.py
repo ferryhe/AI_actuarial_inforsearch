@@ -799,7 +799,7 @@ def test_follow_latest_invalid_target_rolls_back_without_source_event(
         storage.close()
 
 
-def test_same_chunk_set_content_overwrite_emits_content_event_not_binding_event(tmp_path: Path) -> None:
+def test_same_ready_chunk_set_content_overwrite_is_immutable_noop(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "content-overwrite.db"))
     try:
         kb_id = "kb-content-overwrite"
@@ -835,9 +835,7 @@ def test_same_chunk_set_content_overwrite_emits_content_event_not_binding_event(
         )
 
         after = storage.get_agentic_ready_source_state(kb_id=kb_id, profile="general")
-        assert after["event_generation"] == before["event_generation"] + 1
-        assert after["pending_reasons"].count("chunk_content_updated") == 1
-        assert "access_scope_restricted" in after["pending_reasons"]
-        assert "chunk_binding_updated" not in after["pending_reasons"]
+        assert after["event_generation"] == before["event_generation"]
+        assert after["pending_reasons"] == before["pending_reasons"]
     finally:
         storage.close()

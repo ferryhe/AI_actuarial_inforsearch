@@ -19,6 +19,7 @@ import ai_actuarial.api.services.ops_write as ops_write
 import ai_actuarial.api.services.rag_admin as rag_admin
 from ai_actuarial.api.services.ops_write import OpsWriteError, update_ai_routing
 from ai_actuarial.api.services.rag_admin import RagAdminError, update_chunk_profile
+from ai_actuarial.embedding_service import UnsupportedOptionsError
 from ai_actuarial.manifest_ingest import ingest_manifest
 from ai_actuarial.pipeline_config import (
     VERSIONED,
@@ -255,7 +256,7 @@ def test_chunk_profile_immutable_change_in_use_requires_full_reindex(
         )
 
 
-def test_chunk_profile_immutable_change_in_use_allowed_with_full_reindex(
+def test_chunk_profile_immutable_change_in_use_rejected_even_with_legacy_full_reindex(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(rag_admin, "_require_config_write_token", lambda *a, **k: None)
@@ -267,15 +268,21 @@ def test_chunk_profile_immutable_change_in_use_allowed_with_full_reindex(
     finally:
         storage.close()
 
-    result = update_chunk_profile(
-        db_path=db_path,
-        profile_id=profile["profile_id"],
-        payload={"chunk_size": 300, "full_reindex": True},
-        headers={},
-    )
-    assert result["profile"]["chunk_size"] == 300
-    # config_hash must be recomputed to stay consistent with the new immutable config.
-    assert result["profile"]["config_hash"] != profile["config_hash"]
+    with pytest.raises(RagAdminError, match="create a new profile"):
+        update_chunk_profile(
+            db_path=db_path,
+            profile_id=profile["profile_id"],
+            payload={"chunk_size": 300, "full_reindex": True},
+            headers={},
+        )
+
+    storage = Storage(db_path)
+    try:
+        unchanged = storage.get_chunk_profile(profile["profile_id"])
+    finally:
+        storage.close()
+    assert unchanged["chunk_size"] == profile["chunk_size"]
+    assert unchanged["config_hash"] == profile["config_hash"]
 
 
 def test_chunk_profile_immutable_change_not_in_use_is_allowed(
@@ -467,12 +474,11 @@ def test_runtime_chunk_fail_closed_passes_without_committed_chunks() -> None:
     )
 
 
-def test_runtime_chunk_generation_fail_closed_on_committed_mismatch(
+def test_runtime_chunk_generation_rejects_legacy_kb_option(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Verifies the guard is actually wired into the chunk generation runtime:
-    # a KB with committed chunk data at (800, 100) must reject a run at (300, 50)
-    # unless full_reindex / overwrite_same_profile bypasses it.
+    # Removed KB options must be rejected before chunk generation runs, even
+    # when the saved data already has committed chunks.
     db_path = str(tmp_path / "index.db")
     file_url = "https://example.com/wired.md"
     storage = Storage(db_path)
@@ -539,7 +545,7 @@ def test_runtime_chunk_generation_fail_closed_on_committed_mismatch(
         lambda **kwargs: {"chunk_set_id": "cs-wired", "chunk_count": 1, "reused_existing": False},
     )
     try:
-        with pytest.raises(RuntimeError, match="full_reindex"):
+        with pytest.raises(UnsupportedOptionsError, match="unsupported_option: kb_id"):
             runtime._run_chunk_generation(
                 "task-wired",
                 storage,
@@ -613,10 +619,10 @@ def _seed_kb_with_committed_chunk(
         storage.close()
 
 
-def test_runtime_chunk_generation_full_reindex_bypasses_guard(
+def test_runtime_chunk_generation_rejects_legacy_full_reindex_and_kb_options(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # full_reindex is the atomic rebuild signal; the guard must not fail-closed.
+    # Issue #237 removes KB binding/reindex from chunk generation entirely.
     db_path = str(tmp_path / "index.db")
     file_url = "https://example.com/wired.md"
     _seed_kb_with_committed_chunk(db_path, tmp_path, file_url=file_url)
@@ -628,23 +634,25 @@ def test_runtime_chunk_generation_full_reindex_bypasses_guard(
         lambda **kwargs: {"chunk_count": 1, "reused_existing": False},
     )
     try:
-        result = runtime._run_chunk_generation(
-            "task-wired",
-            storage,
-            db_path,
-            {"kb_id": "kb-1", "chunk_size": 300, "chunk_overlap": 50, "full_reindex": True},
-        )
+        with pytest.raises(
+            UnsupportedOptionsError,
+            match="unsupported_option: full_reindex, kb_id",
+        ):
+            runtime._run_chunk_generation(
+                "task-wired",
+                storage,
+                db_path,
+                {"kb_id": "kb-1", "chunk_size": 300, "chunk_overlap": 50, "full_reindex": True},
+            )
     finally:
         storage.close()
-    assert result.success is True
-    assert result.items_downloaded == 1
 
 
-def test_runtime_chunk_generation_overwrite_same_profile_still_fail_closed(
+def test_runtime_chunk_generation_overwrite_noop_does_not_allow_legacy_kb_option(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # overwrite_same_profile only replaces the same-profile chunk set and does
-    # not rebuild the RAG index, so it must NOT bypass the guard.
+    # overwrite_same_profile remains a no-op compatibility signal, but it does
+    # not make the removed KB option valid.
     db_path = str(tmp_path / "index.db")
     file_url = "https://example.com/wired.md"
     _seed_kb_with_committed_chunk(db_path, tmp_path, file_url=file_url)
@@ -656,7 +664,7 @@ def test_runtime_chunk_generation_overwrite_same_profile_still_fail_closed(
         lambda **kwargs: {"chunk_count": 1, "reused_existing": False},
     )
     try:
-        with pytest.raises(RuntimeError, match="full_reindex"):
+        with pytest.raises(UnsupportedOptionsError, match="unsupported_option: kb_id"):
             runtime._run_chunk_generation(
                 "task-wired",
                 storage,

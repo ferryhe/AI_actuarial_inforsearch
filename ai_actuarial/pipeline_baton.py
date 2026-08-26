@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from ai_actuarial.embedding_service import (
+    LEGACY_CHUNK_OPTIONS,
+    sanitize_legacy_chunk_generation_payload,
+)
+
 
 PIPELINE_STEPS = (
     "scheduled",
@@ -32,12 +37,14 @@ class PipelineBaton:
         state_path: str | Path,
         start_task: Callable[..., str],
         task_status: Callable[[str], str | None],
+        task_result: Callable[[str], dict[str, Any] | None] | None = None,
         category_kb_ids: Callable[[], list[str]],
         now: Callable[[], str] = _utc_now,
     ) -> None:
         self._state_path = Path(state_path)
         self._start_task = start_task
         self._task_status = task_status
+        self._task_result = task_result or (lambda _task_id: None)
         self._category_kb_ids = category_kb_ids
         self._now = now
         self._lock = threading.RLock()
@@ -53,6 +60,10 @@ class PipelineBaton:
                 "round_status": "idle",
                 "last_check": None,
                 "consumed_scheduled_task_id": None,
+                "chunk_embedding_phase": None,
+                "chunk_task_id": None,
+                "embedding_task_id": None,
+                "markdown_files": [],
             },
         }
 
@@ -67,7 +78,15 @@ class PipelineBaton:
         config = raw.get("config") if isinstance(raw, dict) else None
         state = raw.get("state") if isinstance(raw, dict) else None
         if isinstance(config, dict) and isinstance(config.get("overrides"), dict):
-            empty["config"]["overrides"] = config["overrides"]
+            overrides = dict(config["overrides"])
+            chunk_override = overrides.get("chunk_generation")
+            if isinstance(chunk_override, dict):
+                sanitized = sanitize_legacy_chunk_generation_payload(chunk_override)
+                if sanitized:
+                    overrides["chunk_generation"] = sanitized
+                else:
+                    overrides.pop("chunk_generation", None)
+            empty["config"]["overrides"] = overrides
         if isinstance(state, dict):
             for key in empty["state"]:
                 if key in state:
@@ -90,7 +109,7 @@ class PipelineBaton:
                 raise ValueError(f"Pipeline override for {step} must be an object")
             forbidden = _FORBIDDEN_OVERRIDE_KEYS.intersection(payload)
             if step == "chunk_generation":
-                forbidden = forbidden.union({"kb_id", "binding_mode", "full_reindex"}.intersection(payload))
+                forbidden = forbidden.union(LEGACY_CHUNK_OPTIONS.intersection(payload))
             if step == "rag_indexing":
                 forbidden = forbidden.union({"kb_id", "force_reindex", "incremental"}.intersection(payload))
             if forbidden:
@@ -121,6 +140,10 @@ class PipelineBaton:
                 "round_status": "running",
                 "last_check": self._now(),
                 "consumed_scheduled_task_id": scheduled_task_id,
+                "chunk_embedding_phase": None,
+                "chunk_task_id": None,
+                "embedding_task_id": None,
+                "markdown_files": [],
             }
             self._save(document)
             return self._view(document)
@@ -154,10 +177,34 @@ class PipelineBaton:
             if current_step == "scheduled":
                 self._start_step(document, "markdown_conversion")
             elif current_step == "markdown_conversion":
-                self._start_step(document, "catalog")
+                markdown_files = self._canonical_markdown_files(
+                    self._task_result(str(state["current_task_id"] or ""))
+                )
+                if not markdown_files:
+                    state["round_status"] = "error"
+                else:
+                    state["markdown_files"] = markdown_files
+                    self._start_step(document, "catalog")
             elif current_step == "catalog":
                 self._start_step(document, "chunk_generation")
-            elif current_step in {"chunk_generation", "rag_indexing"}:
+            elif current_step == "chunk_generation":
+                if state.get("chunk_embedding_phase") == "embedding":
+                    self._start_next_rag_or_complete(document)
+                else:
+                    chunk_task_id = str(state.get("chunk_task_id") or state["current_task_id"] or "")
+                    task_result = self._task_result(chunk_task_id) or {}
+                    result = task_result.get("result") if isinstance(task_result, dict) else None
+                    chunk_sets = (result or {}).get("chunk_sets") if isinstance(result, dict) else None
+                    chunk_set_ids = [
+                        str(row.get("chunk_set_id") or "")
+                        for row in chunk_sets or []
+                        if str(row.get("chunk_set_id") or "")
+                    ]
+                    if not chunk_set_ids:
+                        state["round_status"] = "error"
+                    else:
+                        self._start_embedding_step(document, chunk_set_ids)
+            elif current_step == "rag_indexing":
                 self._start_next_rag_or_complete(document)
             self._save(document)
             return self._view(document)
@@ -169,6 +216,12 @@ class PipelineBaton:
     def _start_step(self, document: dict[str, Any], step: str, *, kb_id: str | None = None) -> None:
         overrides = document["config"]["overrides"]
         payload = dict(overrides.get(step) or {})
+        markdown_files = list(document["state"].get("markdown_files") or [])
+        if step == "catalog":
+            payload["file_urls"] = [str(row["file_url"]) for row in markdown_files]
+        elif step == "chunk_generation":
+            payload = sanitize_legacy_chunk_generation_payload(payload)
+            payload["files"] = [dict(row) for row in markdown_files]
         if step == "rag_indexing":
             payload.update({"kb_id": kb_id, "incremental": True, "force_reindex": False})
         source_task_id = str(document["state"]["consumed_scheduled_task_id"])
@@ -188,6 +241,67 @@ class PipelineBaton:
             current_step=step,
             current_task_id=task_id,
             current_rag_kb=kb_id,
+        )
+        if step == "chunk_generation":
+            document["state"].update(
+                chunk_embedding_phase="chunk",
+                chunk_task_id=task_id,
+                embedding_task_id=None,
+            )
+
+    @staticmethod
+    def _canonical_markdown_files(task: dict[str, Any] | None) -> list[dict[str, Any]]:
+        result = task.get("result") if isinstance(task, dict) else None
+        files = result.get("files") if isinstance(result, dict) else None
+        if not isinstance(files, list):
+            return []
+        canonical: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw in files:
+            if not isinstance(raw, dict):
+                return []
+            file_url = str(raw.get("file_url") or "").strip()
+            markdown_hash = str(raw.get("markdown_hash") or "").strip()
+            markdown_version = str(raw.get("markdown_version") or "").strip()
+            if (
+                not file_url
+                or not markdown_hash
+                or markdown_version != markdown_hash
+                or str(raw.get("status") or "") != "ready"
+                or file_url in seen
+            ):
+                return []
+            seen.add(file_url)
+            canonical.append(
+                {
+                    "file_url": file_url,
+                    "markdown_hash": markdown_hash,
+                    "markdown_version": markdown_version,
+                    "status": "ready",
+                }
+            )
+        return canonical
+
+    def _start_embedding_step(
+        self,
+        document: dict[str, Any],
+        chunk_set_ids: list[str],
+    ) -> None:
+        source_task_id = str(document["state"]["consumed_scheduled_task_id"])
+        task_id = self._start_task(
+            "embedding_generation",
+            {"chunk_set_ids": chunk_set_ids},
+            task_name="Pipeline: Embedding Generation",
+            extra_fields={
+                "pipeline_baton_step": "chunk_generation",
+                "pipeline_baton_source_task_id": source_task_id,
+                "pipeline_baton_subtask": "embedding_generation",
+            },
+        )
+        document["state"].update(
+            current_task_id=task_id,
+            chunk_embedding_phase="embedding",
+            embedding_task_id=task_id,
         )
 
     def _start_next_rag_or_complete(self, document: dict[str, Any]) -> None:

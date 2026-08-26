@@ -94,7 +94,7 @@ def _create_chunk_set(
         file_url=file_url,
         profile_id=profile_id,
         markdown_hash=f"hash-{version}",
-        status="ready",
+        status="building",
     )
     chunk_set_id = str(chunk_set["chunk_set_id"])
     if chunks:
@@ -268,7 +268,7 @@ def test_section_hierarchy_uses_sqlite_text_affinity_for_canonical_noop(
         storage.close()
 
 
-def test_bound_selected_chunk_content_change_marks_soft_stale_once(tmp_path: Path) -> None:
+def test_bound_selected_ready_chunk_content_change_is_immutable_noop(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "bound-soft.db"))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
@@ -285,11 +285,10 @@ def test_bound_selected_chunk_content_change_marks_soft_stale_once(tmp_path: Pat
         )
 
         state = _state(storage, kb_id)
-        assert result["replaced"] is True
-        assert result["inserted"] == 1
-        assert state["event_generation"] == 1
-        assert state["pending_severity"] == "soft_stale"
-        assert state["pending_reasons"] == ["chunk_content_updated"]
+        assert result["replaced"] is False
+        assert result["inserted"] == 0
+        assert state["event_generation"] == 0
+        assert state["pending_reasons"] == []
         assert state["serving_allowed"] is True
     finally:
         storage.close()
@@ -352,7 +351,7 @@ def test_compare_and_write_use_begin_immediate(tmp_path: Path) -> None:
         storage.close()
 
 
-def test_selected_nonempty_chunk_set_becoming_empty_marks_hard_invalidated(
+def test_selected_nonempty_ready_chunk_set_cannot_become_empty(
     tmp_path: Path,
 ) -> None:
     storage = Storage(str(tmp_path / "hard-empty.db"))
@@ -371,18 +370,17 @@ def test_selected_nonempty_chunk_set_becoming_empty_marks_hard_invalidated(
         )
 
         state = _state(storage, kb_id)
-        assert result["chunk_count"] == 0
-        assert result["replaced"] is True
+        assert result["chunk_count"] == 1
+        assert result["replaced"] is False
         assert result["inserted"] == 0
-        assert state["event_generation"] == 1
-        assert state["pending_severity"] == "hard_stale"
-        assert state["pending_reasons"] == ["source_invalidated"]
-        assert state["serving_allowed"] is False
+        assert state["event_generation"] == 0
+        assert state["pending_reasons"] == []
+        assert state["serving_allowed"] is True
     finally:
         storage.close()
 
 
-def test_empty_to_empty_is_a_complete_noop(tmp_path: Path) -> None:
+def test_ready_empty_chunk_set_is_immutable_and_fails_closed(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "empty-noop.db"))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
@@ -390,17 +388,23 @@ def test_empty_to_empty_is_a_complete_noop(tmp_path: Path) -> None:
             tmp_path,
             name="empty-noop",
         )
+        storage._conn.execute(
+            "UPDATE file_chunk_sets SET status = 'ready' WHERE chunk_set_id = ?",
+            (chunk_set_id,),
+        )
+        storage._conn.commit()
         before_metadata = _chunk_set_metadata(storage, chunk_set_id)
 
-        result = storage.replace_global_chunks(
-            chunk_set_id=chunk_set_id,
-            chunks=[],
-            overwrite=True,
-        )
+        with pytest.raises(
+            ValueError,
+            match="ready chunk set has no persisted chunks and is immutable",
+        ):
+            storage.replace_global_chunks(
+                chunk_set_id=chunk_set_id,
+                chunks=[],
+                overwrite=True,
+            )
 
-        assert result["chunk_count"] == 0
-        assert result["replaced"] is False
-        assert result["inserted"] == 0
         assert _chunk_set_metadata(storage, chunk_set_id) == before_metadata
         assert _state(storage, kb_id)["event_generation"] == 0
     finally:
@@ -530,7 +534,7 @@ def test_affected_kb_lookup_does_not_materialize_each_full_bound_selection(
             overwrite=True,
         )
 
-        assert _state(storage, kb_id)["pending_reasons"] == ["chunk_content_updated"]
+        assert _state(storage, kb_id)["pending_reasons"] == []
     finally:
         storage.close()
 
@@ -566,8 +570,8 @@ def test_multiple_affected_kbs_each_advance_once(tmp_path: Path) -> None:
 
         for kb_id in ("kb-bound", "kb-fallback"):
             state = _state(storage, kb_id)
-            assert state["event_generation"] == 1
-            assert state["pending_reasons"] == ["chunk_content_updated"]
+            assert state["event_generation"] == 0
+            assert state["pending_reasons"] == []
     finally:
         storage.close()
 
@@ -634,13 +638,12 @@ def test_all_known_ready_data_profiles_advance_once(tmp_path: Path) -> None:
 
         for profile in profiles:
             state = _state(storage, kb_id, profile)
-            assert state["event_generation"] == before[profile] + 1
-            assert state["pending_reasons"] == ["chunk_content_updated"]
+            assert state["event_generation"] == before[profile]
     finally:
         storage.close()
 
 
-def test_marker_failure_rolls_back_chunks_metadata_and_all_kb_generations(
+def test_ready_chunk_immutability_skips_content_event_markers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -674,14 +677,14 @@ def test_marker_failure_rolls_back_chunks_metadata_and_all_kb_generations(
 
         monkeypatch.setattr(storage, "mark_agentic_ready_source_event_for_kb", fail_second_marker)
 
-        with pytest.raises(RuntimeError, match="injected marker failure"):
-            storage.replace_global_chunks(
-                chunk_set_id=chunk_set_id,
-                chunks=[_chunk("After")],
-                overwrite=True,
-            )
+        result = storage.replace_global_chunks(
+            chunk_set_id=chunk_set_id,
+            chunks=[_chunk("After")],
+            overwrite=True,
+        )
 
-        assert marker_calls == 2
+        assert result["replaced"] is False
+        assert marker_calls == 0
         assert _stored_chunks(storage, chunk_set_id) == before_chunks
         assert _chunk_set_metadata(storage, chunk_set_id) == before_metadata
         for kb_id in kb_ids:
@@ -748,16 +751,16 @@ def test_duplicate_chunk_indexes_compare_the_final_persisted_rows(tmp_path: Path
         rows = _stored_chunks(storage, chunk_set_id)
         assert noop["replaced"] is False
         assert noop["inserted"] == 0
-        assert changed["replaced"] is True
-        assert changed["inserted"] == 1
+        assert changed["replaced"] is False
+        assert changed["inserted"] == 0
         assert len(rows) == 1
-        assert rows[0][2:4] == ("Changed final", 3)
-        assert _state(storage, kb_id)["event_generation"] == 1
+        assert rows[0][2:4] == ("Final", 2)
+        assert _state(storage, kb_id)["event_generation"] == 0
     finally:
         storage.close()
 
 
-def test_same_set_overwrite_emits_only_content_reason(tmp_path: Path) -> None:
+def test_same_ready_set_overwrite_emits_no_content_reason(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "content-only.db"))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
@@ -773,7 +776,7 @@ def test_same_set_overwrite_emits_only_content_reason(tmp_path: Path) -> None:
             overwrite=True,
         )
 
-        assert _state(storage, kb_id)["pending_reasons"] == ["chunk_content_updated"]
+        assert _state(storage, kb_id)["pending_reasons"] == []
     finally:
         storage.close()
 
@@ -893,13 +896,13 @@ def test_content_events_do_not_move_publication_pointers_or_enable_automation(
         assert after["previous_publication_id"] == before["previous_publication_id"]
         assert after["automatic_build_enabled"] is False
         assert after["automatic_publish_enabled"] is False
-        assert state["serving_stale"] is True
+        assert state["serving_stale"] is False
         assert state["serving_allowed"] is True
     finally:
         storage.close()
 
 
-def test_invalid_chunk_input_rolls_back_without_source_event(tmp_path: Path) -> None:
+def test_ready_chunk_immutability_ignores_invalid_replacement_input(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "invalid-input.db"))
     try:
         kb_id, _file_url, chunk_set_id = _seed_bound_context(
@@ -911,13 +914,13 @@ def test_invalid_chunk_input_rolls_back_without_source_event(tmp_path: Path) -> 
         before_chunks = _stored_chunks(storage, chunk_set_id)
         before_metadata = _chunk_set_metadata(storage, chunk_set_id)
 
-        with pytest.raises(ValueError):
-            storage.replace_global_chunks(
-                chunk_set_id=chunk_set_id,
-                chunks=[{"chunk_index": "not-an-index", "content": "Invalid"}],
-                overwrite=True,
-            )
+        result = storage.replace_global_chunks(
+            chunk_set_id=chunk_set_id,
+            chunks=[{"chunk_index": "not-an-index", "content": "Invalid"}],
+            overwrite=True,
+        )
 
+        assert result["replaced"] is False
         assert _stored_chunks(storage, chunk_set_id) == before_chunks
         assert _chunk_set_metadata(storage, chunk_set_id) == before_metadata
         assert _state(storage, kb_id)["event_generation"] == 0

@@ -54,7 +54,7 @@ export function FilterBar({
         <option value="search">Search</option>
         <option value="catalog">Catalog</option>
         <option value="markdown_conversion">Markdown</option>
-        <option value="chunk_generation">Chunk</option>
+        <option value="chunk_generation">Chunk &amp; Embedding</option>
         <option value="rag_indexing">RAG Indexing</option>
       </select>
     </div>

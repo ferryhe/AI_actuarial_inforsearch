@@ -64,7 +64,7 @@ def _bind_file(storage: Storage, *, kb_id: str, file_url: str) -> dict[str, obje
         file_url=file_url,
         profile_id=str(profile["profile_id"]),
         markdown_hash=f"binding:{file_url}",
-        status="ready",
+        status="building",
     )
     storage.replace_global_chunks(
         chunk_set_id=str(chunk_set["chunk_set_id"]),
