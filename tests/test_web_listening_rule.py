@@ -35,11 +35,9 @@ def test_web_listening_rule_draft_validate_and_materialize_helpers(monkeypatch) 
     assert materialized.site["acquisition_tools"] == ["crawler", "search"]
     assert materialized.site["content_selector"] == "main"
     assert materialized.site["allow_url_patterns"] == ["/research"]
-    assert materialized.scheduled_task["type"] == "full_pipeline"
-    assert materialized.scheduled_task["params"]["source_collection_type"] == "scheduled"
+    assert materialized.scheduled_task["type"] == "scheduled"
     assert materialized.scheduled_task["params"]["site"] == "Web Listening: example.com"
-    assert materialized.scheduled_task["params"]["name"] == "Full Pipeline: Web Listening: example.com"
-    assert materialized.scheduled_task["params"]["run_rag_indexing"] is False
+    assert materialized.scheduled_task["params"]["name"] == "Scheduled: Web Listening: example.com"
 
 
 
@@ -219,13 +217,11 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
     assert site["exclude_prefixes"] == ["archive_"]
     assert site["web_listening_rule_schema_version"] == "web-listening-agent-rule.v1"
     task = matching_tasks[0]
-    assert task["type"] == "full_pipeline"
+    assert task["type"] == "scheduled"
     assert task["interval"] == "daily at 03:15"
-    assert task["params"]["source_collection_type"] == "scheduled"
     assert task["params"]["site"] == "Rules Example Insights"
-    assert task["params"]["name"] == "Full Pipeline: Rules Example Insights"
+    assert task["params"]["name"] == "Scheduled: Rules Example Insights"
     assert task["params"]["check_database"] is True
-    assert task["params"]["run_rag_indexing"] is False
 
     read_back = client.get("/api/config/sites", headers=headers)
     assert read_back.status_code == 200, read_back.text

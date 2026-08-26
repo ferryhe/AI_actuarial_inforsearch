@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from collections import deque
@@ -29,12 +30,12 @@ from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.search import search_all
 from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_config_path, load_yaml, parse_int_clamped, task_log_path
-from ai_actuarial.pipeline_config import IMMUTABLE_STAGES, normalize_stage_options, resolve_effective_options
+from ai_actuarial.pipeline_baton import PIPELINE_STEPS, PipelineBaton
 from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
 
-_CAPACITY_GATED_TYPES = frozenset({"full_pipeline", "recategory", "rag_indexing", "kb_index_build"})
+_CAPACITY_GATED_TYPES = frozenset({"recategory", "rag_indexing", "kb_index_build"})
 
 # Bounded wait for search-fallback child runs to reach a terminal state before
 # the parent pipeline run finalizes (#213). All child runs are required: a hard
@@ -171,22 +172,6 @@ def _new_scheduler() -> Any:
     return _FallbackScheduler()
 
 
-def pipeline_mode_for_site(site: dict[str, Any] | None, global_config: dict[str, Any] | None) -> str:
-    """Decide a site's scheduled pipeline mode: ``"full"`` or ``"legacy"``.
-
-    The global fallback switch wins: when ``defaults.full_pipeline_fallback`` is
-    truthy, every site runs the legacy ``scheduled`` pipeline even if the site
-    itself opted into ``full_pipeline``. Otherwise a site whose ``full_pipeline``
-    flag is truthy runs the full pipeline; the default is legacy.
-    """
-    global_config = global_config or {}
-    if coerce_bool(global_config.get("full_pipeline_fallback"), default=False):
-        return "legacy"
-    if coerce_bool((site or {}).get("full_pipeline"), default=False):
-        return "full"
-    return "legacy"
-
-
 @dataclass(slots=True)
 class RuntimeRefs:
     active_tasks_ref: dict[str, dict[str, Any]]
@@ -196,6 +181,10 @@ class RuntimeRefs:
     start_background_task: Callable[..., str]
     init_scheduler: Callable[[], None]
     set_site_config: Callable[[dict[str, Any]], None]
+    pipeline_baton_status: Callable[[], dict[str, Any]]
+    pipeline_baton_start: Callable[[], dict[str, Any]]
+    pipeline_baton_tick: Callable[[], dict[str, Any]]
+    pipeline_baton_configure: Callable[[dict[str, Any]], dict[str, Any]]
 
 
 class NativeTaskRuntime:
@@ -205,6 +194,7 @@ class NativeTaskRuntime:
         ready_data_db_path: str = "",
         ready_data_poll_interval_seconds: int = 60,
         ready_data_runner: Callable[..., dict[str, Any]] | None = None,
+        pipeline_baton_state_path: str = "data/pipeline_baton.json",
     ) -> None:
         self.active_tasks: dict[str, dict[str, Any]] = {}
         self.task_history: list[dict[str, Any]] = self._load_history_from_disk()
@@ -220,6 +210,14 @@ class NativeTaskRuntime:
         )
         self._ready_data_runner = ready_data_runner
         self._ready_data_worker_lock = threading.Lock()
+        self._pipeline_baton = PipelineBaton(
+            state_path=pipeline_baton_state_path,
+            start_task=lambda task_type, payload, **kwargs: self.start_background_task(
+                task_type, payload, **kwargs
+            ),
+            task_status=self._pipeline_task_status,
+            category_kb_ids=self._category_kb_ids,
+        )
 
     def _load_history_from_disk(self) -> list[dict[str, Any]]:
         path = Path("data/job_history.jsonl")
@@ -249,7 +247,106 @@ class NativeTaskRuntime:
             start_background_task=self.start_background_task,
             init_scheduler=self.init_scheduler,
             set_site_config=self.set_site_config,
+            pipeline_baton_status=self.pipeline_baton_status,
+            pipeline_baton_start=self.start_pipeline_baton,
+            pipeline_baton_tick=self.tick_pipeline_baton,
+            pipeline_baton_configure=self.configure_pipeline_baton,
         )
+
+    def _pipeline_task_status(self, task_id: str) -> str | None:
+        with self.task_lock:
+            active = self.active_tasks.get(task_id)
+            if active is not None:
+                return str(active.get("status") or "pending")
+            for task in reversed(self.task_history):
+                if str(task.get("id") or "") == task_id:
+                    return str(task.get("status") or "") or None
+        return None
+
+    def _category_kb_ids(self) -> list[str]:
+        db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                "SELECT kb_id FROM rag_knowledge_bases WHERE kb_mode = 'category' ORDER BY kb_id"
+            ).fetchall()
+        return [str(row[0]) for row in rows if str(row[0] or "")]
+
+    def pipeline_baton_status(self) -> dict[str, Any]:
+        view = self._pipeline_baton.status()
+        state = view["state"]
+        source_task_id = str(state.get("consumed_scheduled_task_id") or "")
+        with self.task_lock:
+            tasks = [dict(task) for task in self.task_history]
+            tasks.extend(dict(task) for task in self.active_tasks.values())
+        stage_tasks: dict[str, list[dict[str, Any]]] = {step: [] for step in PIPELINE_STEPS}
+        if source_task_id:
+            source = next((task for task in tasks if str(task.get("id") or "") == source_task_id), None)
+            stage_tasks["scheduled"].append(
+                {
+                    "task_id": source_task_id,
+                    "status": str((source or {}).get("status") or "unknown"),
+                    "log_url": f"/api/tasks/log/{source_task_id}",
+                }
+            )
+        for task in tasks:
+            if str(task.get("pipeline_baton_source_task_id") or "") != source_task_id:
+                continue
+            step = str(task.get("pipeline_baton_step") or "")
+            if step not in stage_tasks:
+                continue
+            stage_tasks[step].append(
+                {
+                    "task_id": str(task.get("id") or ""),
+                    "status": str(task.get("status") or "unknown"),
+                    "kb_id": task.get("pipeline_baton_kb_id"),
+                    "log_url": f"/api/tasks/log/{task.get('id')}",
+                }
+            )
+        view["stages"] = [
+            {"step": step, "tasks": stage_tasks[step]}
+            for step in PIPELINE_STEPS
+        ]
+        return view
+
+    def configure_pipeline_baton(self, overrides: dict[str, Any]) -> dict[str, Any]:
+        self._pipeline_baton.configure(overrides)
+        return self.pipeline_baton_status()
+
+    def tick_pipeline_baton(self) -> dict[str, Any]:
+        self._pipeline_baton.tick()
+        return self.pipeline_baton_status()
+
+    def _scheduled_pipeline_baton_tick(self) -> None:
+        try:
+            self.tick_pipeline_baton()
+        except Exception:  # noqa: BLE001 - keep one failed tick from stopping the scheduler
+            logger.exception("Scheduled pipeline baton tick failed")
+
+    def start_pipeline_baton(self) -> dict[str, Any]:
+        current = self._pipeline_baton.status()
+        if current["state"]["round_status"] == "running":
+            return self.pipeline_baton_status()
+        task_cfg = next(
+            (
+                task
+                for task in list(self._load_site_config().get("scheduled_tasks") or [])
+                if str(task.get("name") or "") == "Scheduled Collection"
+                and str(task.get("type") or "") == "scheduled"
+                and task.get("enabled", True)
+            ),
+            None,
+        )
+        if task_cfg is None:
+            raise ValueError("Enabled scheduled task 'Scheduled Collection' was not found")
+        params = dict(task_cfg.get("params") or {})
+        params.setdefault("name", "Scheduled: Scheduled Collection")
+        task_id = self.start_background_task(
+            "scheduled",
+            params,
+            task_name="Scheduled: Scheduled Collection",
+        )
+        self._pipeline_baton.start(task_id)
+        return self.pipeline_baton_status()
 
     def set_site_config(self, new_config: dict[str, Any]) -> None:
         self._site_config_override = dict(new_config or {})
@@ -359,32 +456,17 @@ class NativeTaskRuntime:
             )
 
         def make_site_job(site: dict[str, Any]) -> Callable[[], None]:
-            mode = pipeline_mode_for_site(site, site_config.get("defaults") or {})
-
             def job_wrapper() -> None:
-                if mode == "full":
-                    self.start_background_task(
-                        "full_pipeline",
-                        {
-                            "source_collection_type": "scheduled",
-                            "site": site.get("name"),
-                            "name": f"Scheduled: {site.get('name')}",
-                            "max_pages": site.get("max_pages"),
-                            "max_depth": site.get("max_depth"),
-                        },
-                        task_name=f"Scheduled: {site.get('name')}",
-                    )
-                else:
-                    self.start_background_task(
-                        "scheduled",
-                        {
-                            "site": site.get("name"),
-                            "name": f"Scheduled: {site.get('name')}",
-                            "max_pages": site.get("max_pages"),
-                            "max_depth": site.get("max_depth"),
-                        },
-                        task_name=f"Scheduled: {site.get('name')}",
-                    )
+                self.start_background_task(
+                    "scheduled",
+                    {
+                        "site": site.get("name"),
+                        "name": f"Scheduled: {site.get('name')}",
+                        "max_pages": site.get("max_pages"),
+                        "max_depth": site.get("max_depth"),
+                    },
+                    task_name=f"Scheduled: {site.get('name')}",
+                )
 
             return job_wrapper
 
@@ -393,8 +475,13 @@ class NativeTaskRuntime:
                 params = dict(task_cfg.get("params") or {})
                 task_name = str(task_cfg.get("name") or "Generic Task")
                 task_type = str(task_cfg.get("type") or "catalog")
+                is_pipeline_source = task_name == "Scheduled Collection" and task_type == "scheduled"
+                if is_pipeline_source and self._pipeline_baton.status()["state"]["round_status"] == "running":
+                    return
                 params.setdefault("name", f"Scheduled: {task_name}")
-                self.start_background_task(task_type, params, task_name=f"Scheduled: {task_name}")
+                task_id = self.start_background_task(task_type, params, task_name=f"Scheduled: {task_name}")
+                if is_pipeline_source:
+                    self._pipeline_baton.start(task_id)
 
             return job_wrapper
 
@@ -412,6 +499,7 @@ class NativeTaskRuntime:
                 interval = str(task_cfg.get("interval") or "").strip()
                 if interval:
                     self._register_schedule(interval, make_generic_task_job(task_cfg))
+            self.scheduler.every(30).minutes.do(self._scheduled_pipeline_baton_tick)
             if self._ready_data_db_path:
                 self.scheduler.every(self._ready_data_poll_interval_seconds).seconds.do(
                     self._wake_ready_data_automation
@@ -507,9 +595,6 @@ class NativeTaskRuntime:
         if collection_type in _CAPACITY_GATED_TYPES:
             ensure_capacity(path="/", operation=collection_type)
 
-        if collection_type == "full_pipeline":
-            return self._run_full_pipeline(task_id, data, db_path)
-
         storage = Storage(db_path)
         try:
             if collection_type == "file":
@@ -592,7 +677,7 @@ class NativeTaskRuntime:
                 if not isinstance(catalog_cfg, dict):
                     catalog_cfg = {}
                 provider = str(data.get("provider") or catalog_cfg.get("provider") or "local").strip().lower() or "local"
-                input_source = str(data.get("input_source") or "source").strip() or "source"
+                input_source = str(data.get("input_source") or "markdown").strip() or "markdown"
                 catalog_version = str(data.get("catalog_version") or "").strip()
                 if not catalog_version:
                     from ai_actuarial.catalog import CATALOG_VERSION as base_catalog_version
@@ -607,9 +692,9 @@ class NativeTaskRuntime:
                 except (TypeError, ValueError):
                     candidate_offset = 0
                 try:
-                    limit = max(0, int(data.get("scan_count") or data.get("limit") or 0))
+                    limit = max(0, int(data.get("scan_count") or data.get("limit") or 100))
                 except (TypeError, ValueError):
-                    limit = 0
+                    limit = 100
                 updates_dir = Path((config.get("paths") or {}).get("updates_dir") or "data/updates")
                 common_catalog_kwargs = {
                     "db_path": db_path,
@@ -765,434 +850,6 @@ class NativeTaskRuntime:
             errors=[],
             metadata=result,
         )
-
-    def _run_full_pipeline(self, task_id: str, data: dict[str, Any], db_path: str | None = None) -> CollectionResult:
-        """Run collection -> markdown -> catalog -> chunks -> optional RAG indexing.
-
-        The run is recorded as a resumable persisted pipeline run (#179
-        orchestration): each stage's effective options, status, checkpoint and
-        committed artifacts are written to ``pipeline_run``/``pipeline_stage``,
-        a run-level watermark only advances on success, and a lease fences
-        concurrent execution of the same run.
-        """
-        config = self._load_site_config()
-        if not db_path:
-            db_path = str((config.get("paths") or {}).get("db") or "data/index.db")
-            if not os.path.isabs(db_path):
-                db_path = os.path.abspath(db_path)
-
-        source_type = str(
-            data.get("source_collection_type")
-            or data.get("source_type")
-            or data.get("collection_type")
-            or "scheduled"
-        ).strip().lower() or "scheduled"
-        if source_type == "full_pipeline":
-            source_type = "scheduled"
-
-        # Fail-fast on a malformed stage_options, and keep the normalized result
-        # for per-stage effective-option recording.
-        stage_options = normalize_stage_options(data.get("stage_options"))
-
-        stage_specs: list[tuple[str, str, dict[str, Any]]] = [
-            ("acquisition", source_type, self._stage_payload(data, source_type)),
-            ("markdown_conversion", "markdown_conversion", self._stage_payload(data, "markdown_conversion")),
-            ("catalog", "catalog", self._stage_payload(data, "catalog")),
-            ("chunk_generation", "chunk_generation", self._stage_payload(data, "chunk_generation")),
-        ]
-
-        kb_id = str(data.get("kb_id") or "").strip()
-        run_rag_indexing = coerce_bool(data.get("run_rag_indexing"), default=bool(kb_id))
-        if run_rag_indexing:
-            rag_payload = self._stage_payload(data, "rag_indexing")
-            rag_payload["kb_id"] = kb_id
-            stage_specs.append(("rag_indexing", "rag_indexing", rag_payload))
-
-        correlation_id = str(data.get("correlation_id") or task_id).strip() or task_id
-
-        stage_results: list[dict[str, Any]] = []
-        errors: list[str] = []
-        items_found = 0
-        items_downloaded = 0
-        items_skipped = 0
-        stopped = False
-        failed = False
-        source_stage_started_at: str | None = None
-        resumed = False
-        run_id: str | None = None
-        lease_owner = f"{os.getpid()}:{secrets.token_hex(6)}"
-        children_enqueued_this_run = False
-
-        storage = Storage(db_path)
-        try:
-            # find-or-create + claim + start must be atomic: two workers cold-starting
-            # the same correlation must serialize on the write lock, so only one run
-            # is ever created and claimed for that correlation.
-            with storage.transaction(immediate=True):
-                existing_run = storage.get_pipeline_run_by_correlation(correlation_id)
-                if existing_run is not None:
-                    run_id = str(existing_run["run_id"])
-                    resumed = True
-                    watermark = self._parse_json_string_list(str(existing_run.get("watermark") or ""))
-                else:
-                    run_id = secrets.token_hex(16)
-                    storage.create_pipeline_run(run_id, correlation_id=correlation_id, source_type=source_type)
-                    watermark: list[str] = []
-
-                if not storage.claim_pipeline_run(run_id, lease_owner=lease_owner):
-                    raise RuntimeError(
-                        f"pipeline run {run_id} (correlation={correlation_id}) is already leased by another worker"
-                    )
-                storage.start_pipeline_run(run_id)
-
-            prior_stages = {s["stage_name"]: s for s in storage.get_pipeline_stages(run_id)}
-            succeeded_stages = {name for name, s in prior_stages.items() if s["status"] == "succeeded"}
-            append_task_log(task_id, "INFO", f"Full pipeline source stage: {source_type}"
-                           + (" (resumed run {})".format(run_id) if resumed else ""))
-
-            for order, (stage_name, collection_type, payload) in enumerate(stage_specs, start=1):
-                if self._stop_requested(task_id):
-                    stopped = True
-                    errors.append("Task stopped by user")
-                    break
-                if collection_type == "rag_indexing" and not str(payload.get("kb_id") or "").strip():
-                    errors.append("rag_indexing: kb_id is required for RAG indexing")
-                    break
-
-                effective = self._stage_effective_options(stage_name, stage_options, config, data, source_type)
-                effective_json = json.dumps(effective, sort_keys=True, default=str)
-
-                if stage_name in succeeded_stages:
-                    if stage_name in IMMUTABLE_STAGES:
-                        recorded = str(prior_stages[stage_name].get("options_json") or "{}")
-                        if self._canonical_json(recorded) != self._canonical_json(effective):
-                            message = (
-                                f"immutable stage {stage_name}: effective config changed since the "
-                                "committed run; start a new pipeline run (fresh correlation_id) instead of resuming"
-                            )
-                            storage.update_pipeline_run(
-                                run_id, status="failed", error=message, finished_at=storage.now()
-                            )
-                            raise RuntimeError(message)
-                    if stage_name == "acquisition":
-                        # Re-inject the already-discovered file URLs so downstream
-                        # stages still see them on resume even though acquisition
-                        # itself is skipped.
-                        prior_urls = self._parse_json_string_list(
-                            str(prior_stages["acquisition"].get("committed_artifacts_json") or "[]")
-                        )
-                        if prior_urls:
-                            for _, downstream_type, downstream_payload in stage_specs[1:]:
-                                if downstream_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
-                                    downstream_payload["file_urls"] = list(prior_urls)
-                    stage_results.append(
-                        {"stage": stage_name, "type": collection_type, "success": True, "resumed": True, "errors": []}
-                    )
-                    append_task_log(task_id, "INFO", f"Full pipeline stage resumed (already committed): {stage_name}")
-                    continue
-
-                self._update_task(task_id, current_activity=f"Full pipeline: {stage_name}")
-                append_task_log(task_id, "INFO", f"Full pipeline stage started: {stage_name} ({collection_type})")
-                if stage_name == "acquisition" and db_path:
-                    source_stage_started_at = self._full_pipeline_storage_now(db_path)
-
-                if not storage.renew_pipeline_lease(run_id, lease_owner=lease_owner):
-                    raise RuntimeError(
-                        f"pipeline run {run_id} lost its lease to another worker; aborting stage {stage_name}"
-                    )
-
-                storage.upsert_pipeline_stage(
-                    run_id, stage_name, stage_order=order, options_json=effective_json,
-                    status="running", started_at=storage.now(),
-                )
-                try:
-                    if stage_name == "acquisition" and run_id:
-                        payload["_pipeline_run_id"] = run_id
-                    result = self._run_collection(task_id, collection_type, payload)
-                except Exception as exc:  # noqa: BLE001
-                    storage.update_pipeline_stage(run_id, stage_name, status="failed", error=str(exc))
-                    message = f"{stage_name}: {exc}"
-                    errors.append(message)
-                    stage_results.append({"stage": stage_name, "type": collection_type, "success": False, "errors": [str(exc)]})
-                    append_task_log(task_id, "ERROR", f"Full pipeline stage failed: {message}")
-                    break
-
-                stage_errors = [str(error) for error in list(result.errors or [])]
-                if stage_name == "acquisition" and int((result.metadata or {}).get("search_fallback_enqueued") or 0) > 0:
-                    children_enqueued_this_run = True
-                stage_stopped = bool((result.metadata or {}).get("stopped")) or any(
-                    "stopped" in error.lower() for error in stage_errors
-                )
-                collected_file_urls: list[str] = []
-                if stage_name == "acquisition" and db_path and source_stage_started_at:
-                    collected_file_urls = self._full_pipeline_recent_file_urls(db_path, source_stage_started_at, data)
-                    if collected_file_urls:
-                        for _, downstream_type, downstream_payload in stage_specs[1:]:
-                            if downstream_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
-                                downstream_payload["file_urls"] = list(collected_file_urls)
-                committed_artifacts = collected_file_urls if stage_name == "acquisition" else self._stage_committed_artifacts(payload, result)
-                checkpoint = {"stage": stage_name, "committed": bool(result.success),
-                              "items_found": int(result.items_found or 0)}
-                storage.update_pipeline_stage(
-                    run_id,
-                    stage_name,
-                    status="succeeded" if result.success else "failed",
-                    checkpoint_json=json.dumps(checkpoint, sort_keys=True, default=str),
-                    committed_artifacts_json=json.dumps(committed_artifacts, sort_keys=True, default=str),
-                    error="; ".join(stage_errors) if stage_errors else "",
-                    finished_at=storage.now(),
-                )
-                stage_results.append(
-                    {
-                        "stage": stage_name,
-                        "type": collection_type,
-                        "success": bool(result.success),
-                        "items_found": int(result.items_found or 0),
-                        "items_downloaded": int(result.items_downloaded or 0),
-                        "items_skipped": int(result.items_skipped or 0),
-                        "errors": stage_errors,
-                        "metadata": dict(result.metadata or {}),
-                        "stopped": stage_stopped,
-                    }
-                )
-                items_found += int(result.items_found or 0)
-                items_downloaded += int(result.items_downloaded or 0)
-                items_skipped += int(result.items_skipped or 0)
-                errors.extend(f"{stage_name}: {error}" for error in stage_errors)
-                append_task_log(task_id, "INFO", f"Full pipeline stage finished: {stage_name} (success={result.success})")
-
-                if result.success and stage_name not in watermark:
-                    watermark.append(stage_name)
-                    storage.update_pipeline_run(run_id, watermark=json.dumps(watermark, sort_keys=True))
-
-                if stage_stopped or self._stop_requested(task_id):
-                    stopped = True
-                    if not errors:
-                        errors.append("Task stopped by user")
-                    break
-                if not result.success:
-                    failed = True
-                    if not stage_errors:
-                        errors.append(f"{stage_name}: stage returned unsuccessful result")
-                    break
-
-            # Parent-waits-for-children (#213): only when this run actually
-            # enqueued search-fallback children. On resume acquisition is
-            # skipped, so historical terminal child rows must not be re-summarized
-            # (that would re-inject old failures and make the run unrecoverable).
-            if children_enqueued_this_run:
-                child_summary = self._wait_and_summarize_child_runs(storage, run_id, task_id)
-            else:
-                child_summary = {"children": [], "failed": [], "partial": [], "pending": []}
-            child_failed = child_summary["failed"]
-            child_partial = child_summary["partial"]
-            child_pending = child_summary["pending"]
-            child_metadata = [
-                {
-                    "child_run_id": c.get("child_run_id"),
-                    "status": c.get("status"),
-                    "partial": int(c.get("partial") or 0),
-                    "error": c.get("error") or "",
-                }
-                for c in child_summary["children"]
-            ]
-            # Hard child failures and timed-out (still-pending) required children
-            # fail the parent; partial (completed-but-unsuccessful) children are
-            # best-effort and recorded in metadata only.
-            for c in child_failed:
-                errors.append(
-                    f"search_fallback child {c.get('child_run_id')} failed: "
-                    f"{c.get('error') or 'unknown error'}"
-                )
-            for c in child_pending:
-                errors.append(
-                    f"search_fallback child {c.get('child_run_id')} did not finish in time"
-                )
-
-            if errors or stopped or failed:
-                storage.update_pipeline_run(run_id, status="failed", error="; ".join(errors[:5]), finished_at=storage.now())
-            else:
-                storage.update_pipeline_run(run_id, status="succeeded", finished_at=storage.now())
-        finally:
-            if run_id is not None:
-                storage.release_pipeline_lease(run_id, lease_owner=lease_owner)
-            storage.close()
-
-        return CollectionResult(
-            success=not errors and not stopped and not failed,
-            items_found=items_found,
-            items_downloaded=items_downloaded,
-            items_skipped=items_skipped,
-            errors=errors,
-            metadata={
-                "source_type": "full_pipeline",
-                "source_collection_type": source_type,
-                "stages": stage_results,
-                "stage_count": len(stage_results),
-                "requested_stage_count": len(stage_specs),
-                "stopped": stopped,
-                "kb_id": kb_id or None,
-                "run_rag_indexing": run_rag_indexing,
-                "run_id": run_id,
-                "resumed": resumed,
-                "search_fallback_children": child_metadata,
-                "search_fallback_failed": len(child_failed),
-                "search_fallback_partial": len(child_partial),
-                "search_fallback_pending": len(child_pending),
-            },
-        )
-
-    def _stage_module_defaults(
-        self, stage: str, config: dict[str, Any], data: dict[str, Any], source_type: str
-    ) -> dict[str, Any]:
-        """Best-effort module defaults for a stage, sourced from the same config each stage reads."""
-        ai_config = config.get("ai_config") or {}
-        if stage == "acquisition":
-            return {"source_type": source_type}
-        if stage == "markdown_conversion":
-            try:
-                md = load_markdown_conversion_config()
-                return dict(md) if isinstance(md, dict) else {}
-            except Exception:  # noqa: BLE001 - best-effort defaults only
-                return {}
-        if stage == "catalog":
-            c = ai_config.get("catalog")
-            return dict(c) if isinstance(c, dict) else {}
-        if stage == "kb_reconciliation":
-            return {"kb_mode": str(data.get("kb_mode") or "").strip()}
-        if stage == "chunk_generation":
-            # Mirror _run_chunk_generation's defaults exactly so the recorded
-            # effective options match what the stage actually uses (avoids a
-            # false immutable fail-closed on resume).
-            chunk_size = self._positive_int(data.get("chunk_size"), 800)
-            chunk_overlap = self._positive_int(data.get("chunk_overlap"), 100, min_value=0)
-            if chunk_overlap >= chunk_size:
-                chunk_overlap = max(0, chunk_size - 1)
-            return {
-                "chunk_size": chunk_size,
-                "chunk_overlap": chunk_overlap,
-                "splitter": str(data.get("splitter") or "semantic").strip(),
-                "tokenizer": str(data.get("tokenizer") or "cl100k_base").strip(),
-            }
-        if stage == "rag_indexing":
-            e = ai_config.get("embeddings")
-            defaults = dict(e) if isinstance(e, dict) else {}
-            defaults.setdefault("kb_id", str(data.get("kb_id") or "").strip())
-            return defaults
-        return {}
-
-    def _stage_effective_options(
-        self, stage: str, stage_options: dict[str, dict[str, Any]], config: dict[str, Any],
-        data: dict[str, Any], source_type: str,
-    ) -> dict[str, Any]:
-        return resolve_effective_options(stage, stage_options, self._stage_module_defaults(stage, config, data, source_type))
-
-    @staticmethod
-    def _stage_committed_artifacts(payload: dict[str, Any], result: CollectionResult) -> list[str]:
-        """Best-effort list of artifact identifiers a stage committed (its file URLs)."""
-        urls = list(payload.get("file_urls") or [])
-        if not urls:
-            urls = list((result.metadata or {}).get("file_urls") or [])
-        return [str(u) for u in urls if u][:1000]
-
-    @staticmethod
-    def _canonical_json(value: object) -> str:
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except (ValueError, TypeError):
-                pass
-        return json.dumps(value, sort_keys=True, default=str)
-
-    @staticmethod
-    def _parse_json_string_list(raw: str) -> list[str]:
-        try:
-            val = json.loads(raw or "[]")
-            return [str(x) for x in val] if isinstance(val, list) else []
-        except (ValueError, TypeError):
-            return []
-
-    def _stage_payload(self, data: dict[str, Any], collection_type: str) -> dict[str, Any]:
-        payload = dict(data)
-        # stage_options is validated once in _run_full_pipeline (fail-fast) and
-        # consumed by the orchestration layer (PR 4); it must not leak into
-        # individual downstream stage payloads.
-        payload.pop("stage_options", None)
-        payload["type"] = collection_type
-        payload.setdefault("name", str(data.get("name") or "Full Pipeline"))
-        if collection_type in {"markdown_conversion", "catalog", "chunk_generation", "rag_indexing"}:
-            file_urls = self._full_pipeline_file_urls(data)
-            if file_urls and not payload.get("file_urls"):
-                payload["file_urls"] = file_urls
-        return payload
-
-    @staticmethod
-    def _full_pipeline_file_urls(data: dict[str, Any]) -> list[str]:
-        urls: list[str] = []
-        for raw_url in list(data.get("file_urls") or data.get("urls") or []):
-            url = str(raw_url).strip()
-            if url and url not in urls:
-                urls.append(url)
-        single_url = str(data.get("url") or "").strip()
-        if single_url and single_url not in urls:
-            urls.append(single_url)
-        return urls
-
-    @staticmethod
-    def _full_pipeline_storage_now(db_path: str) -> str:
-        storage = Storage(db_path)
-        try:
-            return storage.now()
-        finally:
-            storage.close()
-
-    @staticmethod
-    def _full_pipeline_recent_file_urls(db_path: str, started_at: str, data: dict[str, Any]) -> list[str]:
-        explicit_urls = NativeTaskRuntime._full_pipeline_file_urls(data)
-        site = str(data.get("site") or "").strip()
-        filters: list[str] = []
-        params: list[Any] = [started_at]
-        if explicit_urls:
-            placeholders = ",".join("?" for _ in explicit_urls)
-            filters.append(f"(url IN ({placeholders}) OR source_page_url IN ({placeholders}))")
-            params.extend(explicit_urls)
-            params.extend(explicit_urls)
-        if site:
-            filters.append("source_site = ?")
-            params.append(site)
-        scoped_filter = f"\n                  AND ({' OR '.join(filters)})" if filters else ""
-
-        storage = Storage(db_path)
-        try:
-            rows = storage._conn.execute(
-                f"""
-                SELECT url
-                FROM files
-                WHERE deleted_at IS NULL
-                  AND local_path IS NOT NULL
-                  AND local_path != ''
-                  AND last_seen >= ?
-                  {scoped_filter}
-                ORDER BY last_seen ASC, id ASC
-                """,
-                params,
-            ).fetchall()
-        finally:
-            storage.close()
-
-        row_urls: list[str] = []
-        for row in rows:
-            file_url = str(row[0] if not isinstance(row, dict) else row.get("url") or "").strip()
-            if file_url and file_url not in row_urls:
-                row_urls.append(file_url)
-        if row_urls:
-            return row_urls
-
-        urls: list[str] = []
-        for raw_url in explicit_urls:
-            if raw_url and raw_url not in urls:
-                urls.append(raw_url)
-        return urls
 
     def _run_weekly_summary(self, db_path: str, data: dict[str, Any], *, storage: Storage | None = None) -> CollectionResult:
         from ai_actuarial.api.services.weekly_updates import generate_weekly_update_summary

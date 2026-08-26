@@ -11,6 +11,7 @@ from ..services.ops_write import (
     add_site,
     browse_folder,
     create_backup,
+    configure_pipeline_baton,
     delete_backup,
     delete_provider_credential,
     delete_scheduled_task,
@@ -30,7 +31,9 @@ from ..services.ops_write import (
     reinitialize_scheduler,
     restore_backup,
     sample_sites_yaml,
+    start_pipeline_baton,
     start_collection,
+    tick_pipeline_baton,
     update_ai_models_config,
     update_ai_routing,
     update_backend_settings,
@@ -431,6 +434,40 @@ def api_schedule_reinit(
 ):
     try:
         return reinitialize_scheduler(_bridge(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/pipeline/start")
+def api_pipeline_baton_start(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+):
+    try:
+        return start_pipeline_baton(_bridge(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/pipeline/tick")
+def api_pipeline_baton_tick(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+):
+    try:
+        return tick_pipeline_baton(_bridge(request))
+    except OpsWriteError as exc:
+        return _handle_ops_error(exc)
+
+
+@router.post("/pipeline/config")
+def api_pipeline_baton_configure(
+    payload: dict[str, object],
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("schedule.write")),
+):
+    try:
+        return configure_pipeline_baton(payload, _bridge(request))
     except OpsWriteError as exc:
         return _handle_ops_error(exc)
 

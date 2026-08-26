@@ -34,6 +34,18 @@ def test_start_pipeline_run_stamps_started_at() -> None:
         storage.close()
 
 
+def test_pipeline_run_lease_storage_compatibility() -> None:
+    storage = Storage(":memory:")
+    try:
+        storage.create_pipeline_run("run-lease")
+        assert storage.claim_pipeline_run("run-lease", lease_owner="worker-a") is True
+        assert storage.claim_pipeline_run("run-lease", lease_owner="worker-b") is False
+        storage.release_pipeline_lease("run-lease", lease_owner="worker-a")
+        assert storage.claim_pipeline_run("run-lease", lease_owner="worker-b") is True
+    finally:
+        storage.close()
+
+
 def test_update_pipeline_run_fields() -> None:
     storage = Storage(":memory:")
     try:

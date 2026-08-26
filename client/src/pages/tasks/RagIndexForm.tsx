@@ -12,7 +12,16 @@ interface KnowledgeBaseOption {
   availability?: string;
 }
 
-export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function RagIndexForm({
+  onSubmit,
+  submitting,
+  settingsMode = false,
+}: {
+  onSubmit: (d: Record<string, unknown>) => void;
+  submitting: boolean;
+  settingsMode?: boolean;
+  initialTask?: Record<string, unknown>;
+}) {
   const { t } = useTranslation();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
   const [selectedKbId, setSelectedKbId] = useState("");
@@ -22,6 +31,7 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
   const [fileUrlsInput, setFileUrlsInput] = useState("");
 
   useEffect(() => {
+    if (settingsMode) return;
     setLoadingKbs(true);
     apiGet<{ knowledge_bases?: KnowledgeBaseOption[]; data?: { knowledge_bases?: KnowledgeBaseOption[] } }>("/api/rag/knowledge-bases")
       .then((res) => {
@@ -34,7 +44,7 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
         setSelectedKbId("");
       })
       .finally(() => setLoadingKbs(false));
-  }, []);
+  }, [settingsMode]);
 
   const selectedKb = knowledgeBases.find((kb) => kb.kb_id === selectedKbId);
 
@@ -61,7 +71,12 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t("tasks.form.rag_desc")}</p>
-      {loadingKbs ? (
+      {settingsMode ? (
+        <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm" data-testid="pipeline-rag-fixed-settings">
+          <p>{t("tasks.pipeline.all_category_kbs")}</p>
+          <p className="text-xs text-muted-foreground mt-1">{t("tasks.form.incremental")}</p>
+        </div>
+      ) : loadingKbs ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           {t("tasks.form.loading_kbs")}
@@ -81,7 +96,7 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
           />
         </FormField>
       )}
-      <div className="flex flex-wrap gap-x-5 gap-y-2">
+      {!settingsMode && <div className="flex flex-wrap gap-x-5 gap-y-2">
         <CheckboxField
           checked={incremental}
           onChange={(value) => {
@@ -100,8 +115,8 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
           label={t("tasks.form.force_reindex")}
           testId="checkbox-rag-force-reindex"
         />
-      </div>
-      <FormField label={t("tasks.form.file_urls_optional")} hint={t("tasks.form.file_urls_hint")}>
+      </div>}
+      {!settingsMode && <FormField label={t("tasks.form.file_urls_optional")} hint={t("tasks.form.file_urls_hint")}>
         <textarea
           value={fileUrlsInput}
           onChange={(e) => setFileUrlsInput(e.target.value)}
@@ -110,17 +125,20 @@ export function RagIndexForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
           placeholder="https://example.com/report.pdf"
           data-testid="input-rag-file-urls"
         />
-      </FormField>
+      </FormField>}
       <RunButton
-        label={t("tasks.form.run")}
+        label={settingsMode ? t("common.save") : t("tasks.form.run")}
         submitting={submitting}
-        disabled={submitting || !selectedKbId || loadingKbs}
+        disabled={submitting || (!settingsMode && (!selectedKbId || loadingKbs))}
         onClick={() => {
-          const task = buildTask();
-          if (task) onSubmit(task);
+          if (settingsMode) onSubmit({ type: "rag_indexing", name: "RAG Indexing" });
+          else {
+            const task = buildTask();
+            if (task) onSubmit(task);
+          }
         }}
       />
-      <ScheduleFromTaskButton buildTask={buildTask} disabled={!selectedKbId || loadingKbs} />
+      {!settingsMode && <ScheduleFromTaskButton buildTask={buildTask} disabled={!selectedKbId || loadingKbs} />}
     </div>
   );
 }

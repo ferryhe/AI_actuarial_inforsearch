@@ -71,7 +71,6 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "catalog",
     "markdown_conversion",
     "chunk_generation",
-    "full_pipeline",
     "weekly_summary",
     "rag_indexing",
     "kb_index_build",
@@ -97,7 +96,6 @@ _VALID_COLLECTION_TYPES = {
     "quick_check",
     "markdown_conversion",
     "chunk_generation",
-    "full_pipeline",
     "weekly_summary",
     "rag_indexing",
     "kb_index_build",
@@ -212,6 +210,9 @@ class BridgeState:
         self.start_background_task = getattr(app_state, "start_background_task", None)
         self.init_scheduler = getattr(app_state, "init_scheduler", None)
         self.set_site_config = getattr(app_state, "set_site_config", None)
+        self.pipeline_baton_start = getattr(app_state, "pipeline_baton_start", None)
+        self.pipeline_baton_tick = getattr(app_state, "pipeline_baton_tick", None)
+        self.pipeline_baton_configure = getattr(app_state, "pipeline_baton_configure", None)
 
 
 def _load_config_data() -> dict[str, Any]:
@@ -1798,6 +1799,33 @@ def reinitialize_scheduler(bridge: BridgeState) -> dict[str, Any]:
     bridge.init_scheduler()
     job_count = len(list(getattr(bridge.schedule_ref, "jobs", []) or []))
     return {"success": True, "job_count": job_count}
+
+
+def start_pipeline_baton(bridge: BridgeState) -> dict[str, Any]:
+    if not callable(bridge.pipeline_baton_start):
+        raise OpsWriteError("Pipeline baton runtime is unavailable", status_code=503)
+    try:
+        return bridge.pipeline_baton_start()
+    except ValueError as exc:
+        raise OpsWriteError(str(exc)) from exc
+
+
+def tick_pipeline_baton(bridge: BridgeState) -> dict[str, Any]:
+    if not callable(bridge.pipeline_baton_tick):
+        raise OpsWriteError("Pipeline baton runtime is unavailable", status_code=503)
+    return bridge.pipeline_baton_tick()
+
+
+def configure_pipeline_baton(data: dict[str, Any], bridge: BridgeState) -> dict[str, Any]:
+    overrides = data.get("overrides")
+    if not isinstance(overrides, dict):
+        raise OpsWriteError("overrides must be an object")
+    if not callable(bridge.pipeline_baton_configure):
+        raise OpsWriteError("Pipeline baton runtime is unavailable", status_code=503)
+    try:
+        return bridge.pipeline_baton_configure(overrides)
+    except ValueError as exc:
+        raise OpsWriteError(str(exc)) from exc
 
 
 def request_task_stop(task_id: str, *, bridge: BridgeState) -> dict[str, Any]:

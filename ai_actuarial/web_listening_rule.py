@@ -302,15 +302,13 @@ def materialize_rule(rule: WebListeningAgentRuleV1) -> MaterializedConfig:
 
     scheduled_task = {
         "name": task.name,
-        "type": "full_pipeline",
+        "type": "scheduled",
         "interval": task.schedule_interval,
         "enabled": task.enabled,
         "params": {
-            "source_collection_type": "scheduled",
             "site": acquisition.name,
-            "name": f"Full Pipeline: {acquisition.name}",
+            "name": f"Scheduled: {acquisition.name}",
             "check_database": True,
-            "run_rag_indexing": False,
         },
         "web_listening_rule_schema_version": rule.schema_version,
     }

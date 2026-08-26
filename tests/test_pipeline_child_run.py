@@ -78,7 +78,6 @@ def test_enqueue_search_fallback_creates_child_run_linked_to_parent(monkeypatch,
     finally:
         storage.close()
 
-
 def test_enqueue_search_fallback_without_parent_run_skips_child_run(monkeypatch, tmp_path) -> None:
     db = str(tmp_path / "pipeline.db")
     runtime = _make_runtime(monkeypatch, db)
@@ -217,39 +216,5 @@ def test_wait_and_summarize_no_children(monkeypatch, tmp_path) -> None:
     try:
         summary = runtime._wait_and_summarize_child_runs(storage, "run-missing", "task-1")
         assert summary == {"children": [], "failed": [], "partial": [], "pending": []}
-    finally:
-        storage.close()
-
-
-def test_resume_does_not_resummarize_historical_child_failures(monkeypatch, tmp_path) -> None:
-    db = str(tmp_path / "pipeline.db")
-    runtime = NativeTaskRuntime()
-    monkeypatch.setattr(runtime, "_load_site_config", lambda: {"paths": {"db": db, "download_dir": db + ".files"}})
-    monkeypatch.setattr(runtime, "_stop_requested", lambda task_id: False)
-    monkeypatch.setattr(runtime, "_update_task", lambda task_id, **fields: None)
-
-    # Pre-existing run with a hard-failed child (from a prior attempt).
-    storage = Storage(db)
-    storage.create_pipeline_run("run-1", correlation_id="corr-1", source_type="scheduled")
-    storage.upsert_pipeline_stage("run-1", "acquisition", stage_order=1, options_json="{}", status="succeeded")
-    storage.create_child_run("child-fail", "run-1")
-    storage.update_child_run("child-fail", status="failed", partial=0, error="boom")
-    storage.close()
-
-    def ok_collector(task_id, collection_type, data):
-        return CollectionResult(success=True, items_found=0, items_downloaded=0, items_skipped=0, errors=[], metadata={})
-
-    monkeypatch.setattr(runtime, "_run_collection", ok_collector)
-    result = runtime._run_full_pipeline("task-1", {"correlation_id": "corr-1"}, db)
-
-    # The historical child failure must NOT be re-summarized on resume.
-    assert result.success is True
-    assert result.metadata["resumed"] is True
-    assert result.metadata["search_fallback_failed"] == 0
-
-    storage = Storage(db)
-    try:
-        run = storage.get_pipeline_run("run-1")
-        assert run["status"] == "succeeded"
     finally:
         storage.close()

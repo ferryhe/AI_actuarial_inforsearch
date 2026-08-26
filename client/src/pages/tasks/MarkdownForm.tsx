@@ -6,17 +6,27 @@ import { apiGet } from "@/lib/api";
 import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
-export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function MarkdownForm({
+  onSubmit,
+  submitting,
+  settingsMode = false,
+  initialTask = {},
+}: {
+  onSubmit: (d: Record<string, unknown>) => void;
+  submitting: boolean;
+  settingsMode?: boolean;
+  initialTask?: Record<string, unknown>;
+}) {
   const { t } = useTranslation();
-  const { conversionToolsInfo, defaultConversionTool, markdownConversionLimits, categories: dynamicCategories } = useTaskOptions();
-  const [scopeMode, setScopeMode] = useState("index");
-  const [category, setCategory] = useState("");
-  const [scanCount, setScanCount] = useState(String(markdownConversionLimits.defaultScanCount));
-  const [scanCountTouched, setScanCountTouched] = useState(false);
-  const [startIndex, setStartIndex] = useState("");
-  const [tool, setTool] = useState(defaultConversionTool || "auto");
-  const [skipExisting, setSkipExisting] = useState(true);
-  const [overwriteExisting, setOverwriteExisting] = useState(false);
+  const { conversionToolsInfo, defaultConversionTool, markdownConversionLimits, categories: dynamicCategories, loading: taskOptionsLoading } = useTaskOptions();
+  const [scopeMode, setScopeMode] = useState(String(initialTask.scope_mode || "index"));
+  const [category, setCategory] = useState(String(initialTask.category || ""));
+  const [scanCount, setScanCount] = useState(String(initialTask.scan_count || markdownConversionLimits.defaultScanCount));
+  const [scanCountTouched, setScanCountTouched] = useState(initialTask.scan_count != null);
+  const [startIndex, setStartIndex] = useState(initialTask.scan_start_index == null ? "" : String(initialTask.scan_start_index));
+  const [tool, setTool] = useState(String(initialTask.conversion_tool || defaultConversionTool || "auto"));
+  const [skipExisting, setSkipExisting] = useState(initialTask.skip_existing == null ? true : Boolean(initialTask.skip_existing));
+  const [overwriteExisting, setOverwriteExisting] = useState(Boolean(initialTask.overwrite_existing));
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const categoryOptions = [
@@ -29,11 +39,12 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
     : [{ value: "auto", label: "Auto (configured chain)" }];
 
   useEffect(() => {
+    if (taskOptionsLoading) return;
     const fallbackTool = defaultConversionTool || conversionToolsInfo[0]?.name || "auto";
     if (!tool || !conversionToolsInfo.some((candidate) => candidate.name === tool)) {
       setTool(fallbackTool);
     }
-  }, [conversionToolsInfo, defaultConversionTool, tool]);
+  }, [conversionToolsInfo, defaultConversionTool, taskOptionsLoading, tool]);
 
   useEffect(() => {
     if (!scanCountTouched) {
@@ -140,12 +151,12 @@ export function MarkdownForm({ onSubmit, submitting }: { onSubmit: (d: Record<st
         <CheckboxField checked={overwriteExisting} onChange={(v) => { setOverwriteExisting(v); if (v) setSkipExisting(false); }}
           label={t("tasks.form.overwrite_existing")} testId="checkbox-md-overwrite" />
       </div>
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
+      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim())}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);
         }} />
-      <ScheduleFromTaskButton buildTask={buildTask} disabled={scopeMode === "category" && !category.trim()} />
+      {!settingsMode && <ScheduleFromTaskButton buildTask={buildTask} disabled={scopeMode === "category" && !category.trim()} />}
     </div>
   );
 }

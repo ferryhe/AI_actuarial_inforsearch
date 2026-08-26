@@ -5,6 +5,8 @@ import csv
 import json
 import logging
 import os
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -385,6 +387,50 @@ def cmd_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def pipeline_api_request(
+    api_url: str,
+    action: str,
+    *,
+    method: str,
+    token: str | None,
+) -> dict:
+    url = f"{api_url.rstrip('/')}/api/pipeline/{action}"
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request) as response:  # noqa: S310 - operator-supplied API endpoint
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Pipeline API returned HTTP {exc.code}: {detail}") from exc
+
+
+def cmd_pipeline(args: argparse.Namespace) -> int:
+    action = str(args.pipeline_cmd)
+    method = "GET" if action in {"status", "config"} else "POST"
+    try:
+        result = pipeline_api_request(
+            args.api_url,
+            action,
+            method=method,
+            token=args.token,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        payload = {"success": False, "error": str(exc)}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        else:
+            print(f"Pipeline command failed: {exc}")
+        return 2
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ai-actuarial")
     p.add_argument(
@@ -481,6 +527,28 @@ def build_parser() -> argparse.ArgumentParser:
             help="Emit the stable machine-readable JSON contract",
         )
         p_schema_action.set_defaults(func=cmd_schema)
+
+    p_pipeline = sub.add_parser("pipeline", help="Control the fixed five-step pipeline baton")
+    p_pipeline_sub = p_pipeline.add_subparsers(dest="pipeline_cmd", required=True)
+    for action in ("status", "start", "tick", "config"):
+        action_help = "Show saved pipeline baton configuration" if action == "config" else f"Pipeline baton {action}"
+        p_pipeline_action = p_pipeline_sub.add_parser(action, help=action_help)
+        p_pipeline_action.add_argument(
+            "--api-url",
+            default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+            help="FastAPI base URL",
+        )
+        p_pipeline_action.add_argument(
+            "--token",
+            default=os.getenv("AI_ACTUARIAL_API_TOKEN"),
+            help="Bearer token for the FastAPI gateway",
+        )
+        p_pipeline_action.add_argument(
+            "--json",
+            action="store_true",
+            help="Emit the stable machine-readable JSON response",
+        )
+        p_pipeline_action.set_defaults(func=cmd_pipeline)
 
     # Collection commands using new modular structure
     p_collect = sub.add_parser("collect", help="Run specific collection workflow")
