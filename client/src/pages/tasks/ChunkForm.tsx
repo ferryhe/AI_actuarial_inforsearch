@@ -19,25 +19,35 @@ interface KnowledgeBaseOption {
   file_count?: number;
 }
 
-export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function ChunkForm({
+  onSubmit,
+  submitting,
+  settingsMode = false,
+  initialTask = {},
+}: {
+  onSubmit: (d: Record<string, unknown>) => void;
+  submitting: boolean;
+  settingsMode?: boolean;
+  initialTask?: Record<string, unknown>;
+}) {
   const { t } = useTranslation();
   const { categories: dynamicCategories } = useTaskOptions();
-  const [scopeMode, setScopeMode] = useState("index");
-  const [category, setCategory] = useState("");
-  const [scanCount, setScanCount] = useState("50");
-  const [startIndex, setStartIndex] = useState("");
-  const [chunkSize, setChunkSize] = useState("800");
-  const [chunkOverlap, setChunkOverlap] = useState("100");
-  const [splitter, setSplitter] = useState("semantic");
-  const [tokenizer, setTokenizer] = useState("cl100k_base");
-  const [profileName, setProfileName] = useState("");
+  const [scopeMode, setScopeMode] = useState(String(initialTask.scope_mode || "index"));
+  const [category, setCategory] = useState(String(initialTask.category || ""));
+  const [scanCount, setScanCount] = useState(String(initialTask.scan_count || 50));
+  const [startIndex, setStartIndex] = useState(initialTask.scan_start_index == null ? "" : String(initialTask.scan_start_index));
+  const [chunkSize, setChunkSize] = useState(String(initialTask.chunk_size || 800));
+  const [chunkOverlap, setChunkOverlap] = useState(String(initialTask.chunk_overlap ?? 100));
+  const [splitter, setSplitter] = useState(String(initialTask.splitter || "semantic"));
+  const [tokenizer, setTokenizer] = useState(String(initialTask.tokenizer || "cl100k_base"));
+  const [profileName, setProfileName] = useState(String(initialTask.profile_name || ""));
   const [profiles, setProfiles] = useState<ChunkProfile[]>([]);
-  const [profileSelection, setProfileSelection] = useState("__custom__");
+  const [profileSelection, setProfileSelection] = useState(String(initialTask.profile_id || "__custom__"));
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
   const [bindToKb, setBindToKb] = useState(false);
   const [selectedKbId, setSelectedKbId] = useState("");
   const [bindingMode, setBindingMode] = useState("follow_latest");
-  const [overwriteSameProfile, setOverwriteSameProfile] = useState(false);
+  const [overwriteSameProfile, setOverwriteSameProfile] = useState(Boolean(initialTask.overwrite_same_profile));
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const categoryOptions = [
@@ -64,12 +74,12 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
     ]).then(([profileRes, kbRes]) => {
       const nextProfiles = profileRes?.profiles || profileRes?.data?.profiles || [];
       setProfiles(nextProfiles);
-      setProfileSelection((current) => current !== "__custom__" ? current : (nextProfiles[0]?.profile_id || "__custom__"));
+      setProfileSelection((current) => settingsMode || current !== "__custom__" ? current : (nextProfiles[0]?.profile_id || "__custom__"));
       const nextKbs = kbRes?.knowledge_bases || kbRes?.data?.knowledge_bases || [];
       setKnowledgeBases(nextKbs);
       setSelectedKbId((current) => current || nextKbs[0]?.kb_id || "");
     });
-  }, []);
+  }, [settingsMode]);
 
   useEffect(() => {
     if (stats && !startIndex) {
@@ -193,7 +203,7 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
           </div>
         )}
       </div>
-      <div className="border-t border-border pt-3 mt-1 space-y-3">
+      {!settingsMode && <div className="border-t border-border pt-3 mt-1 space-y-3">
         <CheckboxField checked={bindToKb} onChange={setBindToKb}
           label={t("tasks.form.bind_to_kb")} testId="checkbox-bind-to-kb" />
         {bindToKb && (
@@ -224,15 +234,15 @@ export function ChunkForm({ onSubmit, submitting }: { onSubmit: (d: Record<strin
             </FormField>
           </div>
         )}
-      </div>
+      </div>}
       <CheckboxField checked={overwriteSameProfile} onChange={setOverwriteSameProfile}
         label={t("tasks.form.overwrite_same_profile")} testId="checkbox-overwrite-profile" />
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={formDisabled}
+      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={formDisabled}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);
         }} />
-      <ScheduleFromTaskButton buildTask={buildTask} disabled={formDisabled} />
+      {!settingsMode && <ScheduleFromTaskButton buildTask={buildTask} disabled={formDisabled} />}
     </div>
   );
 }

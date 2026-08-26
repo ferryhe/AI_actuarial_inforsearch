@@ -77,11 +77,11 @@ def test_run_collection_blocks_write_heavy_types_when_full(monkeypatch) -> None:
     monkeypatch.setattr("ai_actuarial.task_runtime.ensure_capacity", fake_ensure)
     monkeypatch.setattr(runtime, "_load_site_config", dict)
 
-    for gated in ("full_pipeline", "recategory", "rag_indexing", "kb_index_build"):
+    for gated in ("recategory", "rag_indexing", "kb_index_build"):
         with pytest.raises(CapacityBlockedError):
             runtime._run_collection("task-id", gated, {})
 
-    assert calls == ["full_pipeline", "recategory", "rag_indexing", "kb_index_build"]
+    assert calls == ["recategory", "rag_indexing", "kb_index_build"]
 
 
 @pytest.mark.parametrize(

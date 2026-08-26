@@ -278,6 +278,10 @@ def create_app() -> FastAPI:
     app.state.start_background_task = native_refs.start_background_task
     app.state.init_scheduler = native_refs.init_scheduler
     app.state.set_site_config = native_refs.set_site_config
+    app.state.pipeline_baton_status = native_refs.pipeline_baton_status
+    app.state.pipeline_baton_start = native_refs.pipeline_baton_start
+    app.state.pipeline_baton_tick = native_refs.pipeline_baton_tick
+    app.state.pipeline_baton_configure = native_refs.pipeline_baton_configure
     app.state.native_route_signatures = collect_fastapi_route_signatures(app)
     app.state.legacy_api_fallback_allowed = False
 

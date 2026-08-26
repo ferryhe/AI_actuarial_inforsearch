@@ -167,6 +167,12 @@ def get_scheduled_tasks() -> dict[str, list[dict[str, Any]]]:
     return {"tasks": tasks if isinstance(tasks, list) else []}
 
 
+def get_pipeline_baton_status(status_fn: Any) -> dict[str, Any]:
+    if not callable(status_fn):
+        raise RuntimeError("Pipeline baton runtime is unavailable")
+    return status_fn()
+
+
 def _task_error_count(task_data: dict[str, Any]) -> int:
     errors = task_data.get("errors")
     if isinstance(errors, list):
@@ -257,41 +263,6 @@ def get_task_log(task_id: str, tail: int) -> dict[str, Any]:
     if not content:
         return {"success": True, "log": "", "log_file": str(path)}
     return {"success": True, "log": content, "log_file": str(path)}
-
-
-def list_pipeline_runs(*, db_path: str, limit: int) -> dict[str, object]:
-    """List recent pipeline runs (all statuses), newest first."""
-    storage = Storage(db_path)
-    try:
-        runs = storage.list_pipeline_runs(limit=limit)
-        return {"runs": runs, "count": len(runs)}
-    finally:
-        storage.close()
-
-
-def get_pipeline_run_detail(*, db_path: str, run_id: str) -> dict[str, object] | None:
-    """Return a single pipeline run with its stage and child-run detail.
-
-    Returns ``None`` when the run does not exist. Stage rows keep their raw
-    ``options_json``/``checkpoint_json``/``committed_artifacts_json`` strings so
-    the frontend can decode them as needed without a schema contract here.
-    """
-    storage = Storage(db_path)
-    try:
-        run = storage.get_pipeline_run(run_id)
-        if run is None:
-            return None
-        return {
-            "run": run,
-            "stages": storage.get_pipeline_stages(run_id),
-            "child_runs": storage.get_child_runs(run_id),
-        }
-    finally:
-        storage.close()
-
-
-def parse_pipeline_runs_limit(raw_value: str | None) -> int:
-    return parse_int_clamped(raw_value or 50, default=50, min_value=1, max_value=500)
 
 
 def get_llm_providers(*, db_path: str) -> dict[str, object]:

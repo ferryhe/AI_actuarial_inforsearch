@@ -6,19 +6,29 @@ import { apiGet } from "@/lib/api";
 import { FormField, InputField, SelectField, CheckboxField, StatsBanner, RunButton } from "@/components/FormFields";
 import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
-export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<string, unknown>) => void; submitting: boolean }) {
+export function CatalogForm({
+  onSubmit,
+  submitting,
+  settingsMode = false,
+  initialTask = {},
+}: {
+  onSubmit: (d: Record<string, unknown>) => void;
+  submitting: boolean;
+  settingsMode?: boolean;
+  initialTask?: Record<string, unknown>;
+}) {
   const { t } = useTranslation();
   const { categories: dynamicCategories, catalogProviders } = useTaskOptions();
-  const [scopeMode, setScopeMode] = useState("index");
-  const [category, setCategory] = useState("");
-  const [scanCount, setScanCount] = useState("100");
-  const [startIndex, setStartIndex] = useState("1");
-  const [inputSource, setInputSource] = useState("markdown");
-  const [retryErrors, setRetryErrors] = useState(false);
-  const [skipExisting, setSkipExisting] = useState(true);
-  const [overwriteExisting, setOverwriteExisting] = useState(false);
-  const [updateTitle, setUpdateTitle] = useState(false);
-  const [outputLanguage, setOutputLanguage] = useState("auto");
+  const [scopeMode, setScopeMode] = useState(String(initialTask.scope_mode || "index"));
+  const [category, setCategory] = useState(String(initialTask.category || ""));
+  const [scanCount, setScanCount] = useState(String(initialTask.scan_count || 100));
+  const [startIndex, setStartIndex] = useState(String(initialTask.scan_start_index || 1));
+  const [inputSource, setInputSource] = useState(String(initialTask.input_source || "markdown"));
+  const [retryErrors, setRetryErrors] = useState(Boolean(initialTask.retry_errors));
+  const [skipExisting, setSkipExisting] = useState(initialTask.skip_existing == null ? true : Boolean(initialTask.skip_existing));
+  const [overwriteExisting, setOverwriteExisting] = useState(Boolean(initialTask.overwrite_existing));
+  const [updateTitle, setUpdateTitle] = useState(Boolean(initialTask.update_title));
+  const [outputLanguage, setOutputLanguage] = useState(String(initialTask.output_language || "auto"));
   const [stats, setStats] = useState<Record<string, unknown> | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const categoryOptions = [
@@ -42,11 +52,11 @@ export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<str
   useEffect(() => { loadStats(); }, [loadStats]);
 
   useEffect(() => {
-    if (stats && startIndex === "1") {
+    if (!settingsMode && stats && startIndex === "1") {
       const first = stats.first_candidate_index;
       if (first != null) setStartIndex(String(first));
     }
-  }, [stats, startIndex]);
+  }, [settingsMode, stats, startIndex]);
 
   const changeCategory = (value: string) => {
     setCategory(value);
@@ -54,7 +64,7 @@ export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<str
   };
 
   const buildTask = (): Record<string, unknown> | null => {
-    if ((scopeMode === "category" && !category.trim()) || catalogProviders.length === 0) return null;
+    if ((scopeMode === "category" && !category.trim()) || (!settingsMode && catalogProviders.length === 0)) return null;
     return {
       type: "catalog",
       name: "AI Catalog",
@@ -144,12 +154,12 @@ export function CatalogForm({ onSubmit, submitting }: { onSubmit: (d: Record<str
             label={t("tasks.form.update_title")} testId="checkbox-update-title" />
         )}
       </div>
-      <RunButton label={t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || catalogProviders.length === 0}
+      <RunButton label={settingsMode ? t("common.save") : t("tasks.form.run")} submitting={submitting} disabled={submitting || (scopeMode === "category" && !category.trim()) || (!settingsMode && catalogProviders.length === 0)}
         onClick={() => {
           const task = buildTask();
           if (task) onSubmit(task);
         }} />
-      <ScheduleFromTaskButton buildTask={buildTask} disabled={(scopeMode === "category" && !category.trim()) || catalogProviders.length === 0} />
+      {!settingsMode && <ScheduleFromTaskButton buildTask={buildTask} disabled={(scopeMode === "category" && !category.trim()) || catalogProviders.length === 0} />}
     </div>
   );
 }

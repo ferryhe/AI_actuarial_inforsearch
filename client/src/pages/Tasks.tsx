@@ -14,7 +14,7 @@ import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
 import { SiteConfigForm } from "./tasks/SiteConfigForm";
 import { ScheduledTasksSection } from "./tasks/ScheduledTasksSection";
-import { PipelineRuns } from "./tasks/PipelineRuns";
+import { PipelineBaton } from "./tasks/PipelineBaton";
 import { WebCrawlForm } from "./tasks/WebCrawlForm";
 import { AdhocUrlForm } from "./tasks/AdhocUrlForm";
 import { FileImportForm } from "./tasks/FileImportForm";
@@ -25,7 +25,6 @@ import { WebListeningForm } from "./tasks/WebListeningForm";
 import { ChunkForm } from "./tasks/ChunkForm";
 import { RagIndexForm } from "./tasks/RagIndexForm";
 import { RecategoryForm } from "./tasks/RecategoryForm";
-import { FullPipelineForm } from "./tasks/FullPipelineForm";
 import { FilterBar } from "./tasks/FilterBar";
 import { TaskCard, statusBadge, formatDate } from "./tasks/TaskCard";
 import { TaskTable } from "./tasks/TaskTable";
@@ -43,7 +42,6 @@ const taskTypes = [
   { type: "markdown", apiType: "markdown_conversion", icon: FileText, color: "bg-pink-500/10 text-pink-600 dark:text-pink-400" },
   { type: "catalog", apiType: "catalog", icon: BookOpen, color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
   { type: "chunk", apiType: "chunk_generation", icon: Layers, color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
-  { type: "full_pipeline", apiType: "full_pipeline", icon: Zap, color: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400" },
   { type: "create_kb", apiType: "create_kb", route: "/knowledge?open=create", icon: FolderOpen, color: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
   { type: "rag_index", apiType: "rag_indexing", icon: Zap, color: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
   { type: "recategory", apiType: "recategory", icon: RefreshCw, color: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
@@ -258,7 +256,6 @@ export default function Tasks() {
       case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "full_pipeline": return <FullPipelineForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "rag_index": return <RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "recategory": return <RecategoryForm onSubmit={handleSubmitTask} submitting={submitting} />;
       default: return null;
@@ -300,7 +297,7 @@ export default function Tasks() {
             "flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             taskView === "pipeline" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
           )}
-          data-testid="tab-pipeline-runs"
+          data-testid="tab-pipeline-baton"
         >
           <Network className="w-4 h-4" />
           {t("tasks.pipeline.title")}
@@ -322,7 +319,7 @@ export default function Tasks() {
       {taskView === "scheduled" && canManageSchedules ? (
         <ScheduledTasksSection />
       ) : taskView === "pipeline" ? (
-        <PipelineRuns onViewLog={viewPipelineLog} />
+        <PipelineBaton onViewLog={viewPipelineLog} />
       ) : (
         <>
       {taskNotice && (

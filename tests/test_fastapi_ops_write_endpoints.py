@@ -638,11 +638,8 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
         },
         headers=headers,
     )
-    assert full_pipeline_response.status_code == 200, full_pipeline_response.text
-    full_pipeline_task = next(
-        task for task in _read_scheduled_tasks(config_path) if task["name"] == "Nightly Full Pipeline"
-    )
-    assert full_pipeline_task["type"] == "full_pipeline"
+    assert full_pipeline_response.status_code == 400, full_pipeline_response.text
+    assert all(task["name"] != "Nightly Full Pipeline" for task in _read_scheduled_tasks(config_path))
 
     run_weekly_summary = client.post(
         "/api/collections/run",
@@ -668,9 +665,8 @@ def test_scheduled_tasks_write_and_schedule_reinit_roundtrip(tmp_path: Path, mon
         },
         headers=headers,
     )
-    assert run_full_pipeline.status_code == 200, run_full_pipeline.text
-    assert recorder.started[-1][0] == "full_pipeline"
-    assert recorder.started[-1][1]["source_collection_type"] == "scheduled"
+    assert run_full_pipeline.status_code == 400, run_full_pipeline.text
+    assert recorder.started[-1][0] == "weekly_summary"
 
     update_response = client.post(
         "/api/scheduled-tasks/update",

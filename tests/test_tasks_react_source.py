@@ -5,7 +5,6 @@ ROOT = Path(__file__).resolve().parents[1] / "client" / "src"
 SCHEDULED_TASKS_TSX = ROOT / "pages" / "tasks" / "ScheduledTasksSection.tsx"
 SCHEDULE_FROM_TASK_TSX = ROOT / "pages" / "tasks" / "ScheduleFromTaskButton.tsx"
 TASKS_TSX = ROOT / "pages" / "Tasks.tsx"
-PIPELINE_RUNS_TSX = ROOT / "pages" / "tasks" / "PipelineRuns.tsx"
 TASK_CARD_TSX = ROOT / "pages" / "tasks" / "TaskCard.tsx"
 TASKS_TYPES_TS = ROOT / "pages" / "tasks" / "Tasks.types.ts"
 LAYOUT_TSX = ROOT / "components" / "Layout.tsx"
@@ -30,14 +29,14 @@ def test_scheduled_tasks_section_surfaces_write_errors_instead_of_silently_ignor
     assert "setErrorMsg" in src
 
 
-def test_scheduled_tasks_section_uses_typed_params_with_advanced_json_fallback():
+def test_scheduled_tasks_section_does_not_offer_old_full_pipeline_type():
     src = SCHEDULED_TASKS_TSX.read_text(encoding="utf-8")
 
     assert "scheduledParamFields" in src
     assert 'weekly_summary: [' in src
-    assert 'full_pipeline: [' in src
     assert '{ value: "weekly_summary", label: t("tasks.type.weekly_summary") }' in src
-    assert '{ value: "full_pipeline", label: t("tasks.type.full_pipeline") }' in src
+    assert 'full_pipeline: [' not in src
+    assert '{ value: "full_pipeline", label: t("tasks.type.full_pipeline") }' not in src
     assert 'value: "file"' not in src
     assert 'data-testid={`input-sched-param-${field.key}`}' in src
     assert 'data-testid="input-sched-params"' in src
@@ -56,9 +55,7 @@ def test_scheduled_tasks_section_uses_typed_params_with_advanced_json_fallback()
     assert 'value.trim().toLowerCase() === "true"' in src
     assert 'url: [' in src
     assert '{ key: "urls", labelKey: "tasks.sched.param.urls", type: "textarea"' in src
-    assert '{ key: "source_collection_type", labelKey: "tasks.sched.param.source_collection_type"' in src
     assert '{ key: "query", labelKey: "tasks.sched.param.query" }' in src
-    assert '{ key: "run_rag_indexing", labelKey: "tasks.sched.param.run_rag_indexing", type: "boolean" }' in src
 
 
 def test_add_to_schedule_error_dismiss_button_is_accessible():
@@ -106,7 +103,6 @@ def test_each_task_form_exposes_add_to_schedule_control():
         "CatalogForm.tsx",
         "MarkdownForm.tsx",
         "ChunkForm.tsx",
-        "FullPipelineForm.tsx",
         "RagIndexForm.tsx",
     ]
 
@@ -136,7 +132,6 @@ def test_file_import_form_uses_browser_upload_batches_not_server_folder_browser(
 
 
 def test_recommended_markdown_conversion_tools_are_in_frontend_defaults():
-    src = (ROOT / "hooks" / "use-task-options.ts").read_text(encoding="utf-8")
     settings_src = (ROOT / "pages" / "settings" / "MarkdownConversionTab.tsx").read_text(encoding="utf-8")
 
     assert '"/api/config/markdown-conversion"' in settings_src
@@ -192,6 +187,15 @@ def test_chunk_form_uses_existing_or_custom_chunk_profiles():
     assert 'testId="select-bind-kb"' in src
     assert "binding_mode: bindingMode" in src
     assert "kb_id: bindToKb ? selectedKbId : undefined" in src
+    assert "useState(Boolean(initialTask.overwrite_same_profile))" in src
+
+
+def test_markdown_settings_wait_for_async_options_before_replacing_saved_tool():
+    src = (ROOT / "pages" / "tasks" / "MarkdownForm.tsx").read_text(encoding="utf-8")
+
+    assert "loading: taskOptionsLoading" in src
+    assert "if (taskOptionsLoading) return;" in src
+    assert "[conversionToolsInfo, defaultConversionTool, taskOptionsLoading, tool]" in src
 
 
 def test_task_category_scopes_use_backend_selects_not_free_text_datalists():
@@ -238,8 +242,8 @@ def test_tasks_page_exposes_agentic_site_monitoring_form():
     assert 'data-testid="input-web-listening-allow-patterns"' in form_src
     assert 'data-testid="input-web-listening-queries"' in form_src
     i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
-    assert "scheduled full pipeline task" in i18n_src
-    assert "完整流水线任务" in i18n_src
+    assert "scheduled collection task" in i18n_src
+    assert "定时采集任务" in i18n_src
 
 
 def test_site_config_form_manages_agentic_monitoring_strategy():
@@ -280,22 +284,42 @@ def test_web_listening_entry_uses_site_permission_not_tasks_run_only():
     assert "const canShowTaskEntryGrid = visibleTaskTypes.length > 0" in tasks_src
     assert "{canShowTaskEntryGrid ? <div>" in tasks_src
     assert '<option value="rag_indexing">RAG Indexing</option>' in filter_src
-    assert '<option value="full_pipeline">Full Pipeline</option>' in filter_src
+    assert '<option value="full_pipeline">Full Pipeline</option>' not in filter_src
 
 
-def test_tasks_page_exposes_full_pipeline_form():
+def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     tasks_src = TASKS_TSX.read_text(encoding="utf-8")
-    form_src = (ROOT / "pages" / "tasks" / "FullPipelineForm.tsx").read_text(encoding="utf-8")
+    form_src = (ROOT / "pages" / "tasks" / "PipelineBaton.tsx").read_text(encoding="utf-8")
 
-    assert 'type: "full_pipeline"' in tasks_src
-    assert 'apiType: "full_pipeline"' in tasks_src
-    assert "<FullPipelineForm onSubmit={handleSubmitTask} submitting={submitting} />" in tasks_src
-    assert 'data-testid="form-full-pipeline"' in form_src
-    assert 'type: "full_pipeline"' in form_src
-    assert "source_collection_type: sourceType" in form_src
-    assert "run_rag_indexing: runRagIndexing" in form_src
-    assert "kb_id: runRagIndexing ? selectedKbId : undefined" in form_src
-    assert "ScheduleFromTaskButton" in form_src
+    assert 'type: "full_pipeline"' not in tasks_src
+    assert "FullPipelineForm" not in tasks_src
+    assert "PipelineRuns" not in tasks_src
+    assert '<PipelineBaton onViewLog={viewPipelineLog} />' in tasks_src
+    assert 'useState<Set<string>>(new Set())' in form_src
+    assert 'aria-expanded={expanded.has(step.step)}' in form_src
+    for step in ("scheduled", "markdown_conversion", "catalog", "chunk_generation", "rag_indexing"):
+        assert f'"pipeline-step-{step}"' in form_src
+    assert 'apiGet<PipelineView>("/api/pipeline/status")' in form_src
+    assert 'apiPost<PipelineView>("/api/pipeline/start")' in form_src
+    assert 'apiPost<PipelineView>("/api/pipeline/config"' in form_src
+    assert "<MarkdownForm" in form_src and "settingsMode" in form_src
+    assert "<CatalogForm" in form_src
+    assert "<ChunkForm" in form_src
+    assert "<RagIndexForm" in form_src
+    assert 'testId="input-pipeline-scheduled-interval"' in form_src
+    assert 'testId="checkbox-pipeline-scheduled-enabled"' in form_src
+    assert 'setScheduledInterval(source?.interval || "")' in form_src
+    assert "setScheduledEnabled(source?.enabled ?? true)" in form_src
+    assert "interval: scheduledInterval.trim()" in form_src
+    assert "enabled: scheduledEnabled" in form_src
+    assert "advanced" not in form_src.lower()
+
+
+def test_catalog_pipeline_settings_can_save_without_provider_discovery():
+    src = (ROOT / "pages" / "tasks" / "CatalogForm.tsx").read_text(encoding="utf-8")
+
+    assert src.count("!settingsMode && catalogProviders.length === 0") >= 2
+    assert "!settingsMode && (" not in src
 
 
 def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
@@ -312,75 +336,30 @@ def test_tasks_page_refreshes_history_on_completion_and_exposes_global_logs():
     assert 'data-testid="button-global-logs"' in src
 
 
-def test_pipeline_runs_view_consumes_read_only_api():
-    src = PIPELINE_RUNS_TSX.read_text(encoding="utf-8")
-    tasks_src = TASKS_TSX.read_text(encoding="utf-8")
-
-    assert 'import { PipelineRuns } from "./tasks/PipelineRuns"' in tasks_src
-    assert "<PipelineRuns" in tasks_src
-    assert '"/api/pipeline/runs?limit=50"' in src
-    assert '`/api/pipeline/runs/${encodeURIComponent(runId)}`' in src
-    assert "toggleExpand" in src
-    assert "expandedRunId" in src
-    assert 'data-testid="pipeline-runs"' in src
-    assert 'data-testid="button-refresh-pipeline-runs"' in src
-    assert 'data-testid="text-no-pipeline-runs"' in src
-
-
-def test_pipeline_runs_renders_expandable_stage_and_child_run_view():
-    src = PIPELINE_RUNS_TSX.read_text(encoding="utf-8")
-
-    assert "aria-expanded={isExpanded}" in src
-    assert 'data-testid={`button-expand-run-${run.run_id}`}' in src
-    assert 'data-testid={`pipeline-run-${run.run_id}`}' in src
-    assert 'data-testid={`pipeline-run-detail-${run.run_id}`}' in src
-    assert 'data-testid={`pipeline-run-error-${run.run_id}`}' in src
-    assert 'data-testid={`pipeline-stages-${run.run_id}`}' in src
-    assert 'data-testid={`pipeline-stage-${stage.stage_name}`}' in src
-    assert 'data-testid={`pipeline-stage-error-${stage.stage_name}`}' in src
-    assert 'data-testid={`pipeline-child-runs-${run.run_id}`}' in src
-    assert 'data-testid={`button-pipeline-log-${run.run_id}`}' in src
-    assert 'data-testid="text-pipeline-detail-error"' in src
-    assert 'data-testid="text-no-pipeline-stages"' in src
-    assert "statusBadge(stage.status)" in src
-    assert "child_runs" in src
-
-
-def test_tasks_page_has_pipeline_runs_tab():
+def test_tasks_page_has_fixed_pipeline_tab_not_pipeline_runs():
     src = TASKS_TSX.read_text(encoding="utf-8")
 
-    assert 'data-testid="tab-pipeline-runs"' in src
+    assert 'data-testid="tab-pipeline-baton"' in src
+    assert 'data-testid="tab-pipeline-runs"' not in src
     assert 'taskView === "pipeline"' in src
-    assert '<PipelineRuns onViewLog={viewPipelineLog} />' in src
+    assert '<PipelineBaton onViewLog={viewPipelineLog} />' in src
     assert 'useState<"run" | "scheduled" | "pipeline">' in src
     assert "viewPipelineLog" in src
 
 
-def test_pipeline_runs_i18n_keys_added_in_both_locales():
+def test_pipeline_baton_i18n_keys_added_in_both_locales():
     i18n_src = (ROOT / "hooks" / "use-i18n.ts").read_text(encoding="utf-8")
 
     for key in (
         "tasks.pipeline.title",
-        "tasks.pipeline.no_runs",
-        "tasks.pipeline.load_error",
-        "tasks.pipeline.detail_error",
+        "tasks.pipeline.start",
+        "tasks.pipeline.default_settings",
+        "tasks.pipeline.all_category_kbs",
         "tasks.pipeline.view_log",
-        "tasks.pipeline.stages",
-        "tasks.pipeline.child_runs",
-        "tasks.pipeline.no_stages",
-        "tasks.pipeline.task_id",
-        "tasks.pipeline.source",
-        "tasks.pipeline.retries",
-        "tasks.pipeline.options",
-        "tasks.pipeline.checkpoint",
-        "tasks.pipeline.artifacts",
-        "tasks.pipeline.error",
-        "tasks.pipeline.finished",
-        "tasks.pipeline.partial",
     ):
         assert f'"{key}":' in i18n_src, key
-    assert '"tasks.pipeline.title": "Pipeline Runs"' in i18n_src
-    assert '"tasks.pipeline.title": "流水线运行"' in i18n_src
+    assert '"tasks.pipeline.title": "Daily Pipeline"' in i18n_src
+    assert '"tasks.pipeline.title": "每日流水线"' in i18n_src
 
 
 def test_status_badge_handles_pipeline_statuses():
@@ -391,13 +370,10 @@ def test_status_badge_handles_pipeline_statuses():
     assert 'pending: "bg-muted text-muted-foreground"' in src
 
 
-def test_pipeline_run_types_defined():
+def test_old_pipeline_run_types_are_removed():
     src = TASKS_TYPES_TS.read_text(encoding="utf-8")
 
-    assert "export interface PipelineRun {" in src
-    assert "export interface PipelineStage {" in src
-    assert "export interface PipelineChildRun {" in src
-    assert "export interface PipelineRunDetail {" in src
-    assert "options_json" in src
-    assert "checkpoint_json" in src
-    assert "committed_artifacts_json" in src
+    assert "export interface PipelineRun {" not in src
+    assert "export interface PipelineStage {" not in src
+    assert "export interface PipelineChildRun {" not in src
+    assert "export interface PipelineRunDetail {" not in src
