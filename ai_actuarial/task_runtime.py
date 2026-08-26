@@ -691,8 +691,13 @@ class NativeTaskRuntime:
                     candidate_offset = max(0, int(raw_start_index or 1) - 1)
                 except (TypeError, ValueError):
                     candidate_offset = 0
+                raw_limit = data.get("scan_count")
+                if raw_limit in (None, ""):
+                    raw_limit = data.get("limit")
+                if raw_limit in (None, ""):
+                    raw_limit = 100
                 try:
-                    limit = max(0, int(data.get("scan_count") or data.get("limit") or 100))
+                    limit = max(0, int(raw_limit))
                 except (TypeError, ValueError):
                     limit = 100
                 updates_dir = Path((config.get("paths") or {}).get("updates_dir") or "data/updates")

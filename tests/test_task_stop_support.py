@@ -758,7 +758,10 @@ def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(tm
     assert kwargs["catalog_system_prompt"] == "Custom prompt"
 
 
-def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize(("scan_count", "expected_limit"), [("12", 12), (0, 0)])
+def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(
+    tmp_path, monkeypatch, scan_count, expected_limit
+) -> None:
     config_path = tmp_path / "sites.yaml"
     db_path = tmp_path / "runtime-catalog-scan.db"
     download_dir = tmp_path / "files"
@@ -790,7 +793,7 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(tmp
             "task-catalog-scan",
             "catalog",
             {
-                "scan_count": "12",
+                "scan_count": scan_count,
                 "scan_start_index": "3",
                 "input_source": "source",
                 "skip_existing": False,
@@ -803,7 +806,7 @@ def test_native_task_runtime_catalog_scan_uses_stats_version_and_scan_window(tmp
     mock_for_urls.assert_not_called()
     kwargs = mock_incremental.call_args.kwargs
     assert kwargs["provider"] == "mistral"
-    assert kwargs["limit"] == 12
+    assert kwargs["limit"] == expected_limit
     assert kwargs["candidate_offset"] == 2
     assert kwargs["skip_existing"] is False
 

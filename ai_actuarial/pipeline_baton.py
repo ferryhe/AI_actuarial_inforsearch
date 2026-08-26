@@ -133,6 +133,12 @@ class PipelineBaton:
                 return self._view(document)
 
             state["last_check"] = self._now()
+            current_step = str(state["current_step"] or "")
+            if current_step not in PIPELINE_STEPS:
+                state["round_status"] = "error"
+                self._save(document)
+                return self._view(document)
+
             task_status = self._task_status(str(state["current_task_id"] or ""))
             if task_status in {None, "pending", "running"}:
                 self._save(document)
@@ -145,7 +151,6 @@ class PipelineBaton:
                 self._save(document)
                 return self._view(document)
 
-            current_step = str(state["current_step"] or "")
             if current_step == "scheduled":
                 self._start_step(document, "markdown_conversion")
             elif current_step == "markdown_conversion":

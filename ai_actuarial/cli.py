@@ -38,6 +38,8 @@ from .sqlite_schema import (
 
 logger = logging.getLogger(__name__)
 
+_PIPELINE_API_TIMEOUT_SECONDS = 30
+
 
 def _load_dotenv(path: str) -> None:
     if not os.path.exists(path):
@@ -400,7 +402,10 @@ def pipeline_api_request(
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request) as response:  # noqa: S310 - operator-supplied API endpoint
+        # The API endpoint is supplied by the operator.
+        with urllib.request.urlopen(
+            request, timeout=_PIPELINE_API_TIMEOUT_SECONDS
+        ) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
