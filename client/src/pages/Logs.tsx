@@ -163,20 +163,25 @@ export default function LogsPage() {
   const [historyFetched, setHistoryFetched] = useState(false);
   const [logModal, setLogModal] = useState<{ taskId: string; log: string } | null>(null);
   const [logModalLoading, setLogModalLoading] = useState(false);
-  const [logsApiDisabled, setLogsApiDisabled] = useState(false);
+  const [loadError, setLoadError] = useState<"unauthenticated" | "forbidden" | "disabled" | "failed" | null>(null);
 
   const fetchLogs = useCallback(async () => {
     try {
-      const res = await apiGet<{ log?: string; logs?: string }>("/api/logs/global");
-      const raw = res.log || res.logs || "";
-      setLogs(parseLogs(typeof raw === "string" ? raw : JSON.stringify(raw)));
-      setLogsApiDisabled(false);
+      const res = await apiGet<{ logs: string }>("/api/logs/global");
+      setLogs(parseLogs(res.logs));
+      setLoadError(null);
     } catch (err: unknown) {
       const status = (err as { status?: number })?.status;
       const msg = String((err as { message?: string })?.message || "");
-      if (status === 401 || status === 403 || msg.includes("403") || msg.includes("401") || msg.toLowerCase().includes("forbidden") || msg.toLowerCase().includes("not enabled") || msg.toLowerCase().includes("unauthorized")) {
-        setLogsApiDisabled(true);
-      }
+      setLoadError(
+        status === 401
+          ? "unauthenticated"
+          : status === 403 && msg === "GLOBAL_LOGS_API_DISABLED"
+            ? "disabled"
+            : status === 403
+              ? "forbidden"
+              : "failed"
+      );
       setLogs([]);
     } finally {
       setLoading(false);
@@ -372,11 +377,11 @@ export default function LogsPage() {
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
-        ) : logsApiDisabled ? (
-          <div className="text-center py-16" data-testid="text-logs-disabled">
+        ) : loadError ? (
+          <div className="text-center py-16" data-testid={`text-logs-${loadError}`}>
             <AlertTriangle className="w-10 h-10 mx-auto text-amber-500/60 mb-3" />
-            <p className="font-medium text-foreground mb-1">{t("logs.api_disabled_title")}</p>
-            <p className="text-sm text-muted-foreground max-w-md mx-auto">{t("logs.api_disabled_desc")}</p>
+            <p className="font-medium text-foreground mb-1">{t(`logs.${loadError}_title`)}</p>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">{t(`logs.${loadError}_desc`)}</p>
           </div>
         ) : filteredLogs.length === 0 ? (
           <div className="text-center py-16" data-testid="text-no-logs">

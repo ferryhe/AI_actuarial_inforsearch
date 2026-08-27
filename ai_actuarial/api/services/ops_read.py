@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 import ai_actuarial.llm_models as llm_models
@@ -13,14 +12,14 @@ from ai_actuarial.ai_runtime import (
     build_model_discovery_credentials,
     resolve_search_engine_credentials,
 )
-from ai_actuarial.markdown_conversion_config import get_markdown_conversion_options
+from ai_actuarial.config import settings
 from ai_actuarial.embedding_service import (
     embedding_coverage_for_selection,
     resolve_embedding_selection,
     resolve_server_embedding_identity,
     sanitize_legacy_chunk_generation_payload,
 )
-from ai_actuarial.config import settings
+from ai_actuarial.markdown_conversion_config import get_markdown_conversion_options
 from ai_actuarial.services.token_encryption import TokenEncryption
 from ai_actuarial.shared_runtime import (
     coerce_bool,
@@ -82,11 +81,14 @@ def get_global_logs(*, enabled: bool | None = None) -> dict[str, str]:
     if enabled is None:
         enabled = bool(settings.ENABLE_GLOBAL_LOGS_API)
     if not enabled:
-        return {"error": "Forbidden"}
+        return {
+            "error": "GLOBAL_LOGS_API_DISABLED",
+            "message": "Global logs API is disabled",
+        }
 
-    log_file = Path("data") / "app.log"
-    if not log_file.exists():
-        return {"logs": "No logs found."}
+    log_file = settings.LOG_FILE
+    if not log_file.exists() or log_file.stat().st_size == 0:
+        return {"logs": ""}
 
     lines = tail_text_file(log_file, max_lines=500).splitlines(keepends=True)
     lines.reverse()

@@ -204,8 +204,8 @@ def api_logs_global(
     if rate_limited is not None:
         return rate_limited
     result = get_global_logs(enabled=bool(getattr(request.app.state, "enable_global_logs_api", False)))
-    if result.get("error") == "Forbidden":
-        return JSONResponse(status_code=403, content={"error": "Forbidden"})
+    if result.get("error") == "GLOBAL_LOGS_API_DISABLED":
+        return JSONResponse(status_code=403, content=result)
     return result
 
 
