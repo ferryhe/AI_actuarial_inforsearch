@@ -6247,6 +6247,8 @@ class Storage:
         """Claim at most one latest pending generation under a durable global lease."""
         if int(lease_seconds) <= 0:
             raise ValueError("ready-data automation lease_seconds must be positive")
+        if not self._table_exists("rag_knowledge_bases"):
+            return None
         now_value = now or datetime.now(timezone.utc)
         if now_value.tzinfo is None:
             now_value = now_value.replace(tzinfo=timezone.utc)

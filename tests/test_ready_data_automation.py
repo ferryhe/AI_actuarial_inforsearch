@@ -332,6 +332,19 @@ def test_default_off_runner_does_not_build_or_write_attempt_state(tmp_path: Path
         storage.close()
 
 
+def test_runner_is_idle_before_any_knowledge_base_exists(tmp_path: Path) -> None:
+    db_path = tmp_path / "index.db"
+    storage = Storage(str(db_path))
+    storage.close()
+
+    result = run_ready_data_automation_once(
+        db_path=str(db_path),
+        heartbeat_interval_seconds=0,
+    )
+
+    assert result == {"status": "idle"}
+
+
 def test_publish_without_build_is_rejected(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "index.db"))
     try:
