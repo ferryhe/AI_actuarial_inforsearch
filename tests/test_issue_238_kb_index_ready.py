@@ -284,6 +284,64 @@ def test_kb_index_uses_persisted_embeddings_and_commits_ordinal_mapping(tmp_path
         storage.close()
 
 
+@pytest.mark.parametrize(
+    ("invalid_mapping", "error_match"),
+    [
+        ("duplicate", "unique"),
+        ("short", "chunk_count must match"),
+    ],
+)
+def test_create_kb_index_version_rejects_incomplete_mapping_without_publication(
+    tmp_path: Path,
+    invalid_mapping: str,
+    error_match: str,
+) -> None:
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        _manager, _chunk_set, _identity_value = _seed_bound_kb(
+            storage,
+            tmp_path=tmp_path,
+            chunk_count=2,
+        )
+        chunk_ids = [
+            str(row["chunk_id"])
+            for row in resolve_kb_bound_chunks(storage, "kb-238")["chunks"]
+        ]
+        previous = storage.create_kb_index_version(
+            kb_id="kb-238",
+            embedding_model="test-embedding",
+            index_type="faiss",
+            chunk_count=2,
+            chunk_ids=chunk_ids,
+            status="ready",
+        )
+
+        invalid_chunk_ids = {
+            "duplicate": [chunk_ids[0], chunk_ids[0]],
+            "short": chunk_ids[:1],
+        }[invalid_mapping]
+        with pytest.raises(ValueError, match=error_match):
+            storage.create_kb_index_version(
+                kb_id="kb-238",
+                embedding_model="test-embedding",
+                index_type="faiss",
+                chunk_count=2,
+                chunk_ids=invalid_chunk_ids,
+                status="ready",
+            )
+
+        assert storage._conn.execute(
+            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+            ("kb-238",),
+        ).fetchone()[0] == previous["index_version_id"]
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_index_versions WHERE kb_id = ?",
+            ("kb-238",),
+        ).fetchone()[0] == 1
+    finally:
+        storage.close()
+
+
 def test_stale_snapshot_and_stop_preserve_previous_ready_pointer(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "index.db"))
     try:

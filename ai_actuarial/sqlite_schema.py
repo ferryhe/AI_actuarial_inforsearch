@@ -722,12 +722,26 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # V7 chunk embeddings cannot prove the identity or vector order behind any
+    # legacy KB artifact. Keep the source chunks/bindings, but force a rebuild
+    # instead of manufacturing a ready mapping from chunk_id order. Rebuilding
+    # the ready-pointer table also works for schema-only deployments where its
+    # optional rag_knowledge_bases parent has never been created.
+    conn.execute("DROP TABLE kb_ready_index_state")
     conn.execute(
         """
-        INSERT INTO kb_index_items_v8 (index_version_id, chunk_id)
-        SELECT index_version_id, chunk_id FROM kb_index_items
+        CREATE TABLE kb_ready_index_state (
+            kb_id TEXT PRIMARY KEY,
+            index_version_id TEXT NOT NULL,
+            embedding_provider TEXT NOT NULL,
+            embedding_model TEXT NOT NULL,
+            embedding_dimension INTEGER,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+        )
         """
     )
+    conn.execute("DELETE FROM kb_index_versions")
 
     for table in (
         "chunk_embeddings",
@@ -773,6 +787,8 @@ def _accept_version_7_source(
     conn: sqlite3.Connection,
     tables: dict[str, TableSignature],
 ) -> bool:
+    if _unexpected_schema_object_counts(conn, tables):
+        return False
     old_columns = {
         "file_chunk_sets": frozenset(
             {
@@ -789,24 +805,92 @@ def _accept_version_7_source(
         "chunk_embeddings": frozenset(
             {"chunk_id", "embedding_model", "dim", "vector_json", "created_at"}
         ),
+        "kb_index_versions": frozenset(
+            {
+                "index_version_id",
+                "kb_id",
+                "embedding_provider",
+                "embedding_model",
+                "embedding_dimension",
+                "index_type",
+                "status",
+                "artifact_path",
+                "chunk_count",
+                "built_at",
+                "created_at",
+            }
+        ),
+        "kb_ready_index_state": frozenset(
+            {
+                "kb_id",
+                "index_version_id",
+                "embedding_provider",
+                "embedding_model",
+                "embedding_dimension",
+                "updated_at",
+            }
+        ),
+        "kb_index_items": frozenset({"index_version_id", "chunk_id"}),
     }
+    chunk_v7_tables = frozenset({"file_chunk_sets", "chunk_embeddings"})
+    kb_index_tables = frozenset(
+        {"kb_index_versions", "kb_ready_index_state", "kb_index_items"}
+    )
     if any(
-        table not in tables or _column_names(tables[table]) != columns
-        for table, columns in old_columns.items()
+        table not in tables or _column_names(tables[table]) != old_columns[table]
+        for table in chunk_v7_tables
     ):
         return False
     for table, columns in {
         "chunk_profiles": frozenset({"profile_id", "config_hash"}),
         "global_chunks": frozenset({"chunk_id", "chunk_set_id"}),
         "kb_chunk_bindings": frozenset({"chunk_set_id"}),
-        "kb_index_items": frozenset({"chunk_id"}),
     }.items():
         if table not in tables or not columns.issubset(_column_names(tables[table])):
             return False
-    adjusted = dict(tables)
     expected = _current_storage_signature()
-    adjusted["file_chunk_sets"] = expected["file_chunk_sets"]
-    adjusted["chunk_embeddings"] = expected["chunk_embeddings"]
+    kb_v7_tables = frozenset(
+        table
+        for table in kb_index_tables
+        if table in tables and _column_names(tables[table]) == old_columns[table]
+    )
+    if any(
+        table not in kb_v7_tables
+        and (table not in tables or tables[table] != expected[table])
+        for table in kb_index_tables
+    ):
+        return False
+    expected_v7_indexes = _version_7_index_signatures()
+    v7_tables = chunk_v7_tables | kb_v7_tables
+    for table in v7_tables:
+        columns = old_columns[table]
+        actual_signature = tables[table]
+        actual_by_name = {column[0]: column for column in actual_signature.columns}
+        expected_by_name = {column[0]: column for column in expected[table].columns}
+        for name in columns:
+            legacy_embedding_column = {
+                "embedding_model": ("embedding_model", "TEXT", 1, None, 2, 0),
+                "dim": ("dim", "INTEGER", 1, "0", 0, 0),
+            }.get(name) if table == "chunk_embeddings" else None
+            if legacy_embedding_column is not None:
+                if actual_by_name[name] != legacy_embedding_column:
+                    return False
+            elif not _column_signature_equivalent(
+                actual_by_name[name], expected_by_name[name], table, name
+            ):
+                return False
+        expected_indexes = expected_v7_indexes[table]
+        if table == "file_chunk_sets" and not kb_v7_tables:
+            expected_indexes = tuple(
+                index for index in expected_indexes if index[1] != "c"
+            )
+        if not _indexes_equivalent(
+            actual_signature.indexes, expected_indexes
+        ) or actual_signature.foreign_keys != expected[table].foreign_keys:
+            return False
+    adjusted = dict(tables)
+    for table in v7_tables:
+        adjusted[table] = expected[table]
     valid, _, _ = _schema_validation(adjusted, tolerate_backfill=True)
     return valid
 
@@ -1043,6 +1127,42 @@ def _schema_signature(conn: sqlite3.Connection) -> dict[str, TableSignature]:
     return tables
 
 
+@lru_cache(maxsize=1)
+def _version_7_index_signatures() -> dict[str, tuple[IndexSignature, ...]]:
+    with sqlite3.connect(":memory:") as conn:
+        conn.executescript(
+            """
+            CREATE TABLE file_chunk_sets (
+                chunk_set_id TEXT PRIMARY KEY,
+                file_url TEXT,
+                profile_id TEXT,
+                markdown_hash TEXT,
+                UNIQUE(file_url, profile_id, markdown_hash)
+            );
+            CREATE INDEX idx_file_chunk_sets_file_url ON file_chunk_sets(file_url);
+            CREATE INDEX idx_file_chunk_sets_profile_id ON file_chunk_sets(profile_id);
+            CREATE TABLE chunk_embeddings (
+                chunk_id TEXT,
+                embedding_model TEXT,
+                PRIMARY KEY (chunk_id, embedding_model)
+            );
+            CREATE TABLE kb_index_versions (
+                index_version_id TEXT PRIMARY KEY,
+                kb_id TEXT
+            );
+            CREATE INDEX idx_kb_index_versions_kb_id ON kb_index_versions(kb_id);
+            CREATE TABLE kb_ready_index_state (kb_id TEXT PRIMARY KEY);
+            CREATE TABLE kb_index_items (
+                index_version_id TEXT,
+                chunk_id TEXT,
+                PRIMARY KEY (index_version_id, chunk_id)
+            );
+            """
+        )
+        signatures = _schema_signature(conn)
+    return {table: signature.indexes for table, signature in signatures.items()}
+
+
 def _user_schema_objects(conn: sqlite3.Connection) -> tuple[SchemaObject, ...]:
     rows = conn.execute(
         """
@@ -1208,6 +1328,57 @@ def _optional_table_signature_variants() -> dict[str, frozenset[TableSignature]]
                 PRIMARY KEY (kb_id, file_url),
                 FOREIGN KEY (kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE,
                 FOREIGN KEY (file_url) REFERENCES files(url) ON DELETE CASCADE
+            )
+            """,
+        ),
+        (
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                embedding_model TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_path TEXT,
+                metadata_path TEXT,
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_dimension INTEGER,
+                chunk_profile_id TEXT,
+                index_dirty_at TEXT,
+                manifest_profile TEXT DEFAULT 'general'
+            )
+            """,
+        ),
+        (
+            """
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                embedding_model TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_path TEXT,
+                metadata_path TEXT,
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_dimension INTEGER,
+                chunk_profile_id TEXT,
+                index_dirty_at TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_identity_key TEXT NOT NULL DEFAULT ''
             )
             """,
         ),
