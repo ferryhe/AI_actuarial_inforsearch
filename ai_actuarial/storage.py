@@ -7721,11 +7721,15 @@ class Storage:
                     now,
                 ),
             )
-            if chunk_ids:
+            if chunk_ids is not None:
+                if len(chunk_ids) != int(chunk_count):
+                    raise ValueError("chunk_count must match the number of chunk_ids")
+                if len(set(chunk_ids)) != len(chunk_ids):
+                    raise ValueError("chunk_ids must be unique")
                 for vector_ordinal, chunk_id in enumerate(chunk_ids):
                     self._conn.execute(
                         """
-                        INSERT OR IGNORE INTO kb_index_items (
+                        INSERT INTO kb_index_items (
                             index_version_id, chunk_id, vector_ordinal
                         )
                         VALUES (?, ?, ?)
