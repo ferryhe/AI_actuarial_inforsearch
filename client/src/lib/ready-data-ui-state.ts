@@ -7,7 +7,7 @@ export interface ReadyDataPublication {
   authoritative_source_version_id?: string | null;
   observed_index_version_id?: string | null;
   current_ready_index_version_id?: string | null;
-  index_consumed_by_builder?: false;
+  index_consumed_by_builder?: boolean;
   artifact_digest?: string;
   doc_count?: number;
   section_count?: number;
@@ -60,7 +60,12 @@ export interface AgenticReadyManifest {
   authoritative_source_version_id?: string | null;
   observed_index_version_id?: string | null;
   current_ready_index_version_id?: string | null;
-  index_consumed_by_builder?: false;
+  index_consumed_by_builder?: boolean;
+  ready_build_input?: {
+    contract_version?: number;
+    index_version_id: string;
+    expected_source_snapshot_fingerprint: string;
+  } | null;
   artifact_digest?: string;
   smoke_status?: string | null;
   smoke_checked_at?: string | null;
@@ -449,6 +454,7 @@ const READY_DATA_DYNAMIC_STATE_KEYS = [
   "last_success_at",
   "last_error",
   "current_ready_index_version_id",
+  "ready_build_input",
   "smoke_status",
   "smoke_checked_at",
 ] as const satisfies readonly (keyof AgenticReadyManifest)[];

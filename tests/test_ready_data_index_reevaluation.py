@@ -20,6 +20,7 @@ from ai_actuarial.api.services.ready_data_automation import (
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import KnowledgeBaseException, RAGException
 from ai_actuarial.rag.indexing import IndexingPipeline
+from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
@@ -59,6 +60,10 @@ def _commit_index(
     model: str = "text-embedding-3-small",
     dimension: int | None = 1536,
     status: str = "ready",
+    embedding_identity_key: str = "",
+    binding_snapshot_fingerprint: str = "",
+    chunk_ids: list[str] | None = None,
+    chunk_count: int = 2,
 ) -> dict[str, Any]:
     return storage.create_kb_index_version(
         kb_id=kb_id,
@@ -66,7 +71,10 @@ def _commit_index(
         embedding_model=model,
         embedding_dimension=dimension,
         index_type="Flat",
-        chunk_count=2,
+        chunk_count=chunk_count,
+        embedding_identity_key=embedding_identity_key,
+        binding_snapshot_fingerprint=binding_snapshot_fingerprint,
+        chunk_ids=chunk_ids,
         status=status,
         artifact_path="index.faiss",
     )
@@ -87,6 +95,7 @@ def _record_publication(
     source_id: str,
     label: str,
     status: str = "validated",
+    index_version_id: str = "idx-test",
 ) -> dict[str, Any]:
     output_dir = (
         Path(storage.db_path).resolve().parent
@@ -103,7 +112,7 @@ def _record_publication(
     artifacts = ["ready_data_manifest.json"]
     return storage.record_agentic_ready_publication(
         kb_id=kb_id,
-        index_version_id=None,
+        index_version_id=index_version_id,
         source_version_kind=SOURCE_KIND,
         source_version_id=source_id,
         profile="general",
@@ -164,10 +173,15 @@ def _set_automation(storage: Storage, kb_id: str, *, publish: bool) -> None:
 
 
 def _fingerprint(source_id: str) -> Callable[..., dict[str, str]]:
-    def load(*, db_path: str, kb_id: str) -> dict[str, str]:
+    def load(*, db_path: str, kb_id: str, profile: str) -> dict[str, str]:
         assert db_path
         assert kb_id
-        return {"source_version_kind": SOURCE_KIND, "source_version_id": source_id}
+        assert profile == "general"
+        return {
+            "source_version_kind": SOURCE_KIND,
+            "source_version_id": source_id,
+            "index_version_id": "idx-test",
+        }
 
     return load
 
@@ -178,7 +192,14 @@ def _builder(
     source_id: str,
     valid: bool = True,
 ) -> Callable[..., dict[str, Any]]:
-    def build(*, db_path: str, kb_id: str, profile: str) -> dict[str, Any]:
+    def build(
+        *,
+        db_path: str,
+        kb_id: str,
+        profile: str,
+        index_version_id: str,
+        expected_source_snapshot_fingerprint: str,
+    ) -> dict[str, Any]:
         storage = Storage(db_path)
         try:
             state = _source_state(storage, kb_id, profile)
@@ -189,6 +210,7 @@ def _builder(
                 kb_id=kb_id,
                 source_id=source_id,
                 label=f"candidate-{generation}-{len(calls)}",
+                index_version_id=index_version_id,
             )
         finally:
             storage.close()
@@ -302,6 +324,23 @@ def _seed_builder_source(storage: Storage, tmp_path: Path, kb_id: str) -> str:
             (kb_id, file_url, "cs-test", now),
         )
     return file_url
+
+
+def _commit_builder_index(storage: Storage, kb_id: str) -> dict[str, Any]:
+    storage._conn.execute(
+        "UPDATE rag_knowledge_bases SET embedding_identity_key = ? WHERE kb_id = ?",
+        ("identity-test", kb_id),
+    )
+    storage._conn.commit()
+    snapshot = resolve_kb_bound_chunks(storage, kb_id)
+    return _commit_index(
+        storage,
+        kb_id,
+        embedding_identity_key="identity-test",
+        binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
+        chunk_ids=["chunk-test"],
+        chunk_count=1,
+    )
 
 
 def test_ready_index_commit_marks_transactional_neutral_event(tmp_path: Path) -> None:
@@ -731,30 +770,15 @@ def test_ready_index_record_failure_marks_native_task_error_and_keeps_artifact(
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     kb_id = "kb-runtime-index-version-failure"
     index_path = tmp_path / "rag-data" / kb_id / "index.faiss"
-    embedding_generator = MagicMock()
-    embedding_generator.get_embedding_dimension.return_value = 3
     kb = SimpleNamespace(
         name="Runtime Versioned KB",
-        kb_mode="manual",
-        index_type="Flat",
-        chunk_count=4,
     )
     manager = SimpleNamespace(
-        storage=SimpleNamespace(
-            create_kb_index_version=MagicMock(
-                side_effect=RuntimeError("transactional source marker failed")
-            )
-        ),
         config=SimpleNamespace(data_dir=str(tmp_path / "rag-data")),
-        chunker=object(),
-        embedding_generator=embedding_generator,
-        get_current_embedding_metadata=MagicMock(
-            return_value={"provider": "openai", "model": "embedding", "dimension": 3}
-        ),
-        sync_kb_embedding_metadata=MagicMock(),
         get_kb=MagicMock(return_value=kb),
-        get_kb_files=MagicMock(return_value=[{"file_url": "file-1"}]),
     )
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_bytes(b"safe runtime artifact")
     runtime = NativeTaskRuntime()
     task_id = "task-ready-index-marker-failure"
     runtime.active_tasks[task_id] = {
@@ -768,26 +792,30 @@ def test_ready_index_record_failure_marks_native_task_error_and_keeps_artifact(
     with patch(
         "ai_actuarial.task_runtime.KnowledgeBaseManager",
         return_value=manager,
-    ), patch("ai_actuarial.rag.indexing.VectorStore") as vector_store_cls, patch.object(
-        IndexingPipeline,
-        "_index_single_file",
-        return_value={"success": True, "chunk_count": 4},
-    ), patch.object(IndexingPipeline, "_update_kb_stats"):
-        vector_store_cls.return_value.save_index.side_effect = lambda: (
-            index_path.parent.mkdir(parents=True, exist_ok=True),
-            index_path.write_bytes(b"safe runtime artifact"),
-        )
+    ), patch(
+        "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
+        return_value={"binding_snapshot_fingerprint": "binding-runtime"},
+    ), patch(
+        "ai_actuarial.task_runtime.build_kb_index",
+        side_effect=RuntimeError("build_failure: transactional source marker failed"),
+    ):
         runtime._execute_collection_task(
             task_id,
             "rag_indexing",
-            {"kb_id": kb_id, "file_urls": ["file-1"], "force_reindex": True},
+            {
+                "contract_version": 1,
+                "kb_id": kb_id,
+                "expected_binding_snapshot_fingerprint": "binding-runtime",
+                "embedding_identity_key": "identity-runtime",
+                "force_rebuild": True,
+            },
         )
 
     assert task_id not in runtime.active_tasks
     task = runtime.task_history[-1]
     assert task["id"] == task_id
     assert task["status"] == "error"
-    assert any("record ready KB index version" in error for error in task["errors"])
+    assert any("build_failure" in error for error in task["errors"])
     assert index_path.read_bytes() == b"safe runtime artifact"
 
 
@@ -909,6 +937,7 @@ def test_metadata_change_coalesced_with_index_event_builds_latest_generation_onc
     try:
         _create_kb(storage, kb_id)
         file_url = _seed_builder_source(storage, tmp_path, kb_id)
+        _commit_builder_index(storage, kb_id)
         initial_fingerprint = get_builder_source_fingerprint(
             db_path=db_path,
             kb_id=kb_id,
@@ -932,7 +961,7 @@ def test_metadata_change_coalesced_with_index_event_builds_latest_generation_onc
         )
         assert changed_fingerprint != initial_fingerprint
 
-        _commit_index(storage, kb_id)
+        _commit_builder_index(storage, kb_id)
         pending = _source_state(storage, kb_id)
         assert set(pending["pending_reasons"]) == {
             "index_committed",
@@ -943,7 +972,14 @@ def test_metadata_change_coalesced_with_index_event_builds_latest_generation_onc
         storage.close()
     calls: list[int] = []
 
-    def tracked_build(*, db_path: str, kb_id: str, profile: str) -> dict[str, Any]:
+    def tracked_build(
+        *,
+        db_path: str,
+        kb_id: str,
+        profile: str,
+        index_version_id: str,
+        expected_source_snapshot_fingerprint: str,
+    ) -> dict[str, Any]:
         current = Storage(db_path)
         try:
             calls.append(
@@ -955,7 +991,15 @@ def test_metadata_change_coalesced_with_index_event_builds_latest_generation_onc
             )
         finally:
             current.close()
-        return _default_build_candidate(db_path=db_path, kb_id=kb_id, profile=profile)
+        return _default_build_candidate(
+            db_path=db_path,
+            kb_id=kb_id,
+            profile=profile,
+            index_version_id=index_version_id,
+            expected_source_snapshot_fingerprint=(
+                expected_source_snapshot_fingerprint
+            ),
+        )
 
     first = run_ready_data_automation_once(
         db_path,
@@ -1079,6 +1123,7 @@ def test_fingerprint_matches_build_identity_and_writes_no_artifacts(tmp_path: Pa
     try:
         _create_kb(storage)
         _seed_builder_source(storage, tmp_path, "kb-index-reeval")
+        committed = _commit_builder_index(storage, "kb-index-reeval")
     finally:
         storage.close()
     before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
@@ -1093,13 +1138,18 @@ def test_fingerprint_matches_build_identity_and_writes_no_artifacts(tmp_path: Pa
         output_dir=str(output_dir),
         profile="general",
         kb_id="kb-index-reeval",
+        index_version_id=str(committed["index_version_id"]),
+        expected_source_snapshot_fingerprint=str(
+            fingerprint["source_snapshot_fingerprint"]
+        ),
     )
     assert {path.name for path in created_by_fingerprint} <= {"source.db-wal", "source.db-shm"}
     assert not any((tmp_path / path).is_dir() for path in created_by_fingerprint)
-    assert fingerprint == {
-        "source_version_kind": manifest["source_version_kind"],
-        "source_version_id": manifest["source_version_id"],
-    }
+    assert fingerprint["source_version_kind"] == manifest["source_version_kind"]
+    assert fingerprint["source_version_id"] == manifest["source_version_id"]
+    assert fingerprint["source_snapshot_fingerprint"] == manifest["source_version_id"]
+    assert fingerprint["index_version_id"] == committed["index_version_id"]
+    assert manifest["index_version_id"] == committed["index_version_id"]
     assert output_dir.is_dir()
 
 
@@ -1115,7 +1165,10 @@ def test_prebuild_races_fail_closed_without_starting_builder(tmp_path: Path, rac
     )
     calls: list[int] = []
 
-    def race_fingerprint(*, db_path: str, kb_id: str) -> dict[str, str]:
+    def race_fingerprint(
+        *, db_path: str, kb_id: str, profile: str
+    ) -> dict[str, str]:
+        assert profile == "general"
         storage = Storage(db_path)
         try:
             if race == "generation":
@@ -1155,7 +1208,11 @@ def test_prebuild_races_fail_closed_without_starting_builder(tmp_path: Path, rac
                 )
         finally:
             storage.close()
-        return {"source_version_kind": SOURCE_KIND, "source_version_id": "new-source"}
+        return {
+            "source_version_kind": SOURCE_KIND,
+            "source_version_id": "new-source",
+            "index_version_id": "idx-test",
+        }
 
     result = run_ready_data_automation_once(
         db_path,
@@ -1181,7 +1238,10 @@ def test_fingerprint_failure_records_automation_failure_without_slot_changes(tmp
         publish=True,
     )
 
-    def fail_fingerprint(*, db_path: str, kb_id: str) -> dict[str, str]:
+    def fail_fingerprint(
+        *, db_path: str, kb_id: str, profile: str
+    ) -> dict[str, str]:
+        assert profile == "general"
         raise RuntimeError(f"fingerprint failed for {kb_id} in {db_path}")
 
     result = run_ready_data_automation_once(

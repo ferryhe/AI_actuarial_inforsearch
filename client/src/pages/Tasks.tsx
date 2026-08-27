@@ -279,6 +279,34 @@ export default function Tasks() {
     } finally { setSubmitting(false); }
   };
 
+  const handleSubmitRagIndex = async (data: Record<string, unknown>) => {
+    if (!canRunTasks) {
+      setSubmitError(t("tasks.run_permission_required"));
+      return;
+    }
+    const kbId = String(data.kb_id || "").trim();
+    if (!kbId) {
+      setSubmitError(t("tasks.form.start_error"));
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    setSubmitSuccess(null);
+    try {
+      const res = await apiPost<{ job_id?: string; error?: string }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`,
+        { force_rebuild: Boolean(data.force_rebuild) },
+      );
+      if (res.error) { setSubmitError(res.error); return; }
+      setSubmitSuccess(res.job_id ? `${t("tasks.form.started")} (${res.job_id})` : t("tasks.form.started"));
+      await fetchTasks();
+      setTimeout(() => { setActiveForm(null); setSubmitSuccess(null); }, 2000);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t("tasks.form.start_error");
+      setSubmitError(msg);
+    } finally { setSubmitting(false); }
+  };
+
   // Filter history tasks
   const filteredHistoryTasks = historyTasks.filter((task) => {
     if (searchQuery && !(task.name || "").toLowerCase().includes(searchQuery.toLowerCase())) return false;
@@ -311,7 +339,7 @@ export default function Tasks() {
       case "catalog": return <CatalogForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "markdown": return <MarkdownForm onSubmit={handleSubmitTask} submitting={submitting} />;
       case "chunk": return <ChunkForm onSubmit={handleSubmitTask} submitting={submitting} />;
-      case "rag_index": return <RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />;
+      case "rag_index": return <RagIndexForm onSubmit={handleSubmitRagIndex} submitting={submitting} />;
       case "recategory": return <RecategoryForm onSubmit={handleSubmitTask} submitting={submitting} />;
       default: return null;
     }

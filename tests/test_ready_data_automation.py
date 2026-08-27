@@ -20,6 +20,7 @@ from ai_actuarial.api.services.ready_data_automation import (
     run_ready_data_automation_once,
 )
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
@@ -33,7 +34,100 @@ def _create_kb(storage: Storage, kb_id: str = "kb-auto") -> None:
         name=f"Automation {kb_id}",
         kb_mode="manual",
         manifest_profile="general",
+        embedding_provider="test",
+        embedding_model="automation-model",
+        embedding_dimension=3,
+        embedding_identity_key=f"identity-{kb_id}",
     )
+    file_url = f"https://example.com/{kb_id}.pdf"
+    now = "2026-08-19T00:00:00+00:00"
+    storage.insert_file(
+        url=file_url,
+        sha256=f"sha-{kb_id}",
+        title=f"Automation source {kb_id}",
+        source_site="example.com",
+        source_page_url="https://example.com",
+        original_filename=f"{kb_id}.pdf",
+        local_path=str(Path(storage.db_path).resolve().parent / f"{kb_id}.pdf"),
+        bytes=10,
+        content_type="application/pdf",
+    )
+    storage.upsert_catalog_item(
+        {
+            "url": file_url,
+            "sha256": f"sha-{kb_id}",
+            "keywords": ["automation"],
+            "summary": f"Automation source for {kb_id}",
+            "category": "test",
+        },
+        pipeline_version="test-v1",
+        status="ok",
+    )
+    with storage.transaction():
+        storage._conn.execute(
+            "INSERT INTO rag_kb_files(kb_id, file_url, added_at) VALUES (?, ?, ?)",
+            (kb_id, file_url, now),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO chunk_profiles(
+                profile_id, name, config_hash, config_json, chunk_size,
+                chunk_overlap, splitter, tokenizer, version, created_at, updated_at
+            ) VALUES (?, ?, ?, '{}', 100, 10, 'semantic', 'test', '1', ?, ?)
+            """,
+            (f"cp-{kb_id}", f"Profile {kb_id}", f"cfg-{kb_id}", now, now),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO file_chunk_sets(
+                chunk_set_id, file_url, profile_id, markdown_hash,
+                status, chunk_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'ready', 1, ?, ?)
+            """,
+            (f"cs-{kb_id}", file_url, f"cp-{kb_id}", f"md-{kb_id}", now, now),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO global_chunks(
+                chunk_id, chunk_set_id, chunk_index, content,
+                token_count, section_hierarchy, content_hash, created_at
+            ) VALUES (?, ?, 0, ?, 3, 'Section', ?, ?)
+            """,
+            (f"chunk-{kb_id}", f"cs-{kb_id}", f"Content {kb_id}", f"content-{kb_id}", now),
+        )
+        storage._conn.execute(
+            """
+            INSERT INTO kb_chunk_bindings(
+                kb_id, file_url, chunk_set_id, bound_at, bound_by,
+                binding_mode, target_profile_id
+            ) VALUES (?, ?, ?, ?, 'test', 'pin', ?)
+            """,
+            (kb_id, file_url, f"cs-{kb_id}", now, f"cp-{kb_id}"),
+        )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_profile_id = ? WHERE kb_id = ?",
+            (f"cp-{kb_id}", kb_id),
+        )
+    snapshot = resolve_kb_bound_chunks(storage, kb_id)
+    storage.create_kb_index_version(
+        kb_id=kb_id,
+        embedding_provider="test",
+        embedding_model="automation-model",
+        embedding_dimension=3,
+        embedding_identity_key=f"identity-{kb_id}",
+        binding_snapshot_fingerprint=snapshot["binding_snapshot_fingerprint"],
+        index_type="faiss",
+        chunk_count=1,
+        artifact_path=f"indexes/{kb_id}",
+        artifact_digest=f"digest-{kb_id}",
+        chunk_ids=[f"chunk-{kb_id}"],
+        status="ready",
+    )
+    storage._conn.execute(
+        "DELETE FROM agentic_ready_source_state WHERE kb_id = ? AND profile = 'general'",
+        (kb_id,),
+    )
+    storage._conn.commit()
 
 
 def _mark_event(storage: Storage, kb_id: str = "kb-auto", reason: str = "membership_added") -> int:
@@ -67,6 +161,7 @@ def _record_candidate(
     generation: int,
     status: str = "validated",
     source_version_id: str | None = None,
+    index_version_id: str = "idx-test",
 ) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
@@ -86,7 +181,7 @@ def _record_candidate(
         artifact_digest = _ready_data_artifact_digest(str(output_dir), artifact_files)
         return storage.record_agentic_ready_publication(
             kb_id=kb_id,
-            index_version_id=None,
+            index_version_id=index_version_id,
             source_version_kind="catalog_chunks_snapshot",
             source_version_id=source_version_id or f"source-{generation}",
             profile="general",
@@ -157,7 +252,14 @@ def _builder(
     hook: Callable[[str, str, int], None] | None = None,
     fail: bool = False,
 ) -> Callable[..., dict[str, Any]]:
-    def build(*, db_path: str, kb_id: str, profile: str) -> dict[str, Any]:
+    def build(
+        *,
+        db_path: str,
+        kb_id: str,
+        profile: str,
+        index_version_id: str,
+        expected_source_snapshot_fingerprint: str,
+    ) -> dict[str, Any]:
         assert profile == "general"
         storage = Storage(db_path)
         try:
@@ -177,6 +279,8 @@ def _builder(
             db_path,
             kb_id=kb_id,
             generation=generation,
+            index_version_id=index_version_id,
+            source_version_id=expected_source_snapshot_fingerprint,
         )
         return {
             "kb_id": kb_id,

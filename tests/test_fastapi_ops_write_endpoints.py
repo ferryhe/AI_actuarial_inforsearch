@@ -844,6 +844,40 @@ def test_upload_batch_then_run_file_collection_uses_batch_not_server_path(tmp_pa
     assert "directory_path" not in recorder.started[-1][1]
 
 
+def test_collection_run_rejects_kb_index_alias_and_accepts_rag_indexing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _patch_available_models(monkeypatch)
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    recorder = _BridgeRecorder()
+    _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": seed["operator_token"]}
+    contract = {
+        "contract_version": 1,
+        "kb_id": "kb-task-type",
+        "expected_binding_snapshot_fingerprint": "bind-task-type",
+        "embedding_identity_key": "emb-task-type",
+    }
+
+    rejected = client.post(
+        "/api/collections/run",
+        json={"type": "kb_index_build", **contract},
+        headers=headers,
+    )
+    accepted = client.post(
+        "/api/collections/run",
+        json={"type": "rag_indexing", **contract},
+        headers=headers,
+    )
+
+    assert rejected.status_code == 400, rejected.text
+    assert rejected.json()["error"] == "Invalid collection type"
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["job_id"] == "task-fastapi-bridge"
+    assert [item[0] for item in recorder.started] == ["rag_indexing"]
+
+
 def test_import_batch_rejects_readers_and_path_traversal(tmp_path: Path, monkeypatch) -> None:
     _patch_available_models(monkeypatch)
     client, _app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=True)
@@ -1040,10 +1074,16 @@ def test_ai_routing_embedding_change_marks_existing_kbs_for_chat_reindex(tmp_pat
     client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
     headers = {"X-Auth-Token": seed["admin_token"]}
     alpha_url = "https://alpha.example/doc-a.pdf"
+    _seed_stats_data(Path(app.state.db_path))
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",
-        json={"kb_id": "kb-embedding-route-change", "name": "Embedding Route Change", "kb_mode": "manual"},
+        json={
+            "kb_id": "kb-embedding-route-change",
+            "name": "Embedding Route Change",
+            "kb_mode": "manual",
+            "chunk_profile_id": "profile-default",
+        },
         headers=headers,
     )
     assert create_kb.status_code == 201, create_kb.text

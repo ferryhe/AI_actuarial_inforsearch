@@ -21,6 +21,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -408,13 +409,41 @@ def _load_builder_source_snapshot(
     conn: sqlite3.Connection,
     *,
     kb_id: str | None,
+    profile: str = "general",
+    index_version_id: str | None = None,
 ) -> tuple[list[sqlite3.Row], list[sqlite3.Row], str, str | None]:
     """Read the exact builder inputs from one consistent SQLite snapshot."""
     conn.execute("BEGIN")
     try:
         kb_join = ""
         where_params: list[Any] = []
+        member_urls: list[str] = []
+        selected_chunk_profile_id = ""
+        selected_embedding_identity_key = ""
         if kb_id:
+            if not _table_exists(conn, "rag_knowledge_bases"):
+                raise ValueError("ready_data requires persisted KB composition")
+            kb_row = conn.execute(
+                """
+                SELECT chunk_profile_id, embedding_identity_key
+                FROM rag_knowledge_bases
+                WHERE kb_id = ?
+                """,
+                (kb_id,),
+            ).fetchone()
+            if not kb_row:
+                raise ValueError("ready_data knowledge base was not found")
+            selected_chunk_profile_id = str(kb_row[0] or "").strip()
+            selected_embedding_identity_key = str(kb_row[1] or "").strip()
+            member_urls = [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT file_url FROM rag_kb_files WHERE kb_id = ? ORDER BY file_url",
+                    (kb_id,),
+                ).fetchall()
+            ]
+            if not member_urls:
+                raise ValueError("ready_data requires non-empty KB membership")
             kb_join = "JOIN rag_kb_files kf ON kf.file_url = c.file_url AND kf.kb_id = ?"
             where_params.append(kb_id)
         catalog_columns = _table_columns(conn, "catalog_items")
@@ -432,52 +461,80 @@ def _load_builder_source_snapshot(
                 ORDER BY c.category, c.file_url""",
             where_params,
         ).fetchall()
+        if kb_id and len(catalog_rows) != len(member_urls):
+            raise ValueError("ready_data requires catalog metadata for every KB member")
 
         file_urls = [row["file_url"] for row in catalog_rows]
         placeholders = ",".join("?" for _ in file_urls)
         chunk_rows: list[sqlite3.Row] = []
+        binding_payload: list[dict[str, Any]] = []
+        current_binding_fingerprint = ""
         if file_urls:
-            use_bound_chunk_sets = bool(
-                kb_id
-                and _table_exists(conn, "kb_chunk_bindings")
-                and conn.execute(
-                    f"""SELECT 1
-                        FROM kb_chunk_bindings b
-                        JOIN rag_kb_files kf
-                          ON kf.kb_id = b.kb_id
-                         AND kf.file_url = b.file_url
-                        JOIN catalog_items c
-                          ON c.file_url = b.file_url
-                         AND c.status = 'ok'
-                        JOIN file_chunk_sets fcs
-                          ON fcs.chunk_set_id = b.chunk_set_id
-                         AND fcs.file_url = b.file_url
-                        WHERE b.kb_id = ?
-                          AND b.file_url IN ({placeholders})
-                        LIMIT 1""",
-                    [kb_id, *file_urls],
-                ).fetchone()
-            )
-            if use_bound_chunk_sets:
-                chunk_rows = conn.execute(
-                    f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
-                               fcs.file_url
-                        FROM global_chunks g
-                        JOIN file_chunk_sets fcs ON g.chunk_set_id = fcs.chunk_set_id
-                        JOIN kb_chunk_bindings b
-                          ON b.chunk_set_id = fcs.chunk_set_id
-                         AND b.file_url = fcs.file_url
-                         AND b.kb_id = ?
-                        JOIN rag_kb_files kf
-                          ON kf.kb_id = b.kb_id
-                         AND kf.file_url = b.file_url
-                        JOIN catalog_items c
-                          ON c.file_url = b.file_url
-                         AND c.status = 'ok'
-                        WHERE fcs.file_url IN ({placeholders})
-                        ORDER BY fcs.file_url, g.chunk_index""",
-                    [kb_id, *file_urls],
+            if kb_id:
+                if not _table_exists(conn, "kb_chunk_bindings"):
+                    raise ValueError("ready_data requires complete KB chunk bindings")
+                binding_rows = conn.execute(
+                    """
+                    SELECT b.file_url, b.chunk_set_id, fcs.file_url, fcs.profile_id,
+                           fcs.profile_config_hash, fcs.status, fcs.chunk_count
+                    FROM kb_chunk_bindings b
+                    LEFT JOIN file_chunk_sets fcs ON fcs.chunk_set_id = b.chunk_set_id
+                    WHERE b.kb_id = ?
+                    ORDER BY b.file_url, b.chunk_set_id
+                    """,
+                    (kb_id,),
                 ).fetchall()
+                by_file: dict[str, list[sqlite3.Row]] = {}
+                for row in binding_rows:
+                    by_file.setdefault(str(row[0] or ""), []).append(row)
+                if set(by_file) != set(file_urls):
+                    raise ValueError("ready_data requires one binding for every KB member")
+                for file_url in file_urls:
+                    rows = by_file.get(str(file_url)) or []
+                    if len(rows) != 1:
+                        raise ValueError("ready_data requires one unambiguous binding per file")
+                    row = rows[0]
+                    chunk_set_id = str(row[1] or "")
+                    if str(row[2] or "") != str(file_url):
+                        raise ValueError("ready_data binding crosses file boundaries")
+                    if (
+                        selected_chunk_profile_id
+                        and str(row[3] or "") != selected_chunk_profile_id
+                    ):
+                        raise ValueError("ready_data binding uses the wrong chunk profile")
+                    if str(row[5] or "") != "ready" or int(row[6] or 0) <= 0:
+                        raise ValueError("ready_data binding does not reference a ready chunk set")
+                    selected = conn.execute(
+                        """
+                        SELECT g.chunk_id, g.content, g.token_count,
+                               g.section_hierarchy, fcs.file_url
+                        FROM global_chunks g
+                        JOIN file_chunk_sets fcs ON fcs.chunk_set_id = g.chunk_set_id
+                        WHERE g.chunk_set_id = ?
+                        ORDER BY g.chunk_index, g.chunk_id
+                        """,
+                        (chunk_set_id,),
+                    ).fetchall()
+                    if len(selected) != int(row[6] or 0):
+                        raise ValueError("ready_data bound chunk count mismatch")
+                    chunk_rows.extend(selected)
+                    binding_payload.append(
+                        {
+                            "file_url": str(file_url),
+                            "chunk_set_id": chunk_set_id,
+                            "profile_id": str(row[3] or ""),
+                            "profile_config_hash": str(row[4] or ""),
+                            "chunk_ids": [str(item[0] or "") for item in selected],
+                        }
+                    )
+                from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
+
+                current_binding_fingerprint = str(
+                    resolve_kb_bound_chunks(
+                        SimpleNamespace(_conn=conn),
+                        kb_id,
+                    )["binding_snapshot_fingerprint"]
+                )
             else:
                 chunk_rows = conn.execute(
                     f"""SELECT g.chunk_id, g.content, g.token_count, g.section_hierarchy,
@@ -489,29 +546,88 @@ def _load_builder_source_snapshot(
                     file_urls,
                 ).fetchall()
 
+        observed_index_version_id: str | None = None
+        index_payload: dict[str, Any] | None = None
+        if kb_id:
+            index_row = conn.execute(
+                """
+                SELECT ready.index_version_id, versions.status,
+                       versions.embedding_identity_key,
+                       versions.binding_snapshot_fingerprint,
+                       versions.artifact_digest, versions.chunk_count
+                FROM kb_ready_index_state ready
+                JOIN kb_index_versions versions
+                  ON versions.index_version_id = ready.index_version_id
+                WHERE ready.kb_id = ?
+                LIMIT 1
+                """,
+                (kb_id,),
+            ).fetchone()
+            if not index_row or str(index_row[1] or "") != "ready":
+                raise ValueError("ready_data requires a committed ready KB index")
+            observed_index_version_id = str(index_row[0] or "").strip()
+            requested_index_version_id = str(index_version_id or "").strip()
+            if requested_index_version_id and requested_index_version_id != observed_index_version_id:
+                raise ValueError(
+                    "stale_snapshot: Ready Data index_version_id is no longer the committed ready index"
+                )
+            index_payload = {
+                "index_version_id": observed_index_version_id,
+                "embedding_identity_key": str(index_row[2] or ""),
+                "binding_snapshot_fingerprint": str(index_row[3] or ""),
+                "artifact_digest": str(index_row[4] or ""),
+                "chunk_count": int(index_row[5] or 0),
+            }
+            if (
+                not index_payload["embedding_identity_key"]
+                or index_payload["embedding_identity_key"]
+                != selected_embedding_identity_key
+            ):
+                raise ValueError("ready_data index embedding identity is stale")
+            if not index_payload["binding_snapshot_fingerprint"]:
+                raise ValueError("ready_data index binding snapshot is missing")
+            if (
+                index_payload["binding_snapshot_fingerprint"]
+                != current_binding_fingerprint
+            ):
+                raise ValueError("ready_data index binding snapshot is stale")
+            item_rows = conn.execute(
+                """
+                SELECT chunk_id, vector_ordinal
+                FROM kb_index_items
+                WHERE index_version_id = ?
+                ORDER BY vector_ordinal
+                """,
+                (observed_index_version_id,),
+            ).fetchall()
+            expected_chunk_ids = [str(row[0] or "") for row in chunk_rows]
+            item_chunk_ids = [str(row[0] or "") for row in item_rows]
+            item_ordinals = [int(row[1]) for row in item_rows]
+            if (
+                len(set(expected_chunk_ids)) != len(expected_chunk_ids)
+                or len(item_rows) != len(expected_chunk_ids)
+                or len(item_rows) != index_payload["chunk_count"]
+                or item_ordinals != list(range(len(item_rows)))
+                or set(item_chunk_ids) != set(expected_chunk_ids)
+            ):
+                raise ValueError("ready_data index does not match the exact bound chunk snapshot")
+
         source_payload = json.dumps(
             {
                 "catalog_rows": [dict(row) for row in catalog_rows],
                 "chunk_rows": [dict(row) for row in chunk_rows],
+                "membership": member_urls,
+                "bindings": binding_payload,
+                "binding_snapshot_fingerprint": current_binding_fingerprint,
+                "index": index_payload,
+                "profile": profile,
+                "profile_version": PROFILES[profile].version,
             },
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
         source_version_id = f"rdsnap_{hashlib.sha256(source_payload).hexdigest()}"
-        observed_index_version_id: str | None = None
-        if kb_id and _table_exists(conn, "kb_ready_index_state"):
-            index_row = conn.execute(
-                """
-                SELECT index_version_id
-                FROM kb_ready_index_state
-                WHERE kb_id = ?
-                LIMIT 1
-                """,
-                (kb_id,),
-            ).fetchone()
-            if index_row and str(index_row[0] or "").strip():
-                observed_index_version_id = str(index_row[0]).strip()
         return catalog_rows, chunk_rows, source_version_id, observed_index_version_id
     finally:
         conn.rollback()
@@ -521,6 +637,8 @@ def get_builder_source_fingerprint(
     *,
     db_path: str,
     kb_id: str | None,
+    profile: str = "general",
+    index_version_id: str | None = None,
 ) -> dict[str, str]:
     """Return the exact builder source identity without creating artifacts."""
     database_uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
@@ -528,10 +646,17 @@ def get_builder_source_fingerprint(
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA query_only = ON")
-        _, _, source_version_id, _ = _load_builder_source_snapshot(conn, kb_id=kb_id)
+        _, _, source_version_id, observed_index_version_id = _load_builder_source_snapshot(
+            conn,
+            kb_id=kb_id,
+            profile=profile,
+            index_version_id=index_version_id,
+        )
         return {
             "source_version_kind": BUILDER_SOURCE_VERSION_KIND,
             "source_version_id": source_version_id,
+            "source_snapshot_fingerprint": source_version_id,
+            "index_version_id": observed_index_version_id or "",
         }
     finally:
         conn.close()
@@ -544,6 +669,8 @@ def _build_l0_with_connection(
     output_dir: str | None = None,
     profile: str = "general",
     kb_id: str | None = None,
+    index_version_id: str | None = None,
+    expected_source_snapshot_fingerprint: str | None = None,
 ) -> dict:
     """Build L0 ready_data artifacts from catalog_items + global_chunks.
 
@@ -576,7 +703,12 @@ def _build_l0_with_connection(
     catalog_rows, chunk_rows, source_version_id, observed_index_version_id = _load_builder_source_snapshot(
         conn,
         kb_id=kb_id,
+        profile=profile,
+        index_version_id=index_version_id,
     )
+    expected_source = str(expected_source_snapshot_fingerprint or "").strip()
+    if expected_source and expected_source != source_version_id:
+        raise ValueError("stale_snapshot: Ready Data source changed before build")
 
     # Group chunks by file_url
     chunks_by_file: dict[str, list[dict]] = {}
@@ -605,7 +737,7 @@ def _build_l0_with_connection(
                 "summary": row["summary"] or "",
                 "keywords": keywords,
                 "headings": headings,
-                "rag_chunk_count": row["rag_chunk_count"] or 0,
+                "rag_chunk_count": len(chunks),
             }
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             catalog_entries.append(entry)
@@ -889,8 +1021,9 @@ def _build_l0_with_connection(
         "source_db": db_path,
         "source_version_kind": BUILDER_SOURCE_VERSION_KIND,
         "source_version_id": source_version_id,
+        "source_snapshot_fingerprint": source_version_id,
         "index_version_id": observed_index_version_id,
-        "index_consumed_by_builder": False,
+        "index_consumed_by_builder": bool(observed_index_version_id),
         "output_dir": output_dir,
         "doc_count": doc_count,
         "section_count": section_count,
@@ -910,6 +1043,16 @@ def _build_l0_with_connection(
             "calculation_term_fields": CALCULATION_TERM_FIELDS,
         },
     }
+    digest = hashlib.sha256()
+    for artifact in sorted(profile_def_artifacts):
+        if artifact == "ready_data_manifest.json":
+            continue
+        artifact_path = Path(output_dir) / artifact
+        digest.update(artifact.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(artifact_path.read_bytes())
+        digest.update(b"\0")
+    manifest["artifact_digest"] = digest.hexdigest()
     manifest_path = os.path.join(output_dir, "ready_data_manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
@@ -929,6 +1072,8 @@ def build_l0(
     output_dir: str | None = None,
     profile: str = "general",
     kb_id: str | None = None,
+    index_version_id: str | None = None,
+    expected_source_snapshot_fingerprint: str | None = None,
 ) -> dict:
     """Build ready_data while guaranteeing the SQLite connection is closed."""
     resolved_db_path = db_path or get_db_path()
@@ -941,6 +1086,8 @@ def build_l0(
             output_dir=output_dir,
             profile=profile,
             kb_id=kb_id,
+            index_version_id=index_version_id,
+            expected_source_snapshot_fingerprint=expected_source_snapshot_fingerprint,
         )
     finally:
         conn.close()

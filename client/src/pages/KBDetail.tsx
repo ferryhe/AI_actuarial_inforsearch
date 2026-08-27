@@ -64,6 +64,7 @@ interface KBMeta {
   embedding_provider?: string;
   embedding_model?: string;
   embedding_dimension?: number;
+  embedding_identity_key?: string;
   index_embedding_provider?: string;
   index_embedding_model?: string;
   index_embedding_dimension?: number;
@@ -73,6 +74,14 @@ interface KBMeta {
     provider?: string;
     model?: string;
     dimension?: number;
+    embedding_identity_key?: string;
+  };
+  index_coverage?: {
+    bound_file_count?: number;
+    bound_chunk_count?: number;
+    ready_embeddings?: number;
+    missing_embeddings?: number;
+    invalid_bindings?: number;
   };
   chunk_size?: number;
   chunk_overlap?: number;
@@ -94,6 +103,13 @@ interface KBStats {
   total_chunks?: number;
   pending_files?: number;
   indexed_files?: number;
+}
+
+interface ChunkProfile {
+  profile_id: string;
+  name: string;
+  chunk_size: number;
+  chunk_overlap: number;
 }
 
 interface KBFile {
@@ -330,6 +346,7 @@ export default function KBDetail() {
   metaRef.current = meta;
   const [manifestBuilding, setManifestBuilding] = useState(false);
   const [automationSaving, setAutomationSaving] = useState(false);
+  const [publishRunning, setPublishRunning] = useState(false);
   const [rollbackRunning, setRollbackRunning] = useState(false);
   const [manifestPollVersion, setManifestPollVersion] = useState(0);
   const manifestPollAttempts = useRef(0);
@@ -432,6 +449,9 @@ export default function KBDetail() {
 
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editChunkProfileId, setEditChunkProfileId] = useState("");
+  const [editEmbeddingIdentityKey, setEditEmbeddingIdentityKey] = useState("");
+  const [chunkProfiles, setChunkProfiles] = useState<ChunkProfile[]>([]);
   const [hasEdits, setHasEdits] = useState(false);
 
   const [showAddCategory, setShowAddCategory] = useState(false);
@@ -547,6 +567,12 @@ export default function KBDetail() {
         }
         setEditName(m.name || "");
         setEditDesc(m.description || "");
+        setEditChunkProfileId(m.chunk_profile_id || "");
+        setEditEmbeddingIdentityKey(
+          m.embedding_identity_key
+          || m.current_embeddings?.embedding_identity_key
+          || ""
+        );
       },
       onError: () => {
         metaRef.current = null;
@@ -755,6 +781,13 @@ export default function KBDetail() {
     if (match) loadAll();
   }, [match, loadAll]);
 
+  useEffect(() => {
+    if (!canManageKnowledge) return;
+    void apiGet<{ profiles?: ChunkProfile[] }>("/api/chunk/profiles")
+      .then((response) => setChunkProfiles(response.profiles || []))
+      .catch(() => setChunkProfiles([]));
+  }, [canManageKnowledge]);
+
   const effectiveManifest = selectEffectiveReadyDataManifest(
     kbId,
     agenticManifest,
@@ -789,6 +822,8 @@ export default function KBDetail() {
       await apiPut(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}`, {
         name: editName,
         description: editDesc,
+        chunk_profile_id: editChunkProfileId,
+        embedding_identity_key: editEmbeddingIdentityKey,
       });
       setHasEdits(false);
       await loadMeta();
@@ -851,16 +886,8 @@ export default function KBDetail() {
     setActionError(null);
     try {
       const endpoint = `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`;
-      const res = await apiPost<{
-        category_sync?: { added_count?: number };
-        all_sync?: { added_count?: number };
-      }>(endpoint, force ? { force_reindex: true } : { incremental: true });
-      const addedCount = res.category_sync?.added_count ?? res.all_sync?.added_count ?? 0;
-      setActionNotice(
-        addedCount > 0
-          ? t("kb.index_sync_notice").replace("{count}", String(addedCount))
-          : t("kb.index_started_notice")
-      );
+      await apiPost<{ job_id: string }>(endpoint, { force_rebuild: force });
+      setActionNotice(t("kb.index_started_notice"));
       await Promise.all([loadMeta(), loadStats(), loadFiles()]);
     } catch (err) {
       console.error("Failed to build index:", err);
@@ -873,6 +900,11 @@ export default function KBDetail() {
 
   const handleBuildAgenticManifest = async () => {
     if (!kbId) return;
+    const readyBuildInput = effectiveManifest?.ready_build_input;
+    if (!readyBuildInput) {
+      setActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", "KB Index is not ready"));
+      return;
+    }
     const mutationRoute = captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId);
     if (!mutationRoute) return;
     const { kbId: mutationKbId, epoch: mutationEpoch } = mutationRoute;
@@ -882,14 +914,19 @@ export default function KBDetail() {
     setActionError(null);
     await runReadyDataRouteMutation({
       request: () => apiPost<{
+        job_id?: string;
         ready_data_snapshot?: { manifest?: AgenticReadyManifest };
         validation?: { valid?: boolean; errors?: string[] };
       }>(
         `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/build`,
-        {},
+        readyBuildInput,
       ),
       isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch),
       onSuccess: async (res) => {
+        if (res.job_id) {
+          setActionNotice(t("knowledge.manifest_build_started"));
+          return;
+        }
         const nextManifest = res.ready_data_snapshot?.manifest || null;
         applyReadyDataManifestUpdate(
           mutationKbId,
@@ -993,6 +1030,49 @@ export default function KBDetail() {
   const handleAutomaticPublishChange = async (enabled: boolean) => {
     if (enabled && !manifest?.automatic_build_enabled) return;
     await updateReadyDataAutomation(Boolean(manifest?.automatic_build_enabled), enabled);
+  };
+
+  const handlePublishReadyData = async () => {
+    if (!kbId) return;
+    const mutationRoute = captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId);
+    if (!mutationRoute) return;
+    const { kbId: mutationKbId, epoch: mutationEpoch } = mutationRoute;
+    const mutationManifest = effectiveManifest;
+    const publicationId = mutationManifest?.last_attempt_publication_id;
+    if (!publicationId) return;
+    const profile = selectReadyDataMutationProfile(
+      mutationKbId,
+      mutationManifest,
+      meta?.kb_id,
+      meta?.manifest_profile,
+    );
+    if (!window.confirm(t("knowledge.ready_publish_confirm").replace("{id}", publicationId))) return;
+    if (!isCurrentReadyDataRoute(mutationKbId, mutationEpoch)) return;
+    setPublishRunning(true);
+    setActionNotice(null);
+    setActionError(null);
+    try {
+      await apiPost(
+        `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/publish`,
+        {
+          profile,
+          publication_id: publicationId,
+          expected_active_publication_id:
+            mutationManifest?.publication_state?.active_publication_id ?? null,
+        },
+      );
+      if (!isCurrentReadyDataRoute(mutationKbId, mutationEpoch)) return;
+      setActionNotice(t("knowledge.ready_publish_succeeded"));
+      const refreshed = await loadAgenticManifest({
+        force: true,
+        preserveCurrentOnError: true,
+      });
+      if (!refreshed) setActionError(t("knowledge.ready_refresh_failed"));
+    } catch (err) {
+      setActionError(formatApiErrorDetail(err) || t("knowledge.ready_publish_failed"));
+    } finally {
+      setPublishRunning(false);
+    }
   };
 
   const handleRollbackPublication = async () => {
@@ -1234,7 +1314,7 @@ export default function KBDetail() {
     manifest?.automation_state,
     manifest?.status,
   );
-  const manifestBusy = manifestBuilding || ["pending", "running", "building"].includes(manifestAutomationState);
+  const manifestBusy = manifestBuilding || publishRunning || ["pending", "running", "building"].includes(manifestAutomationState);
   const currentReadyIndexVersion = manifest?.current_ready_index_version_id
     || activePublication?.current_ready_index_version_id;
   const rollbackAvailable = Boolean(
@@ -1296,6 +1376,39 @@ export default function KBDetail() {
                     data-testid="input-kb-edit-desc"
                   />
                   <p className="text-[10px] text-muted-foreground/60 mt-1">{t("kb.desc_guidance")}</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <select
+                      value={editChunkProfileId}
+                      onChange={(e) => {
+                        setEditChunkProfileId(e.target.value);
+                        setHasEdits(true);
+                      }}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                      data-testid="select-kb-edit-chunk-profile"
+                    >
+                      {editChunkProfileId && !chunkProfiles.some((profile) => profile.profile_id === editChunkProfileId) && (
+                        <option value={editChunkProfileId}>{meta.chunk_profile_name || editChunkProfileId}</option>
+                      )}
+                      {chunkProfiles.map((profile) => (
+                        <option key={profile.profile_id} value={profile.profile_id}>
+                          {profile.name} ({profile.chunk_size}/{profile.chunk_overlap})
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={editEmbeddingIdentityKey}
+                      onChange={(e) => {
+                        setEditEmbeddingIdentityKey(e.target.value);
+                        setHasEdits(true);
+                      }}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                      data-testid="select-kb-edit-embedding-identity"
+                    >
+                      <option value={meta.current_embeddings?.embedding_identity_key || editEmbeddingIdentityKey}>
+                        {[meta.current_embeddings?.provider, meta.current_embeddings?.model, meta.current_embeddings?.dimension].filter(Boolean).join(" / ")}
+                      </option>
+                    </select>
+                  </div>
                 </>
               )}
               {!canManageKnowledge && (
@@ -1448,6 +1561,18 @@ export default function KBDetail() {
             </div>
             {canRunKnowledgeTasks && (
               <div className="mt-4 border-t border-border pt-4">
+                {manifestAutomationState === "awaiting_publish" && manifest?.last_attempt_publication_id && (
+                  <button
+                    type="button"
+                    onClick={() => void handlePublishReadyData()}
+                    disabled={publishRunning}
+                    className="mb-3 inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-muted disabled:opacity-50"
+                    data-testid="button-publish-ready-data"
+                  >
+                    {publishRunning && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {t("knowledge.ready_publish")}
+                  </button>
+                )}
                 <p className="text-[11px] text-muted-foreground">
                   {t("knowledge.ready_rollback_target")}: {displayValue(previousPublication?.publication_id)} / {displayTime(previousPublication?.published_at)}
                 </p>
@@ -1477,6 +1602,16 @@ export default function KBDetail() {
         <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300" data-testid="alert-kb-detail-action-notice">
           <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
           <span>{actionNotice}</span>
+        </div>
+      )}
+
+      {meta.index_coverage && (
+        <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-card p-4 text-xs text-muted-foreground sm:grid-cols-5" data-testid="kb-index-coverage">
+          <span>{t("knowledge.bound_files")}: {meta.index_coverage.bound_file_count ?? 0}</span>
+          <span>{t("knowledge.bound_chunks")}: {meta.index_coverage.bound_chunk_count ?? 0}</span>
+          <span>{t("knowledge.ready_embeddings")}: {meta.index_coverage.ready_embeddings ?? 0}</span>
+          <span>{t("knowledge.missing_embeddings")}: {meta.index_coverage.missing_embeddings ?? 0}</span>
+          <span>{t("knowledge.invalid_bindings")}: {meta.index_coverage.invalid_bindings ?? 0}</span>
         </div>
       )}
 

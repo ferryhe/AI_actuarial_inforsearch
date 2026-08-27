@@ -35,19 +35,42 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _default_build_candidate(*, db_path: str, kb_id: str, profile: str) -> dict[str, Any]:
+def _default_build_candidate(
+    *,
+    db_path: str,
+    kb_id: str,
+    profile: str,
+    index_version_id: str,
+    expected_source_snapshot_fingerprint: str,
+) -> dict[str, Any]:
     return _build_agentic_ready_manifest_core(
         db_path=db_path,
         kb_id=kb_id,
-        payload={"profile": profile},
+        payload={
+            "profile": profile,
+            "index_version_id": index_version_id,
+            "expected_source_snapshot_fingerprint": (
+                expected_source_snapshot_fingerprint
+            ),
+        },
         publish=False,
+        record_manual_candidate=False,
     )
 
 
-def _default_source_fingerprint(*, db_path: str, kb_id: str) -> dict[str, str]:
+def _default_source_fingerprint(
+    *,
+    db_path: str,
+    kb_id: str,
+    profile: str,
+) -> dict[str, str]:
     from ai_actuarial.agentic_rag.ready_data_builder import get_builder_source_fingerprint
 
-    return get_builder_source_fingerprint(db_path=db_path, kb_id=kb_id)
+    return get_builder_source_fingerprint(
+        db_path=db_path,
+        kb_id=kb_id,
+        profile=profile,
+    )
 
 
 def set_ready_data_automation(
@@ -304,15 +327,24 @@ def run_ready_data_automation_once(
                     source_fingerprint(
                         db_path=db_path,
                         kb_id=str(claim["kb_id"]),
+                        profile=str(claim["profile"]),
                     )
                 )
                 fingerprint_kind = str(
                     fingerprint.get("source_version_kind") or ""
                 ).strip().lower()
                 fingerprint_id = str(fingerprint.get("source_version_id") or "").strip()
-                if not fingerprint_kind or not fingerprint_id:
+                fingerprint_index_version_id = str(
+                    fingerprint.get("index_version_id") or ""
+                ).strip()
+                if (
+                    not fingerprint_kind
+                    or not fingerprint_id
+                    or not fingerprint_index_version_id
+                ):
                     raise ValueError(
-                        "ready_data source fingerprint must include source_version_kind and source_version_id"
+                        "ready_data source fingerprint must include source_version_kind, "
+                        "source_version_id, and index_version_id"
                     )
             except Exception as exc:  # noqa: BLE001
                 failure_storage = Storage(db_path)
@@ -427,6 +459,8 @@ def run_ready_data_automation_once(
                     db_path=db_path,
                     kb_id=str(claim["kb_id"]),
                     profile=str(claim["profile"]),
+                    index_version_id=fingerprint_index_version_id,
+                    expected_source_snapshot_fingerprint=fingerprint_id,
                 )
             except Exception as exc:  # noqa: BLE001
                 failure_storage = Storage(db_path)
@@ -521,6 +555,51 @@ def run_ready_data_automation_once(
 
         publish_storage = Storage(db_path)
         try:
+            try:
+                current_fingerprint = dict(
+                    source_fingerprint(
+                        db_path=db_path,
+                        kb_id=str(claim["kb_id"]),
+                        profile=str(claim["profile"]),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                error = f"stale_snapshot: {exc}"
+                finished = _finish_claim(
+                    publish_storage,
+                    claim,
+                    state="failed",
+                    publication_id=str(candidate.get("publication_id") or "") or None,
+                    error=error,
+                    now=clock(),
+                )
+                return {
+                    **claim,
+                    "status": "failed" if finished else "claim_lost",
+                    "candidate_publication": candidate,
+                    "error": error,
+                }
+            if (
+                str(candidate.get("index_version_id") or "")
+                != str(current_fingerprint.get("index_version_id") or "")
+                or str(candidate.get("source_version_id") or "")
+                != str(current_fingerprint.get("source_version_id") or "")
+            ):
+                error = "stale_snapshot: Ready Data source changed before publication"
+                finished = _finish_claim(
+                    publish_storage,
+                    claim,
+                    state="failed",
+                    publication_id=str(candidate.get("publication_id") or "") or None,
+                    error=error,
+                    now=clock(),
+                )
+                return {
+                    **claim,
+                    "status": "failed" if finished else "claim_lost",
+                    "candidate_publication": candidate,
+                    "error": error,
+                }
             non_publish = _fenced_non_publish_result(
                 publish_storage,
                 claim,
@@ -579,6 +658,34 @@ def run_ready_data_automation_once(
                 active_validation or {},
                 "active ready_data failed publication validation",
             ) if corrupt_active else ""
+            latest_fingerprint = dict(
+                source_fingerprint(
+                    db_path=db_path,
+                    kb_id=str(claim["kb_id"]),
+                    profile=str(claim["profile"]),
+                )
+            )
+            if (
+                str(candidate.get("index_version_id") or "")
+                != str(latest_fingerprint.get("index_version_id") or "")
+                or str(candidate.get("source_version_id") or "")
+                != str(latest_fingerprint.get("source_version_id") or "")
+            ):
+                error = "stale_snapshot: Ready Data source changed before publication"
+                finished = _finish_claim(
+                    publish_storage,
+                    claim,
+                    state="failed",
+                    publication_id=str(candidate.get("publication_id") or "") or None,
+                    error=error,
+                    now=clock(),
+                )
+                return {
+                    **claim,
+                    "status": "failed" if finished else "claim_lost",
+                    "candidate_publication": candidate,
+                    "error": error,
+                }
             publication_state = publish_storage.publish_claimed_agentic_ready_publication(
                 str(candidate["publication_id"]),
                 kb_id=str(claim["kb_id"]),

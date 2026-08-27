@@ -128,6 +128,7 @@ def test_migration_v1_to_v2_creates_taxonomy_state(tmp_path: Path) -> None:
         "add_pipeline_fks_v6",
         "add_pipeline_lease_v7",
         "add_chunk_embedding_identity_v8",
+        "add_kb_index_contract_v9",
     ]
 
     with sqlite3.connect(db_path) as conn:

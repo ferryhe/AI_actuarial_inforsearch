@@ -6,7 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ai_actuarial.rag.exceptions import ChunkingException
 from ai_actuarial.embedding_service import validate_chunk_generation_payload
@@ -183,7 +183,14 @@ def export_catalog(*, db_path: str, format_type: str) -> tuple[bytes, str, str]:
 
 
 
-def delete_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def delete_file_record(
+    *,
+    db_path: str,
+    payload: dict[str, Any],
+    bridge_state: Any | None = None,
+    headers: Mapping[str, str] | None = None,
+    auth: Any | None = None,
+) -> dict[str, Any]:
     if not _is_file_deletion_enabled():
         raise FileWriteError(
             "File deletion is disabled. Enable it via Settings > System or set ENABLE_FILE_DELETION=true in environment.",
@@ -199,11 +206,33 @@ def delete_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
         raise FileWriteError('Explicit confirmation required. Include {"confirm": "DELETE"} in the request body.')
 
     storage = Storage(db_path)
-    details = {"url": url, "database_marked": False, "physical_file_deleted": False, "errors": []}
+    details = {
+        "url": url,
+        "database_marked": False,
+        "physical_file_deleted": False,
+        "affected_kb_count": 0,
+        "reindex_jobs": [],
+        "reindex_skipped": [],
+        "errors": [],
+    }
     try:
+        from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+
+        manager = KnowledgeBaseManager(storage)
+        affected_kb_ids = [
+            str(row[0])
+            for row in storage._conn.execute(
+                "SELECT kb_id FROM rag_kb_files WHERE file_url = ? ORDER BY kb_id",
+                (url,),
+            ).fetchall()
+        ]
         deleted_time = __import__("datetime").datetime.now().isoformat()
-        storage.mark_file_deleted(url, deleted_time)
+        with storage.transaction(immediate=True):
+            for kb_id in affected_kb_ids:
+                manager.remove_files_from_kb(kb_id, [str(url)])
+            storage.mark_file_deleted(url, deleted_time)
         details["database_marked"] = True
+        details["affected_kb_count"] = len(affected_kb_ids)
         file_record = storage.get_file_by_url(url)
         if file_record and file_record.get("local_path"):
             candidate = _resolve_local_path(file_record.get("local_path"))
@@ -224,6 +253,42 @@ def delete_file_record(*, db_path: str, payload: dict[str, Any]) -> dict[str, An
                     storage.clear_local_path(url)
         else:
             details["errors"].append("No local_path found in database for this file")
+        if bridge_state is not None:
+            from ai_actuarial.api.services.rag_admin import (
+                RagAdminError,
+                create_index_task,
+            )
+
+            for kb_id in affected_kb_ids:
+                member_count = int(
+                    storage._conn.execute(
+                        "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
+                        (kb_id,),
+                    ).fetchone()[0]
+                    or 0
+                )
+                if member_count == 0:
+                    details["reindex_skipped"].append(
+                        {"kb_id": kb_id, "reason": "empty_kb"}
+                    )
+                    continue
+                try:
+                    launched, _status_code = create_index_task(
+                        db_path=db_path,
+                        kb_id=kb_id,
+                        payload={"force_rebuild": True},
+                        headers=dict(headers or {}),
+                        bridge_state=bridge_state,
+                        auth=auth,
+                    )
+                except RagAdminError as exc:
+                    details["reindex_skipped"].append(
+                        {"kb_id": kb_id, "reason": exc.message}
+                    )
+                    continue
+                details["reindex_jobs"].append(
+                    {"kb_id": kb_id, "job_id": launched["job_id"]}
+                )
         return {"success": True, "details": details}
     finally:
         storage.close()

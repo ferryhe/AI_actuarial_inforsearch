@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 8
+CURRENT_SQLITE_SCHEMA_VERSION = 9
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -95,6 +95,7 @@ _OPTIONAL_TABLE_ALLOWED_COLUMNS: dict[str, frozenset[str]] = {
             "embedding_provider",
             "embedding_model",
             "embedding_dimension",
+            "embedding_identity_key",
             "chunk_size",
             "chunk_overlap",
             "index_type",
@@ -721,7 +722,12 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    conn.execute("INSERT INTO kb_index_items_v8 SELECT * FROM kb_index_items")
+    conn.execute(
+        """
+        INSERT INTO kb_index_items_v8 (index_version_id, chunk_id)
+        SELECT index_version_id, chunk_id FROM kb_index_items
+        """
+    )
 
     for table in (
         "chunk_embeddings",
@@ -805,6 +811,87 @@ def _accept_version_7_source(
     return valid
 
 
+def _add_kb_index_contract_v9(conn: sqlite3.Connection) -> None:
+    """Version KB indexes and persist their exact binding/vector identity."""
+    version_columns = {row[1] for row in conn.execute("PRAGMA table_info(kb_index_versions)")}
+    for name, definition in (
+        ("embedding_identity_key", "TEXT NOT NULL DEFAULT ''"),
+        ("binding_snapshot_fingerprint", "TEXT NOT NULL DEFAULT ''"),
+        ("artifact_digest", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if name not in version_columns:
+            conn.execute(f"ALTER TABLE kb_index_versions ADD COLUMN {name} {definition}")
+
+    ready_columns = {row[1] for row in conn.execute("PRAGMA table_info(kb_ready_index_state)")}
+    for name, definition in (
+        ("embedding_identity_key", "TEXT NOT NULL DEFAULT ''"),
+        ("binding_snapshot_fingerprint", "TEXT NOT NULL DEFAULT ''"),
+        ("artifact_path", "TEXT NOT NULL DEFAULT ''"),
+        ("artifact_digest", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if name not in ready_columns:
+            conn.execute(f"ALTER TABLE kb_ready_index_state ADD COLUMN {name} {definition}")
+
+    item_columns = {row[1] for row in conn.execute("PRAGMA table_info(kb_index_items)")}
+    if "vector_ordinal" not in item_columns:
+        conn.execute(
+            """
+            CREATE TABLE kb_index_items_v9 (
+                index_version_id TEXT NOT NULL,
+                chunk_id TEXT NOT NULL,
+                vector_ordinal INTEGER NOT NULL,
+                PRIMARY KEY (index_version_id, chunk_id),
+                UNIQUE (index_version_id, vector_ordinal),
+                FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
+                FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO kb_index_items_v9 (index_version_id, chunk_id, vector_ordinal)
+            SELECT index_version_id, chunk_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY index_version_id ORDER BY chunk_id
+                   ) - 1
+            FROM kb_index_items
+            """
+        )
+        conn.execute("DROP TABLE kb_index_items")
+        conn.execute("ALTER TABLE kb_index_items_v9 RENAME TO kb_index_items")
+
+    rag_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'rag_knowledge_bases'"
+    ).fetchone()
+    if rag_table:
+        kb_columns = {row[1] for row in conn.execute("PRAGMA table_info(rag_knowledge_bases)")}
+        if "embedding_identity_key" not in kb_columns:
+            conn.execute(
+                "ALTER TABLE rag_knowledge_bases "
+                "ADD COLUMN embedding_identity_key TEXT NOT NULL DEFAULT ''"
+            )
+    _set_user_version(conn, 9)
+
+
+def _accept_version_8_source(
+    _conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    required = {
+        "kb_index_versions": frozenset(
+            {"index_version_id", "kb_id", "embedding_model", "artifact_path"}
+        ),
+        "kb_ready_index_state": frozenset(
+            {"kb_id", "index_version_id", "embedding_model"}
+        ),
+        "kb_index_items": frozenset({"index_version_id", "chunk_id"}),
+    }
+    return all(
+        table in tables and columns.issubset(_column_names(tables[table]))
+        for table, columns in required.items()
+    )
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -852,6 +939,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_chunk_embedding_identity_v8",
         apply=_add_chunk_embedding_identity_v8,
         source_validator=_accept_version_7_source,
+    ),
+    SQLiteSchemaMigration(
+        version=9,
+        migration_id="add_kb_index_contract_v9",
+        apply=_add_kb_index_contract_v9,
+        source_validator=_accept_version_8_source,
     ),
 )
 
@@ -1039,6 +1132,7 @@ def _optional_table_signature_variants() -> dict[str, frozenset[TableSignature]]
                 embedding_provider TEXT DEFAULT 'openai',
                 embedding_model TEXT NOT NULL,
                 embedding_dimension INTEGER,
+                embedding_identity_key TEXT NOT NULL DEFAULT '',
                 chunk_size INTEGER NOT NULL,
                 chunk_overlap INTEGER NOT NULL,
                 index_type TEXT NOT NULL,
@@ -1093,6 +1187,7 @@ def _optional_table_signature_variants() -> dict[str, frozenset[TableSignature]]
                 embedding_provider TEXT DEFAULT 'openai',
                 embedding_model TEXT NOT NULL,
                 embedding_dimension INTEGER,
+                embedding_identity_key TEXT NOT NULL DEFAULT '',
                 chunk_size INTEGER NOT NULL,
                 chunk_overlap INTEGER NOT NULL,
                 index_type TEXT NOT NULL,

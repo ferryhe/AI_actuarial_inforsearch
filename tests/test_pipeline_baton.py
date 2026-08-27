@@ -67,7 +67,7 @@ def _service(tmp_path: Path, tasks: FakeTasks, kbs: list[str]) -> PipelineBaton:
         start_task=tasks.start,
         task_status=tasks.status,
         task_result=tasks.result,
-        category_kb_ids=lambda: list(kbs),
+        indexable_kb_ids=lambda: list(kbs),
         now=lambda: next(ticks),
     )
 
@@ -304,6 +304,11 @@ def test_persisted_document_contains_only_config_and_minimal_baton_state(tmp_pat
         "chunk_task_id",
         "embedding_task_id",
         "markdown_files",
+        "kb_index_ready_phase",
+        "kb_index_task_id",
+        "ready_data_task_id",
+        "kb_results",
+        "summary",
     }
     assert "markdown_content" not in json.dumps(document)
 

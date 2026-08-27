@@ -665,9 +665,12 @@ class Storage:
                 embedding_provider TEXT NOT NULL DEFAULT 'openai',
                 embedding_model TEXT NOT NULL,
                 embedding_dimension INTEGER,
+                embedding_identity_key TEXT NOT NULL DEFAULT '',
+                binding_snapshot_fingerprint TEXT NOT NULL DEFAULT '',
                 index_type TEXT NOT NULL,
                 status TEXT NOT NULL,
                 artifact_path TEXT,
+                artifact_digest TEXT NOT NULL DEFAULT '',
                 chunk_count INTEGER NOT NULL DEFAULT 0,
                 built_at TEXT,
                 created_at TEXT NOT NULL
@@ -682,6 +685,10 @@ class Storage:
                 embedding_provider TEXT NOT NULL,
                 embedding_model TEXT NOT NULL,
                 embedding_dimension INTEGER,
+                embedding_identity_key TEXT NOT NULL DEFAULT '',
+                binding_snapshot_fingerprint TEXT NOT NULL DEFAULT '',
+                artifact_path TEXT NOT NULL DEFAULT '',
+                artifact_digest TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
@@ -692,7 +699,9 @@ class Storage:
             CREATE TABLE IF NOT EXISTS kb_index_items (
                 index_version_id TEXT NOT NULL,
                 chunk_id TEXT NOT NULL,
+                vector_ordinal INTEGER NOT NULL,
                 PRIMARY KEY (index_version_id, chunk_id),
+                UNIQUE (index_version_id, vector_ordinal),
                 FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
                 FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
             )
@@ -1040,6 +1049,18 @@ class Storage:
             {
                 "embedding_provider": "TEXT NOT NULL DEFAULT 'openai'",
                 "embedding_dimension": "INTEGER",
+                "embedding_identity_key": "TEXT NOT NULL DEFAULT ''",
+                "binding_snapshot_fingerprint": "TEXT NOT NULL DEFAULT ''",
+                "artifact_digest": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
+        self._ensure_columns(
+            "kb_ready_index_state",
+            {
+                "embedding_identity_key": "TEXT NOT NULL DEFAULT ''",
+                "binding_snapshot_fingerprint": "TEXT NOT NULL DEFAULT ''",
+                "artifact_path": "TEXT NOT NULL DEFAULT ''",
+                "artifact_digest": "TEXT NOT NULL DEFAULT ''",
             },
         )
         rows = self._conn.execute(
@@ -1288,6 +1309,9 @@ class Storage:
             changed = True
         if "embedding_dimension" not in existing:
             self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_dimension INTEGER")
+            changed = True
+        if "embedding_identity_key" not in existing:
+            self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN embedding_identity_key TEXT NOT NULL DEFAULT ''")
             changed = True
         if "chunk_profile_id" not in existing:
             self._conn.execute("ALTER TABLE rag_knowledge_bases ADD COLUMN chunk_profile_id TEXT")
@@ -4319,19 +4343,16 @@ class Storage:
             )
             now = self._utcnow_iso()
 
-            # For follow_latest mode, keep only one active binding per (kb, file, profile).
-            if mode == "follow_latest":
-                self._conn.execute(
-                    """
-                    DELETE FROM kb_chunk_bindings
-                    WHERE kb_id = ?
-                      AND file_url = ?
-                      AND binding_mode = 'follow_latest'
-                      AND COALESCE(target_profile_id, '') = ?
-                      AND chunk_set_id != ?
-                    """,
-                    (kb_id, file_url, target_profile_id or "", chunk_set_id),
-                )
+            # A KB ready index represents one complete effective selection per
+            # member file. Rebinding replaces the previous active selection;
+            # immutable chunk sets themselves remain available for pinning.
+            self._conn.execute(
+                """
+                DELETE FROM kb_chunk_bindings
+                WHERE kb_id = ? AND file_url = ? AND chunk_set_id != ?
+                """,
+                (kb_id, file_url, chunk_set_id),
+            )
 
             exists = self._conn.execute(
                 """
@@ -5904,6 +5925,112 @@ class Storage:
             kb_id=kb_id,
             profile=normalized_profile,
         )
+
+    def record_agentic_ready_manual_publication_state(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        publication_id: str,
+        published: bool,
+    ) -> None:
+        """Expose one explicit build candidate without changing automation settings."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        now = self._utcnow_iso()
+        with self.transaction(immediate=True):
+            publication = self.get_agentic_ready_publication(publication_id)
+            expected_status = "active" if published else "validated"
+            if (
+                not publication
+                or str(publication.get("kb_id") or "") != kb_id
+                or str(publication.get("profile") or "") != normalized_profile
+                or str(publication.get("status") or "") != expected_status
+                or bool(publication.get("attempt_disposition"))
+            ):
+                raise ValueError("ready-data manual publication state is invalid")
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_slots (
+                    kb_id, profile, active_publication_id, previous_publication_id,
+                    automatic_build_enabled, automatic_publish_enabled, updated_at
+                )
+                VALUES (?, ?, NULL, NULL, 0, 0, ?)
+                ON CONFLICT(kb_id, profile) DO NOTHING
+                """,
+                (kb_id, normalized_profile, now),
+            )
+            if published:
+                active = self.get_agentic_ready_publication_state(
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                )
+                if active.get("active_publication_id") != publication_id:
+                    raise ValueError("ready-data manual publication is not active")
+            generation_row = self._conn.execute(
+                """
+                SELECT event_generation
+                FROM agentic_ready_source_state
+                WHERE kb_id = ? AND profile = ?
+                """,
+                (kb_id, normalized_profile),
+            ).fetchone()
+            generation = int(generation_row[0] or 0) if generation_row else 0
+            prior = self._conn.execute(
+                """
+                SELECT automation_state, last_attempted_generation,
+                       last_attempt_publication_id
+                FROM agentic_ready_automation
+                WHERE kb_id = ? AND profile = ?
+                """,
+                (kb_id, normalized_profile),
+            ).fetchone()
+            if (
+                not published
+                and prior
+                and str(prior[0] or "") == "awaiting_publish"
+                and prior[2]
+                and str(prior[2]) != publication_id
+                and int(prior[1] or 0) < generation
+            ):
+                self.mark_agentic_ready_publication_superseded_generation(
+                    str(prior[2])
+                )
+            automation_state = "succeeded" if published else "awaiting_publish"
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_automation (
+                    kb_id, profile, automation_state, running_generation,
+                    last_attempted_generation, claim_token, claimed_at,
+                    lease_expires_at, last_attempt_publication_id,
+                    last_success_at, last_error, updated_at
+                )
+                VALUES (?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, '', ?)
+                ON CONFLICT(kb_id, profile) DO UPDATE SET
+                    automation_state = excluded.automation_state,
+                    running_generation = NULL,
+                    last_attempted_generation = excluded.last_attempted_generation,
+                    claim_token = NULL,
+                    claimed_at = NULL,
+                    lease_expires_at = NULL,
+                    last_attempt_publication_id = excluded.last_attempt_publication_id,
+                    last_success_at = CASE
+                        WHEN excluded.automation_state = 'succeeded'
+                        THEN excluded.last_success_at
+                        ELSE agentic_ready_automation.last_success_at
+                    END,
+                    last_error = '',
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    kb_id,
+                    normalized_profile,
+                    automation_state,
+                    generation,
+                    publication_id,
+                    now if published else None,
+                    now,
+                ),
+            )
 
     @staticmethod
     def _agentic_ready_automation_timestamp(now: datetime | None = None) -> str:
@@ -7541,8 +7668,11 @@ class Storage:
         chunk_count: int,
         embedding_provider: str = "openai",
         embedding_dimension: int | None = None,
+        embedding_identity_key: str = "",
+        binding_snapshot_fingerprint: str = "",
         status: str = "ready",
         artifact_path: str = "",
+        artifact_digest: str = "",
         chunk_ids: list[str] | None = None,
         built_at: str | None = None,
     ) -> dict[str, Any]:
@@ -7564,29 +7694,15 @@ class Storage:
                 """,
                 (kb_id,),
             ).fetchone()
-            # Keep only the latest index version record per KB.
-            old_ids = [
-                str(r[0])
-                for r in self._conn.execute(
-                    "SELECT index_version_id FROM kb_index_versions WHERE kb_id = ?",
-                    (kb_id,),
-                ).fetchall()
-            ]
-            if old_ids:
-                for old_id in old_ids:
-                    self._conn.execute(
-                        "DELETE FROM kb_index_items WHERE index_version_id = ?",
-                        (old_id,),
-                    )
-                self._conn.execute("DELETE FROM kb_index_versions WHERE kb_id = ?", (kb_id,))
-
             self._conn.execute(
                 """
                 INSERT INTO kb_index_versions (
-                    index_version_id, kb_id, embedding_provider, embedding_model, embedding_dimension, index_type, status,
-                    artifact_path, chunk_count, built_at, created_at
+                    index_version_id, kb_id, embedding_provider, embedding_model,
+                    embedding_dimension, embedding_identity_key,
+                    binding_snapshot_fingerprint, index_type, status,
+                    artifact_path, artifact_digest, chunk_count, built_at, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     index_version_id,
@@ -7594,22 +7710,27 @@ class Storage:
                     normalized_provider,
                     normalized_model,
                     normalized_dimension,
+                    str(embedding_identity_key or ""),
+                    str(binding_snapshot_fingerprint or ""),
                     index_type,
                     normalized_status,
                     artifact_path,
+                    str(artifact_digest or ""),
                     int(chunk_count),
                     built_time,
                     now,
                 ),
             )
             if chunk_ids:
-                for chunk_id in chunk_ids:
+                for vector_ordinal, chunk_id in enumerate(chunk_ids):
                     self._conn.execute(
                         """
-                        INSERT OR IGNORE INTO kb_index_items (index_version_id, chunk_id)
-                        VALUES (?, ?)
+                        INSERT OR IGNORE INTO kb_index_items (
+                            index_version_id, chunk_id, vector_ordinal
+                        )
+                        VALUES (?, ?, ?)
                         """,
-                        (index_version_id, chunk_id),
+                        (index_version_id, chunk_id, vector_ordinal),
                     )
             if normalized_status == "ready":
                 previous_embedding = (
@@ -7639,14 +7760,20 @@ class Storage:
                     """
                     INSERT INTO kb_ready_index_state (
                         kb_id, index_version_id, embedding_provider,
-                        embedding_model, embedding_dimension, updated_at
+                        embedding_model, embedding_dimension,
+                        embedding_identity_key, binding_snapshot_fingerprint,
+                        artifact_path, artifact_digest, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(kb_id) DO UPDATE SET
                         index_version_id = excluded.index_version_id,
                         embedding_provider = excluded.embedding_provider,
                         embedding_model = excluded.embedding_model,
                         embedding_dimension = excluded.embedding_dimension,
+                        embedding_identity_key = excluded.embedding_identity_key,
+                        binding_snapshot_fingerprint = excluded.binding_snapshot_fingerprint,
+                        artifact_path = excluded.artifact_path,
+                        artifact_digest = excluded.artifact_digest,
                         updated_at = excluded.updated_at
                     """,
                     (
@@ -7655,6 +7782,10 @@ class Storage:
                         normalized_provider,
                         normalized_model,
                         normalized_dimension,
+                        str(embedding_identity_key or ""),
+                        str(binding_snapshot_fingerprint or ""),
+                        artifact_path,
+                        str(artifact_digest or ""),
                         now,
                     ),
                 )
@@ -7664,9 +7795,12 @@ class Storage:
             "embedding_provider": normalized_provider,
             "embedding_model": normalized_model,
             "embedding_dimension": normalized_dimension,
+            "embedding_identity_key": str(embedding_identity_key or ""),
+            "binding_snapshot_fingerprint": str(binding_snapshot_fingerprint or ""),
             "index_type": index_type,
             "status": normalized_status,
             "artifact_path": artifact_path,
+            "artifact_digest": str(artifact_digest or ""),
             "chunk_count": int(chunk_count),
             "built_at": built_time,
             "created_at": now,
@@ -7691,6 +7825,12 @@ class Storage:
             WHERE NOT EXISTS (
                 SELECT 1 FROM kb_chunk_bindings b WHERE b.chunk_set_id = s.chunk_set_id
             )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM global_chunks g
+                JOIN kb_index_items i ON i.chunk_id = g.chunk_id
+                WHERE g.chunk_set_id = s.chunk_set_id
+              )
             ORDER BY COALESCE(s.updated_at, s.created_at) ASC
             LIMIT ?
             """,
@@ -7728,11 +7868,6 @@ class Storage:
         with self.transaction():
             for item in candidates:
                 chunk_set_id = str(item["chunk_set_id"])
-                # Remove index references first (safe even when SQLite FK is disabled).
-                self._conn.execute(
-                    "DELETE FROM kb_index_items WHERE chunk_id LIKE ?",
-                    (f"{chunk_set_id}:%",),
-                )
                 self._conn.execute(
                     """
                     DELETE FROM chunk_embeddings

@@ -521,6 +521,89 @@ def _wait_for_api_task(args: argparse.Namespace, job_id: str) -> dict:
             time.sleep(0.2)
 
 
+def _get_api_task(args: argparse.Namespace, job_id: str) -> dict:
+    active = _api_json_request(
+        args.api_url,
+        "/api/tasks/active",
+        method="GET",
+        token=args.token,
+        timeout=args.timeout,
+    )
+    match = next(
+        (
+            task
+            for task in active.get("tasks") or []
+            if str(task.get("id") or "") == job_id
+        ),
+        None,
+    )
+    if match is None:
+        history = _api_json_request(
+            args.api_url,
+            "/api/tasks/history?limit=500",
+            method="GET",
+            token=args.token,
+            timeout=args.timeout,
+        )
+        match = next(
+            (
+                task
+                for task in history.get("tasks") or []
+                if str(task.get("id") or "") == job_id
+            ),
+            None,
+        )
+    if match is None:
+        raise RuntimeError(f"task '{job_id}' was not found")
+    return dict(match)
+
+
+def _task_command_error(args: argparse.Namespace, exc: Exception) -> int:
+    _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+    return 2
+
+
+def cmd_task_status(args: argparse.Namespace) -> int:
+    try:
+        task = _get_api_task(args, args.job_id)
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        return _task_command_error(args, exc)
+    _print_cli_payload({"job_id": args.job_id, "task": task}, as_json=args.json)
+    return 0
+
+
+def cmd_task_log(args: argparse.Namespace) -> int:
+    path = f"/api/tasks/log/{urllib.parse.quote(args.job_id, safe='')}?tail={args.tail}"
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method="GET",
+            token=args.token,
+            timeout=args.timeout,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        return _task_command_error(args, exc)
+    _print_cli_payload(result, as_json=args.json)
+    return 0
+
+
+def cmd_task_stop(args: argparse.Namespace) -> int:
+    path = f"/api/tasks/stop/{urllib.parse.quote(args.job_id, safe='')}"
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method="POST",
+            token=args.token,
+            timeout=args.timeout,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        return _task_command_error(args, exc)
+    _print_cli_payload({"job_id": args.job_id, **result}, as_json=args.json)
+    return 0
+
+
 def cmd_task_run(args: argparse.Namespace) -> int:
     payload: dict = {}
     if args.payload_json:
@@ -580,6 +663,95 @@ def cmd_embedding_coverage(args: argparse.Namespace) -> int:
     path = "/api/embeddings/coverage"
     if params:
         path += "?" + urllib.parse.urlencode(params)
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method="GET",
+            token=args.token,
+            timeout=args.timeout,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+        return 2
+    _print_cli_payload(result, as_json=args.json)
+    return 0
+
+
+def cmd_kb_binding(args: argparse.Namespace) -> int:
+    path = (
+        "/api/rag/knowledge-bases/"
+        f"{urllib.parse.quote(args.kb_id, safe='')}/bindings"
+    )
+    payload = None
+    method = "GET"
+    if args.binding_cmd == "set":
+        try:
+            payload = json.loads(args.payload_json)
+        except json.JSONDecodeError as exc:
+            _print_cli_payload(
+                {"success": False, "error": f"invalid --payload-json: {exc}"},
+                as_json=args.json,
+            )
+            return 2
+        if not isinstance(payload, dict):
+            _print_cli_payload(
+                {"success": False, "error": "--payload-json must be an object"},
+                as_json=args.json,
+            )
+            return 2
+        method = "POST"
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method=method,
+            token=args.token,
+            payload=payload,
+            timeout=args.timeout,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        _print_cli_payload(
+            {"success": False, "error": str(exc)},
+            as_json=args.json,
+        )
+        return 2
+    _print_cli_payload(result, as_json=args.json)
+    return 0
+
+
+def cmd_kb_ready_publish(args: argparse.Namespace) -> int:
+    path = (
+        "/api/rag/knowledge-bases/"
+        f"{urllib.parse.quote(args.kb_id, safe='')}/agentic-ready-manifest/publish"
+    )
+    payload = {
+        "profile": args.profile,
+        "publication_id": args.publication_id,
+        "expected_active_publication_id": args.expected_active_publication_id,
+    }
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method="POST",
+            token=args.token,
+            payload=payload,
+            timeout=args.timeout,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError) as exc:
+        _print_cli_payload({"success": False, "error": str(exc)}, as_json=args.json)
+        return 2
+    _print_cli_payload(result, as_json=args.json)
+    return 0
+
+
+def cmd_kb_ready_get(args: argparse.Namespace) -> int:
+    path = (
+        "/api/rag/knowledge-bases/"
+        f"{urllib.parse.quote(args.kb_id, safe='')}/agentic-ready-manifest?"
+        + urllib.parse.urlencode({"profile": args.profile})
+    )
     try:
         result = _api_json_request(
             args.api_url,
@@ -729,6 +901,42 @@ def build_parser() -> argparse.ArgumentParser:
     p_task_run.add_argument("--timeout", type=float, default=300, help="Request/wait timeout in seconds")
     p_task_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_task_run.set_defaults(func=cmd_task_run)
+    for action, handler, action_help in (
+        ("status", cmd_task_status, "Show one task status"),
+        ("log", cmd_task_log, "Read one task log"),
+        ("stop", cmd_task_stop, "Request one task to stop"),
+    ):
+        p_task_action = p_task_sub.add_parser(action, help=action_help)
+        p_task_action.add_argument("job_id", help="Task job ID")
+        p_task_action.add_argument(
+            "--api-url",
+            default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+            help="FastAPI base URL",
+        )
+        p_task_action.add_argument(
+            "--token",
+            default=os.getenv("AI_ACTUARIAL_API_TOKEN"),
+            help="Bearer token",
+        )
+        p_task_action.add_argument(
+            "--timeout",
+            type=float,
+            default=30,
+            help="Request timeout in seconds",
+        )
+        p_task_action.add_argument(
+            "--json",
+            action="store_true",
+            help="Emit machine-readable JSON",
+        )
+        if action == "log":
+            p_task_action.add_argument(
+                "--tail",
+                type=int,
+                default=500,
+                help="Maximum log lines",
+            )
+        p_task_action.set_defaults(func=handler)
 
     p_embedding = sub.add_parser("embedding", help="Inspect persisted embedding coverage")
     p_embedding_sub = p_embedding.add_subparsers(dest="embedding_cmd", required=True)
@@ -742,6 +950,106 @@ def build_parser() -> argparse.ArgumentParser:
     p_embedding_coverage.add_argument("--timeout", type=float, default=30, help="Request timeout in seconds")
     p_embedding_coverage.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_embedding_coverage.set_defaults(func=cmd_embedding_coverage)
+
+    p_kb = sub.add_parser("kb", help="Operate on knowledge-base resources")
+    p_kb_sub = p_kb.add_subparsers(dest="kb_cmd", required=True)
+    p_kb_binding = p_kb_sub.add_parser(
+        "binding",
+        help="Read or reconcile the exact KB binding resource",
+    )
+    p_kb_binding_sub = p_kb_binding.add_subparsers(
+        dest="binding_cmd",
+        required=True,
+    )
+    for action in ("get", "set"):
+        p_kb_binding_action = p_kb_binding_sub.add_parser(
+            action,
+            help=(
+                "Read the exact binding contract"
+                if action == "get"
+                else "Reconcile bindings and return the exact binding contract"
+            ),
+        )
+        p_kb_binding_action.add_argument("kb_id", help="Knowledge-base ID")
+        if action == "set":
+            p_kb_binding_action.add_argument(
+                "--payload-json",
+                required=True,
+                help="Binding POST body as a JSON object",
+            )
+        p_kb_binding_action.add_argument(
+            "--api-url",
+            default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+            help="FastAPI base URL",
+        )
+        p_kb_binding_action.add_argument(
+            "--token",
+            default=os.getenv("AI_ACTUARIAL_API_TOKEN"),
+            help="Bearer token",
+        )
+        p_kb_binding_action.add_argument(
+            "--timeout",
+            type=float,
+            default=30,
+            help="Request timeout in seconds",
+        )
+        p_kb_binding_action.add_argument(
+            "--json",
+            action="store_true",
+            help="Emit machine-readable JSON",
+        )
+        p_kb_binding_action.set_defaults(func=cmd_kb_binding)
+
+    p_kb_ready = p_kb_sub.add_parser("ready", help="Operate on Ready Data publications")
+    p_kb_ready_sub = p_kb_ready.add_subparsers(dest="ready_cmd", required=True)
+    p_kb_ready_get = p_kb_ready_sub.add_parser(
+        "get",
+        help="Read Ready Data status and discover a validated candidate",
+    )
+    p_kb_ready_get.add_argument("kb_id", help="Knowledge-base ID")
+    p_kb_ready_get.add_argument("--profile", required=True, help="Ready Data profile")
+    p_kb_ready_get.add_argument(
+        "--api-url",
+        default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+        help="FastAPI base URL",
+    )
+    p_kb_ready_get.add_argument(
+        "--token",
+        default=os.getenv("AI_ACTUARIAL_API_TOKEN"),
+        help="Bearer token",
+    )
+    p_kb_ready_get.add_argument("--timeout", type=float, default=30)
+    p_kb_ready_get.add_argument("--json", action="store_true")
+    p_kb_ready_get.set_defaults(func=cmd_kb_ready_get)
+    p_kb_ready_publish = p_kb_ready_sub.add_parser(
+        "publish",
+        help="Publish one validated Ready Data candidate",
+    )
+    p_kb_ready_publish.add_argument("kb_id", help="Knowledge-base ID")
+    p_kb_ready_publish.add_argument("--profile", required=True, help="Ready Data profile")
+    p_kb_ready_publish.add_argument(
+        "--publication-id",
+        required=True,
+        help="Validated Ready Data publication ID",
+    )
+    p_kb_ready_publish.add_argument(
+        "--expected-active-publication-id",
+        default=None,
+        help="Expected current active publication ID; omit when none is active",
+    )
+    p_kb_ready_publish.add_argument(
+        "--api-url",
+        default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+        help="FastAPI base URL",
+    )
+    p_kb_ready_publish.add_argument(
+        "--token",
+        default=os.getenv("AI_ACTUARIAL_API_TOKEN"),
+        help="Bearer token",
+    )
+    p_kb_ready_publish.add_argument("--timeout", type=float, default=30)
+    p_kb_ready_publish.add_argument("--json", action="store_true")
+    p_kb_ready_publish.set_defaults(func=cmd_kb_ready_publish)
 
     # Collection commands using new modular structure
     p_collect = sub.add_parser("collect", help="Run specific collection workflow")

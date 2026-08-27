@@ -4,8 +4,10 @@ import hashlib
 import json
 import shutil
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import yaml
@@ -15,9 +17,314 @@ from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
 from ai_actuarial.api.routers import rag_admin as rag_admin_router
+from ai_actuarial.api.routers import ready_data_publication as ready_publication_router
+from ai_actuarial.api.services import rag_admin as rag_admin_service
+from ai_actuarial.embedding_service import resolve_server_embedding_identity
+from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.storage import Storage
 
 PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+class _CoreResponse:
+    def __init__(self, payload: dict[str, object], status_code: int = 200):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = json.dumps(payload, ensure_ascii=False)
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class _KBContractTestClient(TestClient):
+    """Upgrade legacy KB-create fixtures to select the shared ready profile."""
+
+    def __init__(self, *args: Any, default_chunk_profile_id: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.default_chunk_profile_id = default_chunk_profile_id
+
+    def post(self, url: str, *args: Any, **kwargs: Any):
+        payload = kwargs.get("json")
+        if (
+            url == "/api/rag/knowledge-bases"
+            and isinstance(payload, dict)
+            and "chunk_profile_id" not in payload
+        ):
+            kwargs["json"] = {
+                **payload,
+                "chunk_profile_id": self.default_chunk_profile_id,
+            }
+        return super().post(url, *args, **kwargs)
+
+
+def _prepare_committed_kb_index(
+    db_path: Path,
+    kb_id: str,
+    *,
+    persist_embeddings: bool = False,
+) -> dict[str, object]:
+    """Upgrade a legacy test KB fixture to the exact #238 index contract."""
+    storage = Storage(str(db_path))
+    try:
+        kb_row = storage._conn.execute(
+            """
+            SELECT chunk_profile_id, embedding_provider, embedding_model,
+                   embedding_dimension, embedding_identity_key, manifest_profile
+            FROM rag_knowledge_bases
+            WHERE kb_id = ?
+            """,
+            (kb_id,),
+        ).fetchone()
+        if not kb_row:
+            raise AssertionError(f"test KB not found: {kb_id}")
+        member_rows = storage._conn.execute(
+            "SELECT file_url FROM rag_kb_files WHERE kb_id = ? ORDER BY file_url",
+            (kb_id,),
+        ).fetchall()
+        if not member_rows:
+            raise AssertionError(f"test KB has no members: {kb_id}")
+
+        profile_id = str(kb_row[0] or "").strip()
+        if not profile_id:
+            existing_binding = storage._conn.execute(
+                """
+                SELECT fcs.profile_id
+                FROM kb_chunk_bindings binding
+                JOIN file_chunk_sets fcs ON fcs.chunk_set_id = binding.chunk_set_id
+                WHERE binding.kb_id = ? AND fcs.status = 'ready'
+                ORDER BY binding.file_url
+                LIMIT 1
+                """,
+                (kb_id,),
+            ).fetchone()
+            if existing_binding:
+                profile_id = str(existing_binding[0] or "")
+            else:
+                profile_id = str(
+                    storage.create_chunk_profile(
+                        name="issue-238-api-fixture",
+                        chunk_size=256,
+                        chunk_overlap=32,
+                    )["profile_id"]
+                )
+            storage._conn.execute(
+                "UPDATE rag_knowledge_bases SET chunk_profile_id = ? WHERE kb_id = ?",
+                (profile_id, kb_id),
+            )
+            storage._conn.commit()
+
+        selected_chunk_ids: list[str] = []
+        for member_row in member_rows:
+            file_url = str(member_row[0])
+            ready_set = storage._conn.execute(
+                """
+                SELECT chunk_set_id
+                FROM file_chunk_sets
+                WHERE file_url = ? AND profile_id = ? AND status = 'ready'
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                """,
+                (file_url, profile_id),
+            ).fetchone()
+            if ready_set:
+                chunk_set_id = str(ready_set[0])
+            else:
+                catalog = storage._conn.execute(
+                    """
+                    SELECT COALESCE(markdown_content, ''), COALESCE(summary, '')
+                    FROM catalog_items
+                    WHERE file_url = ?
+                    """,
+                    (file_url,),
+                ).fetchone()
+                content = str((catalog[0] if catalog else "") or (catalog[1] if catalog else "") or file_url)
+                chunk_set = storage.get_or_create_file_chunk_set(
+                    file_url=file_url,
+                    profile_id=profile_id,
+                    markdown_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    status="building",
+                )
+                storage.replace_global_chunks(
+                    chunk_set_id=str(chunk_set["chunk_set_id"]),
+                    chunks=[
+                        {
+                            "chunk_index": 0,
+                            "content": content,
+                            "token_count": max(1, len(content.split())),
+                            "section_hierarchy": "Root",
+                        }
+                    ],
+                    overwrite=True,
+                )
+                chunk_set_id = str(chunk_set["chunk_set_id"])
+            storage.bind_chunk_set_to_kb(
+                kb_id=kb_id,
+                file_url=file_url,
+                chunk_set_id=chunk_set_id,
+                bound_by="issue_238_api_fixture",
+                binding_mode="pin",
+            )
+            selected_chunk_ids.extend(
+                str(row[0])
+                for row in storage._conn.execute(
+                    """
+                    SELECT chunk_id
+                    FROM global_chunks
+                    WHERE chunk_set_id = ?
+                    ORDER BY chunk_index, chunk_id
+                    """,
+                    (chunk_set_id,),
+                ).fetchall()
+            )
+
+        resolved = resolve_kb_bound_chunks(storage, kb_id)
+        identity_key = str(kb_row[4] or "")
+        provider = str(kb_row[1] or "openai")
+        model = str(kb_row[2] or "text-embedding-3-large")
+        dimension = int(kb_row[3] or 3072)
+        if persist_embeddings:
+            identity = resolve_server_embedding_identity(storage, identity_key)
+            storage.batch_upsert_chunk_embeddings(
+                [
+                    {
+                        "chunk_id": chunk_id,
+                        "vector": [float(index + 1)] * identity.dimension,
+                    }
+                    for index, chunk_id in enumerate(selected_chunk_ids)
+                ],
+                identity=identity.as_dict(),
+            )
+
+        current = storage._conn.execute(
+            """
+            SELECT versions.index_version_id, versions.embedding_identity_key,
+                   versions.binding_snapshot_fingerprint, versions.chunk_count
+            FROM kb_ready_index_state ready
+            JOIN kb_index_versions versions
+              ON versions.index_version_id = ready.index_version_id
+            WHERE ready.kb_id = ? AND versions.status = 'ready'
+            """,
+            (kb_id,),
+        ).fetchone()
+        if (
+            current
+            and str(current[1] or "") == identity_key
+            and str(current[2] or "") == resolved["binding_snapshot_fingerprint"]
+            and int(current[3] or 0) == len(selected_chunk_ids)
+        ):
+            item_count = int(
+                storage._conn.execute(
+                    "SELECT COUNT(*) FROM kb_index_items WHERE index_version_id = ?",
+                    (current[0],),
+                ).fetchone()[0]
+            )
+            if item_count == len(selected_chunk_ids):
+                return {
+                    "index_version_id": str(current[0]),
+                    "binding_snapshot_fingerprint": str(current[2]),
+                    "chunk_ids": selected_chunk_ids,
+                    "status": "ready",
+                    "manifest_profile": str(kb_row[5] or "general"),
+                }
+
+        created = storage.create_kb_index_version(
+            kb_id=kb_id,
+            embedding_provider=provider,
+            embedding_model=model,
+            embedding_dimension=dimension,
+            embedding_identity_key=identity_key,
+            binding_snapshot_fingerprint=str(resolved["binding_snapshot_fingerprint"]),
+            index_type="faiss",
+            chunk_count=len(selected_chunk_ids),
+            artifact_path=str(db_path.parent / "test-indexes" / kb_id),
+            artifact_digest=hashlib.sha256(kb_id.encode("utf-8")).hexdigest(),
+            chunk_ids=selected_chunk_ids,
+            status="ready",
+        )
+        return {
+            "index_version_id": str(created["index_version_id"]),
+            "binding_snapshot_fingerprint": str(resolved["binding_snapshot_fingerprint"]),
+            "chunk_ids": selected_chunk_ids,
+            "status": "ready",
+            "manifest_profile": str(kb_row[5] or "general"),
+        }
+    finally:
+        storage.close()
+
+
+def _post_ready_build_core(
+    client: TestClient,
+    url: str,
+    *,
+    json: dict[str, object] | None = None,
+    prepare_index: bool = True,
+) -> _CoreResponse:
+    marker = "/api/rag/knowledge-bases/"
+    suffix = "/agentic-ready-manifest/build"
+    assert url.startswith(marker) and url.endswith(suffix)
+    kb_id = url[len(marker) : -len(suffix)]
+    db_path = Path(client.app.state.db_path)
+    request_payload = dict(json or {})
+    if prepare_index:
+        prepared = _prepare_committed_kb_index(db_path, kb_id)
+        request_payload.setdefault(
+            "index_version_id",
+            str(prepared["index_version_id"]),
+        )
+        if "expected_source_snapshot_fingerprint" not in request_payload:
+            from ai_actuarial.agentic_rag.ready_data_builder import (
+                get_builder_source_fingerprint,
+            )
+
+            source = get_builder_source_fingerprint(
+                db_path=str(db_path),
+                kb_id=kb_id,
+                profile=str(
+                    request_payload.get("profile")
+                    or prepared.get("manifest_profile")
+                    or "general"
+                ),
+                index_version_id=str(request_payload["index_version_id"]),
+            )
+            request_payload["expected_source_snapshot_fingerprint"] = str(
+                source["source_snapshot_fingerprint"]
+            )
+    try:
+        payload = rag_admin_service._build_agentic_ready_manifest_core(
+            db_path=str(db_path),
+            kb_id=kb_id,
+            payload=request_payload,
+            publish=True,
+        )
+        return _CoreResponse(payload)
+    except rag_admin_service.RagAdminError as exc:
+        return _CoreResponse({"error": str(exc)}, exc.status_code)
+
+
+def _wait_for_task(client: TestClient, job_id: str, *, timeout: float = 10.0) -> dict[str, object]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with client.app.state.task_lock:
+            active = client.app.state.active_tasks_ref.get(job_id)
+            if active is not None:
+                task = dict(active)
+            else:
+                task = next(
+                    (
+                        dict(item)
+                        for item in reversed(client.app.state.task_history_ref)
+                        if str(item.get("id") or "") == job_id
+                    ),
+                    {},
+                )
+        if task and str(task.get("status") or "") in {
+            "completed",
+            "error",
+            "stopped",
+        }:
+            return task
+        time.sleep(0.02)
+    raise AssertionError(f"task did not finish: {job_id}")
 
 
 def _sqlite_file_state(db_path: Path) -> tuple[tuple[bool, int, str], ...]:
@@ -90,8 +397,7 @@ def _build_public_rollback_pair(
     kb_id: str,
     file_url: str,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    first_response = client.post(
-        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+    first_response = _post_ready_build_core(client, f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     )
     assert first_response.status_code == 200, first_response.text
@@ -110,8 +416,7 @@ def _build_public_rollback_pair(
             )
     finally:
         storage.close()
-    second_response = client.post(
-        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+    second_response = _post_ready_build_core(client, f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     )
     assert second_response.status_code == 200, second_response.text
@@ -277,13 +582,36 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, object]:
 def _build_test_client(tmp_path: Path, monkeypatch) -> tuple[TestClient, object, dict[str, object]]:
     db_path, config_path, categories_path, files_dir = _write_config_files(tmp_path)
     seed = _seed_storage(db_path, files_dir)
+    storage = Storage(str(db_path))
+    try:
+        default_profile = storage.create_chunk_profile(
+            name="issue-238-api-default",
+            chunk_size=256,
+            chunk_overlap=32,
+        )
+    finally:
+        storage.close()
+    default_profile_id = str(default_profile["profile_id"])
+    _seed_ready_chunk_set(
+        db_path,
+        str(seed["alpha_url"]),
+        default_profile_id,
+        text="Alpha fixture chunk",
+    )
+    _seed_ready_chunk_set(
+        db_path,
+        str(seed["beta_url"]),
+        default_profile_id,
+        text="Beta fixture chunk",
+    )
+    seed["default_chunk_profile_id"] = default_profile_id
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setenv("CATEGORIES_CONFIG_PATH", str(categories_path))
     monkeypatch.setenv("FASTAPI_SESSION_SECRET", "fastapi-rag-admin-test-secret")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.delenv("REQUIRE_AUTH", raising=False)
     app = create_app()
-    client = TestClient(app)
+    client = _KBContractTestClient(app, default_chunk_profile_id=default_profile_id)
     client.headers.update({"X-Auth-Token": seed["admin_token"]})
     return client, app, seed
 
@@ -353,7 +681,7 @@ def _seed_ready_chunk_set(db_path: Path, file_url: str, profile_id: str, *, text
         chunk_set = storage.get_or_create_file_chunk_set(
             file_url=file_url,
             profile_id=profile_id,
-            markdown_hash=f"{file_url}:{profile_id}",
+            markdown_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             status="building",
         )
         storage.replace_global_chunks(
@@ -387,6 +715,7 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/rag/knowledge-bases/{kb_id}/stats" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build" in body["native_paths"]
+    assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/publish" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/files/{file_url:path}" in body["native_paths"]
@@ -398,6 +727,47 @@ def test_fastapi_rag_admin_routes_are_listed_in_native_inventory(tmp_path: Path,
     assert "/api/rag/knowledge-bases/{kb_id}/bindings" in body["native_paths"]
     assert "/api/rag/knowledge-bases/{kb_id}/index" in body["native_paths"]
     assert "/api/chunk-sets/cleanup" in body["native_paths"]
+
+
+def test_explicit_ready_publish_api_is_thin_exact_adapter(tmp_path: Path, monkeypatch) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    def publish(*, db_path: str, kb_id: str, payload: dict[str, object]):
+        captured.update({"db_path": db_path, "kb_id": kb_id, "payload": payload})
+        return {
+            "kb_id": kb_id,
+            "profile": "general",
+            "publication_id": "arp_candidate",
+            "publish_status": "published",
+            "active_publication_id": "arp_candidate",
+        }
+
+    monkeypatch.setattr(ready_publication_router, "publish_ready_data_publication", publish)
+    request_payload = {
+        "profile": "general",
+        "publication_id": "arp_candidate",
+        "expected_active_publication_id": None,
+    }
+
+    response = client.post(
+        "/api/rag/knowledge-bases/kb-publish/agentic-ready-manifest/publish",
+        json=request_payload,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "kb_id": "kb-publish",
+        "profile": "general",
+        "publication_id": "arp_candidate",
+        "publish_status": "published",
+        "active_publication_id": "arp_candidate",
+    }
+    assert captured == {
+        "db_path": str(tmp_path / "index.db"),
+        "kb_id": "kb-publish",
+        "payload": request_payload,
+    }
 
 
 def test_fastapi_rag_admin_read_routes_require_task_or_config_permissions(tmp_path: Path, monkeypatch) -> None:
@@ -479,6 +849,12 @@ def test_fastapi_rag_admin_kb_writes_accept_admin_operator_sessions_with_legacy_
         json={"categories": ["AI"], "action": "replace"},
     )
     assert operator_categories.status_code == 200, operator_categories.text
+
+    _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-session-operator",
+        persist_embeddings=True,
+    )
 
     operator_index = client.post(
         "/api/rag/knowledge-bases/kb-session-operator/index",
@@ -1354,19 +1730,18 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     assert status_before_build.json()["manifest"]["publication_revision"] == 0
     assert status_before_build.json()["publication_state"]["publication_revision"] == 0
 
-    build = client.post(
-        "/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest/build",
+    build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-agentic-manifest/agentic-ready-manifest/build",
         json={},
     )
     assert build.status_code == 200, build.text
     build_body = build.json()
     manifest = build_body["manifest"]
-    assert manifest["status"] == "ready"
+    assert manifest["status"] == "ready", build.text
     assert manifest["usable"] is True
     assert manifest["fallback_mode"] == "agentic"
     assert manifest["doc_count"] == 1
     assert manifest["publication_id"].startswith("arp_")
-    assert manifest["index_version_id"] is None
+    assert manifest["index_version_id"].startswith("idxv_")
     assert manifest["source_version_kind"] == "catalog_chunks_snapshot"
     assert manifest["source_version_id"].startswith("rdsnap_")
     assert len(manifest["artifact_digest"]) == 64
@@ -1381,7 +1756,7 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     assert safe_snapshot["publication_state"]["previous_publication"] is None
     safe_active = safe_snapshot["publication_state"]["active_publication"]
     assert safe_active["publication_id"] == manifest["publication_id"]
-    assert safe_active["index_consumed_by_builder"] is False
+    assert safe_active["index_consumed_by_builder"] is True
     serialized_safe_snapshot = json.dumps(safe_snapshot, sort_keys=True)
     for forbidden in (
         "source_db",
@@ -1422,10 +1797,94 @@ def test_fastapi_rag_admin_agentic_ready_manifest_build_is_kb_scoped(tmp_path: P
     assert stale_manifest["status"] == "ready"
     assert stale_manifest["usable"] is True
     assert stale_manifest["fallback_mode"] == "agentic"
-    assert stale_manifest["event_generation"] == 2
-    assert stale_manifest["pending_evaluation_generation"] == 2
+    assert stale_manifest["event_generation"] >= 2
+    assert (
+        stale_manifest["pending_evaluation_generation"]
+        == stale_manifest["event_generation"]
+    )
     assert stale_manifest["source_state"]["pending_severity"] == "soft_stale"
-    assert stale_manifest["source_state"]["pending_reasons"] == ["membership_added"]
+    assert stale_manifest["source_state"]["pending_reasons"] == [
+        "membership_added",
+        "chunk_binding_updated",
+    ]
+
+
+def test_fastapi_rag_admin_ready_build_launches_real_async_task(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-ready-async",
+            "name": "Ready Async KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    ready_index = _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-ready-async",
+    )
+    status = client.get(
+        "/api/rag/knowledge-bases/kb-ready-async"
+    )
+    assert status.status_code == 200, status.text
+    ready_build_input = status.json()["knowledge_base"]["agentic_ready_manifest"][
+        "ready_build_input"
+    ]
+    assert ready_build_input["index_version_id"] == ready_index["index_version_id"]
+
+    launched = client.post(
+        "/api/rag/knowledge-bases/kb-ready-async/agentic-ready-manifest/build",
+        json=ready_build_input,
+    )
+
+    assert launched.status_code == 202, launched.text
+    assert str(launched.json()["job_id"]).startswith("task_")
+    assert launched.json()["index_version_id"] == ready_index["index_version_id"]
+    completed = _wait_for_task(client, str(launched.json()["job_id"]))
+    assert completed["status"] == "completed", completed
+    assert completed["result"]["index_version_id"] == ready_index["index_version_id"]
+    assert completed["result"]["publication_id"] is None
+    assert completed["result"]["publish_status"] == "awaiting_publish"
+
+    pending = client.get(
+        "/api/rag/knowledge-bases/kb-ready-async/agentic-ready-manifest"
+    )
+    assert pending.status_code == 200, pending.text
+    pending_manifest = pending.json()["manifest"]
+    candidate_id = pending_manifest["last_attempt_publication_id"]
+    assert str(candidate_id).startswith("arp_")
+    assert pending_manifest["automation_state"] == "awaiting_publish"
+    assert pending_manifest["ready_build_input"] == {
+        "contract_version": 1,
+        "index_version_id": ready_index["index_version_id"],
+        "expected_source_snapshot_fingerprint": launched.json()[
+            "source_snapshot_fingerprint"
+        ],
+    }
+    assert pending.json()["publication_state"]["automatic_build_enabled"] is False
+    assert pending.json()["publication_state"]["automatic_publish_enabled"] is False
+
+    published = client.post(
+        "/api/rag/knowledge-bases/kb-ready-async/agentic-ready-manifest/publish",
+        json={
+            "profile": "general",
+            "publication_id": candidate_id,
+            "expected_active_publication_id": None,
+        },
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["publication_id"] == candidate_id
+    settled = client.get(
+        "/api/rag/knowledge-bases/kb-ready-async/agentic-ready-manifest"
+    )
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["manifest"]["automation_state"] == "succeeded"
+    assert settled.json()["manifest"]["last_attempt_publication_id"] == candidate_id
 
 
 @pytest.mark.parametrize("concurrent_mutation", ("publish", "rollback"))
@@ -1446,8 +1905,7 @@ def test_ready_manifest_public_projection_uses_one_sqlite_read_snapshot(
         },
     )
     assert created.status_code == 201, created.text
-    first = client.post(
-        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
 
@@ -1590,8 +2048,7 @@ def test_ready_manifest_rollback_success_response_uses_new_read_snapshot(
         },
     )
     assert created.status_code == 201, created.text
-    first = client.post(
-        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
     storage = Storage(str(tmp_path / "index.db"))
@@ -1608,8 +2065,7 @@ def test_ready_manifest_rollback_success_response_uses_new_read_snapshot(
             )
     finally:
         storage.close()
-    second = client.post(
-        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+    second = _post_ready_build_core(client, f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
     storage = Storage(str(tmp_path / "index.db"))
@@ -1720,19 +2176,12 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    storage = Storage(str(tmp_path / "index.db"))
-    try:
-        ready_index = storage.create_kb_index_version(
-            kb_id="kb-publication-controls",
-            embedding_model="embedding-test",
-            index_type="flat",
-            chunk_count=0,
-        )
-    finally:
-        storage.close()
+    ready_index = _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-publication-controls",
+    )
 
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -1760,8 +2209,7 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     finally:
         storage.close()
 
-    second = client.post(
-        "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/build",
+    second = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest/build",
         json={},
     )
     assert second.status_code == 200, second.text
@@ -1802,7 +2250,7 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     assert active["authoritative_source_version_id"] == second_publication["source_version_id"]
     assert active["observed_index_version_id"] == ready_index["index_version_id"]
     assert active["current_ready_index_version_id"] == ready_index["index_version_id"]
-    assert active["index_consumed_by_builder"] is False
+    assert active["index_consumed_by_builder"] is True
     assert previous["publication_id"] == first_publication["publication_id"]
     serialized_projection = json.dumps(body["publication_state"], sort_keys=True)
     for forbidden in (
@@ -1928,8 +2376,7 @@ def test_public_rollback_rejects_active_publication_from_another_kb_atomically(
         )
         assert created.status_code == 201, created.text
 
-    first_a_response = client.post(
-        "/api/rag/knowledge-bases/kb-rollback-scope-a/agentic-ready-manifest/build",
+    first_a_response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-rollback-scope-a/agentic-ready-manifest/build",
         json={},
     )
     assert first_a_response.status_code == 200, first_a_response.text
@@ -1950,14 +2397,12 @@ def test_public_rollback_rejects_active_publication_from_another_kb_atomically(
     finally:
         storage.close()
 
-    second_a_response = client.post(
-        "/api/rag/knowledge-bases/kb-rollback-scope-a/agentic-ready-manifest/build",
+    second_a_response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-rollback-scope-a/agentic-ready-manifest/build",
         json={},
     )
     assert second_a_response.status_code == 200, second_a_response.text
     second_a = second_a_response.json()["candidate_publication"]
-    active_b_response = client.post(
-        "/api/rag/knowledge-bases/kb-rollback-scope-b/agentic-ready-manifest/build",
+    active_b_response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-rollback-scope-b/agentic-ready-manifest/build",
         json={},
     )
     assert active_b_response.status_code == 200, active_b_response.text
@@ -2064,8 +2509,7 @@ def test_public_rollback_accepts_canonical_legacy_publication_profiles(
         },
     )
     assert created.status_code == 201, created.text
-    first_response = client.post(
-        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+    first_response = _post_ready_build_core(client, f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     )
     assert first_response.status_code == 200, first_response.text
@@ -2086,8 +2530,7 @@ def test_public_rollback_accepts_canonical_legacy_publication_profiles(
     finally:
         storage.close()
 
-    second_response = client.post(
-        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+    second_response = _post_ready_build_core(client, f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
         json={},
     )
     assert second_response.status_code == 200, second_response.text
@@ -2154,8 +2597,7 @@ def test_ready_manifest_public_projection_fail_closes_sensitive_errors(
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-public-errors/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-public-errors/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2262,8 +2704,7 @@ def test_ready_manifest_public_projection_canonicalizes_all_public_state_enums(
             },
         )
         assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-enum-active/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-enum-active/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2437,8 +2878,7 @@ def test_ready_manifest_public_projection_keeps_active_ready_while_automation_ru
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-ready-running/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-ready-running/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2504,8 +2944,7 @@ def test_ready_manifest_public_projection_fail_closes_unknown_source_severity(
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-unknown-severity/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-unknown-severity/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2565,8 +3004,7 @@ def test_ready_manifest_public_projection_preserves_soft_stale_agentic_serving(
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-soft-stale-agentic/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-soft-stale-agentic/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2628,8 +3066,7 @@ def test_ready_manifest_public_projection_fail_closes_corrupt_active_slot(
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-active-slot/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-active-slot/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2700,8 +3137,7 @@ def test_ready_manifest_public_projection_rejects_invalid_active_profile_scope(
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-invalid-active-profile/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-invalid-active-profile/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2762,8 +3198,7 @@ def test_ready_manifest_public_projection_rejects_invalid_previous_profile_scope
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-invalid-previous-profile/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-invalid-previous-profile/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2827,8 +3262,7 @@ def test_ready_manifest_public_projection_only_exposes_previous_status(
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-invalid-previous-status/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-invalid-previous-status/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2879,8 +3313,7 @@ def test_ready_manifest_public_projection_accepts_exact_publication_profile_scop
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-valid-publication-profile/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-valid-publication-profile/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2907,8 +3340,7 @@ def test_ready_manifest_public_projection_preserves_legacy_ready_without_active_
         },
     )
     assert created.status_code == 201, created.text
-    built = client.post(
-        "/api/rag/knowledge-bases/kb-legacy-no-active-slot/agentic-ready-manifest/build",
+    built = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-legacy-no-active-slot/agentic-ready-manifest/build",
         json={},
     )
     assert built.status_code == 200, built.text
@@ -2953,8 +3385,7 @@ def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots
         },
     )
     assert created.status_code == 201, created.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
     storage = Storage(str(tmp_path / "index.db"))
@@ -2971,8 +3402,7 @@ def test_ready_manifest_rollback_rejects_corrupt_previous_without_changing_slots
             )
     finally:
         storage.close()
-    second = client.post(
-        "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/build",
+    second = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-public-rollback-corrupt/agentic-ready-manifest/build",
         json={},
     ).json()["candidate_publication"]
     catalog_path = Path(first["output_dir"]) / "doc_catalog.jsonl"
@@ -3379,8 +3809,7 @@ def test_fastapi_rag_admin_failed_ready_build_keeps_serving_publication(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    first_build = client.post(
-        "/api/rag/knowledge-bases/kb-failed-staging/agentic-ready-manifest/build",
+    first_build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-failed-staging/agentic-ready-manifest/build",
         json={},
     )
     assert first_build.status_code == 200, first_build.text
@@ -3411,8 +3840,7 @@ def test_fastapi_rag_admin_failed_ready_build_keeps_serving_publication(
             "warnings": [],
         },
     )
-    failed_build = client.post(
-        "/api/rag/knowledge-bases/kb-failed-staging/agentic-ready-manifest/build",
+    failed_build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-failed-staging/agentic-ready-manifest/build",
         json={},
     )
     assert failed_build.status_code == 200, failed_build.text
@@ -3442,8 +3870,7 @@ def test_fastapi_rag_admin_idempotent_ready_build_retains_validated_duplicate(
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-staging/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-staging/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -3451,8 +3878,7 @@ def test_fastapi_rag_admin_idempotent_ready_build_retains_validated_duplicate(
     staging_root = Path(first_manifest["output_dir"]).parent
     staging_dirs_before = sorted(path.name for path in staging_root.iterdir())
 
-    duplicate = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-staging/agentic-ready-manifest/build",
+    duplicate = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-staging/agentic-ready-manifest/build",
         json={},
     )
     assert duplicate.status_code == 200, duplicate.text
@@ -3495,8 +3921,7 @@ def test_fastapi_rag_admin_duplicate_keeps_deferred_compatibility_when_gc_mark_l
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -3506,8 +3931,7 @@ def test_fastapi_rag_admin_duplicate_keeps_deferred_compatibility_when_gc_mark_l
         "mark_agentic_ready_publication_redundant_duplicate",
         lambda _storage, _publication_id, *, expected_active_publication_id: False,
     )
-    duplicate = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
+    duplicate = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-gc-guard-loss/agentic-ready-manifest/build",
         json={},
     )
 
@@ -3547,8 +3971,7 @@ def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-cas-loss/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-cas-loss/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -3602,8 +4025,7 @@ def test_fastapi_rag_admin_duplicate_reports_concurrent_active_cas_loss(
         publish_different_identity_after_validation,
     )
 
-    duplicate = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-cas-loss/agentic-ready-manifest/build",
+    duplicate = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-cas-loss/agentic-ready-manifest/build",
         json={},
     )
     assert duplicate.status_code == 200, duplicate.text
@@ -3647,8 +4069,7 @@ def test_fastapi_rag_admin_exception_build_cleans_partial_staging(
         raise RuntimeError("synthetic builder failure")
 
     monkeypatch.setattr(ready_data_builder, "build_l0", partial_failure)
-    failed = client.post(
-        "/api/rag/knowledge-bases/kb-exception-staging/agentic-ready-manifest/build",
+    failed = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-exception-staging/agentic-ready-manifest/build",
         json={},
     )
     assert failed.status_code == 200, failed.text
@@ -3694,8 +4115,7 @@ def test_fastapi_rag_admin_rejects_symlink_staging_root_without_touching_outside
     except OSError as exc:
         pytest.skip(f"directory symlink unavailable: {exc}")
 
-    response = client.post(
-        "/api/rag/knowledge-bases/kb-symlink-staging/agentic-ready-manifest/build",
+    response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-symlink-staging/agentic-ready-manifest/build",
         json={},
     )
 
@@ -3732,8 +4152,7 @@ def test_fastapi_rag_admin_cleanup_warning_does_not_mask_builder_error(
 
     monkeypatch.setattr(ready_data_builder, "build_l0", build_failure)
     monkeypatch.setattr(rag_admin_service, "_remove_unreferenced_staging_dir", cleanup_failure)
-    response = client.post(
-        "/api/rag/knowledge-bases/kb-cleanup-warning/agentic-ready-manifest/build",
+    response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-cleanup-warning/agentic-ready-manifest/build",
         json={},
     )
 
@@ -3770,8 +4189,7 @@ def test_fastapi_rag_admin_rejects_builder_returning_a_different_staging_path(
         return manifest
 
     monkeypatch.setattr(ready_data_builder, "build_l0", build_with_wrong_returned_path)
-    response = client.post(
-        "/api/rag/knowledge-bases/kb-unexpected-build-path/agentic-ready-manifest/build",
+    response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-unexpected-build-path/agentic-ready-manifest/build",
         json={},
     )
 
@@ -3829,8 +4247,7 @@ def test_fastapi_rag_admin_rechecks_staging_root_immediately_before_publish(
         return digest
 
     monkeypatch.setattr(rag_admin_service, "_ready_data_artifact_digest", digest_then_swap_root)
-    response = client.post(
-        "/api/rag/knowledge-bases/kb-publish-root-swap/agentic-ready-manifest/build",
+    response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-publish-root-swap/agentic-ready-manifest/build",
         json={},
     )
 
@@ -3877,8 +4294,7 @@ def test_fastapi_rag_admin_rechecks_generated_candidate_before_publish(
         "_verified_staging_candidate",
         fail_second_verification,
     )
-    response = client.post(
-        "/api/rag/knowledge-bases/kb-publish-recheck/agentic-ready-manifest/build",
+    response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-publish-recheck/agentic-ready-manifest/build",
         json={},
     )
 
@@ -3932,8 +4348,7 @@ def test_fastapi_rag_admin_rechecks_candidate_after_publication_record(
         "_verified_staging_candidate",
         fail_once_after_record,
     )
-    response = client.post(
-        "/api/rag/knowledge-bases/kb-post-record-recheck/agentic-ready-manifest/build",
+    response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-post-record-recheck/agentic-ready-manifest/build",
         json={},
     )
 
@@ -3988,8 +4403,7 @@ def test_fastapi_rag_admin_post_record_gate_failure_can_retry_with_new_attempt(
         fail_once_after_record,
     )
 
-    failed_publish = client.post(
-        "/api/rag/knowledge-bases/kb-post-record-retry/agentic-ready-manifest/build",
+    failed_publish = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-post-record-retry/agentic-ready-manifest/build",
         json={},
     )
     assert failed_publish.status_code == 200, failed_publish.text
@@ -4000,8 +4414,7 @@ def test_fastapi_rag_admin_post_record_gate_failure_can_retry_with_new_attempt(
     assert Path(failed_candidate["output_dir"]).is_dir()
     assert failed_body["publication_state"]["active_publication_id"] is None
 
-    retry = client.post(
-        "/api/rag/knowledge-bases/kb-post-record-retry/agentic-ready-manifest/build",
+    retry = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-post-record-retry/agentic-ready-manifest/build",
         json={},
     )
     assert retry.status_code == 200, retry.text
@@ -4030,8 +4443,7 @@ def test_fastapi_rag_admin_replaces_corrupt_active_with_fresh_duplicate(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-active/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-active/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -4040,8 +4452,7 @@ def test_fastapi_rag_admin_replaces_corrupt_active_with_fresh_duplicate(
     first_output = Path(first_candidate["output_dir"])
     (first_output / "doc_catalog.jsonl").write_text("corrupt\n", encoding="utf-8")
 
-    replacement = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-active/agentic-ready-manifest/build",
+    replacement = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-active/agentic-ready-manifest/build",
         json={},
     )
     assert replacement.status_code == 200, replacement.text
@@ -4080,8 +4491,7 @@ def test_fastapi_rag_admin_excludes_corrupt_different_identity_from_previous(
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-previous/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-previous/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -4100,8 +4510,7 @@ def test_fastapi_rag_admin_excludes_corrupt_different_identity_from_previous(
     finally:
         storage.close()
 
-    second = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-previous/agentic-ready-manifest/build",
+    second = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-previous/agentic-ready-manifest/build",
         json={},
     )
     assert second.status_code == 200, second.text
@@ -4148,8 +4557,7 @@ def test_fastapi_rag_admin_revalidates_different_identity_active_before_previous
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-different-identity-recheck/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-different-identity-recheck/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -4187,8 +4595,7 @@ def test_fastapi_rag_admin_revalidates_different_identity_active_before_previous
         "_validate_recorded_ready_publication",
         validate_then_corrupt,
     )
-    second = client.post(
-        "/api/rag/knowledge-bases/kb-different-identity-recheck/agentic-ready-manifest/build",
+    second = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-different-identity-recheck/agentic-ready-manifest/build",
         json={},
     )
     assert second.status_code == 200, second.text
@@ -4224,8 +4631,7 @@ def test_internal_ready_publication_rollback_rejects_corrupt_previous(
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-rollback/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-rollback/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -4239,8 +4645,7 @@ def test_internal_ready_publication_rollback_rejects_corrupt_previous(
             )
     finally:
         storage.close()
-    second = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-rollback/agentic-ready-manifest/build",
+    second = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-rollback/agentic-ready-manifest/build",
         json={},
     )
     assert second.status_code == 200, second.text
@@ -4300,8 +4705,7 @@ def test_fastapi_rag_admin_revalidates_active_after_dedupe_decision(
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-post-validation-corruption/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-post-validation-corruption/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -4330,8 +4734,7 @@ def test_fastapi_rag_admin_revalidates_active_after_dedupe_decision(
         "_validate_recorded_ready_publication",
         validate_then_corrupt,
     )
-    replacement = client.post(
-        "/api/rag/knowledge-bases/kb-dedupe-post-validation-corruption/agentic-ready-manifest/build",
+    replacement = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-dedupe-post-validation-corruption/agentic-ready-manifest/build",
         json={},
     )
     assert replacement.status_code == 200, replacement.text
@@ -4360,8 +4763,7 @@ def test_fastapi_rag_admin_corrupt_replacement_cas_loss_is_not_reported_as_repla
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-cas-loss/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-cas-loss/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -4429,8 +4831,7 @@ def test_fastapi_rag_admin_corrupt_replacement_cas_loss_is_not_reported_as_repla
         "publish_agentic_ready_publication",
         publish_concurrent_replacement,
     )
-    replacement = client.post(
-        "/api/rag/knowledge-bases/kb-corrupt-cas-loss/agentic-ready-manifest/build",
+    replacement = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-corrupt-cas-loss/agentic-ready-manifest/build",
         json={},
     )
     assert replacement.status_code == 200, replacement.text
@@ -4486,8 +4887,7 @@ def test_fastapi_rag_admin_rejects_real_staging_swap_after_record(
         return publication
 
     monkeypatch.setattr(Storage, "record_agentic_ready_publication", record_then_swap_root)
-    response = client.post(
-        "/api/rag/knowledge-bases/kb-real-post-record-swap/agentic-ready-manifest/build",
+    response = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-real-post-record-swap/agentic-ready-manifest/build",
         json={},
     )
 
@@ -4518,8 +4918,7 @@ def test_fastapi_rag_admin_first_publication_preserves_legacy_ready_manifest(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    initial_build = client.post(
-        "/api/rag/knowledge-bases/kb-legacy-ready/agentic-ready-manifest/build",
+    initial_build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-legacy-ready/agentic-ready-manifest/build",
         json={},
     )
     assert initial_build.status_code == 200, initial_build.text
@@ -4555,8 +4954,7 @@ def test_fastapi_rag_admin_first_publication_preserves_legacy_ready_manifest(
     finally:
         storage.close()
 
-    migrated_build = client.post(
-        "/api/rag/knowledge-bases/kb-legacy-ready/agentic-ready-manifest/build",
+    migrated_build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-legacy-ready/agentic-ready-manifest/build",
         json={},
     )
     assert migrated_build.status_code == 200, migrated_build.text
@@ -4585,8 +4983,7 @@ def test_fastapi_rag_admin_invalid_legacy_manifest_is_not_registered_as_previous
         },
     )
     assert create_kb.status_code == 201, create_kb.text
-    initial = client.post(
-        "/api/rag/knowledge-bases/kb-invalid-legacy/agentic-ready-manifest/build",
+    initial = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-invalid-legacy/agentic-ready-manifest/build",
         json={},
     )
     assert initial.status_code == 200, initial.text
@@ -4622,8 +5019,7 @@ def test_fastapi_rag_admin_invalid_legacy_manifest_is_not_registered_as_previous
         storage.close()
     (legacy_output_dir / "doc_catalog.jsonl").write_text("not-json\n", encoding="utf-8")
 
-    blocked = client.post(
-        "/api/rag/knowledge-bases/kb-invalid-legacy/agentic-ready-manifest/build",
+    blocked = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-invalid-legacy/agentic-ready-manifest/build",
         json={},
     )
     assert blocked.status_code == 200, blocked.text
@@ -4653,16 +5049,12 @@ def test_fastapi_rag_admin_ready_build_uses_builder_input_snapshot_not_index(
     )
     assert create_kb.status_code == 201, create_kb.text
 
+    ready = _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-index-source",
+    )
     storage = Storage(str(tmp_path / "index.db"))
     try:
-        ready = storage.create_kb_index_version(
-            kb_id="kb-index-source",
-            embedding_model="test-model",
-            index_type="faiss",
-            chunk_count=1,
-            status="ready",
-            built_at="2026-08-18T10:00:00+00:00",
-        )
         storage._conn.execute(
             """
             INSERT INTO kb_index_versions (
@@ -4685,8 +5077,7 @@ def test_fastapi_rag_admin_ready_build_uses_builder_input_snapshot_not_index(
     finally:
         storage.close()
 
-    build = client.post(
-        "/api/rag/knowledge-bases/kb-index-source/agentic-ready-manifest/build",
+    build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-index-source/agentic-ready-manifest/build",
         json={},
     )
     assert build.status_code == 200, build.text
@@ -4715,14 +5106,13 @@ def test_fastapi_rag_admin_agentic_ready_manifest_builds_regulation_profile(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    build = client.post(
-        "/api/rag/knowledge-bases/kb-regulation-manifest/agentic-ready-manifest/build",
+    build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-regulation-manifest/agentic-ready-manifest/build",
         json={},
     )
     assert build.status_code == 200, build.text
     manifest = build.json()["manifest"]
     assert manifest["profile"] == "regulation"
-    assert manifest["status"] == "ready"
+    assert manifest["status"] == "ready", build.text
     assert manifest["usable"] is True
     assert manifest["fallback_mode"] == "agentic"
     output_dir = Path(manifest["output_dir"])
@@ -4736,24 +5126,31 @@ def test_fastapi_rag_admin_agentic_ready_manifest_builds_formula_profile(
     monkeypatch,
 ) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    formula_source = "\n".join(
+        [
+            "# Net premium",
+            "Net Premium = PV Benefits / PV Premiums.",
+            "| Term | Description |",
+            "| q_x | mortality rate |",
+            "| v | discount factor |",
+            "The reserve calculation uses mortality rate and discount rate assumptions.",
+        ]
+    )
     storage = Storage(str(tmp_path / "index.db"))
     try:
         storage.update_file_markdown(
             str(seed["alpha_url"]),
-            "\n".join(
-                [
-                    "# Net premium",
-                    "Net Premium = PV Benefits / PV Premiums.",
-                    "| Term | Description |",
-                    "| q_x | mortality rate |",
-                    "| v | discount factor |",
-                    "The reserve calculation uses mortality rate and discount rate assumptions.",
-                ]
-            ),
+            formula_source,
             "manual",
         )
     finally:
         storage.close()
+    _seed_ready_chunk_set(
+        tmp_path / "index.db",
+        str(seed["alpha_url"]),
+        str(seed["default_chunk_profile_id"]),
+        text=formula_source,
+    )
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",
@@ -4767,8 +5164,7 @@ def test_fastapi_rag_admin_agentic_ready_manifest_builds_formula_profile(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    build = client.post(
-        "/api/rag/knowledge-bases/kb-formula-manifest/agentic-ready-manifest/build",
+    build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-formula-manifest/agentic-ready-manifest/build",
         json={},
     )
     assert build.status_code == 200, build.text
@@ -4805,16 +5201,14 @@ def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    ready_build = client.post(
-        "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
+    ready_build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
         json={},
     )
     assert ready_build.status_code == 200, ready_build.text
     ready_manifest = ready_build.json()["manifest"]
     assert ready_manifest["status"] == "ready"
 
-    traversal = client.post(
-        "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
+    traversal = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
         json={"output_dir": "../escape"},
     )
     assert traversal.status_code == 400
@@ -4826,8 +5220,7 @@ def test_fastapi_rag_admin_agentic_manifest_rejects_output_dir_escape(
     assert after_traversal_manifest["status"] == "ready"
     assert after_traversal_manifest["output_dir"] == ready_manifest["output_dir"]
 
-    absolute_outside = client.post(
-        "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
+    absolute_outside = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-output-dir-guard/agentic-ready-manifest/build",
         json={"output_dir": str(tmp_path.parent / "outside-agentic-ready-data")},
     )
     assert absolute_outside.status_code == 400
@@ -4877,8 +5270,7 @@ def test_fastapi_rag_admin_legacy_manifest_stale_uses_bound_chunks_and_catalog_m
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    build = client.post(
-        "/api/rag/knowledge-bases/kb-bound-manifest/agentic-ready-manifest/build",
+    build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-bound-manifest/agentic-ready-manifest/build",
         json={},
     )
     assert build.status_code == 200, build.text
@@ -4966,8 +5358,7 @@ def test_fastapi_rag_admin_legacy_manifest_ignores_binding_outside_builder_input
     )
     assert create_kb.status_code == 201, create_kb.text
 
-    build = client.post(
-        "/api/rag/knowledge-bases/kb-legacy-invalid-binding/agentic-ready-manifest/build",
+    build = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-legacy-invalid-binding/agentic-ready-manifest/build",
         json={},
     )
     assert build.status_code == 200, build.text
@@ -5032,8 +5423,7 @@ def test_manual_ready_build_clears_captured_hard_generation_after_safe_publish(
         },
     )
     assert created.status_code == 201, created.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-manual-generation/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-manual-generation/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -5049,8 +5439,7 @@ def test_manual_ready_build_clears_captured_hard_generation_after_safe_publish(
     finally:
         storage.close()
 
-    rebuilt = client.post(
-        "/api/rag/knowledge-bases/kb-manual-generation/agentic-ready-manifest/build",
+    rebuilt = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-manual-generation/agentic-ready-manifest/build",
         json={},
     )
 
@@ -5078,8 +5467,7 @@ def test_manual_ready_build_does_not_clear_generation_created_during_build(
         },
     )
     assert created.status_code == 201, created.text
-    first = client.post(
-        "/api/rag/knowledge-bases/kb-manual-generation-race/agentic-ready-manifest/build",
+    first = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-manual-generation-race/agentic-ready-manifest/build",
         json={},
     )
     assert first.status_code == 200, first.text
@@ -5115,8 +5503,7 @@ def test_manual_ready_build_does_not_clear_generation_created_during_build(
 
     monkeypatch.setattr(ready_data_builder, "build_l0", build_then_mark_new_generation)
 
-    rebuilt = client.post(
-        "/api/rag/knowledge-bases/kb-manual-generation-race/agentic-ready-manifest/build",
+    rebuilt = _post_ready_build_core(client, "/api/rag/knowledge-bases/kb-manual-generation-race/agentic-ready-manifest/build",
         json={},
     )
 
@@ -5164,9 +5551,12 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
             kb_id="kb-files-test",
             profile="general",
         )
-        assert added_state["event_generation"] == 1
-        assert added_state["pending_severity"] == "soft_stale"
-        assert added_state["pending_reasons"] == ["membership_added"]
+        assert added_state["event_generation"] == 2
+        assert added_state["pending_severity"] == "hard_stale"
+        assert added_state["pending_reasons"] == [
+            "membership_added",
+            "access_scope_restricted",
+        ]
     finally:
         storage.close()
 
@@ -5183,9 +5573,13 @@ def test_fastapi_rag_admin_kb_file_membership_routes_work(tmp_path: Path, monkey
             kb_id="kb-files-test",
             profile="general",
         )
-        assert removed_state["event_generation"] == 2
+        assert removed_state["event_generation"] == 3
         assert removed_state["pending_severity"] == "hard_stale"
-        assert removed_state["pending_reasons"] == ["membership_added", "membership_removed"]
+        assert removed_state["pending_reasons"] == [
+            "membership_added",
+            "access_scope_restricted",
+            "membership_removed",
+        ]
         assert removed_state["serving_allowed"] is False
     finally:
         storage.close()
@@ -5207,6 +5601,11 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: 
     )
     assert create_kb.status_code == 201, create_kb.text
 
+    _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-index-dirty",
+        persist_embeddings=True,
+    )
     storage = Storage(str(tmp_path / "index.db"))
     try:
         indexed_at = "2026-05-24T02:00:00+00:00"
@@ -5226,25 +5625,9 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: 
             ("kb-index-dirty:alpha:0", "kb-index-dirty", alpha_url, 0, "Alpha indexed chunk", 3, "Alpha", "hash-alpha", indexed_at),
         )
         storage._conn.execute(
-            "UPDATE kb_chunk_bindings SET bound_at = ? WHERE kb_id = ? AND file_url = ?",
-            (indexed_at, "kb-index-dirty", alpha_url),
+            "UPDATE rag_knowledge_bases SET chunk_count = ?, index_dirty_at = NULL WHERE kb_id = ?",
+            (1, "kb-index-dirty"),
         )
-        storage._conn.execute(
-            "UPDATE rag_knowledge_bases SET chunk_count = ?, updated_at = ? WHERE kb_id = ?",
-            (1, indexed_at, "kb-index-dirty"),
-        )
-        storage._conn.commit()
-        storage.create_kb_index_version(
-            kb_id="kb-index-dirty",
-            embedding_provider="openai",
-            embedding_model="text-embedding-3-large",
-            embedding_dimension=3072,
-            index_type="Flat",
-            chunk_count=1,
-            status="ready",
-            built_at=indexed_at,
-        )
-        storage._conn.execute("UPDATE rag_knowledge_bases SET index_dirty_at = NULL WHERE kb_id = ?", ("kb-index-dirty",))
         storage._conn.commit()
     finally:
         storage.close()
@@ -5263,46 +5646,27 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: 
     assert after_add.status_code == 200, after_add.text
     assert after_add.json()["knowledge_base"]["needs_reindex"] is True
 
+    _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-index-dirty",
+        persist_embeddings=True,
+    )
+
     incremental = client.post(
         "/api/rag/knowledge-bases/kb-index-dirty/index",
         json={"incremental": True},
     )
     assert incremental.status_code == 202, incremental.text
-    assert incremental.json()["file_count"] == 1
-
-    storage = Storage(str(tmp_path / "index.db"))
-    try:
-        beta_indexed_at = "2026-05-24T02:10:00+00:00"
-        storage._conn.execute(
-            "UPDATE rag_kb_files SET indexed_at = ?, chunk_count = ? WHERE kb_id = ? AND file_url = ?",
-            (beta_indexed_at, 1, "kb-index-dirty", beta_url),
-        )
-        storage._conn.execute(
-            "UPDATE catalog_items SET markdown_updated_at = ? WHERE file_url = ?",
-            (beta_indexed_at, beta_url),
-        )
-        storage._conn.commit()
-        storage.create_kb_index_version(
-            kb_id="kb-index-dirty",
-            embedding_provider="openai",
-            embedding_model="text-embedding-3-large",
-            embedding_dimension=3072,
-            index_type="Flat",
-            chunk_count=2,
-            status="ready",
-            built_at=beta_indexed_at,
-        )
-        storage._conn.execute("UPDATE rag_knowledge_bases SET index_dirty_at = NULL WHERE kb_id = ?", ("kb-index-dirty",))
-        storage._conn.commit()
-    finally:
-        storage.close()
+    assert incremental.json()["file_count"] == 2
+    completed = _wait_for_task(client, str(incremental.json()["job_id"]))
+    assert completed["status"] == "completed", completed
 
     remove_alpha = client.delete(f"/api/rag/knowledge-bases/kb-index-dirty/files/{alpha_url}")
     assert remove_alpha.status_code == 200, remove_alpha.text
 
     after_delete = client.get("/api/rag/knowledge-bases/kb-index-dirty")
     assert after_delete.status_code == 200, after_delete.text
-    assert after_delete.json()["knowledge_base"]["needs_reindex"] is False
+    assert after_delete.json()["knowledge_base"]["needs_reindex"] is True
 
     storage = Storage(str(tmp_path / "index.db"))
     try:
@@ -5312,10 +5676,189 @@ def test_fastapi_rag_admin_kb_add_marks_dirty_and_delete_soft_applies(tmp_path: 
         ).fetchone()[0]
     finally:
         storage.close()
-    assert stale_chunks == 0
+    assert stale_chunks == 1
 
 
-def test_fastapi_rag_admin_rejects_incremental_index_after_embedding_change(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("kb_mode", "selector"),
+    [
+        ("manual", {"file_urls": ["alpha"]}),
+        ("category", {"categories": ["AI"]}),
+        ("all", {}),
+    ],
+)
+def test_kb_create_preflight_missing_chunks_leaves_no_partial_kb(
+    tmp_path: Path,
+    monkeypatch,
+    kb_mode: str,
+    selector: dict[str, object],
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": f"missing-{kb_mode}", "chunk_size": 333, "chunk_overlap": 17},
+    )
+    assert profile.status_code == 201, profile.text
+    selector_payload = dict(selector)
+    if selector_payload.get("file_urls") == ["alpha"]:
+        selector_payload["file_urls"] = [seed["alpha_url"]]
+
+    response = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": f"kb-preflight-{kb_mode}",
+            "name": f"Preflight {kb_mode}",
+            "kb_mode": kb_mode,
+            "chunk_profile_id": profile.json()["profile"]["profile_id"],
+            **selector_payload,
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "missing_chunk:" in response.json()["error"]
+    assert "Chunk & Embedding" in response.json()["error"]
+    missing = client.get(f"/api/rag/knowledge-bases/kb-preflight-{kb_mode}")
+    assert missing.status_code == 404
+
+
+def test_manual_add_preflight_missing_chunk_leaves_membership_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "missing-manual-add", "chunk_size": 334, "chunk_overlap": 18},
+    )
+    profile_id = profile.json()["profile"]["profile_id"]
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-preflight-manual-add",
+            "name": "Preflight Manual Add",
+            "kb_mode": "manual",
+            "chunk_profile_id": profile_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    response = client.post(
+        "/api/rag/knowledge-bases/kb-preflight-manual-add/files",
+        json={"file_urls": [seed["alpha_url"]]},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "missing_chunk:" in response.json()["error"]
+    files = client.get("/api/rag/knowledge-bases/kb-preflight-manual-add/files")
+    assert files.json()["files"] == []
+
+
+def test_category_replace_preflight_preserves_existing_mapping_membership_and_binding(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "category-replace-preflight", "chunk_size": 335, "chunk_overlap": 19},
+    )
+    profile_id = profile.json()["profile"]["profile_id"]
+    alpha_set = _seed_ready_chunk_set(
+        db_path, seed["alpha_url"], profile_id, text="Existing AI chunk"
+    )
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET category = ? WHERE file_url = ?",
+            ("Risk", seed["beta_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-category-preflight",
+            "name": "Category Preflight",
+            "kb_mode": "category",
+            "chunk_profile_id": profile_id,
+            "categories": ["AI"],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    response = client.post(
+        "/api/rag/knowledge-bases/kb-category-preflight/categories",
+        json={"action": "replace", "categories": ["Risk"]},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "missing_chunk:" in response.json()["error"]
+    assert client.get(
+        "/api/rag/knowledge-bases/kb-category-preflight/categories"
+    ).json()["categories"] == ["AI"]
+    files = client.get("/api/rag/knowledge-bases/kb-category-preflight/files")
+    assert [row["file_url"] for row in files.json()["files"]] == [seed["alpha_url"]]
+    storage = Storage(str(db_path))
+    try:
+        assert storage._conn.execute(
+            "SELECT chunk_set_id FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-category-preflight",),
+        ).fetchone()[0] == alpha_set["chunk_set_id"]
+    finally:
+        storage.close()
+
+
+def test_profile_update_preflight_preserves_old_profile_and_bindings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    old_profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "old-profile", "chunk_size": 256, "chunk_overlap": 32},
+    ).json()["profile"]
+    new_profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "new-profile", "chunk_size": 512, "chunk_overlap": 32},
+    ).json()["profile"]
+    old_set = _seed_ready_chunk_set(
+        db_path, seed["alpha_url"], old_profile["profile_id"], text="Old profile chunk"
+    )
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-profile-preflight",
+            "name": "Profile Preflight",
+            "kb_mode": "manual",
+            "chunk_profile_id": old_profile["profile_id"],
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    response = client.put(
+        "/api/rag/knowledge-bases/kb-profile-preflight",
+        json={"chunk_profile_id": new_profile["profile_id"]},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "missing_chunk:" in response.json()["error"]
+    current = client.get("/api/rag/knowledge-bases/kb-profile-preflight")
+    assert current.json()["knowledge_base"]["chunk_profile_id"] == old_profile["profile_id"]
+    storage = Storage(str(db_path))
+    try:
+        assert storage._conn.execute(
+            "SELECT chunk_set_id FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-profile-preflight",),
+        ).fetchone()[0] == old_set["chunk_set_id"]
+    finally:
+        storage.close()
+
+
+def test_fastapi_rag_admin_rebuilds_complete_index_after_embedding_change(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     alpha_url = seed["alpha_url"]
 
@@ -5329,6 +5872,12 @@ def test_fastapi_rag_admin_rejects_incremental_index_after_embedding_change(tmp_
         },
     )
     assert create_kb.status_code == 201, create_kb.text
+
+    _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-embedding-change",
+        persist_embeddings=True,
+    )
 
     storage = Storage(str(tmp_path / "index.db"))
     try:
@@ -5360,8 +5909,10 @@ def test_fastapi_rag_admin_rejects_incremental_index_after_embedding_change(tmp_
         json={"incremental": True},
     )
 
-    assert incremental.status_code == 409, incremental.text
-    assert "full re-embed" in incremental.text.lower()
+    assert incremental.status_code == 202, incremental.text
+    assert incremental.json()["embedding_identity_key"] == create_kb.json()[
+        "knowledge_base"
+    ]["embedding_identity_key"]
 
 
 def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) -> None:
@@ -5434,9 +5985,20 @@ def test_fastapi_rag_admin_kb_detail_surfaces_work(tmp_path: Path, monkeypatch) 
     assert categories_after_replace.status_code == 200, categories_after_replace.text
     assert categories_after_replace.json()["categories"] == ["Risk"]
 
+    add_alpha = client.post(
+        "/api/rag/knowledge-bases/kb-detail-test/files",
+        json={"file_urls": [alpha_url]},
+    )
+    assert add_alpha.status_code == 200, add_alpha.text
+    _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-detail-test",
+        persist_embeddings=True,
+    )
+
     index = client.post(
         "/api/rag/knowledge-bases/kb-detail-test/index",
-        json={"file_urls": [alpha_url]},
+        json={},
     )
     assert index.status_code in {200, 202}, index.text
 
@@ -5458,6 +6020,10 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
     )
     assert create_profile.status_code == 201, create_profile.text
     assert create_profile.json()["profile"]["chunk_overlap"] == 0
+    profile_id = create_profile.json()["profile"]["profile_id"]
+    _seed_ready_chunk_set(
+        tmp_path / "index.db", alpha_url, profile_id, text="Zero overlap chunk"
+    )
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",
@@ -5465,6 +6031,7 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
             "kb_id": "kb-zero-overlap",
             "name": "KB Zero Overlap",
             "kb_mode": "manual",
+            "chunk_profile_id": profile_id,
             "chunk_size": 256,
             "chunk_overlap": 0,
             "file_urls": [alpha_url],
@@ -5472,6 +6039,12 @@ def test_fastapi_rag_admin_preserves_zero_chunk_overlap_and_requires_task_bridge
     )
     assert create_kb.status_code == 201, create_kb.text
     assert create_kb.json()["knowledge_base"]["chunk_overlap"] == 0
+
+    _prepare_committed_kb_index(
+        tmp_path / "index.db",
+        "kb-zero-overlap",
+        persist_embeddings=True,
+    )
 
     index = client.post(
         "/api/rag/knowledge-bases/kb-zero-overlap/index",
@@ -5524,15 +6097,34 @@ def test_fastapi_rag_admin_create_kb_uses_existing_chunk_profile_bindings(tmp_pa
             ],
             overwrite=True,
         )
+        beta_chunk_set = storage.get_or_create_file_chunk_set(
+            file_url=beta_url,
+            profile_id=profile_id,
+            markdown_hash="beta-markdown-hash",
+            status="building",
+        )
+        storage.replace_global_chunks(
+            chunk_set_id=beta_chunk_set["chunk_set_id"],
+            chunks=[
+                {
+                    "chunk_index": 0,
+                    "content": "Beta chunk",
+                    "token_count": 2,
+                    "section_hierarchy": "Beta",
+                }
+            ],
+            overwrite=True,
+        )
     finally:
         storage.close()
 
     selectable = client.get("/api/rag/files/selectable", params={"profile_id": profile_id})
     assert selectable.status_code == 200, selectable.text
     selectable_files = selectable.json()["files"]
-    assert [item["url"] for item in selectable_files] == [alpha_url]
-    assert selectable_files[0]["chunk_set_id"] == chunk_set["chunk_set_id"]
-    assert selectable_files[0]["chunk_profile_id"] == profile_id
+    selectable_by_url = {item["url"]: item for item in selectable_files}
+    assert set(selectable_by_url) == {alpha_url, beta_url}
+    assert selectable_by_url[alpha_url]["chunk_set_id"] == chunk_set["chunk_set_id"]
+    assert selectable_by_url[alpha_url]["chunk_profile_id"] == profile_id
 
     create_kb = client.post(
         "/api/rag/knowledge-bases",
@@ -5550,19 +6142,20 @@ def test_fastapi_rag_admin_create_kb_uses_existing_chunk_profile_bindings(tmp_pa
     body = create_kb.json()
     assert body["knowledge_base"]["chunk_size"] == 300
     assert body["knowledge_base"]["chunk_overlap"] == 50
-    assert body["chunk_bindings"]["bound"] == 1
-    assert body["chunk_bindings"]["skipped_without_chunks"] == 1
+    assert body["chunk_bindings"]["bound"] == 2
+    assert body["chunk_bindings"]["skipped_without_chunks"] == 0
 
     files = client.get("/api/rag/knowledge-bases/kb-existing-chunks/files")
     assert files.status_code == 200, files.text
-    assert [item["file_url"] for item in files.json()["files"]] == [alpha_url]
+    assert [item["file_url"] for item in files.json()["files"]] == [
+        alpha_url,
+        beta_url,
+    ]
 
     bindings = client.get("/api/rag/knowledge-bases/kb-existing-chunks/bindings")
     assert bindings.status_code == 200, bindings.text
-    binding = bindings.json()["bindings"][0]
-    assert binding["file_url"] == alpha_url
-    assert binding["chunk_set_id"] == chunk_set["chunk_set_id"]
-    assert binding["binding_mode"] == "follow_latest"
+    assert bindings.json()["binding"]["bound_file_count"] == 2
+    assert bindings.json()["binding"]["bound_chunk_count"] == 2
 
 
 def test_fastapi_rag_admin_category_stats_and_kb_profile_metadata(tmp_path: Path, monkeypatch) -> None:
@@ -5574,8 +6167,8 @@ def test_fastapi_rag_admin_category_stats_and_kb_profile_metadata(tmp_path: Path
         "/api/chunk/profiles",
         json={
             "name": "stats-profile",
-            "chunk_size": 256,
-            "chunk_overlap": 32,
+            "chunk_size": 321,
+            "chunk_overlap": 31,
         },
     )
     assert create_profile.status_code == 201, create_profile.text
@@ -5650,14 +6243,18 @@ def test_fastapi_rag_admin_file_management_marks_membership_source_state(tmp_pat
             kb_id="kb-membership-api",
             profile="general",
         )
-        assert state["event_generation"] == 1
-        assert state["pending_severity"] == "soft_stale"
-        assert state["pending_reasons"] == ["membership_added"]
+        assert state["event_generation"] == 3
+        assert state["pending_severity"] == "hard_stale"
+        assert state["pending_reasons"] == [
+            "membership_added",
+            "access_scope_restricted",
+            "chunk_binding_updated",
+        ]
     finally:
         storage.close()
 
 
-def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_incremental_index(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_rag_admin_category_update_syncs_new_files_before_index(tmp_path: Path, monkeypatch) -> None:
     client, _app, seed = _build_test_client(tmp_path, monkeypatch)
     db_path = tmp_path / "index.db"
     alpha_url = seed["alpha_url"]
@@ -5708,14 +6305,26 @@ def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_increm
     finally:
         storage.close()
 
+    category_update = client.post(
+        "/api/rag/knowledge-bases/kb-category-sync/categories",
+        json={
+            "action": "replace",
+            "categories": ["AI"],
+            "chunk_profile_id": profile_id,
+        },
+    )
+    assert category_update.status_code == 200, category_update.text
+    assert sorted(category_update.json()["category_sync"]["added_file_urls"]) == [
+        beta_url
+    ]
+    assert category_update.json()["chunk_bindings"]["bound"] == 2
+
     index = client.post(
         "/api/rag/knowledge-bases/kb-category-sync/index",
         json={"incremental": True},
     )
     assert index.status_code == 202, index.text
     assert index.json()["file_count"] == 2
-    assert sorted(index.json()["category_sync"]["added_file_urls"]) == [beta_url]
-    assert index.json()["chunk_bindings"]["bound"] == 2
 
     files_after = client.get("/api/rag/knowledge-bases/kb-category-sync/files")
     assert files_after.status_code == 200, files_after.text
@@ -5733,6 +6342,208 @@ def test_fastapi_rag_admin_category_index_syncs_new_category_files_before_increm
             "membership_added",
             "access_scope_restricted",
             "chunk_binding_updated",
+        ]
+    finally:
+        storage.close()
+
+
+def test_fastapi_rag_admin_removing_last_category_reconciles_files_and_bindings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "remove-last-profile", "chunk_size": 256, "chunk_overlap": 32},
+    )
+    assert profile.status_code == 201, profile.text
+    profile_id = profile.json()["profile"]["profile_id"]
+    _seed_ready_chunk_set(
+        db_path,
+        seed["alpha_url"],
+        profile_id,
+        text="Remove last category chunk",
+    )
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-remove-last-category",
+            "name": "Remove Last Category",
+            "kb_mode": "category",
+            "chunk_profile_id": profile_id,
+            "categories": ["AI"],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    removed = client.post(
+        "/api/rag/knowledge-bases/kb-remove-last-category/categories",
+        json={"action": "remove", "categories": ["AI"]},
+    )
+
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["categories"] == []
+    assert removed.json()["category_sync"]["removed_file_urls"] == [
+        seed["alpha_url"]
+    ]
+    files = client.get("/api/rag/knowledge-bases/kb-remove-last-category/files")
+    assert files.status_code == 200, files.text
+    assert files.json()["files"] == []
+    storage = Storage(str(db_path))
+    try:
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-remove-last-category",),
+        ).fetchone()[0] == 0
+    finally:
+        storage.close()
+
+
+def test_fastapi_rag_admin_category_remove_preserves_files_selected_by_remaining_mapping(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "remove-overlap-profile", "chunk_size": 256, "chunk_overlap": 32},
+    )
+    assert profile.status_code == 201, profile.text
+    profile_id = profile.json()["profile"]["profile_id"]
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET category = ? WHERE file_url = ?",
+            ("AI; Risk", seed["beta_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+    alpha_set = _seed_ready_chunk_set(
+        db_path, seed["alpha_url"], profile_id, text="AI-only chunk"
+    )
+    beta_set = _seed_ready_chunk_set(
+        db_path, seed["beta_url"], profile_id, text="AI and Risk chunk"
+    )
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-remove-overlap-category",
+            "name": "Remove Overlap Category",
+            "kb_mode": "category",
+            "chunk_profile_id": profile_id,
+            "categories": ["AI", "Risk"],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    removed = client.post(
+        "/api/rag/knowledge-bases/kb-remove-overlap-category/categories",
+        json={"action": "remove", "categories": ["AI"]},
+    )
+
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["categories"] == ["Risk"]
+    assert removed.json()["category_sync"]["removed_file_urls"] == [
+        seed["alpha_url"]
+    ]
+    files = client.get("/api/rag/knowledge-bases/kb-remove-overlap-category/files")
+    assert files.status_code == 200, files.text
+    assert [item["file_url"] for item in files.json()["files"]] == [
+        seed["beta_url"]
+    ]
+    storage = Storage(str(db_path))
+    try:
+        rows = storage._conn.execute(
+            "SELECT file_url, chunk_set_id FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-remove-overlap-category",),
+        ).fetchall()
+        assert [(row[0], row[1]) for row in rows] == [
+            (seed["beta_url"], beta_set["chunk_set_id"])
+        ]
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM global_chunks WHERE chunk_set_id = ?",
+            (alpha_set["chunk_set_id"],),
+        ).fetchone()[0] == 1
+    finally:
+        storage.close()
+
+
+def test_fastapi_rag_admin_category_remove_missing_new_remaining_chunk_rolls_back(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "remove-rollback-profile", "chunk_size": 333, "chunk_overlap": 33},
+    )
+    assert profile.status_code == 201, profile.text
+    profile_id = profile.json()["profile"]["profile_id"]
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET category = ? WHERE file_url = ?",
+            ("Finance", seed["beta_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+    alpha_set = _seed_ready_chunk_set(
+        db_path, seed["alpha_url"], profile_id, text="Original AI chunk"
+    )
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-remove-category-rollback",
+            "name": "Remove Category Rollback",
+            "kb_mode": "category",
+            "chunk_profile_id": profile_id,
+            "categories": ["AI", "Risk"],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET category = ? WHERE file_url = ?",
+            ("Risk", seed["beta_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    removed = client.post(
+        "/api/rag/knowledge-bases/kb-remove-category-rollback/categories",
+        json={"action": "remove", "categories": ["AI"]},
+    )
+
+    assert removed.status_code == 400, removed.text
+    assert removed.json()["error"].startswith("missing_chunk:")
+    categories = client.get(
+        "/api/rag/knowledge-bases/kb-remove-category-rollback/categories"
+    )
+    assert categories.status_code == 200, categories.text
+    assert categories.json()["categories"] == ["AI", "Risk"]
+    files = client.get(
+        "/api/rag/knowledge-bases/kb-remove-category-rollback/files"
+    )
+    assert files.status_code == 200, files.text
+    assert [item["file_url"] for item in files.json()["files"]] == [
+        seed["alpha_url"]
+    ]
+    storage = Storage(str(db_path))
+    try:
+        rows = storage._conn.execute(
+            "SELECT file_url, chunk_set_id FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-remove-category-rollback",),
+        ).fetchall()
+        assert [(row[0], row[1]) for row in rows] == [
+            (seed["alpha_url"], alpha_set["chunk_set_id"])
         ]
     finally:
         storage.close()
@@ -5798,20 +6609,45 @@ def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path,
     )
     assert create_kb.status_code == 201, create_kb.text
 
+    binding_payload = {
+        "bindings": [
+            {
+                "file_url": alpha_url,
+                "chunk_set_id": chunk_set["chunk_set_id"],
+                "binding_mode": "follow_latest",
+            }
+        ]
+    }
     bind = client.post(
         "/api/rag/knowledge-bases/kb-direct-bind/bindings",
-        json={
-            "bindings": [
-                {
-                    "file_url": alpha_url,
-                    "chunk_set_id": chunk_set["chunk_set_id"],
-                    "binding_mode": "follow_latest",
-                }
-            ]
-        },
+        json=binding_payload,
     )
     assert bind.status_code == 200, bind.text
     assert bind.json()["created"] == 1
+    assert bind.json()["binding"] == {
+        "contract_version": 1,
+        "kb_id": "kb-direct-bind",
+        "binding_snapshot_fingerprint": bind.json()["binding"][
+            "binding_snapshot_fingerprint"
+        ],
+        "bound_file_count": 1,
+        "bound_chunk_set_count": 1,
+        "bound_chunk_count": 1,
+    }
+    repeated = client.post(
+        "/api/rag/knowledge-bases/kb-direct-bind/bindings",
+        json=binding_payload,
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == 0
+    assert repeated.json()["existing"] == 1
+    assert repeated.json()["binding"] == bind.json()["binding"]
+
+    bindings = client.get("/api/rag/knowledge-bases/kb-direct-bind/bindings")
+    assert bindings.status_code == 200, bindings.text
+    assert bindings.json()["binding"] == bind.json()["binding"]
+    assert "content" not in json.dumps(bindings.json())
+    assert "vector" not in json.dumps(bindings.json())
 
     storage = Storage(str(db_path))
     try:
@@ -5836,6 +6672,235 @@ def test_fastapi_rag_admin_chunk_binding_adds_kb_file_membership(tmp_path: Path,
     removed = client.delete(f"/api/rag/knowledge-bases/kb-direct-bind/files/{alpha_url}")
     assert removed.status_code == 200, removed.text
 
-    bindings = client.get("/api/rag/knowledge-bases/kb-direct-bind/bindings")
-    assert bindings.status_code == 200, bindings.text
-    assert bindings.json()["count"] == 0
+    invalid_bindings = client.get("/api/rag/knowledge-bases/kb-direct-bind/bindings")
+    assert invalid_bindings.status_code == 400, invalid_bindings.text
+    assert "invalid_selector:" in invalid_bindings.json()["error"]
+
+
+def test_fastapi_rag_admin_binding_batch_rolls_back_when_later_item_is_invalid(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "atomic-bind-profile", "chunk_size": 256, "chunk_overlap": 32},
+    )
+    assert profile.status_code == 201, profile.text
+    profile_id = profile.json()["profile"]["profile_id"]
+    valid_set = _seed_ready_chunk_set(
+        db_path,
+        seed["alpha_url"],
+        profile_id,
+        text="Atomic valid chunk",
+    )
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-atomic-invalid",
+            "name": "Atomic Invalid",
+            "kb_mode": "manual",
+            "chunk_profile_id": profile_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    response = client.post(
+        "/api/rag/knowledge-bases/kb-atomic-invalid/bindings",
+        json={
+            "bindings": [
+                {
+                    "file_url": seed["alpha_url"],
+                    "chunk_set_id": valid_set["chunk_set_id"],
+                    "binding_mode": "pin",
+                },
+                {
+                    "file_url": seed["beta_url"],
+                    "chunk_set_id": "missing-chunk-set",
+                    "binding_mode": "pin",
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    storage = Storage(str(db_path))
+    try:
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
+            ("kb-atomic-invalid",),
+        ).fetchone()[0] == 0
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-atomic-invalid",),
+        ).fetchone()[0] == 0
+    finally:
+        storage.close()
+
+
+def test_fastapi_rag_admin_binding_batch_rejects_wrong_profile_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    selected = client.post(
+        "/api/chunk/profiles",
+        json={"name": "selected-profile", "chunk_size": 256, "chunk_overlap": 32},
+    )
+    wrong = client.post(
+        "/api/chunk/profiles",
+        json={"name": "wrong-profile", "chunk_size": 512, "chunk_overlap": 32},
+    )
+    assert selected.status_code == wrong.status_code == 201
+    wrong_set = _seed_ready_chunk_set(
+        db_path,
+        seed["alpha_url"],
+        wrong.json()["profile"]["profile_id"],
+        text="Wrong profile chunk",
+    )
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-atomic-profile",
+            "name": "Atomic Profile",
+            "kb_mode": "manual",
+            "chunk_profile_id": selected.json()["profile"]["profile_id"],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    response = client.post(
+        "/api/rag/knowledge-bases/kb-atomic-profile/bindings",
+        json={
+            "file_url": seed["alpha_url"],
+            "chunk_set_id": wrong_set["chunk_set_id"],
+            "binding_mode": "pin",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "wrong chunk profile" in response.json()["error"]
+    storage = Storage(str(db_path))
+    try:
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
+            ("kb-atomic-profile",),
+        ).fetchone()[0] == 0
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-atomic-profile",),
+        ).fetchone()[0] == 0
+    finally:
+        storage.close()
+
+
+def test_rag_admin_binding_batch_rolls_back_database_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    profile = client.post(
+        "/api/chunk/profiles",
+        json={"name": "db-rollback-profile", "chunk_size": 256, "chunk_overlap": 32},
+    )
+    assert profile.status_code == 201, profile.text
+    profile_id = profile.json()["profile"]["profile_id"]
+    alpha_set = _seed_ready_chunk_set(
+        db_path, seed["alpha_url"], profile_id, text="Alpha rollback chunk"
+    )
+    beta_set = _seed_ready_chunk_set(
+        db_path, seed["beta_url"], profile_id, text="Beta rollback chunk"
+    )
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": "kb-atomic-db",
+            "name": "Atomic DB",
+            "kb_mode": "manual",
+            "chunk_profile_id": profile_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    initial = client.post(
+        "/api/rag/knowledge-bases/kb-atomic-db/bindings",
+        json={
+            "file_url": seed["alpha_url"],
+            "chunk_set_id": alpha_set["chunk_set_id"],
+            "binding_mode": "pin",
+        },
+    )
+    assert initial.status_code == 200, initial.text
+    storage = Storage(str(db_path))
+    try:
+        replacement_set = storage.get_or_create_file_chunk_set(
+            file_url=seed["alpha_url"],
+            profile_id=profile_id,
+            markdown_hash="atomic-db-replacement",
+            status="building",
+        )
+        storage.replace_global_chunks(
+            chunk_set_id=str(replacement_set["chunk_set_id"]),
+            chunks=[
+                {
+                    "chunk_index": 0,
+                    "content": "Replacement rollback chunk",
+                    "token_count": 3,
+                    "section_hierarchy": "Root",
+                }
+            ],
+        )
+    finally:
+        storage.close()
+
+    original_bind = Storage.bind_chunk_set_to_kb
+    bind_calls = 0
+
+    def fail_second_bind(self: Storage, **kwargs):
+        nonlocal bind_calls
+        bind_calls += 1
+        result = original_bind(self, **kwargs)
+        if bind_calls == 2:
+            raise RuntimeError("synthetic binding database failure")
+        return result
+
+    monkeypatch.setattr(Storage, "bind_chunk_set_to_kb", fail_second_bind)
+    with pytest.raises(RuntimeError, match="synthetic binding database failure"):
+        rag_admin_service.bind_chunk_sets(
+            db_path=str(db_path),
+            kb_id="kb-atomic-db",
+            payload={
+                "bindings": [
+                    {
+                        "file_url": seed["alpha_url"],
+                        "chunk_set_id": replacement_set["chunk_set_id"],
+                        "binding_mode": "pin",
+                    },
+                    {
+                        "file_url": seed["beta_url"],
+                        "chunk_set_id": beta_set["chunk_set_id"],
+                        "binding_mode": "pin",
+                    },
+                ]
+            },
+            headers={},
+        )
+
+    storage = Storage(str(db_path))
+    try:
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?",
+            ("kb-atomic-db",),
+        ).fetchone()[0] == 1
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-atomic-db",),
+        ).fetchone()[0] == 1
+        assert storage._conn.execute(
+            "SELECT chunk_set_id FROM kb_chunk_bindings WHERE kb_id = ?",
+            ("kb-atomic-db",),
+        ).fetchone()[0] == alpha_set["chunk_set_id"]
+    finally:
+        storage.close()

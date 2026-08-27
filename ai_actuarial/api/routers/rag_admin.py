@@ -256,13 +256,15 @@ def api_build_agentic_ready_manifest(
     _auth: AuthContext = Depends(require_rag_task_run),
 ):
     try:
-        return build_agentic_ready_manifest(
+        result, status_code = build_agentic_ready_manifest(
             db_path=_db_path(request),
             kb_id=kb_id,
             payload=payload,
             headers=dict(request.headers),
+            bridge_state=_bridge_state(request),
             auth=_auth,
         )
+        return JSONResponse(status_code=status_code, content=result)
     except RagAdminError as exc:
         return _error_response(exc)
 

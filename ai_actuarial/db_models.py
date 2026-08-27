@@ -201,9 +201,12 @@ class KBIndexVersion(Base):
     embedding_provider = Column(Text, nullable=False, default="openai")
     embedding_model = Column(Text, nullable=False)
     embedding_dimension = Column(Integer)
+    embedding_identity_key = Column(Text, nullable=False, default="")
+    binding_snapshot_fingerprint = Column(Text, nullable=False, default="")
     index_type = Column(Text, nullable=False)
     status = Column(Text, nullable=False)
     artifact_path = Column(Text)
+    artifact_digest = Column(Text, nullable=False, default="")
     chunk_count = Column(Integer, nullable=False, default=0)
     built_at = Column(Text)
     created_at = Column(Text, nullable=False)
@@ -220,6 +223,11 @@ class KBIndexItem(Base):
     
     index_version_id = Column(Text, primary_key=True)
     chunk_id = Column(Text, primary_key=True)
+    vector_ordinal = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('index_version_id', 'vector_ordinal', name='uq_kb_index_vector_ordinal'),
+    )
 
 
 # ============== Auth Models ==============

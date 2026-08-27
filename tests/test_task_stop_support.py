@@ -544,7 +544,7 @@ def test_indexing_pipeline_force_reindex_rebuilds_full_kb_when_subset_requested(
         storage.close()
 
 
-def test_remove_files_from_kb_soft_deletes_file_vectors(tmp_path) -> None:
+def test_remove_files_from_kb_preserves_immutable_artifact_and_marks_kb_stale(tmp_path) -> None:
     kb_id = "kb-remove-soft-delete"
     removed_url = "https://example.com/remove-me.pdf"
     kept_url = "https://example.com/keep-me.pdf"
@@ -580,8 +580,16 @@ def test_remove_files_from_kb_soft_deletes_file_vectors(tmp_path) -> None:
 
         assert removed == 1
         reloaded = VectorStore(dimension=3, index_path=str(index_path))
-        assert reloaded.metadata[0].get("_deleted") is True
+        assert reloaded.metadata[0].get("_deleted") is not True
         assert reloaded.metadata[1].get("_deleted") is not True
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ? AND file_url = ?",
+            (kb_id, removed_url),
+        ).fetchone()[0] == 0
+        assert storage._conn.execute(
+            "SELECT index_dirty_at FROM rag_knowledge_bases WHERE kb_id = ?",
+            (kb_id,),
+        ).fetchone()[0]
     finally:
         storage.close()
 
@@ -659,47 +667,64 @@ def test_native_task_runtime_runs_rag_indexing_collection(tmp_path, monkeypatch)
 
     fake_manager = MagicMock()
     fake_manager.get_kb.return_value = SimpleNamespace(name="Runtime RAG KB")
-    fake_manager.get_kb_files.return_value = [
-        {"file_url": "file-1"},
-        {"file_url": "file-2"},
-    ]
-    fake_pipeline = MagicMock()
-    fake_pipeline.index_files.return_value = {
-        "total_files": 2,
-        "indexed_files": 2,
-        "skipped_files": 0,
-        "error_files": 0,
-        "total_chunks": 6,
-        "errors": [],
-        "stopped": False,
+    fake_manager.config = RAGConfig(data_dir=str(tmp_path / "rag-data"))
+    index_result = {
+        "contract_version": 1,
+        "index_version_id": "idxv-runtime",
+        "binding_snapshot_fingerprint": "binding-runtime",
+        "embedding_identity_key": "identity-runtime",
+        "chunk_count": 6,
+        "vector_dimension": 3,
+        "artifact_digest": "digest-runtime",
     }
 
     runtime = NativeTaskRuntime()
     with patch("ai_actuarial.task_runtime.KnowledgeBaseManager", return_value=fake_manager), patch(
-        "ai_actuarial.task_runtime.IndexingPipeline",
-        return_value=fake_pipeline,
-    ) as pipeline_cls:
+        "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
+        return_value={"binding_snapshot_fingerprint": "binding-runtime"},
+    ) as resolve, patch(
+        "ai_actuarial.task_runtime.build_kb_index",
+        return_value=index_result,
+    ) as build:
         result = runtime._run_collection(
             "task-rag",
             "rag_indexing",
-            {"kb_id": "kb-runtime", "force_reindex": True},
+            {
+                "contract_version": 1,
+                "kb_id": "kb-runtime",
+                "expected_binding_snapshot_fingerprint": "binding-runtime",
+                "embedding_identity_key": "identity-runtime",
+                "force_rebuild": True,
+            },
         )
 
     assert result.success is True
-    assert result.items_found == 2
-    assert result.items_downloaded == 2
+    assert result.items_found == 6
+    assert result.items_downloaded == 6
     assert result.items_skipped == 0
     assert result.metadata["kb_id"] == "kb-runtime"
     assert result.metadata["total_chunks"] == 6
-    pipeline_cls.assert_called_once()
-    _, pipeline_kwargs = pipeline_cls.call_args
-    assert callable(pipeline_kwargs["stop_check"])
-    assert pipeline_kwargs["stop_check"]() is False
-    fake_pipeline.index_files.assert_called_once_with(
-        "kb-runtime",
-        ["file-1", "file-2"],
-        force_reindex=True,
-    )
+    assert result.metadata["result"] == index_result
+    resolve.assert_called_once()
+    build.assert_called_once()
+    assert build.call_args.kwargs["kb_id"] == "kb-runtime"
+    assert build.call_args.kwargs["expected_binding_snapshot_fingerprint"] == "binding-runtime"
+    assert build.call_args.kwargs["embedding_identity_key"] == "identity-runtime"
+    assert build.call_args.kwargs["force_rebuild"] is True
+
+
+def test_native_task_runtime_rejects_new_kb_index_build_launches(tmp_path, monkeypatch) -> None:
+    from ai_actuarial.task_runtime import NativeTaskRuntime
+
+    config_path = tmp_path / "sites.yaml"
+    config_path.write_text("paths:\n  db: runtime-alias.db\n", encoding="utf-8")
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    runtime = NativeTaskRuntime()
+
+    with pytest.raises(ValueError, match="rag_indexing"):
+        runtime.start_background_task("kb_index_build", {})
+
+    assert runtime.active_tasks == {}
 
 
 def test_native_task_runtime_catalog_uses_yaml_routing_for_explicit_file_urls(tmp_path, monkeypatch) -> None:

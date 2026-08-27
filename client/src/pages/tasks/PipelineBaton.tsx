@@ -15,6 +15,8 @@ interface StageTask {
   task_id: string;
   status: string;
   kb_id?: string;
+  subtask?: "kb_index" | "ready_data_build";
+  label?: string;
 }
 
 interface PipelineView {
@@ -36,7 +38,7 @@ const steps: Array<{ step: StepName; label: string; testId: string }> = [
   { step: "markdown_conversion", label: "Markdown", testId: "pipeline-step-markdown_conversion" },
   { step: "catalog", label: "Catalog", testId: "pipeline-step-catalog" },
   { step: "chunk_generation", label: "Chunk & Embedding", testId: "pipeline-step-chunk_generation" },
-  { step: "rag_indexing", label: "RAG Index", testId: "pipeline-step-rag_indexing" },
+  { step: "rag_indexing", label: "KB Index & Ready Data", testId: "pipeline-step-rag_indexing" },
 ];
 
 const batonOwnedFields: Partial<Record<StepName, string[]>> = {
@@ -211,16 +213,16 @@ export function PipelineBaton({ onViewLog }: { onViewLog: (taskId: string, taskN
               <button type="button" onClick={() => toggle(step.step)} aria-expanded={expanded.has(step.step)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left">
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-semibold">{index + 1}</span>
-                <span className="flex-1 font-medium">{step.label}{step.step === "rag_indexing" ? ` — ${t("tasks.pipeline.all_category_kbs")}` : ""}</span>
+                <span className="flex-1 font-medium">{step.label}{step.step === "rag_indexing" ? ` — ${t("tasks.pipeline.all_indexable_kbs")}` : ""}</span>
                 <span className="text-xs text-muted-foreground">{hasOverride ? t("tasks.pipeline.saved") : t("tasks.pipeline.default_settings")}</span>
                 {expanded.has(step.step) ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </button>
               {stage && stage.tasks.length > 0 && (
                 <div className="flex flex-wrap gap-2 border-t border-border px-4 py-2">
                   {stage.tasks.map((task) => (
-                    <button key={task.task_id} type="button" onClick={() => onViewLog(task.task_id, `${step.label}${task.kb_id ? `: ${task.kb_id}` : ""}`)}
+                    <button key={task.task_id} type="button" onClick={() => onViewLog(task.task_id, `${task.label || step.label}${task.kb_id ? `: ${task.kb_id}` : ""}`)}
                       className="text-xs text-primary underline" data-testid={`button-pipeline-task-log-${task.task_id}`}>
-                      {task.status} · {task.task_id}{task.kb_id ? ` · ${task.kb_id}` : ""} · {t("tasks.pipeline.view_log")}
+                      {task.label || step.label} · {task.status} · {task.task_id}{task.kb_id ? ` · ${task.kb_id}` : ""} · {t("tasks.pipeline.view_log")}
                     </button>
                   ))}
                 </div>

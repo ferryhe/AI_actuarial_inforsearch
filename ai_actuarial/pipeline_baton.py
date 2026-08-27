@@ -38,14 +38,18 @@ class PipelineBaton:
         start_task: Callable[..., str],
         task_status: Callable[[str], str | None],
         task_result: Callable[[str], dict[str, Any] | None] | None = None,
-        category_kb_ids: Callable[[], list[str]],
+        indexable_kb_ids: Callable[[], list[str]],
+        kb_index_input: Callable[[str], dict[str, Any]] | None = None,
+        ready_data_input: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
         now: Callable[[], str] = _utc_now,
     ) -> None:
         self._state_path = Path(state_path)
         self._start_task = start_task
         self._task_status = task_status
         self._task_result = task_result or (lambda _task_id: None)
-        self._category_kb_ids = category_kb_ids
+        self._indexable_kb_ids = indexable_kb_ids
+        self._kb_index_input = kb_index_input
+        self._ready_data_input = ready_data_input
         self._now = now
         self._lock = threading.RLock()
 
@@ -64,6 +68,16 @@ class PipelineBaton:
                 "chunk_task_id": None,
                 "embedding_task_id": None,
                 "markdown_files": [],
+                "kb_index_ready_phase": None,
+                "kb_index_task_id": None,
+                "ready_data_task_id": None,
+                "kb_results": [],
+                "summary": {
+                    "attempted": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "failed_kbs": [],
+                },
             },
         }
 
@@ -144,6 +158,16 @@ class PipelineBaton:
                 "chunk_task_id": None,
                 "embedding_task_id": None,
                 "markdown_files": [],
+                "kb_index_ready_phase": None,
+                "kb_index_task_id": None,
+                "ready_data_task_id": None,
+                "kb_results": [],
+                "summary": {
+                    "attempted": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "failed_kbs": [],
+                },
             }
             self._save(document)
             return self._view(document)
@@ -167,7 +191,11 @@ class PipelineBaton:
                 self._save(document)
                 return self._view(document)
             if task_status in {"error", "stopped"}:
-                state["round_status"] = task_status
+                if current_step == "rag_indexing":
+                    self._record_current_kb(document, succeeded=False, status=task_status)
+                    self._start_next_rag_or_complete(document)
+                else:
+                    state["round_status"] = task_status
                 self._save(document)
                 return self._view(document)
             if task_status != "completed":
@@ -205,7 +233,37 @@ class PipelineBaton:
                     else:
                         self._start_embedding_step(document, chunk_set_ids)
             elif current_step == "rag_indexing":
-                self._start_next_rag_or_complete(document)
+                if state.get("kb_index_ready_phase") == "ready_data":
+                    self._record_current_kb(
+                        document, succeeded=True, status="completed"
+                    )
+                    self._start_next_rag_or_complete(document)
+                elif self._ready_data_input is None:
+                    # Compatibility for callers that use the baton without the
+                    # product runtime's Ready Data input resolver.
+                    self._record_current_kb(
+                        document, succeeded=True, status="completed"
+                    )
+                    self._start_next_rag_or_complete(document)
+                else:
+                    task = self._task_result(str(state["current_task_id"] or "")) or {}
+                    result = task.get("result") if isinstance(task, dict) else None
+                    if not isinstance(result, dict):
+                        self._record_current_kb(
+                            document, succeeded=False, status="invalid_index_result"
+                        )
+                        self._start_next_rag_or_complete(document)
+                    else:
+                        try:
+                            ready_payload = self._ready_data_input(
+                                str(state.get("current_rag_kb") or ""), result
+                            )
+                            self._start_ready_data_step(document, ready_payload)
+                        except (RuntimeError, ValueError):
+                            self._record_current_kb(
+                                document, succeeded=False, status="ready_launch_failed"
+                            )
+                            self._start_next_rag_or_complete(document)
             self._save(document)
             return self._view(document)
 
@@ -223,7 +281,10 @@ class PipelineBaton:
             payload = sanitize_legacy_chunk_generation_payload(payload)
             payload["files"] = [dict(row) for row in markdown_files]
         if step == "rag_indexing":
-            payload.update({"kb_id": kb_id, "incremental": True, "force_reindex": False})
+            if self._kb_index_input is not None:
+                payload = dict(self._kb_index_input(str(kb_id or "")))
+            else:
+                payload.update({"kb_id": kb_id, "incremental": True, "force_reindex": False})
         source_task_id = str(document["state"]["consumed_scheduled_task_id"])
         extra_fields = {
             "pipeline_baton_step": step,
@@ -231,6 +292,8 @@ class PipelineBaton:
         }
         if kb_id is not None:
             extra_fields["pipeline_baton_kb_id"] = kb_id
+        if step == "rag_indexing":
+            extra_fields["pipeline_baton_subtask"] = "kb_index"
         task_id = self._start_task(
             step,
             payload,
@@ -247,6 +310,14 @@ class PipelineBaton:
                 chunk_embedding_phase="chunk",
                 chunk_task_id=task_id,
                 embedding_task_id=None,
+            )
+        elif step == "rag_indexing":
+            summary = document["state"]["summary"]
+            summary["attempted"] = int(summary.get("attempted") or 0) + 1
+            document["state"].update(
+                kb_index_ready_phase="kb_index",
+                kb_index_task_id=task_id,
+                ready_data_task_id=None,
             )
 
     @staticmethod
@@ -305,13 +376,84 @@ class PipelineBaton:
         )
 
     def _start_next_rag_or_complete(self, document: dict[str, Any]) -> None:
-        current = document["state"]["current_rag_kb"]
-        kb_ids = sorted({str(kb_id) for kb_id in self._category_kb_ids() if str(kb_id)})
-        next_kb = next((kb_id for kb_id in kb_ids if current is None or kb_id > current), None)
-        if next_kb is None:
-            document["state"]["round_status"] = "completed"
-            return
-        self._start_step(document, "rag_indexing", kb_id=next_kb)
+        state = document["state"]
+        current = state["current_rag_kb"]
+        kb_ids = sorted({str(kb_id) for kb_id in self._indexable_kb_ids() if str(kb_id)})
+        while True:
+            next_kb = next(
+                (kb_id for kb_id in kb_ids if current is None or kb_id > current),
+                None,
+            )
+            if next_kb is None:
+                state["round_status"] = "completed"
+                return
+            try:
+                self._start_step(document, "rag_indexing", kb_id=next_kb)
+                return
+            except (RuntimeError, ValueError):
+                state.update(
+                    current_rag_kb=next_kb,
+                    kb_index_ready_phase="kb_index",
+                    kb_index_task_id=None,
+                    ready_data_task_id=None,
+                )
+                state["summary"]["attempted"] = (
+                    int(state["summary"].get("attempted") or 0) + 1
+                )
+                self._record_current_kb(
+                    document,
+                    succeeded=False,
+                    status="index_launch_failed",
+                )
+                current = next_kb
+
+    def _start_ready_data_step(
+        self,
+        document: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        state = document["state"]
+        kb_id = str(state.get("current_rag_kb") or "")
+        source_task_id = str(state["consumed_scheduled_task_id"])
+        task_id = self._start_task(
+            "ready_data_build",
+            dict(payload),
+            task_name=f"Pipeline: Ready Data ({kb_id})",
+            extra_fields={
+                "pipeline_baton_step": "rag_indexing",
+                "pipeline_baton_source_task_id": source_task_id,
+                "pipeline_baton_kb_id": kb_id,
+                "pipeline_baton_subtask": "ready_data_build",
+            },
+        )
+        state.update(
+            current_task_id=task_id,
+            kb_index_ready_phase="ready_data",
+            ready_data_task_id=task_id,
+        )
+
+    def _record_current_kb(
+        self,
+        document: dict[str, Any],
+        *,
+        succeeded: bool,
+        status: str,
+    ) -> None:
+        state = document["state"]
+        kb_id = str(state.get("current_rag_kb") or "")
+        result = {
+            "kb_id": kb_id,
+            "status": "succeeded" if succeeded else "failed",
+            "failure_status": "" if succeeded else status,
+            "kb_index_task_id": state.get("kb_index_task_id"),
+            "ready_data_task_id": state.get("ready_data_task_id"),
+        }
+        state["kb_results"].append(result)
+        summary = state["summary"]
+        bucket = "succeeded" if succeeded else "failed"
+        summary[bucket] = int(summary.get(bucket) or 0) + 1
+        if not succeeded and kb_id not in summary["failed_kbs"]:
+            summary["failed_kbs"].append(kb_id)
 
     @staticmethod
     def _view(document: dict[str, Any]) -> dict[str, Any]:

@@ -90,7 +90,13 @@ def api_files_delete(
     _auth: AuthContext = Depends(require_permissions("files.delete")),
 ):
     try:
-        return delete_file_record(db_path=_db_path(request), payload=payload)
+        return delete_file_record(
+            db_path=_db_path(request),
+            payload=payload,
+            bridge_state=request.app.state,
+            headers=dict(request.headers),
+            auth=_auth,
+        )
     except FileWriteError as exc:
         return _json_error(exc)
 
