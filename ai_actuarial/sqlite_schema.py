@@ -818,9 +818,13 @@ def _accept_version_7_source(
         ),
         "kb_index_items": frozenset({"index_version_id", "chunk_id"}),
     }
+    chunk_v7_tables = frozenset({"file_chunk_sets", "chunk_embeddings"})
+    kb_index_tables = frozenset(
+        {"kb_index_versions", "kb_ready_index_state", "kb_index_items"}
+    )
     if any(
-        table not in tables or _column_names(tables[table]) != columns
-        for table, columns in old_columns.items()
+        table not in tables or _column_names(tables[table]) != old_columns[table]
+        for table in chunk_v7_tables
     ):
         return False
     for table, columns in {
@@ -831,8 +835,21 @@ def _accept_version_7_source(
         if table not in tables or not columns.issubset(_column_names(tables[table])):
             return False
     expected = _current_storage_signature()
+    kb_v7_tables = frozenset(
+        table
+        for table in kb_index_tables
+        if table in tables and _column_names(tables[table]) == old_columns[table]
+    )
+    if any(
+        table not in kb_v7_tables
+        and (table not in tables or tables[table] != expected[table])
+        for table in kb_index_tables
+    ):
+        return False
     expected_v7_indexes = _version_7_index_signatures()
-    for table, columns in old_columns.items():
+    v7_tables = chunk_v7_tables | kb_v7_tables
+    for table in v7_tables:
+        columns = old_columns[table]
         actual_signature = tables[table]
         actual_by_name = {column[0]: column for column in actual_signature.columns}
         expected_by_name = {column[0]: column for column in expected[table].columns}
@@ -848,12 +865,17 @@ def _accept_version_7_source(
                 actual_by_name[name], expected_by_name[name], table, name
             ):
                 return False
+        expected_indexes = expected_v7_indexes[table]
+        if table == "file_chunk_sets" and not kb_v7_tables:
+            expected_indexes = tuple(
+                index for index in expected_indexes if index[1] != "c"
+            )
         if not _indexes_equivalent(
-            actual_signature.indexes, expected_v7_indexes[table]
+            actual_signature.indexes, expected_indexes
         ) or actual_signature.foreign_keys != expected[table].foreign_keys:
             return False
     adjusted = dict(tables)
-    for table in old_columns:
+    for table in v7_tables:
         adjusted[table] = expected[table]
     valid, _, _ = _schema_validation(adjusted, tolerate_backfill=True)
     return valid
