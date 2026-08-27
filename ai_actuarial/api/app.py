@@ -9,6 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from itsdangerous import BadSignature, URLSafeSerializer
 
+from ai_actuarial.config import settings
+from ai_actuarial.shared_auth import hash_token
+from ai_actuarial.shared_runtime import (
+    get_sites_config_path,
+    load_yaml,
+    resolve_fastapi_env,
+    resolve_runtime_features,
+)
+from ai_actuarial.storage import Storage
+from ai_actuarial.task_runtime import NativeTaskRuntime
+
+from .logging_config import configure_application_logging
 from .middleware import RateLimitMiddleware
 from .route_inventory import (
     collect_fastapi_api_paths,
@@ -19,20 +31,15 @@ from .routers.auth import router as auth_router
 from .routers.chat import router as chat_router
 from .routers.files_write import router as files_write_router
 from .routers.meta import router as meta_router
-from .routers.rag_admin import router as rag_admin_router
+from .routers.metrics import router as metrics_router
 from .routers.migration import router as migration_router
 from .routers.ops_read import router as ops_read_router
 from .routers.ops_write import router as ops_write_router
+from .routers.rag_admin import router as rag_admin_router
 from .routers.read import router as read_router
 from .routers.ready_data_automation import router as ready_data_automation_router
 from .routers.ready_data_publication import router as ready_data_publication_router
 from .routers.weekly_updates import router as weekly_updates_router
-from .routers.metrics import router as metrics_router
-from ai_actuarial.config import settings
-from ai_actuarial.shared_auth import hash_token
-from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, resolve_fastapi_env, resolve_runtime_features
-from ai_actuarial.storage import Storage
-from ai_actuarial.task_runtime import NativeTaskRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -323,10 +330,12 @@ def create_app() -> FastAPI:
 def run_server(host: str = "127.0.0.1", port: int = 5000, reload: bool = False) -> None:
     import uvicorn
 
+    configure_application_logging(log_file=settings.LOG_FILE, level=settings.LOG_LEVEL)
     uvicorn.run(
         "ai_actuarial.api.app:create_app",
         factory=True,
         host=host,
         port=port,
         reload=reload,
+        log_config=None,
     )
