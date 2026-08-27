@@ -560,6 +560,30 @@ def test_fastapi_global_logs_read_endpoint_is_native(tmp_path: Path, monkeypatch
     app.state.enable_global_logs_api = False
     disabled = client.get("/api/logs/global")
     assert disabled.status_code == 403
+    assert disabled.json() == {
+        "error": "GLOBAL_LOGS_API_DISABLED",
+        "message": "Global logs API is disabled",
+    }
+
+
+def test_fastapi_global_logs_uses_configured_path_and_returns_empty_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import ai_actuarial.api.services.ops_read as ops_read_service
+
+    configured_log = tmp_path / "mounted-data" / "canonical.log"
+    monkeypatch.setattr(ops_read_service.settings, "LOG_FILE", configured_log)
+
+    assert ops_read_service.get_global_logs(enabled=True) == {"logs": ""}
+
+    configured_log.parent.mkdir(parents=True)
+    configured_log.touch()
+    assert ops_read_service.get_global_logs(enabled=True) == {"logs": ""}
+
+    configured_log.write_text("2026-08-28 10:00:00 INFO canonical\n", encoding="utf-8")
+    assert ops_read_service.get_global_logs(enabled=True) == {
+        "logs": "2026-08-28 10:00:00 INFO canonical\n"
+    }
 
 
 def test_fastapi_global_logs_read_endpoint_keeps_rate_limit(tmp_path: Path, monkeypatch) -> None:
