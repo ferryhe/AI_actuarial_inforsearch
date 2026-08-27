@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from ai_actuarial.api.services import ops_write as ops_write_service
 from ai_actuarial.task_runtime import NativeTaskRuntime
 from ai_actuarial.web_listening_rule import generate_draft_rule, materialize_rule, rule_to_yaml, validate_rule
 from tests.test_fastapi_ops_read_endpoints import _build_test_client, _patch_available_models
@@ -108,6 +109,14 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
     _install_bridge(app, recorder)
     headers = {"X-Auth-Token": str(seed["operator_token"])}
     config_path = Path(os.environ["CONFIG_PATH"])
+    write_calls: list[dict[str, object]] = []
+    write_config_data = ops_write_service._write_config_data
+
+    def record_config_write(config_data: dict[str, object]) -> None:
+        write_calls.append(config_data)
+        write_config_data(config_data)
+
+    monkeypatch.setattr(ops_write_service, "_write_config_data", record_config_write)
 
     exploration_html = """
     <html><head><title>Rules Research</title></head><body><main>
@@ -191,16 +200,31 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
     assert first_body["success"] is True
     assert first_body["requires_scheduler_reinit"] is False
     assert first_body["updated"] == {"site": False, "scheduled_task": False}
+    assert first_body["no_op"] is False
+    assert first_body["resources"]["site"]["status"] == "created"
+    assert first_body["resources"]["site"]["name"] == "Rules Example Insights"
+    assert first_body["resources"]["scheduled_task"]["status"] == "created"
+    assert first_body["resources"]["scheduled_task"]["name"] == "Rules Example Insights Monitor"
     assert recorder.last_site_config is not None
+    assert len(write_calls) == 1
 
+    backup_dir = config_path.parent / "backups"
+    backup_names_after_first = {path.name for path in backup_dir.glob("sites_*.yaml")}
+    config_bytes_after_first = config_path.read_bytes()
+    recorder.last_site_config = None
     second = client.post("/api/web-listening/rules/materialize", json={"rule_yaml": first_body["yaml"]}, headers=headers)
     assert second.status_code == 200, second.text
     second_body = second.json()
-    assert second_body["updated"] == {"site": True, "scheduled_task": True}
-    assert second_body["backup"] != first_body["backup"]
-    backup_dir = config_path.parent / "backups"
+    assert second_body["updated"] == {"site": False, "scheduled_task": False}
+    assert second_body["no_op"] is True
+    assert second_body["backup"] is None
+    assert second_body["resources"]["site"]["status"] == "unchanged"
+    assert second_body["resources"]["scheduled_task"]["status"] == "unchanged"
+    assert config_path.read_bytes() == config_bytes_after_first
+    assert {path.name for path in backup_dir.glob("sites_*.yaml")} == backup_names_after_first
+    assert recorder.last_site_config is None
+    assert len(write_calls) == 1
     assert (backup_dir / first_body["backup"]).exists()
-    assert (backup_dir / second_body["backup"]).exists()
 
     written = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     matching_sites = [site for site in written["sites"] if site["name"] == "Rules Example Insights"]
@@ -230,6 +254,111 @@ def test_web_listening_rule_routes_materialize_idempotently(tmp_path: Path, monk
     assert read_site["collect_linked_files"] is True
     assert read_site["acquisition_tools"] == ["crawler", "search"]
     assert read_site["allow_url_patterns"] == ["/insights", "/globalassets/"]
+    assert first_body["resources"]["site"]["config"] == read_site
+    assert second_body["resources"]["site"]["config"] == read_site
+
+    read_tasks = client.get("/api/scheduled-tasks", headers=headers)
+    assert read_tasks.status_code == 200, read_tasks.text
+    read_task = next(
+        task for task in read_tasks.json()["tasks"] if task["name"] == "Rules Example Insights Monitor"
+    )
+    assert first_body["resources"]["scheduled_task"]["config"] == read_task
+    assert second_body["resources"]["scheduled_task"]["config"] == read_task
+
+
+def test_web_listening_materialize_reports_partial_resource_changes(tmp_path: Path, monkeypatch) -> None:
+    _patch_available_models(monkeypatch)
+    _install_public_dns_resolver(monkeypatch, "partial.example")
+    client, app, seed = _build_test_client(tmp_path, monkeypatch, require_auth=False)
+    recorder = _BridgeRecorder()
+    _install_bridge(app, recorder)
+    headers = {"X-Auth-Token": str(seed["operator_token"])}
+    config_path = Path(os.environ["CONFIG_PATH"])
+    write_calls: list[dict[str, object]] = []
+    write_config_data = ops_write_service._write_config_data
+
+    def record_partial_config_write(config_data: dict[str, object]) -> None:
+        write_calls.append(config_data)
+        write_config_data(config_data)
+
+    monkeypatch.setattr(ops_write_service, "_write_config_data", record_partial_config_write)
+
+    rule = generate_draft_rule(
+        website_url="https://partial.example/research",
+        goal="Monitor actuarial research",
+        name="Partial Example",
+        tools=["crawler"],
+    )
+    materialized = materialize_rule(rule)
+    desired_site = materialized.site
+    desired_task = materialized.scheduled_task
+    base_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+    scenarios = [
+        (
+            "equivalent site and missing task",
+            [desired_site],
+            [],
+            {"site": "unchanged", "scheduled_task": "created"},
+        ),
+        (
+            "changed site and equivalent task",
+            [{**desired_site, "max_pages": desired_site["max_pages"] + 1}],
+            [desired_task],
+            {"site": "updated", "scheduled_task": "unchanged"},
+        ),
+        (
+            "missing site and changed task",
+            [],
+            [{**desired_task, "interval": "daily"}],
+            {"site": "created", "scheduled_task": "updated"},
+        ),
+    ]
+
+    for label, sites, tasks, expected_statuses in scenarios:
+        config_data = dict(base_config)
+        config_data["sites"] = sites
+        config_data["scheduled_tasks"] = tasks
+        config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+        backup_dir = config_path.parent / "backups"
+        before_backups = {path.name for path in backup_dir.glob("sites_*.yaml")}
+        before_write_count = len(write_calls)
+        recorder.last_site_config = None
+
+        response = client.post(
+            "/api/web-listening/rules/materialize",
+            json={"rule": rule.model_dump(mode="json")},
+            headers=headers,
+        )
+
+        assert response.status_code == 200, f"{label}: {response.text}"
+        body = response.json()
+        assert {key: value["status"] for key, value in body["resources"].items()} == expected_statuses
+        assert body["updated"] == {
+            "site": expected_statuses["site"] == "updated",
+            "scheduled_task": expected_statuses["scheduled_task"] == "updated",
+        }
+        assert body["no_op"] is False
+        assert body["backup"] not in before_backups
+        assert (backup_dir / body["backup"]).exists()
+        assert len({path.name for path in backup_dir.glob("sites_*.yaml")}) == len(before_backups) + 1
+        assert len(write_calls) == before_write_count + 1
+        assert recorder.last_site_config is not None
+
+        read_sites = client.get("/api/config/sites", headers=headers).json()["sites"]
+        read_tasks = client.get("/api/scheduled-tasks", headers=headers).json()["tasks"]
+        read_site = next(site for site in read_sites if site["name"] == desired_site["name"])
+        read_task = next(task for task in read_tasks if task["name"] == desired_task["name"])
+        assert body["resources"]["site"] == {
+            "status": expected_statuses["site"],
+            "name": desired_site["name"],
+            "config": read_site,
+        }
+        assert body["resources"]["scheduled_task"] == {
+            "status": expected_statuses["scheduled_task"],
+            "name": desired_task["name"],
+            "config": read_task,
+        }
 
 
 def test_task_runtime_passes_collect_page_content_from_yaml() -> None:
