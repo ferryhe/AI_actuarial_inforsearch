@@ -489,6 +489,179 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
     assert repeated["applied_migrations"] == []
 
 
+def test_mixed_v7_migration_invalidates_unprovable_kb_index_mapping(
+    tmp_path: Path,
+) -> None:
+    from ai_actuarial.sqlite_schema import apply_schema, schema_status
+
+    db_path = tmp_path / "mixed-v7.db"
+    storage = Storage(str(db_path))
+    storage.close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.executescript(
+            """
+            INSERT INTO files (url, sha256, title, first_seen, last_seen)
+            VALUES ('https://example.test/mixed.pdf', 'mixed-sha', 'Mixed', 'created', 'updated');
+            INSERT INTO chunk_profiles (
+                profile_id, name, config_hash, config_json, chunk_size, chunk_overlap,
+                splitter, tokenizer, version, created_at, updated_at
+            ) VALUES ('profile-mixed', 'Mixed', 'profile-hash', '{}', 100, 10,
+                      'semantic', 'test', 'v1', 'created', 'updated');
+            INSERT INTO file_chunk_sets (
+                chunk_set_id, file_url, profile_id, markdown_hash, profile_config_hash,
+                status, chunk_count, created_at, updated_at
+            ) VALUES ('set-mixed', 'https://example.test/mixed.pdf', 'profile-mixed',
+                      'markdown-hash', 'profile-hash', 'ready', 2, 'created', 'updated');
+            INSERT INTO global_chunks (
+                chunk_id, chunk_set_id, chunk_index, content, token_count, created_at
+            ) VALUES
+                ('chunk-z', 'set-mixed', 0, 'first vector', 2, 'created'),
+                ('chunk-a', 'set-mixed', 1, 'second vector', 2, 'created');
+            INSERT INTO chunk_embeddings (
+                chunk_id, embedding_identity_key, embedding_provider, embedding_model,
+                dimension, config_fingerprint, vector_json, status, created_at, updated_at
+            ) VALUES
+                ('chunk-z', 'identity-current', 'local', 'mixed-model', 2,
+                 'config-current', '[1,0]', 'ready', 'created', 'updated'),
+                ('chunk-a', 'identity-current', 'local', 'mixed-model', 2,
+                 'config-current', '[0,1]', 'ready', 'created', 'updated');
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                embedding_model TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_path TEXT,
+                metadata_path TEXT,
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_dimension INTEGER,
+                chunk_profile_id TEXT,
+                index_dirty_at TEXT,
+                manifest_profile TEXT DEFAULT 'general',
+                embedding_identity_key TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE rag_kb_category_mappings (
+                kb_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                auto_sync INTEGER DEFAULT 1,
+                created_at TEXT,
+                PRIMARY KEY (kb_id, category),
+                FOREIGN KEY (kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_rag_kb_category_kb ON rag_kb_category_mappings(kb_id);
+            CREATE INDEX idx_rag_kb_category_cat ON rag_kb_category_mappings(category);
+            INSERT INTO rag_knowledge_bases (
+                kb_id, name, embedding_model, chunk_size, chunk_overlap, index_type,
+                created_at, updated_at, embedding_identity_key
+            ) VALUES ('kb-mixed', 'Mixed KB', 'mixed-model', 100, 10, 'faiss',
+                      'created', 'updated', 'identity-current');
+            INSERT INTO rag_kb_category_mappings (kb_id, category, auto_sync, created_at)
+            VALUES ('kb-mixed', 'Safety', 1, 'created');
+            INSERT INTO kb_chunk_bindings (
+                kb_id, file_url, chunk_set_id, bound_at, bound_by, binding_mode,
+                target_profile_id
+            ) VALUES ('kb-mixed', 'https://example.test/mixed.pdf', 'set-mixed',
+                      'created', 'test', 'pin', 'profile-mixed');
+            INSERT INTO kb_index_versions (
+                index_version_id, kb_id, embedding_provider, embedding_model,
+                embedding_dimension, embedding_identity_key,
+                binding_snapshot_fingerprint, index_type, status, artifact_path,
+                artifact_digest, chunk_count, built_at, created_at
+            ) VALUES ('index-mixed', 'kb-mixed', 'local', 'mixed-model', 2,
+                      'identity-current', 'binding-current', 'faiss', 'ready',
+                      '/tmp/mixed.faiss', 'artifact-current', 2, 'built', 'created');
+            INSERT INTO kb_index_items (index_version_id, chunk_id, vector_ordinal)
+            VALUES ('index-mixed', 'chunk-z', 0), ('index-mixed', 'chunk-a', 1);
+            INSERT INTO kb_ready_index_state (
+                kb_id, index_version_id, embedding_provider, embedding_model,
+                embedding_dimension, embedding_identity_key,
+                binding_snapshot_fingerprint, artifact_path, artifact_digest, updated_at
+            ) VALUES ('kb-mixed', 'index-mixed', 'local', 'mixed-model', 2,
+                      'identity-current', 'binding-current', '/tmp/mixed.faiss',
+                      'artifact-current', 'updated');
+
+            CREATE TABLE file_chunk_sets_v7 (
+                chunk_set_id TEXT PRIMARY KEY,
+                file_url TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                markdown_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ready',
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(file_url, profile_id, markdown_hash),
+                FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
+                FOREIGN KEY(profile_id) REFERENCES chunk_profiles(profile_id) ON DELETE CASCADE
+            );
+            INSERT INTO file_chunk_sets_v7
+            SELECT chunk_set_id, file_url, profile_id, markdown_hash, status,
+                   chunk_count, created_at, updated_at
+            FROM file_chunk_sets;
+            DROP TABLE file_chunk_sets;
+            ALTER TABLE file_chunk_sets_v7 RENAME TO file_chunk_sets;
+
+            CREATE TABLE chunk_embeddings_v7 (
+                chunk_id TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                dim INTEGER NOT NULL DEFAULT 0,
+                vector_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (chunk_id, embedding_model),
+                FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
+            );
+            INSERT INTO chunk_embeddings_v7
+            SELECT chunk_id, embedding_model, dimension, vector_json, created_at
+            FROM chunk_embeddings;
+            DROP TABLE chunk_embeddings;
+            ALTER TABLE chunk_embeddings_v7 RENAME TO chunk_embeddings;
+            PRAGMA user_version=7;
+            """
+        )
+
+    assert schema_status(db_path)["state"] == "needs_migration"
+    migrated = apply_schema(db_path)
+
+    assert migrated["state"] == "current"
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute(
+            "SELECT chunk_id, chunk_index, content FROM global_chunks ORDER BY chunk_index"
+        ).fetchall() == [
+            ("chunk-z", 0, "first vector"),
+            ("chunk-a", 1, "second vector"),
+        ]
+        assert conn.execute(
+            "SELECT chunk_id, vector_json, status FROM chunk_embeddings ORDER BY chunk_id"
+        ).fetchall() == [
+            ("chunk-a", "[0,1]", "legacy_unusable"),
+            ("chunk-z", "[1,0]", "legacy_unusable"),
+        ]
+        assert conn.execute(
+            "SELECT kb_id, file_url, chunk_set_id, target_profile_id FROM kb_chunk_bindings"
+        ).fetchall() == [
+            (
+                "kb-mixed",
+                "https://example.test/mixed.pdf",
+                "set-mixed",
+                "profile-mixed",
+            )
+        ]
+        assert conn.execute(
+            "SELECT kb_id, category, auto_sync FROM rag_kb_category_mappings"
+        ).fetchall() == [("kb-mixed", "Safety", 1)]
+        assert conn.execute("SELECT COUNT(*) FROM kb_index_items").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM kb_ready_index_state").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM kb_index_versions").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize(
     "unknown_drift",
     (

@@ -722,12 +722,26 @@ def _add_chunk_embedding_identity_v8(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # V7 chunk embeddings cannot prove the identity or vector order behind any
+    # legacy KB artifact. Keep the source chunks/bindings, but force a rebuild
+    # instead of manufacturing a ready mapping from chunk_id order. Rebuilding
+    # the ready-pointer table also works for schema-only deployments where its
+    # optional rag_knowledge_bases parent has never been created.
+    conn.execute("DROP TABLE kb_ready_index_state")
     conn.execute(
         """
-        INSERT INTO kb_index_items_v8 (index_version_id, chunk_id)
-        SELECT index_version_id, chunk_id FROM kb_index_items
+        CREATE TABLE kb_ready_index_state (
+            kb_id TEXT PRIMARY KEY,
+            index_version_id TEXT NOT NULL,
+            embedding_provider TEXT NOT NULL,
+            embedding_model TEXT NOT NULL,
+            embedding_dimension INTEGER,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+        )
         """
     )
+    conn.execute("DELETE FROM kb_index_versions")
 
     for table in (
         "chunk_embeddings",
