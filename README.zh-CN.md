@@ -17,6 +17,51 @@ AI Actuarial Info Search 是面向精算和保险研究场景的 FastAPI + React
 - **RAG 和 Chat：** 标准向量 RAG 与 Agentic RAG 并存。Chat 已转为知识库优先体验，保留会话历史，支持标准多知识库 Chat 和单个 ready KB 的 Agentic 模式。
 - **路线图完成：** Agentic RAG PR #133-#145、整合 PR #147-#154，以及飞书计划 managed PR-A 到 PR-I（#156-#164）均已合并；当前没有未完成的 managed-roadmap PR。
 
+## 可插拔 CLI/API 流水线
+
+所有核心流程能力都以可独立调用的 CLI 和/或 API 形式提供。每个处理阶段都复用同一领域服务，并通过稳定的 JSON 任务或资源契约定义输入输出，因此 React UI、内置流水线和外部自动化调用的是同一套能力。通用的 `task run` CLI 与 `POST /api/collections/run` API 可以启动单个阶段；采集、流水线控制、Embedding 覆盖率、知识库绑定、索引、Ready Data 和 Chat 也有各自聚焦的 CLI/API 资源。
+
+```mermaid
+flowchart LR
+    CLI["CLI"] --> Contract["稳定的任务/资源<br/>JSON 契约"]
+    API["FastAPI"] --> Contract
+    UI["React UI"] --> API
+
+    subgraph Acquisition["可插拔采集入口"]
+        Scheduled["定时配置站点爬取"]
+        OnDemand["按需站点或 URL 采集"]
+        Search["搜索服务发现/兜底"]
+        Upload["浏览器文件/文件夹上传"]
+        WebPage["HTML 页面正文采集"]
+    end
+
+    Contract --> Scheduled
+    Contract --> OnDemand
+    Contract --> Search
+    Contract --> Upload
+    Contract --> WebPage
+    Scheduled --> Source["统一保存的源文件<br/>+ 来源元数据"]
+    OnDemand --> Source
+    Search --> Source
+    Upload --> Source
+    WebPage --> Source
+    Source --> Markdown["Markdown 转换"]
+    Markdown --> Catalog["编目 + 分类"]
+    Catalog --> Chunk["Chunk 生成"]
+    Chunk --> Embedding["Embedding 生成"]
+    Embedding --> Binding["KB 成员关系 +<br/>精确 Chunk Set 绑定"]
+    Binding --> Index["KB 索引构建"]
+    Index --> StandardChat["标准 RAG Chat KB"]
+    Index --> Ready["Ready Data 构建<br/>校验 + 可选发布"]
+    Ready --> AgenticChat["Agentic RAG Chat KB"]
+```
+
+采集层可以持续扩展。仓库已经支持配置化/定时站点爬取、直接 URL 采集、浏览器 upload-batch 文件导入、搜索服务兜底和 HTML 页面正文采集。新增采集器可以实现统一的 `BaseCollector` 输入输出契约；外部采集程序也可以产出同样的已保存文件和来源元数据契约，而不需要修改 Markdown 转换及后续阶段。
+
+采集之后的各阶段既可以独立运行，也可以由外部编排器按需要组合。产品目前已经提供一条受支持的端到端自动流程：**定时采集 → Markdown → 编目/分类 → Chunk + Embedding → 已配置的 KB 成员关系/绑定 → KB 索引 + Ready Data → Chat KB**。内置 baton 是一条固定、可观察的组合，不是通用 DAG 编辑器。配置好知识库组成、Chunk Profile、绑定策略和 Embedding Identity 后，一轮自动采集可以继续生成已提交的 KB 索引和通过校验的 Ready Data 候选版本。标准 RAG 使用已提交的索引；启用 Ready Data 自动发布后，Agentic RAG 使用已发布版本。
+
+这种拆分让后续升级保持局部化：采集器、转换引擎、分类器、Chunker、Embedding Provider、KB 索引/Ready Data Builder 或 Chat 检索策略都可以单独替换或升级，只需继续遵守该阶段的输入输出契约。
+
 ## 功能集
 
 ### 发现、导入和编目
