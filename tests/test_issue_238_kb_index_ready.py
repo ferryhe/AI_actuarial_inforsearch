@@ -129,6 +129,53 @@ def _seed_bound_kb(
     return manager, chunk_set, identity
 
 
+def test_create_kb_defaults_to_current_server_embedding_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = Storage(str(tmp_path / "identity.db"))
+    try:
+        manager = KnowledgeBaseManager.__new__(KnowledgeBaseManager)
+        manager.storage = storage
+        manager.config = RAGConfig(
+            embedding_provider="local",
+            embedding_model="test-embedding",
+            data_dir=str(tmp_path / "rag"),
+        )
+        manager.embedding_generator = None
+        manager._ensure_rag_tables()
+        identity = _identity()
+        monkeypatch.setattr(
+            "ai_actuarial.rag.knowledge_base.resolve_server_embedding_identity",
+            lambda _storage: identity,
+            raising=False,
+        )
+
+        created = manager.create_kb(
+            kb_id="kb-default-identity",
+            name="Default Identity",
+            kb_mode="manual",
+        )
+
+        assert created.embedding_identity_key == identity.embedding_identity_key
+        assert created.embedding_provider == identity.provider
+        assert created.embedding_model == identity.model
+        assert created.embedding_dimension == identity.dimension
+        runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+        runtime._ready_data_db_path = storage.db_path
+        runtime._load_site_config = lambda: {}
+        monkeypatch.setattr(
+            "ai_actuarial.task_runtime.resolve_kb_bound_chunks",
+            lambda _storage, _kb_id: {
+                "binding_snapshot_fingerprint": "bind-default-identity"
+            },
+        )
+        payload = runtime._pipeline_kb_index_input("kb-default-identity")
+        assert payload["embedding_identity_key"] == identity.embedding_identity_key
+    finally:
+        storage.close()
+
+
 def test_binding_resolver_is_deterministic_complete_and_read_only(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "index.db"))
     try:
@@ -1059,6 +1106,88 @@ def test_successful_standalone_index_launches_independent_ready_task(
         )
     ]
     assert runtime.task_history[0]["ready_data_task_id"] == "ready-task"
+
+
+@pytest.mark.parametrize("launch_fails", [False, True])
+def test_index_terminal_history_waits_for_ready_handoff_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+    launch_fails: bool,
+) -> None:
+    runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+    runtime.task_lock = threading.RLock()
+    runtime.active_tasks = {
+        "index-task": {
+            "id": "index-task",
+            "status": "running",
+            "kb_id": "kb-238",
+        }
+    }
+    runtime.task_history = []
+    runtime._append_history_to_disk = lambda _task: None
+    runtime._pipeline_ready_data_input = lambda kb_id, result: {
+        "kb_id": kb_id,
+        "index_version_id": result["index_version_id"],
+    }
+    launch_entered = threading.Event()
+    allow_launch_to_finish = threading.Event()
+
+    def launch(*_args: object, **_kwargs: object) -> str:
+        launch_entered.set()
+        if not allow_launch_to_finish.wait(5):
+            raise AssertionError("test did not release Ready Data launch")
+        if launch_fails:
+            raise RuntimeError("synthetic Ready Data launch failure")
+        return "ready-task"
+
+    runtime.start_background_task = launch
+    monkeypatch.setattr("ai_actuarial.task_runtime.append_task_log", lambda *_args: None)
+    result = CollectionResult(
+        success=True,
+        items_found=1,
+        items_downloaded=1,
+        items_skipped=0,
+        errors=[],
+        metadata={
+            "kb_id": "kb-238",
+            "result": {"index_version_id": "idxv-1"},
+        },
+    )
+    finalize_thread = threading.Thread(
+        target=runtime._finalize_task_success,
+        args=("index-task", "rag_indexing", result),
+    )
+    reader_started = threading.Event()
+    reader_finished = threading.Event()
+    observed: dict[str, object] = {}
+
+    def read_terminal_task() -> None:
+        reader_started.set()
+        observed["task"] = runtime._pipeline_task_result("index-task")
+        reader_finished.set()
+
+    finalize_thread.start()
+    assert launch_entered.wait(5)
+    reader_thread = threading.Thread(target=read_terminal_task)
+    reader_thread.start()
+    assert reader_started.wait(5)
+    try:
+        assert not reader_finished.wait(0.2)
+    finally:
+        allow_launch_to_finish.set()
+        finalize_thread.join(5)
+        reader_thread.join(5)
+
+    assert not finalize_thread.is_alive()
+    assert not reader_thread.is_alive()
+    terminal = observed["task"]
+    assert isinstance(terminal, dict)
+    assert terminal["status"] == "completed"
+    if launch_fails:
+        assert terminal["ready_data_launch_error"] == "synthetic Ready Data launch failure"
+        assert "ready_data_task_id" not in terminal
+    else:
+        assert terminal["ready_data_task_id"] == "ready-task"
+        assert "ready_data_launch_error" not in terminal
 
 
 def test_cli_task_status_log_stop_are_thin_json_adapters(

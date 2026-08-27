@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from ai_actuarial.ai_runtime import infer_embedding_dimension, infer_embedding_provider
+from ai_actuarial.embedding_service import resolve_server_embedding_identity
 from ai_actuarial.rag.config import RAGConfig
 from ai_actuarial.rag.exceptions import KnowledgeBaseException
 from ai_actuarial.rag.semantic_chunking import SemanticChunker
@@ -378,6 +379,12 @@ class KnowledgeBaseManager:
             raise KnowledgeBaseException(f"Knowledge base '{kb_id}' already exists")
 
         current_embedding = self.get_current_embedding_metadata()
+        if not str(embedding_identity_key or "").strip():
+            current_identity = resolve_server_embedding_identity(self.storage)
+            embedding_provider = current_identity.provider
+            embedding_model = current_identity.model
+            embedding_dimension = current_identity.dimension
+            embedding_identity_key = current_identity.embedding_identity_key
 
         # Create KB object with defaults from config
         kb = KnowledgeBase(

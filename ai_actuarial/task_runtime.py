@@ -2312,28 +2312,28 @@ class NativeTaskRuntime:
                 ).strip()
                 if kb_id:
                     ready_followup = (kb_id, dict(canonical_result))
+            if ready_followup is not None:
+                kb_id, index_result = ready_followup
+                try:
+                    ready_payload = self._pipeline_ready_data_input(kb_id, index_result)
+                    ready_task_id = self.start_background_task(
+                        "ready_data_build",
+                        ready_payload,
+                        task_name=f"Ready Data: {kb_id}",
+                        extra_fields={
+                            "kb_id": kb_id,
+                            "kb_index_task_id": task_id,
+                        },
+                    )
+                    task_data["ready_data_task_id"] = ready_task_id
+                except Exception as exc:  # noqa: BLE001
+                    task_data["ready_data_launch_error"] = str(exc)
+                    append_task_log(
+                        task_id,
+                        "ERROR",
+                        f"Ready Data task launch failed: {exc}",
+                    )
             self.task_history.append(task_data)
-        if ready_followup is not None:
-            kb_id, index_result = ready_followup
-            try:
-                ready_payload = self._pipeline_ready_data_input(kb_id, index_result)
-                ready_task_id = self.start_background_task(
-                    "ready_data_build",
-                    ready_payload,
-                    task_name=f"Ready Data: {kb_id}",
-                    extra_fields={
-                        "kb_id": kb_id,
-                        "kb_index_task_id": task_id,
-                    },
-                )
-                task_data["ready_data_task_id"] = ready_task_id
-            except Exception as exc:  # noqa: BLE001
-                task_data["ready_data_launch_error"] = str(exc)
-                append_task_log(
-                    task_id,
-                    "ERROR",
-                    f"Ready Data task launch failed: {exc}",
-                )
         append_task_log(task_id, "INFO", f"Task finished (type={collection_type}, success={result.success})")
         self._append_history_to_disk(task_data)
 
