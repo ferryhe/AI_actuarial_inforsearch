@@ -17,6 +17,51 @@ AI Actuarial Info Search is a FastAPI + React document-intelligence platform for
 - **RAG and Chat:** standard vector RAG and Agentic RAG coexist. Chat is knowledge-base first, keeps conversation/session history, and supports standard multi-KB chat plus single-ready-KB Agentic mode.
 - **Roadmap completion:** Agentic RAG PRs #133-#145, consolidation PRs #147-#154, and managed Feishu-plan PR-A through PR-I (#156-#164) are merged; there are no open managed-roadmap PRs.
 
+## Pluggable CLI/API Pipeline
+
+All core workflow capabilities are exposed as independently callable CLI and/or API operations. Each processing stage is backed by a shared domain service and a stable JSON task or resource contract, so the React UI, the built-in pipeline, and external automation use the same inputs and outputs. The generic `task run` CLI and `POST /api/collections/run` API can launch individual stages; focused CLI/API resources cover collection, pipeline control, embedding coverage, knowledge-base bindings, indexing, Ready Data, and Chat.
+
+```mermaid
+flowchart LR
+    CLI["CLI"] --> Contract["Stable task/resource<br/>JSON contracts"]
+    API["FastAPI"] --> Contract
+    UI["React UI"] --> API
+
+    subgraph Acquisition["Pluggable acquisition inputs"]
+        Scheduled["Scheduled configured-site crawl"]
+        OnDemand["On-demand site or URL collection"]
+        Search["Search-provider discovery/fallback"]
+        Upload["Browser file/folder upload"]
+        WebPage["HTML page-content extraction"]
+    end
+
+    Contract --> Scheduled
+    Contract --> OnDemand
+    Contract --> Search
+    Contract --> Upload
+    Contract --> WebPage
+    Scheduled --> Source["Stored source files<br/>+ source metadata"]
+    OnDemand --> Source
+    Search --> Source
+    Upload --> Source
+    WebPage --> Source
+    Source --> Markdown["Markdown conversion"]
+    Markdown --> Catalog["Catalog + classification"]
+    Catalog --> Chunk["Chunk generation"]
+    Chunk --> Embedding["Embedding generation"]
+    Embedding --> Binding["KB membership +<br/>exact chunk-set binding"]
+    Binding --> Index["KB index build"]
+    Index --> StandardChat["Standard RAG Chat KB"]
+    Index --> Ready["Ready Data build<br/>validate + optional publish"]
+    Ready --> AgenticChat["Agentic RAG Chat KB"]
+```
+
+Acquisition is deliberately extensible. The repository already includes configured/scheduled crawling, direct URL collection, browser upload-batch file import, search-provider fallback, and HTML page extraction. A new collector can implement the common `BaseCollector` input/output contract—or an external producer can emit the same stored-file and metadata contract—without changing Markdown conversion or later stages.
+
+After acquisition, the stages can be run separately and composed in the order required by an external orchestrator. The product currently ships one supported end-to-end automation path: **Scheduled Collection → Markdown → Catalog/Classification → Chunk + Embedding → configured KB membership/binding → KB Index + Ready Data → Chat KB**. This built-in baton is intentionally a fixed, observable composition rather than a general DAG editor. With knowledge-base composition, chunk profile, binding policy, and embedding identity configured, it carries an automatic collection round through a committed KB index and a validated Ready Data candidate. Standard RAG consumes the committed index; when automatic Ready Data publication is enabled, Agentic RAG consumes the published release.
+
+This separation keeps future upgrades local: a collector, conversion engine, classifier, chunker, embedding provider, KB index/Ready Data builder, or Chat retrieval strategy can be replaced or upgraded independently as long as it preserves the stage contract.
+
 ## Feature Set
 
 ### Discovery, ingestion, and catalog
