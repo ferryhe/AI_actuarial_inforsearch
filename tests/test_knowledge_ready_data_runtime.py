@@ -107,6 +107,32 @@ def test_publication_projection_is_authoritative_for_current_serving_state() -> 
           source: "publication_state",
         });
 
+        const awaitingManualConfirmation = {
+          ...operationFailedAfterActivePublish,
+          last_error: "empty ready_data requires manual publish confirmation",
+          latest_operation_kind: "build",
+          latest_operation_state: "awaiting_manual_confirmation",
+          latest_operation_error: "",
+          publication_state: {
+            ...operationFailedAfterActivePublish.publication_state,
+            last_error: "empty ready_data requires manual publish confirmation",
+            latest_operation_kind: "build",
+            latest_operation_state: "awaiting_manual_confirmation",
+            latest_operation_error: "",
+          },
+        };
+        assert.equal(
+          resolveReadyDataOperationState(awaitingManualConfirmation).error,
+          "empty ready_data requires manual publish confirmation",
+        );
+        assert.equal(
+          resolveReadyDataOperationState({
+            ...awaitingManualConfirmation,
+            publication_state: undefined,
+          }).error,
+          "empty ready_data requires manual publish confirmation",
+        );
+
         assert.equal(isReadyDataAutomationBusy("pending"), true);
         assert.equal(isReadyDataAutomationBusy("running"), true);
         assert.equal(isReadyDataAutomationBusy("building"), true);

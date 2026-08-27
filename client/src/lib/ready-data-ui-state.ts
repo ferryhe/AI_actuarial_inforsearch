@@ -273,6 +273,16 @@ export function resolveReadyDataServingState(
   };
 }
 
+function readyDataOperationError(
+  status: string,
+  latestError: unknown,
+  fallbackError: unknown,
+): string {
+  if (status !== "failed" && status !== "awaiting_manual_confirmation") return "";
+  if (typeof latestError === "string" && latestError) return latestError;
+  return typeof fallbackError === "string" ? fallbackError : "";
+}
+
 export function resolveReadyDataOperationState(
   manifest: AgenticReadyManifest | null | undefined,
 ): ReadyDataOperationState {
@@ -284,9 +294,11 @@ export function resolveReadyDataOperationState(
         ? projection.latest_operation_kind
         : "none",
       status,
-      error: status === "failed" && typeof projection.latest_operation_error === "string"
-        ? projection.latest_operation_error
-        : "",
+      error: readyDataOperationError(
+        status,
+        projection.latest_operation_error,
+        projection.last_error,
+      ),
       at: typeof projection.latest_operation_at === "string"
         ? projection.latest_operation_at
         : null,
@@ -300,9 +312,11 @@ export function resolveReadyDataOperationState(
         ? manifest.latest_operation_kind
         : "none",
       status,
-      error: status === "failed" && typeof manifest.latest_operation_error === "string"
-        ? manifest.latest_operation_error
-        : "",
+      error: readyDataOperationError(
+        status,
+        manifest.latest_operation_error,
+        manifest.last_error,
+      ),
       at: typeof manifest.latest_operation_at === "string"
         ? manifest.latest_operation_at
         : null,
