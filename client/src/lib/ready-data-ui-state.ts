@@ -20,10 +20,36 @@ export interface ReadyDataPublication {
 
 export interface ReadyDataPublicationState {
   publication_revision?: number | null;
+  serving_status?: "missing" | "ready" | "stale" | "failed" | "unavailable" | null;
+  serving_usable?: boolean;
+  serving_stale?: boolean;
+  automation_state?: string;
+  last_error?: string | null;
+  latest_operation_kind?: string | null;
+  latest_operation_state?: string | null;
+  latest_operation_at?: string | null;
+  latest_operation_error?: string | null;
   active_publication_id?: string | null;
   previous_publication_id?: string | null;
   active_publication?: ReadyDataPublication | null;
   previous_publication?: ReadyDataPublication | null;
+}
+
+export type ReadyDataServingStatus = "missing" | "ready" | "stale" | "failed" | "unavailable";
+
+export interface ReadyDataServingState {
+  status: ReadyDataServingStatus;
+  usable: boolean;
+  stale: boolean;
+  source: "publication_state" | "legacy_manifest";
+}
+
+export interface ReadyDataOperationState {
+  kind: string;
+  status: string;
+  error: string;
+  at: string | null;
+  source: "publication_state" | "manifest" | "legacy_automation";
 }
 
 export interface AgenticReadyManifest {
@@ -56,6 +82,10 @@ export interface AgenticReadyManifest {
   last_attempt_publication_id?: string | null;
   last_success_at?: string | null;
   last_error?: string | null;
+  latest_operation_kind?: string | null;
+  latest_operation_state?: string | null;
+  latest_operation_at?: string | null;
+  latest_operation_error?: string | null;
   authoritative_source_version_kind?: string | null;
   authoritative_source_version_id?: string | null;
   observed_index_version_id?: string | null;
@@ -206,6 +236,94 @@ export function canonicalReadyDataProfile(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+function canonicalReadyDataServingStatus(value: unknown): ReadyDataServingStatus | null {
+  if (["missing", "ready", "stale", "failed", "unavailable"].includes(String(value))) {
+    return value as ReadyDataServingStatus;
+  }
+  return null;
+}
+
+export function resolveReadyDataServingState(
+  manifest: AgenticReadyManifest | null | undefined,
+): ReadyDataServingState {
+  const projection = manifest?.publication_state;
+  const projectedStatus = canonicalReadyDataServingStatus(projection?.serving_status);
+  if (projectedStatus && typeof projection?.serving_usable === "boolean") {
+    return {
+      status: projectedStatus,
+      usable: projection.serving_usable,
+      stale: typeof projection.serving_stale === "boolean"
+        ? projection.serving_stale
+        : projectedStatus === "stale",
+      source: "publication_state",
+    };
+  }
+
+  const usable = Boolean(manifest?.usable);
+  const legacyStale = Boolean(manifest?.serving_stale);
+  const rawStatus = manifest?.status;
+  const status = rawStatus === "building"
+    ? (usable ? (legacyStale ? "stale" : "ready") : "missing")
+    : canonicalReadyDataServingStatus(rawStatus) || "unavailable";
+  return {
+    status,
+    usable,
+    stale: legacyStale || status === "stale",
+    source: "legacy_manifest",
+  };
+}
+
+export function resolveReadyDataOperationState(
+  manifest: AgenticReadyManifest | null | undefined,
+): ReadyDataOperationState {
+  const projection = manifest?.publication_state;
+  if (typeof projection?.latest_operation_state === "string") {
+    const status = normalizeReadyAutomationStatus(projection.latest_operation_state);
+    return {
+      kind: typeof projection.latest_operation_kind === "string"
+        ? projection.latest_operation_kind
+        : "none",
+      status,
+      error: status === "failed" && typeof projection.latest_operation_error === "string"
+        ? projection.latest_operation_error
+        : "",
+      at: typeof projection.latest_operation_at === "string"
+        ? projection.latest_operation_at
+        : null,
+      source: "publication_state",
+    };
+  }
+  if (typeof manifest?.latest_operation_state === "string") {
+    const status = normalizeReadyAutomationStatus(manifest.latest_operation_state);
+    return {
+      kind: typeof manifest.latest_operation_kind === "string"
+        ? manifest.latest_operation_kind
+        : "none",
+      status,
+      error: status === "failed" && typeof manifest.latest_operation_error === "string"
+        ? manifest.latest_operation_error
+        : "",
+      at: typeof manifest.latest_operation_at === "string"
+        ? manifest.latest_operation_at
+        : null,
+      source: "manifest",
+    };
+  }
+  const status = normalizeReadyAutomationStatus(
+    manifest?.automation_state,
+    manifest?.status,
+  );
+  return {
+    kind: status === "idle" ? "none" : "automation",
+    status,
+    error: status === "failed" && typeof manifest?.last_error === "string"
+      ? manifest.last_error
+      : "",
+    at: null,
+    source: "legacy_automation",
+  };
+}
+
 export function resolveReadyDataManifestEpisode(
   kbId: string,
   incoming: AgenticReadyManifest | null | undefined,
@@ -255,6 +373,26 @@ export function normalizeReadyAutomationStatus(status: unknown, legacyServingSta
     "failed",
   ].includes(String(status))) return String(status);
   return "failed";
+}
+
+export function isReadyDataAutomationBusy(status: unknown): boolean {
+  return ["pending", "running", "building"].includes(String(status));
+}
+
+export function readyDataOperationKindTranslationKey(kind: unknown): string {
+  switch (String(kind ?? "").trim().toLowerCase()) {
+    case "build":
+      return "knowledge.ready_operation_build";
+    case "publish":
+    case "publication":
+      return "knowledge.ready_operation_publish";
+    case "rollback":
+      return "knowledge.ready_operation_rollback";
+    case "automation":
+      return "knowledge.ready_operation_automation";
+    default:
+      return "knowledge.ready_operation_none";
+  }
 }
 
 export function mergeConfirmedReadyDataAutomation(
@@ -429,6 +567,13 @@ export function resolveReadyDataSafeMutationManifestEpisode(
   return episode;
 }
 
+const READY_DATA_LATEST_OPERATION_KEYS = [
+  "latest_operation_kind",
+  "latest_operation_state",
+  "latest_operation_at",
+  "latest_operation_error",
+] as const satisfies readonly (keyof AgenticReadyManifest & keyof ReadyDataPublicationState)[];
+
 const READY_DATA_DYNAMIC_STATE_KEYS = [
   "status",
   "usable",
@@ -453,6 +598,7 @@ const READY_DATA_DYNAMIC_STATE_KEYS = [
   "last_attempt_publication_id",
   "last_success_at",
   "last_error",
+  ...READY_DATA_LATEST_OPERATION_KEYS,
   "current_ready_index_version_id",
   "ready_build_input",
   "smoke_status",
@@ -474,6 +620,22 @@ function mergeAuthoritativeReadyDataDynamicState(
     if (Object.is(currentRecord[key], value)) continue;
     mergedRecord[key] = value;
     changed = true;
+  }
+  if (merged.publication_state) {
+    let mergedPublicationState = merged.publication_state;
+    for (const key of READY_DATA_LATEST_OPERATION_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(incoming, key)) continue;
+      const value = incomingRecord[key];
+      if (Object.is(mergedPublicationState[key], value)) continue;
+      if (mergedPublicationState === merged.publication_state) {
+        mergedPublicationState = { ...merged.publication_state };
+      }
+      mergedPublicationState[key] = value as never;
+      changed = true;
+    }
+    if (mergedPublicationState !== merged.publication_state) {
+      merged.publication_state = mergedPublicationState;
+    }
   }
   return changed ? merged : current;
 }

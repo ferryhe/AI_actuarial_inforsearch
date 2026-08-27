@@ -19,6 +19,9 @@ from ai_actuarial.api.services.rag_admin import (
 from ai_actuarial.api.services.ready_data_automation import (
     run_ready_data_automation_once,
 )
+from ai_actuarial.api.services.ready_data_publication import (
+    read_public_ready_data_snapshot,
+)
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.storage import Storage
@@ -495,6 +498,24 @@ def test_enabling_publish_revalidates_and_publishes_existing_candidate(tmp_path:
     assert second["publication_state"]["active_publication_id"] == first[
         "candidate_publication"
     ]["publication_id"]
+    storage = Storage(str(db_path))
+    try:
+        automation = storage.get_agentic_ready_automation_state(
+            kb_id="kb-auto",
+            profile="general",
+        )
+        snapshot = read_public_ready_data_snapshot(
+            storage,
+            kb_id="kb-auto",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert automation["last_attempt_publication_id"] == first[
+        "candidate_publication"
+    ]["publication_id"]
+    assert snapshot["publication_state"]["latest_operation_kind"] == "publish"
+    assert snapshot["publication_state"]["latest_operation_state"] == "succeeded"
 
 
 def test_build_and_publish_preserves_previous_slot_and_settles_generation(tmp_path: Path) -> None:

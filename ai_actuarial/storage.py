@@ -6616,7 +6616,7 @@ class Storage:
                 generation=int(generation),
                 claim_token=claim_token,
                 automation_state="succeeded",
-                publication_id=expected_active_publication_id,
+                publication_id=None,
                 success=True,
                 now=now,
             )

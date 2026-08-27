@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -64,6 +65,15 @@ _PUBLIC_AUTOMATION_STATUSES = frozenset(
         "failed",
     }
 )
+_PUBLIC_BUILD_OPERATION_STATES = frozenset(
+    {
+        "pending",
+        "running",
+        "building",
+        "awaiting_publish",
+        "awaiting_manual_confirmation",
+    }
+)
 _PUBLIC_PUBLICATION_STATUSES = frozenset(
     {"failed", "validated", "active", "previous"}
 )
@@ -104,6 +114,287 @@ def _public_automation_state(value: Any) -> str:
         allowed=_PUBLIC_AUTOMATION_STATUSES,
         fallback="failed",
     )
+
+
+def _public_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _latest_failed_build_attempt(
+    storage: Storage,
+    *,
+    kb_id: str,
+    profile: str,
+) -> dict[str, Any] | None:
+    columns = frozenset(
+        str(row[1])
+        for row in storage._conn.execute(
+            "PRAGMA table_info(agentic_ready_publications)"
+        ).fetchall()
+    )
+    required = {
+        "publication_id",
+        "kb_id",
+        "profile",
+        "status",
+        "error_message",
+        "published_at",
+        "created_at",
+        "updated_at",
+    }
+    if not required.issubset(columns):
+        return None
+    row = storage._conn.execute(
+        """
+        SELECT publication_id, error_message, updated_at
+        FROM agentic_ready_publications
+        WHERE kb_id = ? AND profile = ?
+          AND status = 'failed'
+          AND published_at IS NULL
+        ORDER BY updated_at DESC, created_at DESC, publication_id DESC
+        LIMIT 1
+        """,
+        (kb_id, profile),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "publication_id": row[0],
+        "error_message": row[1] or "",
+        "updated_at": row[2],
+    }
+
+
+def _public_latest_operation(
+    *,
+    automation: Mapping[str, Any],
+    automation_state: str,
+    automation_error: str,
+    active_publication: Mapping[str, Any] | None,
+    previous_publication: Mapping[str, Any] | None,
+    failed_build_attempt: Mapping[str, Any] | None,
+    last_attempt_publication: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    automation_at = automation.get("updated_at")
+    published_at = (
+        active_publication.get("published_at")
+        if isinstance(active_publication, Mapping)
+        else None
+    )
+    parsed_automation_at = _public_timestamp(automation_at)
+    parsed_published_at = _public_timestamp(published_at)
+    failed_build_at = (
+        failed_build_attempt.get("updated_at")
+        if isinstance(failed_build_attempt, Mapping)
+        else None
+    )
+    parsed_failed_build_at = _public_timestamp(failed_build_at)
+    has_failed_build = bool(
+        isinstance(failed_build_at, str) and failed_build_at.strip()
+    )
+    failed_build_is_latest = bool(
+        has_failed_build
+        and (
+            parsed_failed_build_at is None
+            or (
+                (
+                    not isinstance(automation_at, str)
+                    or not automation_at.strip()
+                    or (
+                        parsed_automation_at is not None
+                        and parsed_failed_build_at > parsed_automation_at
+                    )
+                )
+                and (
+                    not isinstance(published_at, str)
+                    or not published_at.strip()
+                    or (
+                        parsed_published_at is not None
+                        and parsed_failed_build_at > parsed_published_at
+                    )
+                )
+            )
+        )
+    )
+    if failed_build_is_latest:
+        return {
+            "latest_operation_kind": "build",
+            "latest_operation_state": "failed",
+            "latest_operation_at": failed_build_at,
+            "latest_operation_error": _public_error(
+                failed_build_attempt.get("error_message")
+            ),
+        }
+    last_attempt_at = (
+        last_attempt_publication.get("updated_at")
+        if isinstance(last_attempt_publication, Mapping)
+        else None
+    )
+    parsed_last_attempt_at = _public_timestamp(last_attempt_at)
+    last_attempt_status = (
+        str(last_attempt_publication.get("status") or "").strip().lower()
+        if isinstance(last_attempt_publication, Mapping)
+        else ""
+    )
+    terminal_failure_is_latest = bool(
+        automation_state == "failed"
+        and parsed_automation_at is not None
+        and isinstance(last_attempt_publication, Mapping)
+        and not last_attempt_publication.get("published_at")
+        and not str(last_attempt_publication.get("attempt_disposition") or "").strip()
+        and (
+            parsed_last_attempt_at is None
+            or parsed_automation_at >= parsed_last_attempt_at
+        )
+        and (
+            not isinstance(published_at, str)
+            or not published_at.strip()
+            or (
+                parsed_published_at is not None
+                and parsed_automation_at >= parsed_published_at
+            )
+        )
+    )
+    terminal_failure_kind = (
+        "build"
+        if terminal_failure_is_latest and last_attempt_status == "failed"
+        else "publish"
+        if terminal_failure_is_latest and last_attempt_status == "validated"
+        else None
+    )
+    if terminal_failure_kind is not None:
+        return {
+            "latest_operation_kind": terminal_failure_kind,
+            "latest_operation_state": "failed",
+            "latest_operation_at": automation_at,
+            "latest_operation_error": automation_error,
+        }
+    active_publication_id = (
+        str(active_publication.get("publication_id") or "")
+        if isinstance(active_publication, Mapping)
+        else ""
+    )
+    automation_confirms_publish = bool(
+        automation_state == "succeeded"
+        and active_publication_id
+        and str(automation.get("last_attempt_publication_id") or "")
+        == active_publication_id
+        and parsed_automation_at is not None
+        and parsed_published_at is not None
+        and parsed_automation_at >= parsed_published_at
+    )
+    if automation_confirms_publish:
+        return {
+            "latest_operation_kind": "publish",
+            "latest_operation_state": "succeeded",
+            "latest_operation_at": automation_at,
+            "latest_operation_error": "",
+        }
+    build_automation_is_latest = bool(
+        automation_state in _PUBLIC_BUILD_OPERATION_STATES
+        and (
+            parsed_automation_at is None
+            or parsed_published_at is None
+            or parsed_automation_at >= parsed_published_at
+        )
+    )
+    if build_automation_is_latest:
+        return {
+            "latest_operation_kind": "build",
+            "latest_operation_state": automation_state,
+            "latest_operation_at": automation_at,
+            "latest_operation_error": "",
+        }
+    publication_is_latest = bool(
+        parsed_published_at is not None
+        and (
+            not isinstance(automation_at, str)
+            or not automation_at.strip()
+            or (
+                parsed_automation_at is not None
+                and parsed_published_at > parsed_automation_at
+            )
+        )
+        and (
+            not has_failed_build
+            or (
+                parsed_failed_build_at is not None
+                and parsed_published_at >= parsed_failed_build_at
+            )
+        )
+    )
+    if publication_is_latest:
+        active_updated_at = (
+            _public_timestamp(active_publication.get("updated_at"))
+            if isinstance(active_publication, Mapping)
+            else None
+        )
+        active_created_at = (
+            _public_timestamp(active_publication.get("created_at"))
+            if isinstance(active_publication, Mapping)
+            else None
+        )
+        previous_published_at = (
+            _public_timestamp(previous_publication.get("published_at"))
+            if isinstance(previous_publication, Mapping)
+            else None
+        )
+        previous_updated_at = (
+            _public_timestamp(previous_publication.get("updated_at"))
+            if isinstance(previous_publication, Mapping)
+            else None
+        )
+        rollback_evidence = bool(
+            parsed_published_at is not None
+            and active_updated_at == parsed_published_at
+            and previous_updated_at == parsed_published_at
+            and active_created_at is not None
+            and previous_published_at is not None
+            and active_created_at < previous_published_at < parsed_published_at
+        )
+        return {
+            "latest_operation_kind": "rollback" if rollback_evidence else "publish",
+            "latest_operation_state": "succeeded",
+            "latest_operation_at": published_at,
+            "latest_operation_error": "",
+        }
+    has_automation_operation = bool(
+        isinstance(automation_at, str) and automation_at.strip()
+    ) or automation_state != "idle"
+    if not has_automation_operation and has_failed_build:
+        return {
+            "latest_operation_kind": "build",
+            "latest_operation_state": "failed",
+            "latest_operation_at": failed_build_at,
+            "latest_operation_error": _public_error(
+                failed_build_attempt.get("error_message")
+            ),
+        }
+    return {
+        "latest_operation_kind": (
+            "build"
+            if has_automation_operation
+            and automation_state in _PUBLIC_BUILD_OPERATION_STATES
+            else "automation"
+            if has_automation_operation
+            else "none"
+        ),
+        "latest_operation_state": automation_state if has_automation_operation else "idle",
+        "latest_operation_at": automation_at if has_automation_operation else None,
+        "latest_operation_error": (
+            automation_error
+            if has_automation_operation and automation_state == "failed"
+            else ""
+        ),
+    }
 
 
 def _public_source_version_kind(value: Any) -> str | None:
@@ -346,6 +637,26 @@ def _public_ready_data_state_in_snapshot(
         kb_id=kb_id,
         profile=normalized_profile,
     )
+    failed_build_attempt = _latest_failed_build_attempt(
+        storage,
+        kb_id=kb_id,
+        profile=normalized_profile,
+    )
+    last_attempt_publication_id = automation.get("last_attempt_publication_id")
+    last_attempt_publication = (
+        storage.get_agentic_ready_publication(str(last_attempt_publication_id))
+        if last_attempt_publication_id
+        else None
+    )
+    last_attempt_publication = (
+        last_attempt_publication
+        if _publication_matches_scope(
+            last_attempt_publication,
+            kb_id=kb_id,
+            profile=normalized_profile,
+        )
+        else None
+    )
     source_state = storage.get_agentic_ready_source_state(
         kb_id=kb_id,
         profile=normalized_profile,
@@ -449,6 +760,15 @@ def _public_ready_data_state_in_snapshot(
         and public_last_error == "empty ready_data requires manual publish confirmation"
     ):
         automation_state = "awaiting_manual_confirmation"
+    latest_operation = _public_latest_operation(
+        automation=automation,
+        automation_state=automation_state,
+        automation_error=public_last_error,
+        active_publication=active_record,
+        previous_publication=previous_record,
+        failed_build_attempt=failed_build_attempt,
+        last_attempt_publication=last_attempt_publication,
+    )
     return {
         "kb_id": kb_id,
         "profile": normalized_profile,
@@ -477,6 +797,7 @@ def _public_ready_data_state_in_snapshot(
         "last_attempt_publication_id": automation.get("last_attempt_publication_id"),
         "last_success_at": automation.get("last_success_at"),
         "last_error": public_last_error,
+        **latest_operation,
         "publication_revision": int(state.get("publication_revision") or 0),
         "active_publication_id": state.get("active_publication_id"),
         "previous_publication_id": state.get("previous_publication_id"),
@@ -605,6 +926,13 @@ def public_ready_data_manifest(
         ),
         "last_success_at": publication_state.get("last_success_at"),
         "last_error": publication_state.get("last_error") or "",
+        "latest_operation_kind": publication_state.get("latest_operation_kind")
+        or "none",
+        "latest_operation_state": publication_state.get("latest_operation_state")
+        or "idle",
+        "latest_operation_at": publication_state.get("latest_operation_at"),
+        "latest_operation_error": publication_state.get("latest_operation_error")
+        or "",
         "publication_revision": int(
             publication_state.get("publication_revision") or 0
         ),
@@ -628,6 +956,35 @@ def public_ready_data_manifest(
     }
 
 
+def _read_public_ready_data_snapshot_in_current_transaction(
+    storage: Storage,
+    *,
+    kb_id: str,
+    profile: str,
+    include_legacy_output_dir: bool = True,
+) -> dict[str, Any]:
+    manifest = _build_agentic_manifest_status(
+        storage=storage,
+        kb_id=kb_id,
+        profile=profile,
+    )
+    publication_state = _public_ready_data_state_in_snapshot(
+        storage,
+        kb_id=kb_id,
+        profile=profile,
+        manifest=manifest,
+    )
+    return {
+        "kb_id": kb_id,
+        "manifest": public_ready_data_manifest(
+            manifest,
+            publication_state,
+            include_legacy_output_dir=include_legacy_output_dir,
+        ),
+        "publication_state": publication_state,
+    }
+
+
 def read_public_ready_data_snapshot(
     storage: Storage,
     *,
@@ -636,26 +993,12 @@ def read_public_ready_data_snapshot(
     include_legacy_output_dir: bool = True,
 ) -> dict[str, Any]:
     with storage.transaction():
-        manifest = _build_agentic_manifest_status(
-            storage=storage,
-            kb_id=kb_id,
-            profile=profile,
-        )
-        publication_state = _public_ready_data_state_in_snapshot(
+        return _read_public_ready_data_snapshot_in_current_transaction(
             storage,
             kb_id=kb_id,
             profile=profile,
-            manifest=manifest,
+            include_legacy_output_dir=include_legacy_output_dir,
         )
-        return {
-            "kb_id": kb_id,
-            "manifest": public_ready_data_manifest(
-                manifest,
-                publication_state,
-                include_legacy_output_dir=include_legacy_output_dir,
-            ),
-            "publication_state": publication_state,
-        }
 
 
 def publish_ready_data_publication(

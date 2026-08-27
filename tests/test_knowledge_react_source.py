@@ -141,8 +141,8 @@ def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
     assert 't("knowledge.manifest_build_completed")' in src
     assert 't("knowledge.manifest_build_not_ready").replace("{detail}", detail)' in src
     assert 't("knowledge.manifest_build_failed")' in src
-    assert "getManifestFallbackMessage(manifest, t)" in src
-    assert "getManifestActionLabel(manifest, t)" in src
+    assert "getManifestFallbackMessage(manifest, manifestServing, t)" in src
+    assert "getManifestActionLabel(manifest, manifestAutomationState, t)" in src
     assert "Agentic manifest profile" not in src
     assert "Agentic manifest build did not produce ready data" not in src
     assert '"knowledge.manifest_profile"' in i18n_src
@@ -172,8 +172,8 @@ def test_kb_detail_surfaces_agentic_manifest_endpoint_status_and_build_action():
     assert 't("knowledge.manifest_build_not_ready").replace("{detail}", detail)' in src
     assert 't("knowledge.manifest_build_failed")' in src
     assert 't("knowledge.manifest_built")' in src
-    assert "getManifestFallbackMessage(manifest, t)" in src
-    assert "getManifestActionLabel(manifest, t)" in src
+    assert "getManifestFallbackMessage(manifest, manifestServing, t)" in src
+    assert "getManifestActionLabel(manifest, manifestAutomationState, t)" in src
     assert "Agentic manifest build did not produce ready data" not in src
     assert '"knowledge.manifest_built"' in i18n_src
     assert "manifest.profile || meta.manifest_profile" in src
@@ -232,6 +232,19 @@ def test_kb_detail_closes_ready_data_publication_management_loop():
         assert i18n_src.count(f'"{key}"') == 2
 
 
+def test_kb_detail_always_renders_server_name_as_page_heading():
+    src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+
+    heading = (
+        '<h1 className="text-xl font-serif font-bold tracking-tight" '
+        'data-testid="text-kb-name">{meta.name}</h1>'
+    )
+    assert heading in src
+    assert src.index(heading) < src.index("{canManageKnowledge && (")
+    assert 'data-testid="text-kb-name-readonly"' not in src
+    assert 'data-testid="input-kb-edit-name"' in src
+
+
 def test_kb_detail_exposes_explicit_ready_publish_confirmation():
     src = KB_DETAIL_TSX.read_text(encoding="utf-8")
 
@@ -259,13 +272,22 @@ def test_knowledge_list_separates_serving_and_automation_status():
     state_src = READY_DATA_UI_STATE_TS.read_text(encoding="utf-8")
 
     assert "automation_state?: string" in state_src
+    assert "serving_status?:" in state_src
+    assert "serving_usable?: boolean" in state_src
     assert "serving_stale?: boolean" in state_src
+    assert "resolveReadyDataServingState" in state_src
+    assert "resolveReadyDataOperationState" in state_src
+    assert "isReadyDataAutomationBusy" in state_src
     assert "manifestAutomationState" in src
     assert 'data-testid={`badge-agentic-automation-${kbId}`}' in src
-    assert "getServingStatusLabel(manifestStatus, t)" in src
-    assert "getAutomationStatusLabel(manifestAutomationState, t)" in src
+    assert "getServingStatusLabel(manifestServing, t)" in src
+    assert "getAutomationStatusLabel(manifestOperation.status, t)" in src
     for page_src in (src, detail_src):
-        assert "normalizeReadyServingStatus" in page_src
+        assert "resolveReadyDataServingState" in page_src
+        assert "resolveReadyDataOperationState" in page_src
+        assert "readyDataOperationKindTranslationKey" in page_src
+        assert "isReadyDataAutomationBusy" in page_src
+        assert "function normalizeReadyServingStatus" not in page_src
         assert "normalizeReadyAutomationStatus" in page_src
         assert 't(`knowledge.ready_serving_' not in page_src
         assert 't(`knowledge.ready_automation_' not in page_src
@@ -275,13 +297,45 @@ def test_knowledge_list_separates_serving_and_automation_status():
         assert 'return t("knowledge.ready_automation_idle")' in page_src
 
 
+def test_knowledge_pages_keep_operation_failures_out_of_serving_messages():
+    list_src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
+    detail_src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+
+    for page_src in (list_src, detail_src):
+        assert "const manifestServing = resolveReadyDataServingState(manifest);" in page_src
+        assert "getManifestFallbackMessage(manifest, manifestServing, t)" in page_src
+        fallback_start = page_src.index("function getManifestFallbackMessage")
+        fallback_end = page_src.index("function getManifestActionLabel", fallback_start)
+        fallback_src = page_src[fallback_start:fallback_end]
+        assert "manifest?.last_error" not in fallback_src
+        assert "manifest?.error_message" not in fallback_src
+        assert "manifest?.stale_reason" not in fallback_src
+
+    assert 'data-testid={`message-agentic-operation-${kbId}`}' in list_src
+    assert 'data-testid="ready-data-last-operation-error"' in detail_src
+    for page_src in (list_src, detail_src):
+        assert 'manifestStatus === "building"' not in page_src
+        assert "getManifestActionLabel(manifest, manifestAutomationState, t)" in page_src
+        assert 't("knowledge.ready_operation_status")' in page_src
+        assert "t(readyDataOperationKindTranslationKey(manifestOperation.kind))" in page_src
+
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+    for key, english, chinese in (
+        ("ready_operation_build", "Build", "构建"),
+        ("ready_operation_publish", "Publish", "发布"),
+        ("ready_operation_rollback", "Rollback", "回滚"),
+    ):
+        assert f'"knowledge.{key}": "{english}"' in i18n_src
+        assert f'"knowledge.{key}": "{chinese}"' in i18n_src
+
+
 def test_knowledge_list_bounds_busy_automation_polling_and_deduplicates_loads():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
     detail_src = KB_DETAIL_TSX.read_text(encoding="utf-8")
 
     assert "READY_DATA_LIST_POLL_INTERVAL_MS" in src
     assert "READY_DATA_LIST_MAX_POLL_ATTEMPTS" in src
-    assert "READY_DATA_LIST_BUSY_STATES" in src
+    assert "isReadyDataAutomationBusy" in src
     assert "readyDataListBusy" in src
     assert "readyDataListPollAttempts.current" in src
     assert "loadDataInFlight.current" in src
@@ -290,7 +344,7 @@ def test_knowledge_list_bounds_busy_automation_polling_and_deduplicates_loads():
     assert "window.clearTimeout" in src
     assert "readyDataListPollAttempts.current >= READY_DATA_LIST_MAX_POLL_ATTEMPTS" in src
     assert "void loadData(false).finally" in src
-    assert "READY_DATA_LIST_BUSY_STATES.has(normalizeReadyAutomationStatus(" in src
+    assert "isReadyDataAutomationBusy(normalizeReadyAutomationStatus(" in src
     assert "const automationState = normalizeReadyAutomationStatus(" in detail_src
     assert "if (kbPayload)" in src
     assert "if (profilePayload)" in src
@@ -376,7 +430,7 @@ def test_kb_detail_localizes_public_ready_errors_and_smoke_statuses():
         assert f'case "{smoke_status}":' in src
         assert f'knowledge.ready_smoke_{smoke_status}' in src
     assert 'return t("knowledge.ready_smoke_unknown")' in src
-    assert "getReadyPublicMessageLabel(manifest?.last_error, t)" in src
+    assert "getReadyPublicMessageLabel(manifestOperation.error, t)" in src
     assert (
         "getReadySmokeStatusLabel(manifest?.smoke_status ?? "
         "activePublication?.smoke_status, t)" in src
