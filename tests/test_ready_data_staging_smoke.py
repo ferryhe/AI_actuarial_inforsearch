@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import pytest
 
 from ai_actuarial.agentic_rag import ready_data_builder
 from ai_actuarial.api.services import rag_admin as rag_admin_service
+from ai_actuarial.api.services import ready_data_publication as publication_service
 from ai_actuarial.api.services.rag_admin import (
     _build_agentic_ready_manifest_core,
     _ready_data_artifact_digest,
@@ -15,9 +17,11 @@ from ai_actuarial.api.services.rag_admin import (
 from ai_actuarial.api.services.ready_data_automation import (
     run_ready_data_automation_once,
 )
+from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.sqlite_schema import schema_status
 from ai_actuarial.storage import Storage
+from ai_actuarial.task_runtime import NativeTaskRuntime
 
 
 def _create_kb(
@@ -26,12 +30,17 @@ def _create_kb(
     *,
     kb_id: str,
     with_document: bool,
+    manifest_profile: str = "general",
 ) -> None:
     KnowledgeBaseManager(storage).create_kb(
         kb_id=kb_id,
         name=f"Smoke {kb_id}",
         kb_mode="manual",
-        manifest_profile="general",
+        manifest_profile=manifest_profile,
+        embedding_provider="test",
+        embedding_model="smoke-model",
+        embedding_dimension=3,
+        embedding_identity_key="emb-smoke-v1",
     )
     if not with_document:
         return
@@ -117,6 +126,27 @@ def _create_kb(
             """,
             (kb_id, file_url, f"cs-{kb_id}", now, f"cp-{kb_id}"),
         )
+        storage._conn.execute(
+            "UPDATE rag_knowledge_bases SET chunk_profile_id = ? WHERE kb_id = ?",
+            (f"cp-{kb_id}", kb_id),
+        )
+    snapshot = resolve_kb_bound_chunks(storage, kb_id)
+    storage.create_kb_index_version(
+        kb_id=kb_id,
+        embedding_provider="test",
+        embedding_model="smoke-model",
+        embedding_dimension=3,
+        embedding_identity_key="emb-smoke-v1",
+        binding_snapshot_fingerprint=str(
+            snapshot["binding_snapshot_fingerprint"]
+        ),
+        index_type="faiss",
+        chunk_count=1,
+        artifact_path=str(tmp_path / "indexes" / kb_id),
+        artifact_digest=f"digest-{kb_id}",
+        chunk_ids=[f"chunk-{kb_id}"],
+        status="ready",
+    )
 
 
 def _setup_db(
@@ -124,6 +154,7 @@ def _setup_db(
     *,
     kb_id: str = "kb-smoke",
     with_document: bool = True,
+    manifest_profile: str = "general",
 ) -> Path:
     db_path = tmp_path / "index.db"
     storage = Storage(str(db_path))
@@ -133,6 +164,7 @@ def _setup_db(
             tmp_path,
             kb_id=kb_id,
             with_document=with_document,
+            manifest_profile=manifest_profile,
         )
     finally:
         storage.close()
@@ -168,12 +200,44 @@ def _failed_smoke(reason: str = "no_evidence") -> dict[str, Any]:
     return result
 
 
-def _manual_build(db_path: Path, kb_id: str) -> dict[str, Any]:
+def _ready_input(db_path: Path, kb_id: str) -> dict[str, str]:
+    storage = Storage(str(db_path))
+    try:
+        row = storage._conn.execute(
+            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+            (kb_id,),
+        ).fetchone()
+    finally:
+        storage.close()
+    if not row:
+        raise ValueError("invalid_selector: Ready Data requires a committed KB index")
+    index_version_id = str(row[0])
+    source = ready_data_builder.get_builder_source_fingerprint(
+        db_path=str(db_path),
+        kb_id=kb_id,
+        profile="general",
+        index_version_id=index_version_id,
+    )
+    return {
+        "index_version_id": index_version_id,
+        "expected_source_snapshot_fingerprint": source[
+            "source_snapshot_fingerprint"
+        ],
+    }
+
+
+def _manual_build(
+    db_path: Path,
+    kb_id: str,
+    *,
+    should_stop=None,
+) -> dict[str, Any]:
     return _build_agentic_ready_manifest_core(
         db_path=str(db_path),
         kb_id=kb_id,
-        payload={"profile": "general"},
+        payload={"profile": "general", **_ready_input(db_path, kb_id)},
         publish=True,
+        should_stop=should_stop,
     )
 
 
@@ -182,18 +246,19 @@ def _enable_automation(
     *,
     kb_id: str,
     publish: bool,
+    profile: str = "general",
 ) -> None:
     storage = Storage(str(db_path))
     try:
         storage.set_agentic_ready_automation(
             kb_id=kb_id,
-            profile="general",
+            profile=profile,
             automatic_build_enabled=True,
             automatic_publish_enabled=publish,
         )
         storage.mark_agentic_ready_source_event(
             kb_id=kb_id,
-            profile="general",
+            profile=profile,
             reason="membership_added",
         )
     finally:
@@ -211,6 +276,447 @@ def test_manual_build_persists_passed_smoke_before_publication(tmp_path: Path) -
     assert candidate["smoke_result"]["status"] == "passed"
     assert candidate["smoke_result"]["matched_doc_id"] == "https://example.com/kb-smoke"
     assert result["publication_state"]["active_publication_id"] == candidate["publication_id"]
+
+
+def _validated_manual_candidate(
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    kb_id: str = "kb-smoke",
+) -> dict[str, Any]:
+    monkeypatch.setattr(rag_admin_service, "run_staging_smoke", lambda **_kwargs: _passed_smoke())
+    return _build_agentic_ready_manifest_core(
+        db_path=str(db_path),
+        kb_id=kb_id,
+        payload={"profile": "general", **_ready_input(db_path, kb_id)},
+        publish=False,
+    )
+
+
+def test_explicit_ready_publish_promotes_validated_manual_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    built = _validated_manual_candidate(db_path, monkeypatch)
+    candidate_id = str(built["candidate_publication"]["publication_id"])
+    expected_ready_input = _ready_input(db_path, "kb-smoke")
+
+    storage = Storage(str(db_path))
+    try:
+        pending = publication_service.read_public_ready_data_snapshot(
+            storage,
+            kb_id="kb-smoke",
+            profile="general",
+            include_legacy_output_dir=False,
+        )
+    finally:
+        storage.close()
+
+    assert pending["manifest"]["automation_state"] == "awaiting_publish"
+    assert pending["manifest"]["last_attempt_publication_id"] == candidate_id
+    assert pending["manifest"]["ready_build_input"] == {
+        "contract_version": 1,
+        **expected_ready_input,
+    }
+    assert pending["publication_state"]["automatic_build_enabled"] is False
+    assert pending["publication_state"]["automatic_publish_enabled"] is False
+
+    result = publication_service.publish_ready_data_publication(
+        db_path=str(db_path),
+        kb_id="kb-smoke",
+        payload={
+            "profile": "general",
+            "publication_id": candidate_id,
+            "expected_active_publication_id": None,
+        },
+    )
+
+    assert result == {
+        "kb_id": "kb-smoke",
+        "profile": "general",
+        "publication_id": candidate_id,
+        "publish_status": "published",
+        "active_publication_id": candidate_id,
+    }
+    storage = Storage(str(db_path))
+    try:
+        published = publication_service.read_public_ready_data_snapshot(
+            storage,
+            kb_id="kb-smoke",
+            profile="general",
+            include_legacy_output_dir=False,
+        )
+    finally:
+        storage.close()
+    assert published["manifest"]["automation_state"] == "succeeded"
+    assert published["manifest"]["last_attempt_publication_id"] == candidate_id
+    assert published["publication_state"]["active_publication_id"] == candidate_id
+
+
+def test_newer_manual_ready_source_supersedes_older_awaiting_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    first = _validated_manual_candidate(db_path, monkeypatch)
+    first_id = str(first["candidate_publication"]["publication_id"])
+    storage = Storage(str(db_path))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("new manual ready source", "https://example.com/kb-smoke"),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id="kb-smoke",
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+
+    second = _validated_manual_candidate(db_path, monkeypatch)
+    second_id = str(second["candidate_publication"]["publication_id"])
+
+    storage = Storage(str(db_path))
+    try:
+        prior = storage.get_agentic_ready_publication(first_id)
+        automation = storage.get_agentic_ready_automation_state(
+            kb_id="kb-smoke",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert prior["attempt_disposition"] == "superseded_generation"
+    assert automation["automation_state"] == "awaiting_publish"
+    assert automation["last_attempt_publication_id"] == second_id
+
+
+@pytest.mark.parametrize("failure", ["source", "index", "artifact", "cas"])
+def test_explicit_ready_publish_failure_preserves_active_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    active = _manual_build(db_path, "kb-smoke")
+    active_id = str(active["publication_state"]["active_publication_id"])
+    built = _validated_manual_candidate(db_path, monkeypatch)
+    candidate = dict(built["candidate_publication"])
+    expected_active: str | None = active_id
+
+    storage = Storage(str(db_path))
+    try:
+        if failure == "source":
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("source changed", "https://example.com/kb-smoke"),
+            )
+            storage._conn.commit()
+        elif failure == "index":
+            snapshot = resolve_kb_bound_chunks(storage, "kb-smoke")
+            storage.create_kb_index_version(
+                kb_id="kb-smoke",
+                embedding_provider="test",
+                embedding_model="smoke-model",
+                embedding_dimension=3,
+                embedding_identity_key="emb-smoke-v1",
+                binding_snapshot_fingerprint=str(snapshot["binding_snapshot_fingerprint"]),
+                index_type="faiss",
+                chunk_count=1,
+                artifact_path=str(tmp_path / "indexes" / "kb-smoke-new"),
+                artifact_digest="digest-new",
+                chunk_ids=["chunk-kb-smoke"],
+                status="ready",
+            )
+        elif failure == "artifact":
+            (Path(str(candidate["output_dir"])) / "doc_catalog.jsonl").write_text(
+                "tampered\n", encoding="utf-8"
+            )
+        else:
+            expected_active = None
+    finally:
+        storage.close()
+
+    with pytest.raises(rag_admin_service.RagAdminError) as exc_info:
+        publication_service.publish_ready_data_publication(
+            db_path=str(db_path),
+            kb_id="kb-smoke",
+            payload={
+                "profile": "general",
+                "publication_id": candidate["publication_id"],
+                "expected_active_publication_id": expected_active,
+            },
+        )
+
+    assert exc_info.value.status_code in {409, 422}
+    storage = Storage(str(db_path))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-smoke", profile="general"
+        )
+        assert state["active_publication_id"] == active_id
+    finally:
+        storage.close()
+
+
+def test_explicit_ready_publish_rechecks_source_inside_cas_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    active = _manual_build(db_path, "kb-smoke")
+    active_id = str(active["publication_state"]["active_publication_id"])
+    built = _validated_manual_candidate(db_path, monkeypatch)
+    candidate_id = str(built["candidate_publication"]["publication_id"])
+
+    service_parts = publication_service._manager_and_storage(str(db_path))
+    service_storage = service_parts[2]
+    original_transaction = service_storage.transaction
+
+    @contextmanager
+    def source_race_transaction(*args: Any, **kwargs: Any):
+        service_storage._conn.execute(
+            "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+            ("source changed at publish transaction", "https://example.com/kb-smoke"),
+        )
+        service_storage._conn.commit()
+        with original_transaction(*args, **kwargs):
+            yield
+
+    monkeypatch.setattr(service_storage, "transaction", source_race_transaction)
+    monkeypatch.setattr(
+        publication_service,
+        "_manager_and_storage",
+        lambda _db_path: service_parts,
+    )
+
+    with pytest.raises(rag_admin_service.RagAdminError) as exc_info:
+        publication_service.publish_ready_data_publication(
+            db_path=str(db_path),
+            kb_id="kb-smoke",
+            payload={
+                "profile": "general",
+                "publication_id": candidate_id,
+                "expected_active_publication_id": active_id,
+            },
+        )
+
+    assert exc_info.value.status_code == 409
+    assert str(exc_info.value).startswith("stale_snapshot:")
+    storage = Storage(str(db_path))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-smoke", profile="general"
+        )
+        assert state["active_publication_id"] == active_id
+        assert storage.get_agentic_ready_publication(candidate_id)["status"] == "validated"
+    finally:
+        storage.close()
+
+
+def test_manual_build_rechecks_source_after_smoke_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    first = _manual_build(db_path, "kb-smoke")
+    storage = Storage(str(db_path))
+    try:
+        storage._conn.execute(
+            "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+            ("source before raced build", "https://example.com/kb-smoke"),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    def smoke_then_change_source(**_kwargs: Any) -> dict[str, Any]:
+        concurrent = Storage(str(db_path))
+        try:
+            concurrent._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("source changed during smoke", "https://example.com/kb-smoke"),
+            )
+            concurrent._conn.commit()
+        finally:
+            concurrent.close()
+        return _passed_smoke()
+
+    monkeypatch.setattr(
+        rag_admin_service,
+        "run_staging_smoke",
+        smoke_then_change_source,
+    )
+
+    raced = _manual_build(db_path, "kb-smoke")
+
+    assert raced["validation"]["valid"] is False
+    assert raced["validation"]["errors"] == [
+        "stale_snapshot: Ready Data source changed before publication"
+    ]
+    assert (
+        raced["publication_state"]["active_publication_id"]
+        == first["publication_state"]["active_publication_id"]
+    )
+
+
+def test_automatic_publish_rechecks_source_after_smoke(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    _enable_automation(db_path, kb_id="kb-smoke", publish=True)
+
+    def smoke_then_change_source(**_kwargs: Any) -> dict[str, Any]:
+        concurrent = Storage(str(db_path))
+        try:
+            concurrent._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("automatic source changed during smoke", "https://example.com/kb-smoke"),
+            )
+            concurrent._conn.commit()
+        finally:
+            concurrent.close()
+        return _passed_smoke()
+
+    monkeypatch.setattr(
+        rag_admin_service,
+        "run_staging_smoke",
+        smoke_then_change_source,
+    )
+
+    raced = run_ready_data_automation_once(
+        str(db_path),
+        heartbeat_interval_seconds=0,
+    )
+
+    assert raced["status"] == "failed"
+    assert raced["error"] == (
+        "stale_snapshot: Ready Data source changed before publication"
+    )
+    storage = Storage(str(db_path))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-smoke",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert state["active_publication_id"] is None
+
+
+def test_automation_resolves_source_for_selected_manifest_profile(
+    tmp_path: Path,
+) -> None:
+    db_path = _setup_db(tmp_path, manifest_profile="regulation")
+    _enable_automation(
+        db_path,
+        kb_id="kb-smoke",
+        publish=False,
+        profile="regulation",
+    )
+
+    result = run_ready_data_automation_once(
+        str(db_path),
+        heartbeat_interval_seconds=0,
+    )
+
+    assert result["status"] == "awaiting_publish"
+    assert result["candidate_publication"]["profile"] == "regulation"
+
+
+def test_ready_core_requires_explicit_index_and_source_contract(
+    tmp_path: Path,
+) -> None:
+    db_path = _setup_db(tmp_path)
+
+    with pytest.raises(
+        rag_admin_service.RagAdminError,
+        match="invalid_selector: Ready Data requires index_version_id and "
+        "expected_source_snapshot_fingerprint",
+    ):
+        _build_agentic_ready_manifest_core(
+            db_path=str(db_path),
+            kb_id="kb-smoke",
+            payload={"profile": "general"},
+            publish=True,
+        )
+
+
+def test_ready_task_stop_preserves_active_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    active = _manual_build(db_path, "kb-smoke")
+    source_storage = Storage(str(db_path))
+    try:
+        source_storage._conn.execute(
+            "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+            ("Ready task stop source", "https://example.com/kb-smoke"),
+        )
+        source_storage._conn.commit()
+    finally:
+        source_storage.close()
+    ready_input = _ready_input(db_path, "kb-smoke")
+    runtime = NativeTaskRuntime(ready_data_db_path=str(db_path))
+    task_id = "task-ready-stop"
+    runtime.active_tasks[task_id] = {"stop_requested": False}
+
+    def smoke_then_stop(**_kwargs: Any) -> dict[str, Any]:
+        runtime.active_tasks[task_id]["stop_requested"] = True
+        return _passed_smoke()
+
+    monkeypatch.setattr(rag_admin_service, "run_staging_smoke", smoke_then_stop)
+
+    task_storage = Storage(str(db_path))
+    try:
+        stopped = runtime._run_ready_data_build(
+            task_id,
+            task_storage,
+            str(db_path),
+            {
+            "contract_version": 1,
+            "kb_id": "kb-smoke",
+            "profile": "general",
+            **ready_input,
+        },
+        )
+    finally:
+        task_storage.close()
+
+    assert stopped.success is False
+    assert stopped.metadata["stopped"] is True
+    storage = Storage(str(db_path))
+    try:
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-smoke",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert state["active_publication_id"] == active["publication_state"][
+        "active_publication_id"
+    ]
+
+
+def test_builder_classifies_prebuild_source_change_as_stale_snapshot(
+    tmp_path: Path,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    ready_input = _ready_input(db_path, "kb-smoke")
+
+    with pytest.raises(ValueError, match="^stale_snapshot:"):
+        ready_data_builder.build_l0(
+            db_path=str(db_path),
+            output_dir=str(tmp_path / "stale-builder"),
+            profile="general",
+            kb_id="kb-smoke",
+            index_version_id=ready_input["index_version_id"],
+            expected_source_snapshot_fingerprint="rdsnap_wrong",
+        )
 
 
 def test_smoke_failure_keeps_active_and_previous_unchanged_and_cleans_staging(
@@ -490,19 +996,17 @@ def test_automatic_smoke_failure_finishes_claim_as_failed(
     assert publication_state["previous_publication_id"] is None
 
 
-def test_manual_build_confirms_and_publishes_empty_kb(tmp_path: Path) -> None:
+def test_manual_build_rejects_empty_kb_without_committed_index(tmp_path: Path) -> None:
     db_path = _setup_db(tmp_path, with_document=False)
 
-    result = _manual_build(db_path, "kb-smoke")
-
-    candidate = result["candidate_publication"]
-    assert result["validation"]["valid"] is True
-    assert candidate["doc_count"] == 0
-    assert candidate["smoke_result"]["status"] == "skipped_empty"
-    assert result["publication_state"]["active_publication_id"] == candidate["publication_id"]
+    with pytest.raises(
+        ValueError,
+        match="invalid_selector: Ready Data requires a committed KB index",
+    ):
+        _manual_build(db_path, "kb-smoke")
 
 
-def test_automatic_publish_keeps_empty_kb_awaiting_manual_confirmation(
+def test_automatic_publish_rejects_empty_kb_without_committed_index(
     tmp_path: Path,
 ) -> None:
     db_path = _setup_db(tmp_path, with_document=False)
@@ -529,22 +1033,21 @@ def test_automatic_publish_keeps_empty_kb_awaiting_manual_confirmation(
         )
     finally:
         storage.close()
-    assert first["status"] == "awaiting_manual_confirmation"
-    assert first["candidate_publication"]["doc_count"] == 0
-    assert first["candidate_publication"]["smoke_result"]["status"] == "skipped_empty"
+    assert first["status"] == "failed"
+    assert "non-empty KB membership" in first["error"]
     assert second == {"status": "idle"}
-    assert automation["automation_state"] == "awaiting_publish"
-    assert automation["last_error"] == "empty ready_data requires manual publish confirmation"
+    assert automation["automation_state"] == "failed"
+    assert "non-empty KB membership" in automation["last_error"]
     assert state["active_publication_id"] is None
     assert state["previous_publication_id"] is None
 
 
-def test_enabling_auto_publish_for_existing_empty_candidate_waits_once(
+def test_empty_kb_build_only_fails_closed_before_publish_toggle(
     tmp_path: Path,
 ) -> None:
     db_path = _setup_db(tmp_path, with_document=False)
     _enable_automation(db_path, kb_id="kb-smoke", publish=False)
-    built = run_ready_data_automation_once(
+    failed = run_ready_data_automation_once(
         str(db_path),
         heartbeat_interval_seconds=0,
     )
@@ -559,17 +1062,13 @@ def test_enabling_auto_publish_for_existing_empty_candidate_waits_once(
     finally:
         storage.close()
 
-    guarded = run_ready_data_automation_once(
-        str(db_path),
-        heartbeat_interval_seconds=0,
-    )
     idle = run_ready_data_automation_once(
         str(db_path),
         heartbeat_interval_seconds=0,
     )
 
-    assert built["status"] == "awaiting_publish"
-    assert guarded["status"] == "awaiting_manual_confirmation"
+    assert failed["status"] == "failed"
+    assert "non-empty KB membership" in failed["error"]
     assert idle == {"status": "idle"}
 
 
@@ -645,74 +1144,28 @@ def test_unproven_legacy_candidate_is_not_claimed_for_automatic_publish(
     assert state["previous_publication_id"] is None
 
 
-def test_automatic_empty_gate_uses_smoke_catalog_result_not_manifest_count(
+def test_automatic_empty_kb_fails_before_custom_builder_is_called(
     tmp_path: Path,
 ) -> None:
     db_path = _setup_db(tmp_path, with_document=False)
     _enable_automation(db_path, kb_id="kb-smoke", publish=True)
 
-    def misleading_empty_candidate(
-        *, db_path: str, kb_id: str, profile: str
-    ) -> dict[str, Any]:
-        storage = Storage(db_path)
-        try:
-            output_dir = tmp_path / "agentic_ready_data" / "misleading-empty"
-            output_dir.mkdir(parents=True)
-            manifest_path = output_dir / "ready_data_manifest.json"
-            manifest_path.write_text(
-                json.dumps(
-                    {
-                        "profile": profile,
-                        "profile_version": "1",
-                        "artifact_files": ["ready_data_manifest.json"],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            candidate = storage.record_agentic_ready_publication(
-                kb_id=kb_id,
-                index_version_id=None,
-                source_version_kind="catalog_chunks_snapshot",
-                source_version_id="misleading-empty-source",
-                profile=profile,
-                profile_version="1",
-                status="validated",
-                output_dir=str(output_dir),
-                artifact_files=["ready_data_manifest.json"],
-                doc_count=1,
-                section_count=0,
-                built_at="2026-08-19T00:00:00+00:00",
-                artifact_digest=_ready_data_artifact_digest(
-                    str(output_dir),
-                    ["ready_data_manifest.json"],
-                ),
-                source_db=db_path,
-                smoke_result={
-                    **_passed_smoke(),
-                    "status": "skipped_empty",
-                    "catalog_doc_count": 0,
-                    "matched_doc_id": "",
-                    "matched_file_url": "",
-                },
-            )
-        finally:
-            storage.close()
-        return {
-            "candidate_publication": candidate,
-            "validation": {"valid": True, "errors": [], "warnings": []},
-        }
+    called = False
+
+    def unexpected_builder(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        raise AssertionError("empty KB must fail before build")
 
     result = run_ready_data_automation_once(
         str(db_path),
-        build_candidate=misleading_empty_candidate,
-        source_fingerprint=lambda **_kwargs: {
-            "source_version_kind": "catalog_chunks_snapshot",
-            "source_version_id": "misleading-empty-source",
-        },
+        build_candidate=unexpected_builder,
         heartbeat_interval_seconds=0,
     )
 
-    assert result["status"] == "awaiting_manual_confirmation"
+    assert result["status"] == "failed"
+    assert "non-empty KB membership" in result["error"]
+    assert called is False
     storage = Storage(str(db_path))
     try:
         state = storage.get_agentic_ready_publication_state(
@@ -793,15 +1246,18 @@ def test_active_pointer_change_during_smoke_loses_expected_active_cas(
             output_dir=str(competitor_dir),
             profile="general",
             kb_id="kb-smoke",
+            **_ready_input(db_path, "kb-smoke"),
         )
         artifacts = list(manifest["artifact_files"])
         storage = Storage(str(db_path))
         try:
             competitor = storage.record_agentic_ready_publication(
                 kb_id="kb-smoke",
-                index_version_id=None,
-                source_version_kind="catalog_chunks_snapshot",
-                source_version_id="competitor-source",
+                index_version_id=_ready_input(db_path, "kb-smoke")[
+                    "index_version_id"
+                ],
+                source_version_kind=str(manifest["source_version_kind"]),
+                source_version_id=str(manifest["source_version_id"]),
                 profile="general",
                 profile_version="1",
                 status="validated",
@@ -904,3 +1360,50 @@ def test_repeated_identical_manual_build_keeps_active_and_query_identity(
         second["candidate_publication"]["smoke_result"]["query_sha256"]
         == first["candidate_publication"]["smoke_result"]["query_sha256"]
     )
+
+
+def test_repeated_automatic_ready_task_returns_existing_active_publication(
+    tmp_path: Path,
+) -> None:
+    db_path = _setup_db(tmp_path)
+    _enable_automation(db_path, kb_id="kb-smoke", publish=True)
+    ready_input = _ready_input(db_path, "kb-smoke")
+    runtime = NativeTaskRuntime.__new__(NativeTaskRuntime)
+    runtime._progress_callback = lambda _task_id: lambda *_args: None
+    runtime._stop_requested = lambda _task_id: False
+    task_input = {
+        "contract_version": 1,
+        "kb_id": "kb-smoke",
+        "profile": "general",
+        **ready_input,
+    }
+
+    storage = Storage(str(db_path))
+    try:
+        first = runtime._run_ready_data_build(
+            "ready-first",
+            storage,
+            str(db_path),
+            task_input,
+        )
+        second = runtime._run_ready_data_build(
+            "ready-second",
+            storage,
+            str(db_path),
+            task_input,
+        )
+        state = storage.get_agentic_ready_publication_state(
+            kb_id="kb-smoke",
+            profile="general",
+        )
+    finally:
+        storage.close()
+
+    assert first.success is True
+    assert second.success is True
+    assert second.metadata["result"]["publication_id"] == first.metadata["result"][
+        "publication_id"
+    ]
+    assert second.metadata["result"]["publication_id"] == state[
+        "active_publication_id"
+    ]

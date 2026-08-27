@@ -93,7 +93,7 @@ def test_add_to_schedule_uses_current_task_payload_without_manual_params_field()
     assert "input-sched-params" not in src
 
 
-def test_each_task_form_exposes_add_to_schedule_control():
+def test_legacy_collection_forms_expose_add_to_schedule_control():
     form_names = [
         "SiteConfigForm.tsx",
         "WebCrawlForm.tsx",
@@ -103,13 +103,17 @@ def test_each_task_form_exposes_add_to_schedule_control():
         "CatalogForm.tsx",
         "MarkdownForm.tsx",
         "ChunkForm.tsx",
-        "RagIndexForm.tsx",
     ]
 
     for form_name in form_names:
         src = (ROOT / "pages" / "tasks" / form_name).read_text(encoding="utf-8")
         assert "ScheduleFromTaskButton" in src, form_name
         assert "buildTask" in src or "buildCollectionTask" in src, form_name
+
+    rag_src = (ROOT / "pages" / "tasks" / "RagIndexForm.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "ScheduleFromTaskButton" not in rag_src
 
 
 def test_file_import_form_uses_browser_upload_batches_not_server_folder_browser():
@@ -156,12 +160,14 @@ def test_tasks_page_restores_rag_indexing_task_form():
 
     assert 'type: "rag_index"' in tasks_src
     assert 'apiType: "rag_indexing"' in tasks_src
-    assert "<RagIndexForm onSubmit={handleSubmitTask} submitting={submitting} />" in tasks_src
+    assert "<RagIndexForm onSubmit={handleSubmitRagIndex} submitting={submitting} />" in tasks_src
+    assert '`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`' in tasks_src
     assert '"/api/rag/knowledge-bases"' in rag_src
-    assert 'type: "rag_indexing"' in rag_src
     assert "kb_id: selectedKbId" in rag_src
-    assert "force_reindex: forceReindex" in rag_src
-    assert "ScheduleFromTaskButton" in rag_src
+    assert "force_rebuild: forceRebuild" in rag_src
+    assert 'type: "rag_indexing"' not in rag_src
+    assert "const [incremental" not in rag_src
+    assert "incremental," not in rag_src
 
 
 def test_tasks_page_orders_markdown_before_catalog_and_links_create_kb():
@@ -212,13 +218,13 @@ def test_task_category_scopes_use_backend_selects_not_free_text_datalists():
         assert "categoryOptions" in src, form_name
 
 
-def test_rag_index_form_supports_explicit_file_urls():
+def test_rag_index_form_uses_only_canonical_full_kb_inputs():
     src = (ROOT / "pages" / "tasks" / "RagIndexForm.tsx").read_text(encoding="utf-8")
 
-    assert "fileUrlsInput" in src
-    assert "parseFileUrls" in src
-    assert "file_urls: fileUrls.length > 0 ? fileUrls : undefined" in src
-    assert 'data-testid="input-rag-file-urls"' in src
+    assert "fileUrlsInput" not in src
+    assert "file_urls" not in src
+    assert "force_reindex:" not in src
+    assert "force_rebuild: forceRebuild" in src
 
 
 def test_tasks_page_exposes_agentic_site_monitoring_form():
@@ -314,6 +320,8 @@ def test_tasks_page_exposes_fixed_collapsible_pipeline_baton():
     assert "interval: scheduledInterval.trim()" in form_src
     assert "enabled: scheduledEnabled" in form_src
     assert 'label: "Chunk & Embedding"' in form_src
+    assert "task.label || step.label" in form_src
+    assert 'subtask?: "kb_index" | "ready_data_build"' in form_src
     assert "binding_mode" not in form_src
     assert "full_reindex" not in form_src
     assert 'rag_indexing: ["incremental", "force_reindex", "kb_id"]' in form_src
@@ -364,7 +372,7 @@ def test_pipeline_baton_i18n_keys_added_in_both_locales():
         "tasks.pipeline.title",
         "tasks.pipeline.start",
         "tasks.pipeline.default_settings",
-        "tasks.pipeline.all_category_kbs",
+        "tasks.pipeline.all_indexable_kbs",
         "tasks.pipeline.view_log",
     ):
         assert f'"{key}":' in i18n_src, key

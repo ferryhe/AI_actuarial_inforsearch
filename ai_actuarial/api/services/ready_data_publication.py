@@ -252,6 +252,30 @@ def _public_source_state(source_state: Any) -> dict[str, Any] | None:
     }
 
 
+def _public_ready_build_input(value: Any) -> dict[str, Any] | None:
+    contract_version = value.get("contract_version") if isinstance(value, Mapping) else None
+    if (
+        not isinstance(value, Mapping)
+        or not isinstance(contract_version, int)
+        or isinstance(contract_version, bool)
+        or contract_version != 1
+    ):
+        return None
+    index_version_id = value.get("index_version_id")
+    source_fingerprint = value.get("expected_source_snapshot_fingerprint")
+    if not isinstance(index_version_id, str) or not isinstance(source_fingerprint, str):
+        return None
+    index_version_id = index_version_id.strip()
+    source_fingerprint = source_fingerprint.strip()
+    if not index_version_id or not source_fingerprint:
+        return None
+    return {
+        "contract_version": 1,
+        "index_version_id": index_version_id,
+        "expected_source_snapshot_fingerprint": source_fingerprint,
+    }
+
+
 def _publication_matches_scope(
     publication: Any,
     *,
@@ -293,7 +317,7 @@ def _public_publication(
         "authoritative_source_version_id": publication.get("source_version_id"),
         "observed_index_version_id": publication.get("index_version_id"),
         "current_ready_index_version_id": current_ready_index_version_id,
-        "index_consumed_by_builder": False,
+        "index_consumed_by_builder": bool(publication.get("index_version_id")),
         "artifact_digest": publication.get("artifact_digest") or "",
         "doc_count": int(publication.get("doc_count") or 0),
         "section_count": int(publication.get("section_count") or 0),
@@ -594,7 +618,10 @@ def public_ready_data_manifest(
         "current_ready_index_version_id": publication_state.get(
             "current_ready_index_version_id"
         ),
-        "index_consumed_by_builder": False,
+        "index_consumed_by_builder": bool(active.get("observed_index_version_id")),
+        "ready_build_input": _public_ready_build_input(
+            manifest.get("ready_build_input")
+        ),
         "smoke_status": publication_state.get("smoke_status"),
         "smoke_checked_at": publication_state.get("smoke_checked_at"),
         "publication_state": dict(publication_state),
@@ -629,6 +656,157 @@ def read_public_ready_data_snapshot(
             ),
             "publication_state": publication_state,
         }
+
+
+def publish_ready_data_publication(
+    *,
+    db_path: str,
+    kb_id: str,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    kid = _kb_id(kb_id)
+    if not isinstance(payload, Mapping):
+        raise RagAdminError("Invalid JSON body")
+    profile_value = payload.get("profile")
+    publication_value = payload.get("publication_id")
+    if not isinstance(profile_value, str) or not profile_value.strip():
+        raise RagAdminError("profile is required")
+    if not isinstance(publication_value, str) or not publication_value.strip():
+        raise RagAdminError("publication_id is required")
+    if "expected_active_publication_id" not in payload:
+        raise RagAdminError("expected_active_publication_id is required")
+    expected_active_value = payload.get("expected_active_publication_id")
+    if expected_active_value is not None and not isinstance(expected_active_value, str):
+        raise RagAdminError("expected_active_publication_id must be a string or null")
+    expected_active = (
+        str(expected_active_value).strip() if expected_active_value is not None else None
+    ) or None
+    profile = _manifest_profile(profile_value)
+    publication_id = publication_value.strip()
+
+    _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    try:
+        if not manager.get_kb(kid):
+            raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        candidate = storage.get_agentic_ready_publication(publication_id)
+        if not candidate:
+            raise RagAdminError("publish_failure: ready_data publication not found", status_code=404)
+        state = storage.get_agentic_ready_publication_state(kb_id=kid, profile=profile)
+        candidate_is_current = (
+            candidate.get("status") == "active"
+            and state.get("active_publication_id") == publication_id
+        )
+        if (
+            not agentic_ready_publication_matches_scope(
+                candidate,
+                kb_id=kid,
+                profile=profile,
+            )
+            or (candidate.get("status") != "validated" and not candidate_is_current)
+        ):
+            raise RagAdminError(
+                "publish_failure: ready_data publication is not eligible for publication",
+                status_code=422,
+            )
+        if state.get("active_publication_id") != expected_active:
+            raise RagAdminError(
+                "publish_failure: ready_data publication state changed; refresh before publish",
+                status_code=409,
+            )
+
+        from ai_actuarial.agentic_rag import ready_data_builder
+
+        allowed_output_root = str(Path(db_path).resolve().parent / "agentic_ready_data")
+        validation = _validate_recorded_ready_publication(
+            candidate,
+            validator=ready_data_builder.validate,
+            allowed_output_root=allowed_output_root,
+        )
+        if not validation["valid"]:
+            raise RagAdminError(
+                "publish_failure: ready_data publication failed artifact validation",
+                status_code=422,
+            )
+        index_version_id = str(candidate.get("index_version_id") or "").strip()
+        source_snapshot_fingerprint = str(
+            candidate.get("source_version_id") or ""
+        ).strip()
+        if not index_version_id or not source_snapshot_fingerprint:
+            raise RagAdminError(
+                "publish_failure: ready_data publication lacks exact source identity",
+                status_code=422,
+            )
+        with storage.transaction(immediate=True):
+            guarded = storage.get_agentic_ready_publication_state(
+                kb_id=kid,
+                profile=profile,
+            )
+            if guarded.get("active_publication_id") != expected_active:
+                raise RagAdminError(
+                    "publish_failure: ready_data publication state changed; refresh before publish",
+                    status_code=409,
+                )
+            try:
+                current_source = ready_data_builder.get_builder_source_fingerprint(
+                    db_path=db_path,
+                    kb_id=kid,
+                    profile=profile,
+                    index_version_id=index_version_id,
+                )
+            except ValueError as exc:
+                raise RagAdminError(f"stale_snapshot: {exc}", status_code=409) from exc
+            if (
+                str(current_source.get("source_snapshot_fingerprint") or "")
+                != source_snapshot_fingerprint
+            ):
+                raise RagAdminError(
+                    "stale_snapshot: Ready Data source changed before explicit publication",
+                    status_code=409,
+                )
+            try:
+                published = storage.publish_agentic_ready_publication(
+                    publication_id,
+                    expected_active_publication_id=expected_active,
+                )
+            except ValueError as exc:
+                raise RagAdminError(f"publish_failure: {exc}", status_code=422) from exc
+            if not published.get("cas_won"):
+                raise RagAdminError(
+                    "publish_failure: ready_data publication state changed; refresh before publish",
+                    status_code=409,
+                )
+            source_state = storage.get_agentic_ready_source_state(
+                kb_id=kid,
+                profile=profile,
+            )
+            pending_generation = source_state.get("pending_evaluation_generation")
+            if pending_generation is not None:
+                storage.record_agentic_ready_source_evaluation(
+                    kb_id=kid,
+                    profile=profile,
+                    evaluated_generation=int(pending_generation),
+                    source_version_kind=str(candidate.get("source_version_kind") or ""),
+                    source_version_id=source_snapshot_fingerprint,
+                )
+            storage.record_agentic_ready_manual_publication_state(
+                kb_id=kid,
+                profile=profile,
+                publication_id=publication_id,
+                published=True,
+            )
+        current = storage.get_agentic_ready_publication_state(
+            kb_id=kid,
+            profile=profile,
+        )
+        return {
+            "kb_id": kid,
+            "profile": profile,
+            "publication_id": str(current.get("active_publication_id") or publication_id),
+            "publish_status": "published",
+            "active_publication_id": current.get("active_publication_id"),
+        }
+    finally:
+        storage.close()
 
 
 def rollback_ready_data_publication(

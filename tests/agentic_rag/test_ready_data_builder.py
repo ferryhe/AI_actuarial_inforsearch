@@ -187,7 +187,7 @@ def test_build_l0_source_version_is_stable_and_tracks_consumed_inputs(test_db_pa
     assert changed["source_version_id"] != first["source_version_id"]
 
 
-def test_build_l0_records_observed_ready_index_without_consuming_it(test_db_path, tmp_path):
+def test_build_l0_kb_scope_requires_persisted_composition(test_db_path, tmp_path):
     conn = sqlite3.connect(test_db_path)
     conn.execute(
         """
@@ -205,44 +205,13 @@ def test_build_l0_records_observed_ready_index_without_consuming_it(test_db_path
     conn.commit()
     conn.close()
 
-    without_index = builder.build_l0(
-        db_path=test_db_path,
-        output_dir=str(tmp_path / "without-index"),
-        profile="general",
-        kb_id="kb-ready",
-    )
-    assert without_index["index_version_id"] is None
-    assert without_index["index_consumed_by_builder"] is False
-
-    conn = sqlite3.connect(test_db_path)
-    conn.execute(
-        """
-        INSERT INTO kb_ready_index_state (
-            kb_id, index_version_id, embedding_provider, embedding_model,
-            embedding_dimension, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        ("kb-ready", "idx-observed", "openai", "embedding-test", 3, "2026-08-19T00:00:00+00:00"),
-    )
-    conn.commit()
-    conn.close()
-
-    with_index = builder.build_l0(
-        db_path=test_db_path,
-        output_dir=str(tmp_path / "with-index"),
-        profile="general",
-        kb_id="kb-ready",
-    )
-    assert with_index["index_version_id"] == "idx-observed"
-    assert with_index["index_consumed_by_builder"] is False
-    assert with_index["source_version_id"] == without_index["source_version_id"]
-
-    fingerprint = builder.get_builder_source_fingerprint(
-        db_path=test_db_path,
-        kb_id="kb-ready",
-    )
-    assert set(fingerprint) == {"source_version_kind", "source_version_id"}
-    assert fingerprint["source_version_id"] == without_index["source_version_id"]
+    with pytest.raises(ValueError, match="persisted KB composition"):
+        builder.build_l0(
+            db_path=test_db_path,
+            output_dir=str(tmp_path / "without-index"),
+            profile="general",
+            kb_id="kb-ready",
+        )
 
 
 def test_build_l0_closes_database_connection_when_build_fails(test_db_path, monkeypatch):
@@ -746,7 +715,7 @@ def test_validate_resolves_dict_mapped_l2_artifact_paths(tmp_path):
     assert any("relation formula targets not in L2 artifacts" in error for error in result["errors"])
 
 
-def test_build_l0_can_scope_to_knowledge_base(test_db_path, tmp_path):
+def test_build_l0_kb_scope_does_not_fallback_to_partial_legacy_tables(test_db_path, tmp_path):
     """KB scoped builds should not leak catalog rows from other KBs."""
     conn = sqlite3.connect(test_db_path)
     conn.executescript(
@@ -816,30 +785,16 @@ def test_build_l0_can_scope_to_knowledge_base(test_db_path, tmp_path):
     conn.commit()
     conn.close()
 
-    manifest = builder.build_l0(
-        db_path=test_db_path,
-        output_dir=str(tmp_path),
-        profile="general",
-        kb_id="kb_rule_1",
-    )
-
-    assert manifest["kb_id"] == "kb_rule_1"
-    assert manifest["scope"] == "knowledge_base"
-    assert manifest["output_dir"] == str(tmp_path)
-    assert manifest["doc_count"] == 1
-    assert manifest["section_count"] == 2
-    catalog_entries = [
-        json.loads(line)
-        for line in (tmp_path / "doc_catalog.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert [entry["file_url"] for entry in catalog_entries] == ["https://example.com/rule1"]
-    section_text = (tmp_path / "sections.jsonl").read_text(encoding="utf-8")
-    assert "Other profile content" not in section_text
-    assert "Wrong Profile" not in section_text
+    with pytest.raises(ValueError, match="persisted KB composition"):
+        builder.build_l0(
+            db_path=test_db_path,
+            output_dir=str(tmp_path),
+            profile="general",
+            kb_id="kb_rule_1",
+        )
 
 
-def test_build_l0_ignores_historical_orphan_binding_for_chunk_mode(test_db_path, tmp_path):
+def test_build_l0_rejects_historical_orphan_binding_without_exact_kb(test_db_path, tmp_path):
     conn = sqlite3.connect(test_db_path)
     conn.executescript(
         """
@@ -880,21 +835,16 @@ def test_build_l0_ignores_historical_orphan_binding_for_chunk_mode(test_db_path,
     conn.commit()
     conn.close()
 
-    output_dir = tmp_path / "orphan-binding"
-    manifest = builder.build_l0(
-        db_path=test_db_path,
-        output_dir=str(output_dir),
-        profile="general",
-        kb_id="kb_rule_1",
-    )
-
-    section_text = (output_dir / "sections.jsonl").read_text(encoding="utf-8")
-    assert manifest["section_count"] == 2
-    assert "第一章 总则" in section_text
-    assert "Orphan content" not in section_text
+    with pytest.raises(ValueError, match="persisted KB composition"):
+        builder.build_l0(
+            db_path=test_db_path,
+            output_dir=str(tmp_path / "orphan-binding"),
+            profile="general",
+            kb_id="kb_rule_1",
+        )
 
 
-def test_build_l0_ignores_binding_outside_current_catalog_input(test_db_path, tmp_path):
+def test_build_l0_rejects_non_ready_binding_without_exact_kb(test_db_path, tmp_path):
     conn = sqlite3.connect(test_db_path)
     conn.executescript(
         """
@@ -950,18 +900,13 @@ def test_build_l0_ignores_binding_outside_current_catalog_input(test_db_path, tm
     conn.commit()
     conn.close()
 
-    output_dir = tmp_path / "invalid-catalog-binding"
-    manifest = builder.build_l0(
-        db_path=test_db_path,
-        output_dir=str(output_dir),
-        profile="general",
-        kb_id="kb_rule_1",
-    )
-
-    section_text = (output_dir / "sections.jsonl").read_text(encoding="utf-8")
-    assert manifest["section_count"] == 2
-    assert "第一章 总则" in section_text
-    assert "Not-ready content" not in section_text
+    with pytest.raises(ValueError, match="persisted KB composition"):
+        builder.build_l0(
+            db_path=test_db_path,
+            output_dir=str(tmp_path / "invalid-catalog-binding"),
+            profile="general",
+            kb_id="kb_rule_1",
+        )
 
 
 def test_build_l0_empty_db(tmp_path):

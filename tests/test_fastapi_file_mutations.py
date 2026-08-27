@@ -9,6 +9,9 @@ from fastapi.testclient import TestClient
 from itsdangerous import URLSafeSerializer
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.embedding_service import resolve_server_embedding_identity
+from ai_actuarial.rag.kb_index import build_kb_index, resolve_kb_bound_chunks
+from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
 
@@ -215,6 +218,170 @@ def test_fastapi_file_mutations_download_and_export_work(tmp_path: Path, monkeyp
     files_after_delete = client.get("/api/files?include_deleted=true", headers=headers)
     deleted = next(item for item in files_after_delete.json()["files"] if item["url"] == seed["beta_url"])
     assert deleted["deleted_at"]
+
+
+def test_global_file_delete_reconciles_kbs_and_reindexes_only_complete_nonempty_kb(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, app, seed = _build_test_client(tmp_path, monkeypatch)
+    db_path = tmp_path / "index.db"
+    storage = Storage(str(db_path))
+    try:
+        identity = resolve_server_embedding_identity(storage)
+        profile = storage.create_chunk_profile(
+            name="delete-reconcile-profile",
+            chunk_size=256,
+            chunk_overlap=32,
+        )
+        profile_id = str(profile["profile_id"])
+        manager = KnowledgeBaseManager(storage)
+        for kb_id, urls in (
+            ("kb-delete-two", [seed["alpha_url"], seed["beta_url"]]),
+            ("kb-delete-empty", [seed["beta_url"]]),
+        ):
+            manager.create_kb(
+                kb_id=kb_id,
+                name=kb_id,
+                kb_mode="manual",
+                chunk_profile_id=profile_id,
+                embedding_provider=identity.provider,
+                embedding_model=identity.model,
+                embedding_dimension=identity.dimension,
+                embedding_identity_key=identity.embedding_identity_key,
+            )
+            manager.add_files_to_kb(kb_id, list(urls))
+
+        storage.update_file_markdown(
+            str(seed["beta_url"]), "# Beta\n\nDelete reconciliation.", "manual"
+        )
+        chunk_ids: dict[str, str] = {}
+        for index, file_url in enumerate((str(seed["alpha_url"]), str(seed["beta_url"]))):
+            chunk_set = storage.get_or_create_file_chunk_set(
+                file_url=file_url,
+                profile_id=profile_id,
+                markdown_hash=f"delete-{index}",
+                status="building",
+            )
+            storage.replace_global_chunks(
+                chunk_set_id=str(chunk_set["chunk_set_id"]),
+                chunks=[
+                    {
+                        "chunk_index": 0,
+                        "content": f"Delete reconciliation chunk {index}",
+                        "token_count": 4,
+                        "section_hierarchy": "Root",
+                    }
+                ],
+            )
+            chunk_id = str(
+                storage._conn.execute(
+                    "SELECT chunk_id FROM global_chunks WHERE chunk_set_id = ?",
+                    (chunk_set["chunk_set_id"],),
+                ).fetchone()[0]
+            )
+            chunk_ids[file_url] = chunk_id
+            for kb_id in (
+                ["kb-delete-two", "kb-delete-empty"]
+                if file_url == seed["beta_url"]
+                else ["kb-delete-two"]
+            ):
+                storage.bind_chunk_set_to_kb(
+                    kb_id=kb_id,
+                    file_url=file_url,
+                    chunk_set_id=str(chunk_set["chunk_set_id"]),
+                    bound_by="delete-test",
+                    binding_mode="pin",
+                )
+        storage.batch_upsert_chunk_embeddings(
+            [
+                {
+                    "chunk_id": chunk_id,
+                    "vector": [float(index + 1)] * identity.dimension,
+                }
+                for index, chunk_id in enumerate(chunk_ids.values())
+            ],
+            identity=identity.as_dict(),
+        )
+        old_versions: dict[str, str] = {}
+        for kb_id in ("kb-delete-two", "kb-delete-empty"):
+            snapshot = resolve_kb_bound_chunks(storage, kb_id)
+            built = build_kb_index(
+                storage=storage,
+                kb_id=kb_id,
+                expected_binding_snapshot_fingerprint=str(
+                    snapshot["binding_snapshot_fingerprint"]
+                ),
+                embedding_identity_key=identity.embedding_identity_key,
+                config=manager.config,
+            )
+            old_versions[kb_id] = str(built["index_version_id"])
+    finally:
+        storage.close()
+
+    launched: list[tuple[str, dict[str, object]]] = []
+
+    def start_task(task_type: str, payload: dict[str, object], **_kwargs: object) -> str:
+        launched.append((task_type, dict(payload)))
+        return f"job-delete-{len(launched)}"
+
+    app.state.start_background_task = start_task
+    response = client.post(
+        "/api/files/delete",
+        json={"url": seed["beta_url"], "confirm": "DELETE"},
+        headers={"Authorization": f"Bearer {seed['operator_token']}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["details"]["affected_kb_count"] == 2
+    assert response.json()["details"]["reindex_jobs"] == [
+        {"kb_id": "kb-delete-two", "job_id": "job-delete-1"}
+    ]
+    assert launched[0][0] == "rag_indexing"
+    storage = Storage(str(db_path))
+    try:
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM rag_kb_files WHERE file_url = ?",
+            (seed["beta_url"],),
+        ).fetchone()[0] == 0
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_chunk_bindings WHERE file_url = ?",
+            (seed["beta_url"],),
+        ).fetchone()[0] == 0
+        assert storage._conn.execute(
+            "SELECT index_dirty_at FROM rag_knowledge_bases WHERE kb_id = ?",
+            ("kb-delete-two",),
+        ).fetchone()[0]
+        assert storage.get_agentic_ready_source_state(
+            kb_id="kb-delete-two", profile="general"
+        )["pending_evaluation_generation"] is not None
+        assert storage._conn.execute(
+            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+            ("kb-delete-empty",),
+        ).fetchone()[0] == old_versions["kb-delete-empty"]
+
+        remaining = resolve_kb_bound_chunks(storage, "kb-delete-two")
+        assert [row["chunk_id"] for row in remaining["chunks"]] == [
+            chunk_ids[str(seed["alpha_url"])]
+        ]
+        rebuilt = build_kb_index(
+            storage=storage,
+            kb_id="kb-delete-two",
+            expected_binding_snapshot_fingerprint=str(
+                remaining["binding_snapshot_fingerprint"]
+            ),
+            embedding_identity_key=str(launched[0][1]["embedding_identity_key"]),
+            config=KnowledgeBaseManager(storage).config,
+        )
+        assert rebuilt["chunk_count"] == 1
+        assert storage._conn.execute(
+            "SELECT COUNT(*) FROM kb_index_items WHERE index_version_id = ?",
+            (old_versions["kb-delete-two"],),
+        ).fetchone()[0] == 2
+        with pytest.raises(Exception, match="invalid_selector"):
+            resolve_kb_bound_chunks(storage, "kb-delete-empty")
+    finally:
+        storage.close()
 
 
 @pytest.mark.parametrize("auth_mode", ["bearer", "x-api-token", "session"])

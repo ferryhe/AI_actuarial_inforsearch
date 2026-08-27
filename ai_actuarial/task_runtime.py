@@ -36,8 +36,12 @@ from ai_actuarial.collectors.file import FileCollector
 from ai_actuarial.collectors.scheduled import ScheduledCollector
 from ai_actuarial.collectors.url import URLCollector
 from ai_actuarial.crawler import Crawler, SiteConfig
-from ai_actuarial.rag.indexing import IndexingPipeline
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+from ai_actuarial.rag.kb_index import (
+    KBIndexStopped,
+    build_kb_index,
+    resolve_kb_bound_chunks,
+)
 from ai_actuarial.search import search_all
 from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_config_path, load_yaml, parse_int_clamped, task_log_path
 from ai_actuarial.pipeline_baton import PIPELINE_STEPS, PipelineBaton
@@ -45,7 +49,7 @@ from ai_actuarial.storage import Storage
 
 logger = logging.getLogger(__name__)
 
-_CAPACITY_GATED_TYPES = frozenset({"recategory", "rag_indexing", "kb_index_build"})
+_CAPACITY_GATED_TYPES = frozenset({"recategory", "rag_indexing", "ready_data_build"})
 
 # Bounded wait for search-fallback child runs to reach a terminal state before
 # the parent pipeline run finalizes (#213). All child runs are required: a hard
@@ -238,7 +242,9 @@ class NativeTaskRuntime:
             ),
             task_status=self._pipeline_task_status,
             task_result=self._pipeline_task_result,
-            category_kb_ids=self._category_kb_ids,
+            indexable_kb_ids=self._indexable_kb_ids,
+            kb_index_input=self._pipeline_kb_index_input,
+            ready_data_input=self._pipeline_ready_data_input,
         )
 
     def _load_history_from_disk(self) -> list[dict[str, Any]]:
@@ -295,13 +301,80 @@ class NativeTaskRuntime:
                     return dict(task)
         return None
 
-    def _category_kb_ids(self) -> list[str]:
+    def _indexable_kb_ids(self) -> list[str]:
         db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
         with sqlite3.connect(db_path) as conn:
             rows = conn.execute(
-                "SELECT kb_id FROM rag_knowledge_bases WHERE kb_mode = 'category' ORDER BY kb_id"
+                """
+                SELECT kb_id
+                FROM rag_knowledge_bases
+                WHERE COALESCE(kb_mode, 'category') IN ('manual', 'category', 'all')
+                ORDER BY kb_id
+                """
             ).fetchall()
         return [str(row[0]) for row in rows if str(row[0] or "")]
+
+    def _pipeline_kb_index_input(self, kb_id: str) -> dict[str, Any]:
+        db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
+        storage = Storage(db_path)
+        try:
+            from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+
+            kb = KnowledgeBaseManager(storage).get_kb(kb_id)
+            if not kb:
+                raise ValueError(f"knowledge base '{kb_id}' was not found")
+            snapshot = resolve_kb_bound_chunks(storage, kb_id)
+            return {
+                "contract_version": 1,
+                "kb_id": kb_id,
+                "expected_binding_snapshot_fingerprint": snapshot[
+                    "binding_snapshot_fingerprint"
+                ],
+                "embedding_identity_key": str(
+                    getattr(kb, "embedding_identity_key", "") or ""
+                ),
+                "force_rebuild": False,
+            }
+        finally:
+            storage.close()
+
+    def _pipeline_ready_data_input(
+        self,
+        kb_id: str,
+        index_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        index_version_id = str(index_result.get("index_version_id") or "").strip()
+        if not index_version_id:
+            raise ValueError("KB Index task did not return index_version_id")
+        db_path = self._ready_data_db_path or self._resolve_db_path(self._load_site_config())
+        storage = Storage(db_path)
+        try:
+            from ai_actuarial.agentic_rag.ready_data_builder import (
+                get_builder_source_fingerprint,
+            )
+            from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
+
+            kb = KnowledgeBaseManager(storage).get_kb(kb_id)
+            if not kb:
+                raise ValueError(f"knowledge base '{kb_id}' was not found")
+            profile = str(getattr(kb, "manifest_profile", "general") or "general")
+            source = get_builder_source_fingerprint(
+                db_path=db_path,
+                kb_id=kb_id,
+                profile=profile,
+                index_version_id=index_version_id,
+            )
+            return {
+                "contract_version": 1,
+                "kb_id": kb_id,
+                "profile": profile,
+                "index_version_id": index_version_id,
+                "expected_source_snapshot_fingerprint": source[
+                    "source_snapshot_fingerprint"
+                ],
+            }
+        finally:
+            storage.close()
 
     def pipeline_baton_status(self) -> dict[str, Any]:
         view = self._pipeline_baton.status()
@@ -326,16 +399,27 @@ class NativeTaskRuntime:
             step = str(task.get("pipeline_baton_step") or "")
             if step not in stage_tasks:
                 continue
-            stage_tasks[step].append(
-                {
-                    "task_id": str(task.get("id") or ""),
-                    "status": str(task.get("status") or "unknown"),
-                    "kb_id": task.get("pipeline_baton_kb_id"),
-                    "log_url": f"/api/tasks/log/{task.get('id')}",
-                }
-            )
+            projected = {
+                "task_id": str(task.get("id") or ""),
+                "status": str(task.get("status") or "unknown"),
+                "kb_id": task.get("pipeline_baton_kb_id"),
+                "log_url": f"/api/tasks/log/{task.get('id')}",
+            }
+            if step == "rag_indexing":
+                subtask = str(task.get("pipeline_baton_subtask") or "kb_index")
+                projected["subtask"] = subtask
+                projected["label"] = (
+                    "Ready Data Build/Publish"
+                    if subtask == "ready_data_build"
+                    else "KB Index"
+                )
+            stage_tasks[step].append(projected)
         view["stages"] = [
-            {"step": step, "tasks": stage_tasks[step]}
+            {
+                "step": step,
+                "label": "KB Index & Ready Data" if step == "rag_indexing" else step,
+                "tasks": stage_tasks[step],
+            }
             for step in PIPELINE_STEPS
         ]
         return view
@@ -440,6 +524,8 @@ class NativeTaskRuntime:
         extra_fields: dict[str, Any] | None = None,
         task_id: str | None = None,
     ) -> str:
+        if collection_type == "kb_index_build":
+            raise ValueError("kb_index_build is historical; use rag_indexing")
         task_id = task_id or self._new_task_id()
         name = task_name or str(data.get("name") or f"{collection_type.capitalize()} Collection")
         task_data: dict[str, Any] = {
@@ -830,8 +916,11 @@ class NativeTaskRuntime:
             if collection_type == "recategory":
                 return self._run_recategory(task_id, storage, data)
 
-            if collection_type in {"rag_indexing", "kb_index_build"}:
+            if collection_type == "rag_indexing":
                 return self._run_rag_indexing(task_id, storage, data)
+
+            if collection_type == "ready_data_build":
+                return self._run_ready_data_build(task_id, storage, db_path, data)
 
             if collection_type == "markdown_conversion":
                 return self._run_markdown_conversion(task_id, storage, config, download_dir, data)
@@ -1141,85 +1230,179 @@ class NativeTaskRuntime:
         if not kb:
             raise RuntimeError(f"Knowledge base '{kb_id}' not found")
 
-        category_sync: dict[str, Any] | None = None
-        all_sync: dict[str, Any] | None = None
-        kb_mode = getattr(kb, "kb_mode", "")
-        if kb_mode == "category":
-            category_sync = manager.sync_category_files(kb_id)
-        elif kb_mode == "all":
-            all_sync = manager.sync_all_files(kb_id, profile_id=getattr(kb, "chunk_profile_id", ""))
-
-        force_reindex = bool(data.get("force_reindex", False) or data.get("reindex_all", False))
-        incremental = bool(data.get("incremental", True))
+        force_rebuild = bool(
+            data.get("force_rebuild", False)
+            or data.get("force_reindex", False)
+            or data.get("reindex_all", False)
+        )
         file_urls = [
             str(file_url).strip()
             for file_url in list(data.get("file_urls") or [])
             if str(file_url).strip()
         ]
-        if not file_urls:
-            if force_reindex or not incremental:
-                file_urls = [
-                    str(row.get("file_url") or "").strip()
-                    for row in manager.get_kb_files(kb_id)
-                    if str(row.get("file_url") or "").strip()
-                ]
-            else:
-                file_urls = manager.get_files_needing_index(kb_id)
-
-        if not file_urls and not force_reindex:
+        expected = str(data.get("expected_binding_snapshot_fingerprint") or "").strip()
+        identity_key = str(data.get("embedding_identity_key") or "").strip()
+        if int(data.get("contract_version") or 0) != 1 or not expected or not identity_key:
+            raise RuntimeError(
+                "invalid_selector: rag_indexing requires contract_version=1, "
+                "expected_binding_snapshot_fingerprint, and embedding_identity_key"
+            )
+        resolve_kb_bound_chunks(
+            storage,
+            kb_id,
+            file_urls=file_urls if file_urls else None,
+        )
+        task_progress = self._progress_callback(task_id)
+        try:
+            result = build_kb_index(
+                storage=storage,
+                kb_id=kb_id,
+                expected_binding_snapshot_fingerprint=expected,
+                embedding_identity_key=identity_key,
+                force_rebuild=force_rebuild,
+                config=manager.config,
+                stop_check=lambda: self._stop_requested(task_id),
+                progress_callback=lambda message, current, total: task_progress(
+                    current, total, message
+                ),
+            )
+        except KBIndexStopped:
             return CollectionResult(
-                success=True,
+                success=False,
                 items_found=0,
                 items_downloaded=0,
                 items_skipped=0,
-                errors=[],
-                metadata={
-                    "kb_id": kb_id,
-                    "kb_name": kb.name,
-                    "force_reindex": force_reindex,
-                    "incremental": incremental,
-                    "total_chunks": 0,
-                },
+                errors=["Task stopped by user"],
+                metadata={"kb_id": kb_id, "stopped": True},
             )
-
-        progress_callback = self._progress_callback(task_id)
-
-        def rag_progress(message: str, current: int, total: int) -> None:
-            progress_callback(current, total, message)
-
-        pipeline = IndexingPipeline(
-            manager,
-            progress_callback=rag_progress,
-            stop_check=lambda: self._stop_requested(task_id),
-        )
-        stats = pipeline.index_files(kb_id, file_urls, force_reindex=force_reindex)
-        errors: list[str] = []
-        for item in list(stats.get("errors") or []):
-            if isinstance(item, dict):
-                file_url = str(item.get("file_url") or "").strip()
-                message = str(item.get("error") or "Unknown indexing error").strip()
-                errors.append(f"{file_url}: {message}" if file_url else message)
-            else:
-                errors.append(str(item))
-
-        stopped = bool(stats.get("stopped", False))
         return CollectionResult(
-            success=not errors and not stopped,
-            items_found=int(stats.get("total_files") or len(file_urls)),
-            items_downloaded=int(stats.get("indexed_files") or 0),
-            items_skipped=int(stats.get("skipped_files") or 0),
-            errors=errors,
+            success=True,
+            items_found=int(result["chunk_count"]),
+            items_downloaded=int(result["chunk_count"]),
+            items_skipped=0,
+            errors=[],
             metadata={
                 "kb_id": kb_id,
                 "kb_name": kb.name,
-                "force_reindex": force_reindex,
-                "incremental": incremental,
-                "total_chunks": int(stats.get("total_chunks") or 0),
-                "error_files": int(stats.get("error_files") or 0),
-                "stopped": stopped,
-                "category_sync": category_sync,
-                "all_sync": all_sync,
+                "force_rebuild": force_rebuild,
+                "total_chunks": int(result["chunk_count"]),
+                "result": result,
             },
+        )
+
+    def _run_ready_data_build(
+        self,
+        task_id: str,
+        storage: Storage,
+        db_path: str,
+        data: dict[str, Any],
+    ) -> CollectionResult:
+        from ai_actuarial.api.services.rag_admin import _build_agentic_ready_manifest_core
+
+        kb_id = str(data.get("kb_id") or "").strip()
+        profile = str(data.get("profile") or "general").strip().lower() or "general"
+        index_version_id = str(data.get("index_version_id") or "").strip()
+        expected_source = str(
+            data.get("expected_source_snapshot_fingerprint") or ""
+        ).strip()
+        if (
+            int(data.get("contract_version") or 0) != 1
+            or not kb_id
+            or not index_version_id
+            or not expected_source
+        ):
+            raise RuntimeError(
+                "invalid_selector: ready_data_build requires contract_version=1, kb_id, "
+                "index_version_id, and expected_source_snapshot_fingerprint"
+            )
+        slot = storage._conn.execute(
+            """
+            SELECT automatic_publish_enabled
+            FROM agentic_ready_slots
+            WHERE kb_id = ? AND profile = ?
+            """,
+            (kb_id, profile),
+        ).fetchone()
+        publish = bool(slot and slot[0])
+        progress = self._progress_callback(task_id)
+        progress(0, 2, "Build/validate Ready Data")
+        payload = _build_agentic_ready_manifest_core(
+            db_path=db_path,
+            kb_id=kb_id,
+            payload={
+                "profile": profile,
+                "index_version_id": index_version_id,
+                "expected_source_snapshot_fingerprint": expected_source,
+            },
+            publish=publish,
+            should_stop=lambda: self._stop_requested(task_id),
+        )
+        if bool((payload.get("metadata") or {}).get("stopped")):
+            return CollectionResult(
+                success=False,
+                items_found=0,
+                items_downloaded=0,
+                items_skipped=0,
+                errors=["Task stopped by user"],
+                metadata={"kb_id": kb_id, "stopped": True},
+            )
+        validation = dict(payload.get("validation") or {})
+        if not validation.get("valid"):
+            validation_errors = [
+                str(error) for error in validation.get("errors") or []
+            ]
+            stale_error = next(
+                (
+                    error
+                    for error in validation_errors
+                    if "stale_snapshot:" in error
+                ),
+                None,
+            )
+            if stale_error:
+                raise RuntimeError(stale_error)
+            raise RuntimeError("build_failure: Ready Data validation failed")
+        candidate = dict(payload.get("candidate_publication") or {})
+        state = dict(payload.get("publication_state") or {})
+        if publish:
+            publication_id = str(state.get("active_publication_id") or "") or None
+            candidate_id = str(candidate.get("publication_id") or "")
+            active_publication = state.get("active_publication")
+            existing_active_is_valid = bool(
+                state.get("idempotent") is True
+                and state.get("cas_won") is True
+                and isinstance(active_publication, dict)
+                and publication_id
+                and str(active_publication.get("publication_id") or "")
+                == publication_id
+                and str(active_publication.get("status") or "") == "active"
+            )
+            if not publication_id or (
+                publication_id != candidate_id and not existing_active_is_valid
+            ):
+                raise RuntimeError("publish_failure: Ready Data publication did not commit")
+            publish_status = "published"
+        else:
+            publication_id = None
+            publish_status = "awaiting_publish"
+        result = {
+            "contract_version": 1,
+            "publication_id": publication_id,
+            "publish_status": publish_status,
+            "source_snapshot_fingerprint": str(candidate.get("source_version_id") or expected_source),
+            "index_version_id": index_version_id,
+            "artifact_digest": str(candidate.get("artifact_digest") or ""),
+            "doc_count": int(candidate.get("doc_count") or 0),
+            "section_count": int(candidate.get("section_count") or 0),
+        }
+        progress(2, 2, "Ready Data build complete")
+        return CollectionResult(
+            success=True,
+            items_found=result["doc_count"],
+            items_downloaded=result["section_count"],
+            items_skipped=0,
+            errors=[],
+            metadata={"kb_id": kb_id, "result": result},
         )
 
     def _run_search_task(
@@ -2093,6 +2276,7 @@ class NativeTaskRuntime:
                 task.update(fields)
 
     def _finalize_task_success(self, task_id: str, collection_type: str, result: CollectionResult) -> None:
+        ready_followup: tuple[str, dict[str, Any]] | None = None
         with self.task_lock:
             task_data = self.active_tasks.pop(task_id, None)
             if task_data is None:
@@ -2115,7 +2299,41 @@ class NativeTaskRuntime:
             canonical_result = (result.metadata or {}).get("result")
             if isinstance(canonical_result, dict):
                 task_data["result"] = canonical_result
+            if (
+                collection_type == "rag_indexing"
+                and result.success
+                and isinstance(canonical_result, dict)
+                and not task_data.get("pipeline_baton_source_task_id")
+            ):
+                kb_id = str(
+                    (result.metadata or {}).get("kb_id")
+                    or task_data.get("kb_id")
+                    or ""
+                ).strip()
+                if kb_id:
+                    ready_followup = (kb_id, dict(canonical_result))
             self.task_history.append(task_data)
+        if ready_followup is not None:
+            kb_id, index_result = ready_followup
+            try:
+                ready_payload = self._pipeline_ready_data_input(kb_id, index_result)
+                ready_task_id = self.start_background_task(
+                    "ready_data_build",
+                    ready_payload,
+                    task_name=f"Ready Data: {kb_id}",
+                    extra_fields={
+                        "kb_id": kb_id,
+                        "kb_index_task_id": task_id,
+                    },
+                )
+                task_data["ready_data_task_id"] = ready_task_id
+            except Exception as exc:  # noqa: BLE001
+                task_data["ready_data_launch_error"] = str(exc)
+                append_task_log(
+                    task_id,
+                    "ERROR",
+                    f"Ready Data task launch failed: {exc}",
+                )
         append_task_log(task_id, "INFO", f"Task finished (type={collection_type}, success={result.success})")
         self._append_history_to_disk(task_data)
 

@@ -3,7 +3,6 @@ import { Loader2 } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
 import { FormField, SelectField, CheckboxField, RunButton } from "@/components/FormFields";
-import { ScheduleFromTaskButton } from "./ScheduleFromTaskButton";
 
 interface KnowledgeBaseOption {
   kb_id: string;
@@ -25,10 +24,8 @@ export function RagIndexForm({
   const { t } = useTranslation();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([]);
   const [selectedKbId, setSelectedKbId] = useState("");
-  const [incremental, setIncremental] = useState(true);
-  const [forceReindex, setForceReindex] = useState(false);
+  const [forceRebuild, setForceRebuild] = useState(false);
   const [loadingKbs, setLoadingKbs] = useState(false);
-  const [fileUrlsInput, setFileUrlsInput] = useState("");
 
   useEffect(() => {
     if (settingsMode) return;
@@ -46,25 +43,11 @@ export function RagIndexForm({
       .finally(() => setLoadingKbs(false));
   }, [settingsMode]);
 
-  const selectedKb = knowledgeBases.find((kb) => kb.kb_id === selectedKbId);
-
-  function parseFileUrls(): string[] {
-    return fileUrlsInput
-      .split(/\r?\n|,/)
-      .map((item) => item.trim())
-      .filter((item, index, all) => Boolean(item) && all.indexOf(item) === index);
-  }
-
   const buildTask = (): Record<string, unknown> | null => {
     if (!selectedKbId) return null;
-    const fileUrls = parseFileUrls();
     return {
-      type: "rag_indexing",
-      name: selectedKb ? `RAG Indexing: ${selectedKb.name || selectedKb.kb_id}` : "RAG Indexing",
       kb_id: selectedKbId,
-      file_urls: fileUrls.length > 0 ? fileUrls : undefined,
-      incremental,
-      force_reindex: forceReindex,
+      force_rebuild: forceRebuild,
     };
   };
 
@@ -73,7 +56,7 @@ export function RagIndexForm({
       <p className="text-sm text-muted-foreground">{t("tasks.form.rag_desc")}</p>
       {settingsMode ? (
         <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm" data-testid="pipeline-rag-fixed-settings">
-          <p>{t("tasks.pipeline.all_category_kbs")}</p>
+          <p>{t("tasks.pipeline.all_indexable_kbs")}</p>
           <p className="text-xs text-muted-foreground mt-1">{t("tasks.form.incremental")}</p>
         </div>
       ) : loadingKbs ? (
@@ -98,47 +81,24 @@ export function RagIndexForm({
       )}
       {!settingsMode && <div className="flex flex-wrap gap-x-5 gap-y-2">
         <CheckboxField
-          checked={incremental}
-          onChange={(value) => {
-            setIncremental(value);
-            if (value) setForceReindex(false);
-          }}
-          label={t("tasks.form.incremental")}
-          testId="checkbox-rag-incremental"
-        />
-        <CheckboxField
-          checked={forceReindex}
-          onChange={(value) => {
-            setForceReindex(value);
-            if (value) setIncremental(false);
-          }}
+          checked={forceRebuild}
+          onChange={setForceRebuild}
           label={t("tasks.form.force_reindex")}
           testId="checkbox-rag-force-reindex"
         />
       </div>}
-      {!settingsMode && <FormField label={t("tasks.form.file_urls_optional")} hint={t("tasks.form.file_urls_hint")}>
-        <textarea
-          value={fileUrlsInput}
-          onChange={(e) => setFileUrlsInput(e.target.value)}
-          rows={4}
-          className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-border bg-background resize-y focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="https://example.com/report.pdf"
-          data-testid="input-rag-file-urls"
-        />
-      </FormField>}
       <RunButton
         label={settingsMode ? t("common.save") : t("tasks.form.run")}
         submitting={submitting}
         disabled={submitting || (!settingsMode && (!selectedKbId || loadingKbs))}
         onClick={() => {
-          if (settingsMode) onSubmit({ type: "rag_indexing", name: "RAG Indexing" });
+          if (settingsMode) onSubmit({});
           else {
             const task = buildTask();
             if (task) onSubmit(task);
           }
         }}
       />
-      {!settingsMode && <ScheduleFromTaskButton buildTask={buildTask} disabled={!selectedKbId || loadingKbs} />}
     </div>
   );
 }

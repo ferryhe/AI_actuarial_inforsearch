@@ -941,7 +941,10 @@ def test_v7_embedding_schema_migrates_empty_and_nonempty_tables_without_reusing_
     migrated = apply_schema(db_path)
 
     assert migrated["state"] == "current"
-    assert migrated["applied_migrations"] == ["add_chunk_embedding_identity_v8"]
+    assert migrated["applied_migrations"] == [
+        "add_chunk_embedding_identity_v8",
+        "add_kb_index_contract_v9",
+    ]
     with sqlite3.connect(db_path) as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         embedding_columns = {

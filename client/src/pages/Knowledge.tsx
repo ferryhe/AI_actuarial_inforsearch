@@ -47,6 +47,7 @@ interface KnowledgeBase {
   availability?: string;
   categories?: string[];
   embedding_model?: string;
+  embedding_identity_key?: string;
   index_embedding_model?: string;
   needs_reindex?: boolean;
   embedding_compatible?: boolean;
@@ -54,6 +55,14 @@ interface KnowledgeBase {
     provider?: string;
     model?: string;
     dimension?: number;
+    embedding_identity_key?: string;
+  };
+  index_coverage?: {
+    bound_file_count?: number;
+    bound_chunk_count?: number;
+    ready_embeddings?: number;
+    missing_embeddings?: number;
+    invalid_bindings?: number;
   };
   kb_mode?: string;
   manifest_profile?: string;
@@ -73,6 +82,7 @@ interface CurrentEmbedding {
   provider?: string;
   model?: string;
   dimension?: number;
+  embedding_identity_key?: string;
 }
 
 interface SelectableFile {
@@ -102,6 +112,7 @@ const emptyKbForm = {
   kb_mode: "manual",
   chunk_profile_id: "",
   manifest_profile: "general",
+  embedding_identity_key: "",
 };
 
 const READY_DATA_LIST_POLL_INTERVAL_MS = 3_000;
@@ -518,6 +529,12 @@ export default function Knowledge() {
   }, [kbForm.chunk_profile_id, profiles, showCreateKB]);
 
   useEffect(() => {
+    const identityKey = currentEmbedding?.embedding_identity_key || "";
+    if (!showCreateKB || kbForm.embedding_identity_key || !identityKey) return;
+    setKbForm((current) => ({ ...current, embedding_identity_key: identityKey }));
+  }, [currentEmbedding?.embedding_identity_key, kbForm.embedding_identity_key, showCreateKB]);
+
+  useEffect(() => {
     if (!showCreateKB || kbForm.kb_mode !== "manual") return;
     const timer = window.setTimeout(() => loadSelectableFiles(fileSearch), 250);
     return () => window.clearTimeout(timer);
@@ -549,6 +566,7 @@ export default function Knowledge() {
   const handleCreateKB = async (createAndIndex = false) => {
     if (!kbForm.name.trim()) return;
     if (!kbForm.chunk_profile_id) return;
+    if (!kbForm.embedding_identity_key) return;
     if (kbForm.kb_mode === "category" && kbForm.categories.length === 0) return;
     if (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0) return;
     const finalKbId = kbForm.kb_id.trim() || generateKbId(kbForm.name);
@@ -568,13 +586,14 @@ export default function Knowledge() {
         kb_mode: kbForm.kb_mode,
         chunk_profile_id: kbForm.chunk_profile_id,
         manifest_profile: kbForm.manifest_profile,
+        embedding_identity_key: kbForm.embedding_identity_key,
       });
       let indexFailed = false;
       let indexErrorDetail = "";
       if (createAndIndex) {
         try {
           await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(finalKbId)}/index`, {
-            incremental: true,
+            force_rebuild: false,
           });
         } catch (indexErr) {
           console.error("Failed to start KB index task:", indexErr);
@@ -583,7 +602,11 @@ export default function Knowledge() {
         }
       }
       const defaultProfileId = profiles.find((profile) => profile.profile_id)?.profile_id || "";
-      setKbForm({ ...emptyKbForm, chunk_profile_id: defaultProfileId });
+      setKbForm({
+        ...emptyKbForm,
+        chunk_profile_id: defaultProfileId,
+        embedding_identity_key: currentEmbedding?.embedding_identity_key || "",
+      });
       setFileSearch("");
       closeCreateKB();
       const syncedCount = createResponse.category_sync?.added_count ?? createResponse.all_sync?.added_count ?? 0;
@@ -625,7 +648,7 @@ export default function Knowledge() {
     setKbActionNotice(null);
     try {
       await apiPost(`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/index`, {
-        force_reindex: true,
+        force_rebuild: true,
       });
       setKbActionNotice(t("knowledge.index_started"));
       loadData();
@@ -639,18 +662,31 @@ export default function Knowledge() {
   };
 
   const handleBuildAgenticManifest = async (kbId: string) => {
+    const readyBuildInput = kbs.find((item) => (
+      String(item.kb_id || item.id || "").trim() === kbId
+    ))?.agentic_ready_manifest?.ready_build_input;
+    if (!readyBuildInput) {
+      setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", "KB Index is not ready"));
+      return;
+    }
     const mutationManifestVersion = ++readyDataListManifestVersion.current;
     setBuildingManifestKb(kbId);
     setKbActionError(null);
     setKbActionNotice(null);
     try {
       const res = await apiPost<{
+        job_id?: string;
         ready_data_snapshot?: { manifest?: AgenticReadyManifest };
         validation?: { valid?: boolean; errors?: string[] };
       }>(
         `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`,
-        {}
+        readyBuildInput
       );
+      if (res.job_id) {
+        setKbActionNotice(t("knowledge.manifest_build_started"));
+        void loadData(false);
+        return;
+      }
       const manifest = res.ready_data_snapshot?.manifest;
       if (manifest) {
         setKbs((current) => {
@@ -960,6 +996,25 @@ export default function Knowledge() {
                   {t("knowledge.manifest_profile_hint")}
                 </p>
               </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  {t("knowledge.embedding_identity")} <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={kbForm.embedding_identity_key}
+                  onChange={(e) => setKbForm({ ...kbForm, embedding_identity_key: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  data-testid="select-kb-embedding-identity"
+                  disabled={!currentEmbedding?.embedding_identity_key}
+                >
+                  <option value={currentEmbedding?.embedding_identity_key || ""}>
+                    {[currentEmbedding?.provider, currentEmbedding?.model, currentEmbedding?.dimension].filter(Boolean).join(" / ") || t("knowledge.embedding_unavailable")}
+                  </option>
+                </select>
+                <p className="text-[10px] text-muted-foreground mt-1 font-mono truncate">
+                  {kbForm.embedding_identity_key || t("knowledge.embedding_unavailable")}
+                </p>
+              </div>
               <div className="sm:col-span-2">
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
                   {t("knowledge.description")}
@@ -1135,6 +1190,7 @@ export default function Knowledge() {
                   creating
                   || !kbForm.name.trim()
                   || !kbForm.chunk_profile_id
+                  || !kbForm.embedding_identity_key
                   || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
                   || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
                 }
@@ -1151,6 +1207,7 @@ export default function Knowledge() {
                   creating
                   || !kbForm.name.trim()
                   || !kbForm.chunk_profile_id
+                  || !kbForm.embedding_identity_key
                   || (kbForm.kb_mode === "category" && kbForm.categories.length === 0)
                   || (kbForm.kb_mode === "manual" && kbForm.file_urls.length === 0)
                 }
@@ -1320,6 +1377,15 @@ export default function Knowledge() {
                         <RefreshCw className={cn("w-3.5 h-3.5", indexingKb === kbId && "animate-spin")} />
                         {t("knowledge.reembed")}
                       </button>
+                    </div>
+                  )}
+                  {kb.index_coverage && (
+                    <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-muted/40 p-2 text-[10px] text-muted-foreground" data-testid={`kb-index-coverage-${kbId}`}>
+                      <span>{t("knowledge.bound_files")}: {kb.index_coverage.bound_file_count ?? 0}</span>
+                      <span>{t("knowledge.bound_chunks")}: {kb.index_coverage.bound_chunk_count ?? 0}</span>
+                      <span>{t("knowledge.ready_embeddings")}: {kb.index_coverage.ready_embeddings ?? 0}</span>
+                      <span>{t("knowledge.missing_embeddings")}: {kb.index_coverage.missing_embeddings ?? 0}</span>
+                      <span>{t("knowledge.invalid_bindings")}: {kb.index_coverage.invalid_bindings ?? 0}</span>
                     </div>
                   )}
                   <div className="flex items-center gap-4 text-xs text-muted-foreground pt-3 border-t border-border">

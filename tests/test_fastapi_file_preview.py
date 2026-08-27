@@ -278,8 +278,8 @@ def test_fastapi_file_chunk_generation_rejects_removed_kb_binding_options(tmp_pa
     assert "KB Binding" in generate_body["guidance"]
 
     bindings = client.get("/api/rag/knowledge-bases/kb-file-bind/bindings", headers=headers)
-    assert bindings.status_code == 200, bindings.text
-    assert bindings.json()["bindings"] == []
+    assert bindings.status_code == 400, bindings.text
+    assert "invalid_selector: knowledge base has no file membership" in bindings.json()["error"]
 
 
 def test_fastapi_chunk_generation_uses_tasks_run_auth_when_legacy_token_is_configured(

@@ -77,9 +77,9 @@ _VALID_SCHEDULED_TASK_TYPES = [
     "markdown_conversion",
     "chunk_generation",
     "embedding_generation",
+    "ready_data_build",
     "weekly_summary",
     "rag_indexing",
-    "kb_index_build",
     "recategory",
 ]
 
@@ -103,9 +103,9 @@ _VALID_COLLECTION_TYPES = {
     "markdown_conversion",
     "chunk_generation",
     "embedding_generation",
+    "ready_data_build",
     "weekly_summary",
     "rag_indexing",
-    "kb_index_build",
     "recategory",
 }
 
@@ -2009,8 +2009,48 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
                 data=data,
                 bridge=bridge,
             )
-    if collection_type in {"rag_indexing", "kb_index_build"} and not str(data.get("kb_id") or "").strip():
-        _reject_request(f"kb_id is required for {collection_type}", collection_type=collection_type, data=data, bridge=bridge)
+    if collection_type == "rag_indexing":
+        missing = [
+            key
+            for key in (
+                "kb_id",
+                "expected_binding_snapshot_fingerprint",
+                "embedding_identity_key",
+            )
+            if not str(data.get(key) or "").strip()
+        ]
+        if int(data.get("contract_version") or 0) != 1 or missing:
+            required = (
+                (["contract_version=1"] if int(data.get("contract_version") or 0) != 1 else [])
+                + missing
+            )
+            _reject_request(
+                f"{collection_type} requires: {', '.join(required)}",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
+    if collection_type == "ready_data_build":
+        missing = [
+            key
+            for key in (
+                "kb_id",
+                "index_version_id",
+                "expected_source_snapshot_fingerprint",
+            )
+            if not str(data.get(key) or "").strip()
+        ]
+        if int(data.get("contract_version") or 0) != 1 or missing:
+            required = (
+                (["contract_version=1"] if int(data.get("contract_version") or 0) != 1 else [])
+                + missing
+            )
+            _reject_request(
+                f"ready_data_build requires: {', '.join(required)}",
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
 
     if not callable(bridge.start_background_task):
         raise OpsWriteError("Task bridge is unavailable", status_code=503)

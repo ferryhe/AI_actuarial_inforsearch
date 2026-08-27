@@ -15,6 +15,46 @@ from ai_actuarial.api.services.rag_admin import (
     _ready_data_artifact_digest,
     _remove_unreferenced_staging_dir,
 )
+from ai_actuarial.api.services.ready_data_publication import (
+    public_ready_data_manifest,
+)
+
+
+def test_public_ready_manifest_projects_only_canonical_ready_build_input() -> None:
+    projected = public_ready_data_manifest(
+        {
+            "kb_id": "kb-ready",
+            "profile": "general",
+            "ready_build_input": {
+                "contract_version": 1,
+                "index_version_id": " idx-1 ",
+                "expected_source_snapshot_fingerprint": " source-1 ",
+                "content": "must-not-leak",
+                "vectors": [1.0],
+            },
+        },
+        {"profile": "general", "serving_usable": False},
+    )
+
+    assert projected["ready_build_input"] == {
+        "contract_version": 1,
+        "index_version_id": "idx-1",
+        "expected_source_snapshot_fingerprint": "source-1",
+    }
+
+    invalid = public_ready_data_manifest(
+        {
+            "kb_id": "kb-ready",
+            "profile": "general",
+            "ready_build_input": {
+                "contract_version": True,
+                "index_version_id": "idx-1",
+                "expected_source_snapshot_fingerprint": "source-1",
+            },
+        },
+        {"profile": "general", "serving_usable": False},
+    )
+    assert invalid["ready_build_input"] is None
 
 
 def _open_storage(tmp_path: Path) -> Storage:
@@ -32,6 +72,7 @@ def _open_storage(tmp_path: Path) -> Storage:
             embedding_provider TEXT DEFAULT 'openai',
             embedding_model TEXT NOT NULL,
             embedding_dimension INTEGER,
+            embedding_identity_key TEXT NOT NULL DEFAULT '',
             chunk_size INTEGER NOT NULL,
             chunk_overlap INTEGER NOT NULL,
             index_type TEXT NOT NULL,

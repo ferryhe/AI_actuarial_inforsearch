@@ -232,6 +232,27 @@ def test_kb_detail_closes_ready_data_publication_management_loop():
         assert i18n_src.count(f'"{key}"') == 2
 
 
+def test_kb_detail_exposes_explicit_ready_publish_confirmation():
+    src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+
+    assert "agentic-ready-manifest/publish" in src
+    assert 'data-testid="button-publish-ready-data"' in src
+    assert 'manifestAutomationState === "awaiting_publish"' in src
+    assert "last_attempt_publication_id" in src
+    assert "expected_active_publication_id" in src
+    assert "window.confirm" in src
+
+
+def test_kb_detail_keeps_ready_build_input_from_dedicated_manifest_get():
+    src = KB_DETAIL_TSX.read_text(encoding="utf-8")
+    state_src = READY_DATA_UI_STATE_TS.read_text(encoding="utf-8")
+
+    assert '"ready_build_input",' in state_src
+    assert "const readyBuildInput = effectiveManifest?.ready_build_input" in src
+    assert "agentic-ready-manifest/build" in src
+    assert "readyBuildInput," in src
+
+
 def test_knowledge_list_separates_serving_and_automation_status():
     src = KNOWLEDGE_TSX.read_text(encoding="utf-8")
     detail_src = KB_DETAIL_TSX.read_text(encoding="utf-8")
@@ -385,10 +406,11 @@ def test_kb_detail_guards_ready_data_mutations_by_route_epoch():
 
     build_start = src.index("const handleBuildAgenticManifest")
     automation_start = src.index("const updateReadyDataAutomation", build_start)
-    rollback_start = src.index("const handleRollbackPublication", automation_start)
+    publish_start = src.index("const handlePublishReadyData", automation_start)
+    rollback_start = src.index("const handleRollbackPublication", publish_start)
     rollback_end = src.index("const handleSearchBindable", rollback_start)
     build_src = src[build_start:automation_start]
-    automation_src = src[automation_start:rollback_start]
+    automation_src = src[automation_start:publish_start]
     rollback_src = src[rollback_start:rollback_end]
 
     for handler_src, loading_reset in (
@@ -597,10 +619,11 @@ def test_every_manifest_write_uses_publication_revision_ordering():
 
     build_start = src.index("const handleBuildAgenticManifest")
     automation_start = src.index("const updateReadyDataAutomation", build_start)
-    rollback_start = src.index("const handleRollbackPublication", automation_start)
+    publish_start = src.index("const handlePublishReadyData", automation_start)
+    rollback_start = src.index("const handleRollbackPublication", publish_start)
     rollback_end = src.index("const handleSearchBindable", rollback_start)
     build_src = src[build_start:automation_start]
-    automation_src = src[automation_start:rollback_start]
+    automation_src = src[automation_start:publish_start]
     rollback_src = src[rollback_start:rollback_end]
 
     assert "setAgenticManifest(nextManifest)" not in build_src

@@ -9,7 +9,7 @@ import stat
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Any, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, infer_embedding_provider, resolve_ai_function_runtime
 from ai_actuarial.agentic_rag.manifest_profiles import PROFILES
@@ -18,6 +18,12 @@ from ai_actuarial.agentic_rag.staging_smoke import (
     run_staging_smoke,
 )
 from ai_actuarial.config import settings
+from ai_actuarial.embedding_service import resolve_server_embedding_identity
+from ai_actuarial.rag.kb_index import (
+    KBIndexContractError,
+    binding_contract,
+    resolve_kb_bound_chunks,
+)
 from ai_actuarial.shared_runtime import parse_int_clamped
 from ai_actuarial.storage import Storage, _split_visible_categories
 
@@ -154,6 +160,60 @@ def _unique_existing_chunk_file_urls(storage: Storage, *, file_urls: list[str], 
     return out
 
 
+def _all_eligible_file_urls(storage: Storage) -> list[str]:
+    rows = storage._conn.execute(
+        """
+        SELECT DISTINCT f.url
+        FROM files f
+        JOIN catalog_items c ON c.file_url = f.url
+        WHERE f.deleted_at IS NULL
+          AND c.status = 'ok'
+          AND c.markdown_content IS NOT NULL
+          AND c.markdown_content != ''
+        ORDER BY f.url
+        """
+    ).fetchall()
+    return [str(row[0]) for row in rows if row and row[0]]
+
+
+def _require_complete_ready_chunk_sets(
+    storage: Storage,
+    *,
+    file_urls: list[str],
+    profile_id: str,
+) -> None:
+    selected = sorted({str(file_url or "").strip() for file_url in file_urls if str(file_url or "").strip()})
+    if not selected:
+        return
+    if not profile_id:
+        raise RagAdminError(
+            "missing_chunk: select a chunk profile and run Chunk & Embedding before adding files"
+        )
+    missing = [
+        file_url
+        for file_url in selected
+        if not _latest_ready_chunk_set(
+            storage,
+            file_url=file_url,
+            profile_id=profile_id,
+        )
+    ]
+    if missing:
+        raise RagAdminError(
+            "missing_chunk: ready chunk set is missing for the selected profile; "
+            "run Chunk & Embedding first (files: " + ", ".join(missing) + ")"
+        )
+
+
+def _require_complete_kb_snapshot(storage: Storage, kb_id: str, file_urls: list[str]) -> None:
+    if not file_urls:
+        return
+    try:
+        resolve_kb_bound_chunks(storage, kb_id)
+    except KBIndexContractError as exc:
+        raise RagAdminError(str(exc), status_code=400) from exc
+
+
 
 def _category_file_urls_with_existing_chunks(storage: Storage, *, categories: list[str], profile_id: str) -> list[str]:
     where_sql, params = _category_filter(categories)
@@ -224,14 +284,7 @@ def _add_and_bind_existing_profile_chunks(
     profile_id: str,
     bound_by: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    bindable_file_urls = _unique_existing_chunk_file_urls(
-        storage,
-        file_urls=file_urls,
-        profile_id=profile_id,
-    )
-    add_result: dict[str, Any] = {"added_count": 0, "skipped_count": 0, "total_files": 0}
-    if bindable_file_urls:
-        add_result = manager.add_files_to_kb(kb_id, bindable_file_urls)
+    add_result = manager.add_files_to_kb(kb_id, file_urls)
     binding_result = _bind_existing_chunk_sets(
         storage,
         kb_id=kb_id,
@@ -312,6 +365,7 @@ def _serialize_kb(kb: Any) -> dict[str, Any]:
         "embedding_provider": getattr(kb, "embedding_provider", "openai"),
         "embedding_model": kb.embedding_model,
         "embedding_dimension": getattr(kb, "embedding_dimension", None),
+        "embedding_identity_key": getattr(kb, "embedding_identity_key", "") or "",
         "chunk_size": kb.chunk_size,
         "chunk_overlap": kb.chunk_overlap,
         "index_type": kb.index_type,
@@ -563,20 +617,9 @@ def _ready_data_artifact_digest(output_dir: str, artifact_files: list[str]) -> s
     artifact_paths = _recorded_ready_artifact_paths(root_path, artifact_files)
     digest = hashlib.sha256()
     for artifact, artifact_path in artifact_paths:
-        content = artifact_path.read_bytes()
         if artifact_path.name == "ready_data_manifest.json":
-            manifest = json.loads(content.decode("utf-8"))
-            if isinstance(manifest, dict):
-                manifest = dict(manifest)
-                manifest.pop("built_at", None)
-                manifest.pop("output_dir", None)
-                manifest.pop("source_db", None)
-                content = json.dumps(
-                    manifest,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
+            continue
+        content = artifact_path.read_bytes()
         digest.update(artifact.encode("utf-8"))
         digest.update(b"\0")
         digest.update(content)
@@ -1025,6 +1068,35 @@ def _build_agentic_manifest_status(
         kb_id=kb_id,
         profile=normalized_profile,
     )
+    ready_build_input: dict[str, Any] | None = None
+    if _storage_has_table(storage, "kb_ready_index_state"):
+        ready_index = storage._conn.execute(
+            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
+            (kb_id,),
+        ).fetchone()
+        index_version_id = _norm(ready_index[0] if ready_index else "")
+        if index_version_id:
+            from ai_actuarial.agentic_rag.ready_data_builder import (
+                get_builder_source_fingerprint,
+            )
+
+            try:
+                source = get_builder_source_fingerprint(
+                    db_path=storage.db_path,
+                    kb_id=kb_id,
+                    profile=normalized_profile,
+                    index_version_id=index_version_id,
+                )
+            except ValueError:
+                pass
+            else:
+                ready_build_input = {
+                    "contract_version": 1,
+                    "index_version_id": index_version_id,
+                    "expected_source_snapshot_fingerprint": source[
+                        "source_snapshot_fingerprint"
+                    ],
+                }
     manifest = storage.get_agentic_ready_manifest(kb_id=kb_id, profile=normalized_profile)
     if not manifest:
         return {
@@ -1058,6 +1130,7 @@ def _build_agentic_manifest_status(
             "publication_revision": int(
                 publication_state.get("publication_revision") or 0
             ),
+            "ready_build_input": ready_build_input,
         }
 
     payload = dict(manifest)
@@ -1122,6 +1195,7 @@ def _build_agentic_manifest_status(
             "publication_revision": int(
                 publication_state.get("publication_revision") or 0
             ),
+            "ready_build_input": ready_build_input,
         }
     )
     if stale_reason:
@@ -1170,6 +1244,14 @@ def _embedding_metadata_matches(current: Mapping[str, Any], *, provider: Any, mo
 
 def _current_embeddings_payload(*, storage: Storage | None) -> dict[str, Any]:
     runtime = resolve_ai_function_runtime("embeddings", storage=storage)
+    identity_key = ""
+    if storage is not None:
+        try:
+            identity_key = resolve_server_embedding_identity(
+                storage
+            ).embedding_identity_key
+        except ValueError:
+            identity_key = ""
     return {
         "provider": runtime.provider,
         "model": runtime.model,
@@ -1181,6 +1263,7 @@ def _current_embeddings_payload(*, storage: Storage | None) -> dict[str, Any]:
         "configured": runtime.configured,
         "credential_error": runtime.credential_error,
         "embedding_fingerprint": build_embedding_fingerprint(runtime.provider, runtime.model),
+        "embedding_identity_key": identity_key,
     }
 
 
@@ -1211,6 +1294,43 @@ def _build_kb_embedding_status(
         dimension=effective_index_dimension,
     )
     needs_reindex = bool(composition.get("needs_reindex")) or (has_index and not embedding_compatible)
+    coverage = {
+        "bound_file_count": 0,
+        "bound_chunk_count": 0,
+        "ready_embeddings": 0,
+        "missing_embeddings": 0,
+        "invalid_bindings": 0,
+        "binding_error": "",
+    }
+    if kb_id:
+        try:
+            snapshot = resolve_kb_bound_chunks(storage, kb_id)
+            chunk_ids = [str(row["chunk_id"]) for row in snapshot["chunks"]]
+            coverage["bound_file_count"] = int(snapshot["bound_file_count"])
+            coverage["bound_chunk_count"] = int(snapshot["bound_chunk_count"])
+            if not storage._table_exists("chunk_embeddings"):
+                coverage["missing_embeddings"] = len(chunk_ids)
+            else:
+                try:
+                    identity = resolve_server_embedding_identity(
+                        storage,
+                        str(kb_payload.get("embedding_identity_key") or "") or None,
+                    )
+                    embedding_rows = storage.read_valid_chunk_embeddings(
+                        chunk_ids,
+                        identity=identity.as_dict(),
+                    )
+                    coverage["ready_embeddings"] = len(embedding_rows["valid"])
+                    coverage["missing_embeddings"] = (
+                        len(embedding_rows["missing_chunk_ids"])
+                        + len(embedding_rows["invalid_chunk_ids"])
+                    )
+                except ValueError as exc:
+                    coverage["missing_embeddings"] = len(chunk_ids)
+                    coverage["binding_error"] = str(exc)
+        except KBIndexContractError as exc:
+            coverage["invalid_bindings"] = 1
+            coverage["binding_error"] = str(exc)
     index_status = str(latest_index.get("status") or "").strip().lower()
     if not has_index or index_status in {"pending", "queued", "running", "building", "indexing"}:
         availability = "building"
@@ -1233,6 +1353,7 @@ def _build_kb_embedding_status(
         "availability": availability,
         "usable": usable,
         "current_embeddings": effective_current_embeddings,
+        "index_coverage": coverage,
     }
 
 
@@ -1411,7 +1532,16 @@ def get_kb_bindings(*, db_path: str, kb_id: str) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
         bindings = storage.list_kb_chunk_bindings(kid)
-        return {"kb_id": kid, "bindings": bindings, "count": len(bindings)}
+        try:
+            snapshot = resolve_kb_bound_chunks(storage, kid)
+        except KBIndexContractError as exc:
+            raise RagAdminError(str(exc), status_code=400) from exc
+        return {
+            "kb_id": kid,
+            "bindings": bindings,
+            "count": len(bindings),
+            "binding": binding_contract(snapshot),
+        }
     finally:
         storage.close()
 
@@ -1769,6 +1899,22 @@ class _KBListStorageView:
     @staticmethod
     def _agentic_ready_json_list(value: str | None) -> list[str]:
         return Storage._agentic_ready_json_list(value)
+
+    @staticmethod
+    def _valid_embedding_vector(value: Any, dimension: int) -> bool:
+        return Storage._valid_embedding_vector(value, dimension)
+
+    def read_valid_chunk_embeddings(
+        self,
+        chunk_ids: Iterable[str],
+        *,
+        identity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return Storage.read_valid_chunk_embeddings(
+            self,
+            chunk_ids,
+            identity=identity,
+        )
 
     def close(self) -> None:
         self._conn.close()
@@ -2747,13 +2893,14 @@ def _kb_list_row_payload(row: Any) -> dict[str, Any]:
         "embedding_provider": str(row[6] or "openai").strip().lower() or "openai",
         "embedding_model": row[7],
         "embedding_dimension": int(row[8]) if row[8] not in (None, "") else None,
-        "chunk_size": row[9],
-        "chunk_overlap": row[10],
-        "index_type": row[11],
-        "created_at": row[12] or datetime.now(timezone.utc).isoformat(),
-        "updated_at": row[13] or datetime.now(timezone.utc).isoformat(),
-        "file_count": row[14],
-        "chunk_count": row[15],
+        "embedding_identity_key": str(row[9] or ""),
+        "chunk_size": row[10],
+        "chunk_overlap": row[11],
+        "index_type": row[12],
+        "created_at": row[13] or datetime.now(timezone.utc).isoformat(),
+        "updated_at": row[14] or datetime.now(timezone.utc).isoformat(),
+        "file_count": row[15],
+        "chunk_count": row[16],
     }
 
 
@@ -2780,9 +2927,15 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
             )
         kb_mode = _norm(query.get("kb_mode"))
         search = _norm(query.get("search")).lower()
+        kb_columns = _kb_list_table_columns(storage._conn, "rag_knowledge_bases") or frozenset()
+        identity_column = (
+            "embedding_identity_key"
+            if "embedding_identity_key" in kb_columns
+            else "'' AS embedding_identity_key"
+        )
         rows = storage._conn.execute(
-            """
-            SELECT kb_id, name, description, kb_mode, chunk_profile_id, manifest_profile, embedding_provider, embedding_model, embedding_dimension, chunk_size, chunk_overlap,
+            f"""
+            SELECT kb_id, name, description, kb_mode, chunk_profile_id, manifest_profile, embedding_provider, embedding_model, embedding_dimension, {identity_column}, chunk_size, chunk_overlap,
                    index_type, created_at, updated_at, file_count, chunk_count
             FROM rag_knowledge_bases
             ORDER BY created_at DESC
@@ -2844,23 +2997,43 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
         else:
             chunk_size = parse_int_clamped(payload.get("chunk_size"), default=800, min_value=1, max_value=10000)
             chunk_overlap = parse_int_clamped(payload.get("chunk_overlap"), default=100, min_value=0, max_value=10000)
-        runtime_embedding = manager.get_current_embedding_metadata()
-        manager.create_kb(
-            kb_id=kb_id,
-            name=name,
-            description=_norm(payload.get("description")),
-            kb_mode=kb_mode,
-            chunk_profile_id=chunk_profile_id,
-            manifest_profile=manifest_profile,
-            embedding_model=runtime_embedding["model"],
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-        )
+        try:
+            embedding_identity = resolve_server_embedding_identity(
+                storage,
+                _norm(payload.get("embedding_identity_key")) or None,
+            )
+        except ValueError as exc:
+            raise RagAdminError(str(exc), status_code=400) from exc
         chunk_binding_result: dict[str, Any] | None = None
         category_sync_result: dict[str, Any] | None = None
         all_sync_result: dict[str, Any] | None = None
         if kb_mode == "category":
-            if chunk_profile_id:
+            prospective_file_urls = manager._files_for_categories(categories)
+        elif kb_mode == "all":
+            prospective_file_urls = _all_eligible_file_urls(storage)
+        else:
+            prospective_file_urls = file_urls
+        with storage.transaction(immediate=True):
+            _require_complete_ready_chunk_sets(
+                storage,
+                file_urls=prospective_file_urls,
+                profile_id=chunk_profile_id,
+            )
+            manager.create_kb(
+                kb_id=kb_id,
+                name=name,
+                description=_norm(payload.get("description")),
+                kb_mode=kb_mode,
+                chunk_profile_id=chunk_profile_id,
+                manifest_profile=manifest_profile,
+                embedding_provider=embedding_identity.provider,
+                embedding_model=embedding_identity.model,
+                embedding_dimension=embedding_identity.dimension,
+                embedding_identity_key=embedding_identity.embedding_identity_key,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+            if kb_mode == "category":
                 manager.link_kb_to_categories(kb_id, categories, auto_sync=False)
                 category_sync_result, chunk_binding_result = _sync_category_kb_files(
                     manager,
@@ -2870,25 +3043,16 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
                     profile_id=chunk_profile_id,
                     bound_by="kb_create_category_sync",
                 )
-            else:
-                manager.link_kb_to_categories(kb_id, categories)
-        elif kb_mode == "all":
-            all_sync_result, chunk_binding_result = _sync_all_kb_files(
-                manager,
-                storage,
-                kb_id=kb_id,
-                profile_id=chunk_profile_id,
-                bound_by="kb_create_all_sync",
-            )
-        elif file_urls:
-            if chunk_profile_id:
-                bindable_file_urls = _unique_existing_chunk_file_urls(
+            elif kb_mode == "all":
+                all_sync_result, chunk_binding_result = _sync_all_kb_files(
+                    manager,
                     storage,
-                    file_urls=file_urls,
+                    kb_id=kb_id,
                     profile_id=chunk_profile_id,
+                    bound_by="kb_create_all_sync",
                 )
-                if bindable_file_urls:
-                    manager.add_files_to_kb(kb_id, bindable_file_urls)
+            elif file_urls:
+                manager.add_files_to_kb(kb_id, file_urls)
                 chunk_binding_result = _bind_existing_chunk_sets(
                     storage,
                     kb_id=kb_id,
@@ -2896,8 +3060,7 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
                     profile_id=chunk_profile_id,
                     requested_count=len(file_urls),
                 )
-            else:
-                manager.add_files_to_kb(kb_id, file_urls)
+            _require_complete_kb_snapshot(storage, kb_id, prospective_file_urls)
         kb = manager.get_kb(kb_id)
         response_payload = _decorate_kb_agentic_manifest(
             storage,
@@ -2959,15 +3122,77 @@ def build_agentic_ready_manifest(
     kb_id: str,
     payload: dict[str, Any],
     headers: Mapping[str, str],
+    bridge_state: Any,
     auth: Any | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     _require_config_write_token(headers, auth)
-    return _build_agentic_ready_manifest_core(
-        db_path=db_path,
-        kb_id=kb_id,
-        payload=payload,
-        publish=True,
-    )
+    kid = _kb_id(kb_id)
+    if not isinstance(payload, dict):
+        raise RagAdminError("Invalid JSON body")
+    _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    try:
+        kb = manager.get_kb(kid)
+        if not kb:
+            raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        profile = _manifest_profile(
+            payload.get("profile")
+            or payload.get("manifest_profile")
+            or getattr(kb, "manifest_profile", "general")
+        )
+        index_version_id = _norm(payload.get("index_version_id"))
+        expected_source = _norm(
+            payload.get("expected_source_snapshot_fingerprint")
+        )
+        if not index_version_id or not expected_source:
+            raise RagAdminError(
+                "invalid_selector: Ready Data requires index_version_id and "
+                "expected_source_snapshot_fingerprint",
+                status_code=400,
+            )
+        from ai_actuarial.agentic_rag.ready_data_builder import get_builder_source_fingerprint
+
+        try:
+            source = get_builder_source_fingerprint(
+                db_path=db_path,
+                kb_id=kid,
+                profile=profile,
+                index_version_id=index_version_id,
+            )
+        except ValueError as exc:
+            raise RagAdminError(f"stale_snapshot: {exc}", status_code=409) from exc
+        if expected_source != source["source_snapshot_fingerprint"]:
+            raise RagAdminError(
+                "stale_snapshot: Ready Data source changed before launch",
+                status_code=409,
+            )
+        start_background_task = getattr(bridge_state, "start_background_task", None)
+        if start_background_task is None:
+            raise RagAdminError("Task bridge is unavailable", status_code=503)
+        task_id = start_background_task(
+            "ready_data_build",
+            {
+                "type": "ready_data_build",
+                "contract_version": 1,
+                "kb_id": kid,
+                "profile": profile,
+                "index_version_id": index_version_id,
+                "expected_source_snapshot_fingerprint": source[
+                    "source_snapshot_fingerprint"
+                ],
+                "name": f"Ready Data: {kb.name}",
+            },
+            task_name=f"Ready Data: {kb.name}",
+            extra_fields={"kb_id": kid, "kb_name": kb.name},
+        )
+        return {
+            "job_id": task_id,
+            "kb_id": kid,
+            "profile": profile,
+            "index_version_id": index_version_id,
+            "source_snapshot_fingerprint": source["source_snapshot_fingerprint"],
+        }, 202
+    finally:
+        storage.close()
 
 
 def _build_agentic_ready_manifest_core(
@@ -2976,6 +3201,8 @@ def _build_agentic_ready_manifest_core(
     kb_id: str,
     payload: dict[str, Any],
     publish: bool,
+    should_stop: Callable[[], bool] | None = None,
+    record_manual_candidate: bool = True,
 ) -> dict[str, Any]:
     """Build and validate one staging attempt without applying HTTP authorization."""
     kid = _kb_id(kb_id)
@@ -2993,6 +3220,34 @@ def _build_agentic_ready_manifest_core(
             or getattr(kb, "manifest_profile", "general")
         )
         profile_def = PROFILES[profile]
+        requested_index_version_id = _norm(payload.get("index_version_id"))
+        expected_source_snapshot_fingerprint = _norm(
+            payload.get("expected_source_snapshot_fingerprint")
+        )
+        if not requested_index_version_id or not expected_source_snapshot_fingerprint:
+            raise RagAdminError(
+                "invalid_selector: Ready Data requires index_version_id and "
+                "expected_source_snapshot_fingerprint",
+                status_code=400,
+            )
+
+        stop_requested = should_stop or (lambda: False)
+        if stop_requested():
+            return {
+                "kb_id": kid,
+                "manifest": _build_agentic_manifest_status(
+                    storage=storage,
+                    kb_id=kid,
+                    profile=profile,
+                ),
+                "candidate_publication": {},
+                "publication_state": storage.get_agentic_ready_publication_state(
+                    kb_id=kid,
+                    profile=profile,
+                ),
+                "validation": {"valid": False, "errors": [], "warnings": []},
+                "metadata": {"stopped": True},
+            }
 
         from ai_actuarial.agentic_rag import ready_data_builder
 
@@ -3019,6 +3274,55 @@ def _build_agentic_ready_manifest_core(
         publication_state: dict[str, Any] = {}
         validated_attempt_recorded = False
         smoke_result = _staging_smoke_not_run("build_not_completed")
+
+        def stopped_result(
+            candidate: Mapping[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            warnings: list[str] = []
+            if not candidate and Path(candidate_output_dir).exists():
+                cleanup_warning = _best_effort_staging_cleanup(
+                    storage,
+                    output_dir=candidate_output_dir,
+                    staging_root=staging_root,
+                    allowed_output_root=allowed_output_root,
+                )
+                if cleanup_warning:
+                    warnings.append(cleanup_warning)
+            return {
+                "kb_id": kid,
+                "manifest": _build_agentic_manifest_status(
+                    storage=storage,
+                    kb_id=kid,
+                    profile=profile,
+                ),
+                "candidate_publication": dict(candidate or {}),
+                "publication_state": storage.get_agentic_ready_publication_state(
+                    kb_id=kid,
+                    profile=profile,
+                ),
+                "validation": {
+                    "valid": False,
+                    "errors": [],
+                    "warnings": warnings,
+                },
+                "metadata": {"stopped": True},
+            }
+
+        def require_current_source() -> None:
+            current_source = ready_data_builder.get_builder_source_fingerprint(
+                db_path=db_path,
+                kb_id=kid,
+                profile=profile,
+                index_version_id=requested_index_version_id,
+            )
+            if (
+                str(current_source.get("source_snapshot_fingerprint") or "")
+                != expected_source_snapshot_fingerprint
+            ):
+                raise ValueError(
+                    "stale_snapshot: Ready Data source changed before publication"
+                )
+
         initial_source_state = storage.get_agentic_ready_source_state(
             kb_id=kid,
             profile=profile,
@@ -3029,12 +3333,18 @@ def _build_agentic_ready_manifest_core(
             else None
         )
         try:
+            if stop_requested():
+                return stopped_result()
             builder_manifest = ready_data_builder.build_l0(
                 db_path=db_path,
                 output_dir=staging_output_dir,
                 profile=profile,
                 kb_id=kid,
+                index_version_id=requested_index_version_id,
+                expected_source_snapshot_fingerprint=expected_source_snapshot_fingerprint,
             )
+            if stop_requested():
+                return stopped_result()
             returned_output_dir = str(builder_manifest.get("output_dir") or staging_output_dir)
             _require_generated_staging_candidate(
                 returned_output_dir=returned_output_dir,
@@ -3048,12 +3358,32 @@ def _build_agentic_ready_manifest_core(
             observed_index_version_id = (
                 str(builder_manifest.get("index_version_id") or "").strip() or None
             )
+            observed_source_snapshot_fingerprint = str(
+                builder_manifest.get("source_snapshot_fingerprint") or ""
+            ).strip()
+            if (
+                expected_source_snapshot_fingerprint
+                and observed_source_snapshot_fingerprint
+                != expected_source_snapshot_fingerprint
+            ):
+                raise ValueError("stale_snapshot: Ready Data source changed during build")
+            if (
+                requested_index_version_id
+                and observed_index_version_id != requested_index_version_id
+            ):
+                raise ValueError("stale_snapshot: Ready Data index changed during build")
             if not source_version_kind or not source_version_id:
                 raise ValueError("ready_data builder did not report its source snapshot version")
+            if stop_requested():
+                return stopped_result()
             validation = ready_data_builder.validate(candidate_output_dir)
             artifact_files = list(builder_manifest.get("artifact_files") or [])
             artifact_digest = _ready_data_artifact_digest(candidate_output_dir, artifact_files)
+            if artifact_digest != str(builder_manifest.get("artifact_digest") or ""):
+                raise ValueError("build_failure: Ready Data artifact digest mismatch")
             if validation.get("valid"):
+                if stop_requested():
+                    return stopped_result()
                 try:
                     smoke_result = run_staging_smoke(
                         output_dir=candidate_output_dir,
@@ -3120,6 +3450,10 @@ def _build_agentic_ready_manifest_core(
                 smoke_result = _staging_smoke_not_run(
                     "structural_validation_failed"
                 )
+            if stop_requested():
+                return stopped_result()
+            if validation.get("valid"):
+                require_current_source()
             if not validation.get("valid"):
                 error_message = "; ".join(str(item) for item in validation.get("errors") or [])
                 candidate_publication = storage.record_agentic_ready_publication(
@@ -3150,6 +3484,8 @@ def _build_agentic_ready_manifest_core(
                 if cleanup_warning:
                     _append_validation_warning(validation, cleanup_warning)
             else:
+                if stop_requested():
+                    return stopped_result()
                 if publish:
                     _bootstrap_legacy_ready_publication(
                         storage,
@@ -3185,6 +3521,13 @@ def _build_agentic_ready_manifest_core(
                 validated_attempt_recorded = True
                 recorded_publication_id = str(candidate_publication["publication_id"])
                 if not publish:
+                    if record_manual_candidate:
+                        storage.record_agentic_ready_manual_publication_state(
+                            kb_id=kid,
+                            profile=profile,
+                            publication_id=recorded_publication_id,
+                            published=False,
+                        )
                     publication_state = storage.get_agentic_ready_publication_state(
                         kb_id=kid,
                         profile=profile,
@@ -3200,6 +3543,8 @@ def _build_agentic_ready_manifest_core(
                         "publication_state": publication_state,
                         "validation": validation,
                     }
+                if stop_requested():
+                    return stopped_result(candidate_publication)
                 current_publication_state = storage.get_agentic_ready_publication_state(
                     kb_id=kid,
                     profile=profile,
@@ -3303,6 +3648,9 @@ def _build_agentic_ready_manifest_core(
                     corrupt_error = ""
                     if corrupt_active:
                         corrupt_error = "; ".join(active_validation["errors"])
+                    if stop_requested():
+                        return stopped_result(candidate_publication)
+                    require_current_source()
                     publication_state = storage.publish_agentic_ready_publication(
                         recorded_publication_id,
                         expected_active_publication_id=current_publication_state[
@@ -3893,19 +4241,103 @@ def update_knowledge_base(*, db_path: str, kb_id: str, payload: dict[str, Any], 
     name = _norm(payload["name"]) if "name" in payload else None
     description = _norm(payload["description"]) if "description" in payload else None
     manifest_profile = _manifest_profile(payload["manifest_profile"]) if "manifest_profile" in payload else None
-    if name is None and description is None and manifest_profile is None:
-        raise RagAdminError("No valid update fields provided (name, description, manifest_profile)")
+    chunk_profile_id = (
+        _norm(payload.get("chunk_profile_id") or payload.get("profile_id"))
+        if "chunk_profile_id" in payload or "profile_id" in payload
+        else None
+    )
+    requested_identity_key = (
+        _norm(payload.get("embedding_identity_key"))
+        if "embedding_identity_key" in payload
+        else None
+    )
+    if (
+        name is None
+        and description is None
+        and manifest_profile is None
+        and chunk_profile_id is None
+        and requested_identity_key is None
+    ):
+        raise RagAdminError(
+            "No valid update fields provided (name, description, manifest_profile, "
+            "chunk_profile_id, embedding_identity_key)"
+        )
 
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
-        if not manager.get_kb(kid):
+        current = manager.get_kb(kid)
+        if not current:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        manager.update_kb(kid, name=name, description=description, manifest_profile=manifest_profile)
+        if chunk_profile_id is not None and not storage.get_chunk_profile(chunk_profile_id):
+            raise RagAdminError("chunk profile not found", status_code=404)
+        embedding_identity = None
+        if requested_identity_key is not None:
+            try:
+                embedding_identity = resolve_server_embedding_identity(
+                    storage, requested_identity_key
+                )
+            except ValueError as exc:
+                raise RagAdminError(str(exc), status_code=400) from exc
+        binding_result = None
+        file_urls = [
+            str(row.get("file_url") or "")
+            for row in manager.get_kb_files(kid)
+            if str(row.get("file_url") or "")
+        ]
+        with storage.transaction(immediate=True):
+            if chunk_profile_id is not None:
+                _require_complete_ready_chunk_sets(
+                    storage,
+                    file_urls=file_urls,
+                    profile_id=chunk_profile_id,
+                )
+            manager.update_kb(
+                kid,
+                name=name,
+                description=description,
+                manifest_profile=manifest_profile,
+                chunk_profile_id=chunk_profile_id,
+                embedding_provider=(embedding_identity.provider if embedding_identity else None),
+                embedding_model=(embedding_identity.model if embedding_identity else None),
+                embedding_dimension=(embedding_identity.dimension if embedding_identity else None),
+                embedding_identity_key=(
+                    embedding_identity.embedding_identity_key if embedding_identity else None
+                ),
+            )
+            if chunk_profile_id is not None:
+                storage._conn.execute(
+                    "DELETE FROM kb_chunk_bindings WHERE kb_id = ?", (kid,)
+                )
+                binding_result = _bind_existing_chunk_sets(
+                    storage,
+                    kb_id=kid,
+                    file_urls=file_urls,
+                    profile_id=chunk_profile_id,
+                    requested_count=len(file_urls),
+                    bound_by="kb_update_profile",
+                )
+                _require_complete_kb_snapshot(storage, kid, file_urls)
+            if (
+                embedding_identity is not None
+                and embedding_identity.embedding_identity_key
+                != getattr(current, "embedding_identity_key", "")
+            ):
+                now = _KnowledgeBase._get_timestamp()
+                storage._conn.execute(
+                    "UPDATE rag_knowledge_bases SET index_dirty_at = ?, updated_at = ? WHERE kb_id = ?",
+                    (now, now, kid),
+                )
+                storage.mark_agentic_ready_source_event_for_kb(
+                    kb_id=kid, reason="embedding_identity_updated"
+                )
         updated_payload = _decorate_kb_agentic_manifest(
             storage,
             _decorate_kb_chunk_profile(storage, _serialize_kb(manager.get_kb(kid))),
         )
-        return {"knowledge_base": updated_payload}
+        response = {"knowledge_base": updated_payload}
+        if binding_result is not None:
+            response["chunk_bindings"] = binding_result
+        return response
     finally:
         storage.close()
 
@@ -4030,10 +4462,31 @@ def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        chunk_profile_id = _norm(payload.get("chunk_profile_id") or payload.get("profile_id") or getattr(kb, "chunk_profile_id", ""))
-        if chunk_profile_id:
-            if not storage.get_chunk_profile(chunk_profile_id):
-                raise RagAdminError("chunk profile not found", status_code=404)
+        current_profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
+        requested_profile_id = _norm(
+            payload.get("chunk_profile_id") or payload.get("profile_id")
+        )
+        if current_profile_id and requested_profile_id and requested_profile_id != current_profile_id:
+            raise RagAdminError(
+                "invalid_selector: chunk profile must match the knowledge base"
+            )
+        chunk_profile_id = requested_profile_id or current_profile_id
+        if chunk_profile_id and not storage.get_chunk_profile(chunk_profile_id):
+            raise RagAdminError("chunk profile not found", status_code=404)
+        existing_file_urls = [
+            str(row.get("file_url") or "")
+            for row in manager.get_kb_files(kid)
+            if str(row.get("file_url") or "")
+        ]
+        prospective_file_urls = list(dict.fromkeys([*existing_file_urls, *file_urls]))
+        with storage.transaction(immediate=True):
+            _require_complete_ready_chunk_sets(
+                storage,
+                file_urls=prospective_file_urls,
+                profile_id=chunk_profile_id,
+            )
+            if requested_profile_id and not current_profile_id:
+                manager.update_kb(kid, chunk_profile_id=requested_profile_id)
             result, binding_result = _add_and_bind_existing_profile_chunks(
                 manager,
                 storage,
@@ -4042,19 +4495,18 @@ def add_knowledge_base_files(*, db_path: str, kb_id: str, payload: dict[str, Any
                 profile_id=chunk_profile_id,
                 bound_by="kb_add_files",
             )
-            return {
-                "kb_id": kid,
-                "added_count": int(result.get("added_count") or 0),
-                "skipped_count": int(result.get("skipped_count") or 0) + int(binding_result.get("skipped_without_chunks") or 0),
-                "total_files": int(result.get("total_files") or manager.get_kb_stats(kid).get("total_files") or 0),
-                "chunk_bindings": binding_result,
-            }
-        result = manager.add_files_to_kb(kid, file_urls)
+            _require_complete_kb_snapshot(storage, kid, prospective_file_urls)
         return {
             "kb_id": kid,
             "added_count": int(result.get("added_count") or 0),
-            "skipped_count": int(result.get("skipped_count") or 0),
-            "total_files": int(result.get("total_files") or 0),
+            "skipped_count": int(result.get("skipped_count") or 0)
+            + int(binding_result.get("skipped_without_chunks") or 0),
+            "total_files": int(
+                result.get("total_files")
+                or manager.get_kb_stats(kid).get("total_files")
+                or 0
+            ),
+            "chunk_bindings": binding_result,
         }
     finally:
         storage.close()
@@ -4267,23 +4719,54 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
         manager._ensure_category_mapping_table()
         conn = storage._conn
         timestamp = _KnowledgeBase._get_timestamp()
-        chunk_profile_id = _norm(payload.get("chunk_profile_id") or payload.get("profile_id") or getattr(kb, "chunk_profile_id", ""))
+        current_profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
+        requested_profile_id = _norm(
+            payload.get("chunk_profile_id") or payload.get("profile_id")
+        )
+        if current_profile_id and requested_profile_id and requested_profile_id != current_profile_id:
+            raise RagAdminError(
+                "invalid_selector: chunk profile must match the knowledge base"
+            )
+        chunk_profile_id = requested_profile_id or current_profile_id
+        current_categories = manager.get_kb_categories(kid)
+        if action == "add":
+            prospective_categories = sorted(set(current_categories) | set(categories))
+        elif action == "remove":
+            removed_categories = set(categories)
+            prospective_categories = [
+                category
+                for category in current_categories
+                if category not in removed_categories
+            ]
+        else:
+            prospective_categories = list(categories)
+        prospective_file_urls = (
+            manager._files_for_categories(prospective_categories)
+            if prospective_categories
+            else []
+        )
 
         if action == "add":
-            manager.link_kb_to_categories(kid, categories, auto_sync=not bool(chunk_profile_id))
-            binding_result = None
-            sync_result = None
-            if chunk_profile_id:
-                if not storage.get_chunk_profile(chunk_profile_id):
+            with storage.transaction(immediate=True):
+                if chunk_profile_id and not storage.get_chunk_profile(chunk_profile_id):
                     raise RagAdminError("chunk profile not found", status_code=404)
+                _require_complete_ready_chunk_sets(
+                    storage,
+                    file_urls=prospective_file_urls,
+                    profile_id=chunk_profile_id,
+                )
+                if requested_profile_id and not current_profile_id:
+                    manager.update_kb(kid, chunk_profile_id=requested_profile_id)
+                manager.link_kb_to_categories(kid, categories, auto_sync=False)
                 sync_result, binding_result = _sync_category_kb_files(
                     manager,
                     storage,
                     kb_id=kid,
-                    categories=categories,
+                    categories=prospective_categories,
                     profile_id=chunk_profile_id,
                     bound_by="kb_category_add",
                 )
+                _require_complete_kb_snapshot(storage, kid, prospective_file_urls)
             after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
             response = {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n)}
             if sync_result is not None:
@@ -4293,26 +4776,55 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
             return response
 
         if action == "remove":
-            placeholders = ",".join(["?" for _ in categories])
-            deleted = conn.execute(
-                f"DELETE FROM rag_kb_category_mappings WHERE kb_id = ? AND category IN ({placeholders})",
-                [kid, *categories],
-            ).rowcount
-            conn.execute(
-                "UPDATE rag_knowledge_bases SET updated_at = ? WHERE kb_id = ?",
-                (timestamp, kid),
-            )
-            conn.commit()
-            return {"kb_id": kid, "action": action, "removed_count": int(deleted), "categories": manager.get_kb_categories(kid)}
+            with storage.transaction(immediate=True):
+                if chunk_profile_id and not storage.get_chunk_profile(chunk_profile_id):
+                    raise RagAdminError("chunk profile not found", status_code=404)
+                _require_complete_ready_chunk_sets(
+                    storage,
+                    file_urls=prospective_file_urls,
+                    profile_id=chunk_profile_id,
+                )
+                placeholders = ",".join(["?" for _ in categories])
+                deleted = conn.execute(
+                    f"DELETE FROM rag_kb_category_mappings WHERE kb_id = ? AND category IN ({placeholders})",
+                    [kid, *categories],
+                ).rowcount
+                conn.execute(
+                    "UPDATE rag_knowledge_bases SET updated_at = ? WHERE kb_id = ?",
+                    (timestamp, kid),
+                )
+                sync_result, binding_result = _sync_category_kb_files(
+                    manager,
+                    storage,
+                    kb_id=kid,
+                    categories=prospective_categories,
+                    profile_id=chunk_profile_id,
+                    bound_by="kb_category_remove",
+                )
+                _require_complete_kb_snapshot(storage, kid, prospective_file_urls)
+            response = {
+                "kb_id": kid,
+                "action": action,
+                "removed_count": int(deleted),
+                "categories": prospective_categories,
+                "category_sync": sync_result,
+            }
+            if binding_result is not None:
+                response["chunk_bindings"] = binding_result
+            return response
 
-        conn.execute("DELETE FROM rag_kb_category_mappings WHERE kb_id = ?", (kid,))
-        conn.commit()
-        manager.link_kb_to_categories(kid, categories, auto_sync=not bool(chunk_profile_id))
-        binding_result = None
-        sync_result = None
-        if chunk_profile_id:
-            if not storage.get_chunk_profile(chunk_profile_id):
+        with storage.transaction(immediate=True):
+            if chunk_profile_id and not storage.get_chunk_profile(chunk_profile_id):
                 raise RagAdminError("chunk profile not found", status_code=404)
+            _require_complete_ready_chunk_sets(
+                storage,
+                file_urls=prospective_file_urls,
+                profile_id=chunk_profile_id,
+            )
+            if requested_profile_id and not current_profile_id:
+                manager.update_kb(kid, chunk_profile_id=requested_profile_id)
+            conn.execute("DELETE FROM rag_kb_category_mappings WHERE kb_id = ?", (kid,))
+            manager.link_kb_to_categories(kid, categories, auto_sync=False)
             sync_result, binding_result = _sync_category_kb_files(
                 manager,
                 storage,
@@ -4321,6 +4833,7 @@ def set_knowledge_base_categories(*, db_path: str, kb_id: str, payload: dict[str
                 profile_id=chunk_profile_id,
                 bound_by="kb_category_replace",
             )
+            _require_complete_kb_snapshot(storage, kid, prospective_file_urls)
         after_n = int(manager.get_kb_stats(kid).get("total_files", 0))
         response = {"kb_id": kid, "action": action, "linked_count": len(categories), "files_added": max(0, after_n - before_n), "categories": manager.get_kb_categories(kid)}
         if sync_result is not None:
@@ -4378,12 +4891,13 @@ def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], header
     parsed: list[tuple[str, str, str]] = []
     for item in items:
         if not isinstance(item, dict):
-            continue
+            raise RagAdminError("each binding must be an object")
         file_url = _norm(item.get("file_url"))
         chunk_set_id = _norm(item.get("chunk_set_id"))
         binding_mode = _norm(item.get("binding_mode") or default_binding_mode or "pin").lower()
-        if file_url and chunk_set_id and binding_mode:
-            parsed.append((file_url, chunk_set_id, binding_mode))
+        if not file_url or not chunk_set_id or not binding_mode:
+            raise RagAdminError("bindings must include file_url and chunk_set_id")
+        parsed.append((file_url, chunk_set_id, binding_mode))
     if not parsed:
         raise RagAdminError("bindings must include file_url and chunk_set_id")
 
@@ -4392,36 +4906,72 @@ def bind_chunk_sets(*, db_path: str, kb_id: str, payload: dict[str, Any], header
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        selected_profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
+        if not selected_profile_id:
+            raise RagAdminError(
+                "invalid_selector: knowledge base requires a selected chunk profile"
+            )
         unique_file_urls = []
-        for file_url, _chunk_set_id, _binding_mode in parsed:
+        for file_url, chunk_set_id, binding_mode in parsed:
             if file_url not in unique_file_urls:
                 unique_file_urls.append(file_url)
-        if unique_file_urls:
-            manager.add_files_to_kb(kid, unique_file_urls)
+            if binding_mode not in {"pin", "follow_latest"}:
+                raise RagAdminError("binding_mode must be 'pin' or 'follow_latest'")
+            if not storage._conn.execute(
+                "SELECT 1 FROM files WHERE url = ? LIMIT 1",
+                (file_url,),
+            ).fetchone():
+                raise RagAdminError(f"file_url not found: {file_url}", status_code=404)
+            chunk_set = storage._conn.execute(
+                """
+                SELECT file_url, profile_id
+                FROM file_chunk_sets
+                WHERE chunk_set_id = ?
+                LIMIT 1
+                """,
+                (chunk_set_id,),
+            ).fetchone()
+            if not chunk_set:
+                raise RagAdminError("chunk_set_id not found", status_code=404)
+            if str(chunk_set[0] or "") != file_url:
+                raise RagAdminError(
+                    "chunk_set_id does not belong to the specified file_url"
+                )
+            if str(chunk_set[1] or "") != selected_profile_id:
+                raise RagAdminError(
+                    f"binding uses the wrong chunk profile: {file_url}"
+                )
+
         created_n = 0
         out: list[dict[str, Any]] = []
-        for file_url, chunk_set_id, binding_mode in parsed:
-            try:
-                res = storage.bind_chunk_set_to_kb(
-                    kb_id=kid,
-                    file_url=file_url,
-                    chunk_set_id=chunk_set_id,
-                    bound_by=bound_by,
-                    binding_mode=binding_mode,
-                )
-            except ValueError as exc:
-                message = str(exc)
-                status_code = 404 if "not found" in message.lower() else 400
-                raise RagAdminError(message, status_code=status_code) from exc
-            if res.get("created"):
-                created_n += 1
-            out.append(res)
+        try:
+            with storage.transaction(immediate=True):
+                manager.add_files_to_kb(kid, unique_file_urls)
+                for file_url, chunk_set_id, binding_mode in parsed:
+                    res = storage.bind_chunk_set_to_kb(
+                        kb_id=kid,
+                        file_url=file_url,
+                        chunk_set_id=chunk_set_id,
+                        bound_by=bound_by,
+                        binding_mode=binding_mode,
+                    )
+                    if res.get("created"):
+                        created_n += 1
+                    out.append(res)
+                snapshot = resolve_kb_bound_chunks(storage, kid)
+        except ValueError as exc:
+            message = str(exc)
+            status_code = 404 if "not found" in message.lower() else 400
+            raise RagAdminError(message, status_code=status_code) from exc
+        except KBIndexContractError as exc:
+            raise RagAdminError(str(exc), status_code=400) from exc
         return {
             "kb_id": kid,
             "processed": len(out),
             "created": created_n,
             "existing": len(out) - created_n,
             "bindings": out,
+            "binding": binding_contract(snapshot),
         }
     finally:
         storage.close()
@@ -4433,83 +4983,47 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
     kid = _kb_id(kb_id)
     if not isinstance(payload, dict):
         raise RagAdminError("Invalid JSON body")
-    force_reindex = bool(payload.get("force_reindex", False) or payload.get("reindex_all", False))
-    incremental = bool(payload.get("incremental", True))
-    requested = _list(payload.get("file_urls"), "file_urls")
+    force_rebuild = bool(
+        payload.get("force_rebuild", False)
+        or payload.get("force_reindex", False)
+        or payload.get("reindex_all", False)
+    )
+    requested = (
+        _list(payload.get("file_urls"), "file_urls")
+        if "file_urls" in payload
+        else None
+    )
 
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        category_sync_result = None
-        all_sync_result = None
-        chunk_binding_result = None
-        kb_mode = getattr(kb, "kb_mode", "")
-        if kb_mode == "category":
-            categories = manager.get_kb_categories(kid)
-            profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
-            if categories:
-                category_sync_result, chunk_binding_result = _sync_category_kb_files(
-                    manager,
-                    storage,
-                    kb_id=kid,
-                    categories=categories,
-                    profile_id=profile_id,
-                    bound_by="kb_index_category_sync",
-                )
-        elif kb_mode == "all":
-            profile_id = _norm(getattr(kb, "chunk_profile_id", ""))
-            all_sync_result, chunk_binding_result = _sync_all_kb_files(
-                manager,
+        try:
+            snapshot = resolve_kb_bound_chunks(
                 storage,
-                kb_id=kid,
-                profile_id=profile_id,
-                bound_by="kb_index_all_sync",
+                kid,
+                file_urls=requested,
             )
-        if not force_reindex:
-            embedding_status = _build_kb_embedding_status(
-                storage=storage,
-                kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
+        except KBIndexContractError as exc:
+            status_code = 409 if exc.code == "stale_snapshot" else 400
+            raise RagAdminError(str(exc), status_code=status_code) from exc
+        expected = _norm(payload.get("expected_binding_snapshot_fingerprint"))
+        if expected and expected != snapshot["binding_snapshot_fingerprint"]:
+            raise RagAdminError(
+                "stale_snapshot: binding snapshot changed before launch",
+                status_code=409,
             )
-            if embedding_status.get("index_status") and not embedding_status.get("embedding_compatible"):
-                raise RagAdminError(
-                    "Embedding configuration changed; full re-embed is required before incremental indexing",
-                    status_code=409,
-                )
-        user_requested = bool(requested)
-        files_to_index = requested
-        if not files_to_index:
-            if force_reindex or not incremental:
-                files_to_index = [row.get("file_url") for row in manager.get_kb_files(kid)]
-                files_to_index = [url for url in files_to_index if url]
-            else:
-                files_to_index = manager.get_files_needing_index(kid)
-        if not files_to_index and not force_reindex:
-            raise RagAdminError("No files to index")
-
-        skipped_no_markdown = 0
-        if not user_requested:
-            markdown_urls = set()
-            batch_size = 900
-            for i in range(0, len(files_to_index), batch_size):
-                batch = files_to_index[i:i + batch_size]
-                placeholders = ",".join(["?" for _ in batch])
-                rows = storage._conn.execute(
-                    f"""
-                    SELECT DISTINCT file_url FROM catalog_items
-                    WHERE file_url IN ({placeholders})
-                      AND markdown_content IS NOT NULL
-                      AND markdown_content != ''
-                    """,
-                    batch,
-                ).fetchall()
-                markdown_urls.update(row[0] for row in rows if row and row[0])
-            original_count = len(files_to_index)
-            files_to_index = [url for url in files_to_index if url in markdown_urls]
-            skipped_no_markdown = max(0, original_count - len(files_to_index))
-            if not files_to_index:
-                raise RagAdminError("No markdown files to index (all candidates missing markdown)")
+        expected = str(snapshot["binding_snapshot_fingerprint"])
+        identity_key = _norm(payload.get("embedding_identity_key")) or _norm(
+            getattr(kb, "embedding_identity_key", "")
+        )
+        if not identity_key or identity_key != _norm(
+            getattr(kb, "embedding_identity_key", "")
+        ):
+            raise RagAdminError(
+                "invalid_selector: embedding identity must exactly match the knowledge base"
+            )
 
         start_background_task = getattr(bridge_state, "start_background_task", None)
         if start_background_task is None:
@@ -4519,30 +5033,29 @@ def create_index_task(*, db_path: str, kb_id: str, payload: dict[str, Any], head
             "rag_indexing",
             {
                 "type": "rag_indexing",
+                "contract_version": 1,
                 "kb_id": kid,
-                "file_urls": files_to_index,
-                "force_reindex": force_reindex,
-                "incremental": incremental,
-                "name": f"RAG Indexing: {kb.name}",
+                "expected_binding_snapshot_fingerprint": expected,
+                "embedding_identity_key": identity_key,
+                "force_rebuild": force_rebuild,
+                "name": f"KB Index: {kb.name}",
             },
-            task_name=f"RAG Indexing: {kb.name}",
-            extra_fields={"kb_id": kid, "kb_name": kb.name, "rag_file_count": len(files_to_index)},
+            task_name=f"KB Index: {kb.name}",
+            extra_fields={
+                "kb_id": kid,
+                "kb_name": kb.name,
+                "rag_file_count": int(snapshot["bound_file_count"]),
+            },
         )
 
         response = {
             "job_id": task_id,
             "kb_id": kid,
-            "file_count": len(files_to_index),
-            "skipped_no_markdown": skipped_no_markdown,
-            "force_reindex": force_reindex,
-            "incremental": incremental,
+            "file_count": int(snapshot["bound_file_count"]),
+            "force_rebuild": force_rebuild,
+            "binding": binding_contract(snapshot),
+            "embedding_identity_key": identity_key,
         }
-        if category_sync_result is not None:
-            response["category_sync"] = category_sync_result
-        if all_sync_result is not None:
-            response["all_sync"] = all_sync_result
-        if chunk_binding_result is not None:
-            response["chunk_bindings"] = chunk_binding_result
         return response, 202
     finally:
         storage.close()

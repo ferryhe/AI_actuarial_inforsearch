@@ -318,7 +318,7 @@ def test_missing_remove_does_not_advance_generation(tmp_path: Path) -> None:
         storage.close()
 
 
-def test_mixed_remove_soft_deletes_only_actual_members(
+def test_mixed_remove_stales_composition_without_mutating_immutable_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -342,7 +342,7 @@ def test_mixed_remove_soft_deletes_only_actual_members(
         removed = manager.remove_files_from_kb("kb-membership", file_urls)
 
         assert removed == 1
-        assert soft_deleted_urls == [file_urls[0]]
+        assert soft_deleted_urls == []
         assert storage._conn.execute(
             """
             SELECT COUNT(*)

@@ -13,6 +13,7 @@ from ai_actuarial.api.services.ready_data_automation import (
 from ai_actuarial.catalog import CatalogItem
 from ai_actuarial.collectors import CollectionConfig, WebPageCollector
 from ai_actuarial.rag.indexing import IndexingPipeline
+from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.storage import Storage
 
@@ -23,6 +24,10 @@ def _create_kb(storage: Storage, kb_id: str, *, profile: str = "general") -> Non
         name=f"Metadata {kb_id}",
         kb_mode="manual",
         manifest_profile=profile,
+        embedding_provider="test",
+        embedding_model="metadata-model",
+        embedding_dimension=3,
+        embedding_identity_key=f"identity-{kb_id}",
     )
 
 
@@ -92,6 +97,65 @@ def _seed_member(
 
 def _state(storage: Storage, kb_id: str, profile: str = "general") -> dict[str, Any]:
     return storage.get_agentic_ready_source_state(kb_id=kb_id, profile=profile)
+
+
+def _prepare_ready_source(storage: Storage, *, kb_id: str, file_url: str) -> None:
+    profile = storage.create_chunk_profile(
+        name=f"Ready source {kb_id}",
+        chunk_size=256,
+        chunk_overlap=32,
+    )
+    profile_id = str(profile["profile_id"])
+    chunk_set = storage.get_or_create_file_chunk_set(
+        file_url=file_url,
+        profile_id=profile_id,
+        markdown_hash=f"markdown-{kb_id}",
+        status="building",
+    )
+    storage.replace_global_chunks(
+        chunk_set_id=str(chunk_set["chunk_set_id"]),
+        chunks=[
+            {
+                "chunk_index": 0,
+                "content": "Ready metadata automation body",
+                "token_count": 4,
+                "section_hierarchy": "Root",
+            }
+        ],
+        overwrite=True,
+    )
+    storage.bind_chunk_set_to_kb(
+        kb_id=kb_id,
+        file_url=file_url,
+        chunk_set_id=str(chunk_set["chunk_set_id"]),
+        bound_by="ready_metadata_fixture",
+        binding_mode="pin",
+    )
+    storage._conn.execute(
+        "UPDATE rag_knowledge_bases SET chunk_profile_id = ? WHERE kb_id = ?",
+        (profile_id, kb_id),
+    )
+    storage._conn.commit()
+    kb = KnowledgeBaseManager(storage).get_kb(kb_id)
+    assert kb is not None and kb.embedding_identity_key
+    snapshot = resolve_kb_bound_chunks(storage, kb_id)
+    chunk_ids = [str(row["chunk_id"]) for row in snapshot["chunks"]]
+    storage.create_kb_index_version(
+        kb_id=kb_id,
+        embedding_provider=kb.embedding_provider,
+        embedding_model=kb.embedding_model,
+        embedding_dimension=kb.embedding_dimension,
+        embedding_identity_key=kb.embedding_identity_key,
+        binding_snapshot_fingerprint=str(
+            snapshot["binding_snapshot_fingerprint"]
+        ),
+        index_type="faiss",
+        chunk_count=len(chunk_ids),
+        artifact_path="fixture-index.faiss",
+        artifact_digest="fixture-index-digest",
+        chunk_ids=chunk_ids,
+        status="ready",
+    )
 
 
 def _upsert_file_metadata(storage: Storage, file_url: str, **changes: Any) -> None:
@@ -594,6 +658,7 @@ def test_enabled_automation_claims_metadata_generation_with_one_shot_runner(
     db_path = storage.db_path
     try:
         storage.update_file_markdown(file_url, "# Metadata automation\n\nReady body")
+        _prepare_ready_source(storage, kb_id=kb_id, file_url=file_url)
         state = _state(storage, kb_id)
         storage.record_agentic_ready_source_evaluation(
             kb_id=kb_id,
