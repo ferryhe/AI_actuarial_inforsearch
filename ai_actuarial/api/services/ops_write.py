@@ -45,6 +45,7 @@ from ai_actuarial.shared_runtime import (
     serialize_backend_settings,
 )
 from ai_actuarial.config import settings
+from ai_actuarial.api.services.ops_read import get_config_sites, get_scheduled_tasks
 from ai_actuarial.markdown_conversion_config import list_conversion_tools, write_markdown_conversion_config
 from ai_actuarial.rag.defaults import get_embedding_model_defaults
 from ai_actuarial.api.services.import_batches import ImportBatchError, load_import_batch
@@ -870,29 +871,47 @@ def materialize_web_listening_rule(data: dict[str, Any], *, bridge: BridgeState 
 
     site_name = str(materialized.site.get("name") or "")
     task_name = str(materialized.scheduled_task.get("name") or "")
-    updated_site = False
+    desired_site = dict(materialized.site)
+    desired_task = dict(materialized.scheduled_task)
+    site_status = "created"
     for index, site in enumerate(sites):
         if str(site.get("name") or "") == site_name:
-            sites[index] = dict(materialized.site)
-            updated_site = True
+            if site == desired_site:
+                site_status = "unchanged"
+            else:
+                sites[index] = desired_site
+                site_status = "updated"
             break
-    if not updated_site:
-        sites.append(dict(materialized.site))
+    else:
+        sites.append(desired_site)
 
-    updated_task = False
+    task_status = "created"
     for index, task in enumerate(tasks):
         if str(task.get("name") or "") == task_name:
-            tasks[index] = dict(materialized.scheduled_task)
-            updated_task = True
+            if task == desired_task:
+                task_status = "unchanged"
+            else:
+                tasks[index] = desired_task
+                task_status = "updated"
             break
-    if not updated_task:
-        tasks.append(dict(materialized.scheduled_task))
+    else:
+        tasks.append(desired_task)
 
-    backup_name = _backup_config("before_web_listening_rule")
-    config_data["sites"] = sites
-    config_data["scheduled_tasks"] = tasks
-    _write_config_data(config_data)
-    _notify_site_config_updated(bridge, config_data)
+    changed = site_status != "unchanged" or task_status != "unchanged"
+    backup_name = None
+    if changed:
+        backup_name = _backup_config("before_web_listening_rule")
+        config_data["sites"] = sites
+        config_data["scheduled_tasks"] = tasks
+        _write_config_data(config_data)
+        _notify_site_config_updated(bridge, config_data)
+
+    persisted_site = next(
+        site for site in get_config_sites()["sites"] if str(site.get("name") or "") == site_name
+    )
+    persisted_task = next(
+        task for task in get_scheduled_tasks()["tasks"] if str(task.get("name") or "") == task_name
+    )
     return {
         "success": True,
         "rule": rule.model_dump(mode="json"),
@@ -900,7 +919,12 @@ def materialize_web_listening_rule(data: dict[str, Any], *, bridge: BridgeState 
         "warnings": warnings,
         "materialized_config": materialized.model_dump(mode="json"),
         "backup": backup_name,
-        "updated": {"site": updated_site, "scheduled_task": updated_task},
+        "updated": {"site": site_status == "updated", "scheduled_task": task_status == "updated"},
+        "resources": {
+            "site": {"status": site_status, "name": site_name, "config": persisted_site},
+            "scheduled_task": {"status": task_status, "name": task_name, "config": persisted_task},
+        },
+        "no_op": not changed,
         "requires_scheduler_reinit": False,
     }
 
