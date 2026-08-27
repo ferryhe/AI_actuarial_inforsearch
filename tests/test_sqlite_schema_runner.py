@@ -36,6 +36,129 @@ def _current_db_at_version_zero(db_path: Path) -> None:
         storage.close()
 
 
+def _production_v7_db(db_path: Path) -> None:
+    storage = Storage(str(db_path))
+    storage.close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.executescript(
+            """
+            ALTER TABLE api_tokens RENAME TO api_tokens_current;
+            CREATE TABLE api_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'llm',
+                api_key_encrypted TEXT NOT NULL,
+                api_base_url TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT,
+                updated_at TEXT,
+                notes TEXT,
+                instance_id TEXT DEFAULT 'default',
+                label TEXT,
+                is_default INTEGER DEFAULT 1
+            );
+            DROP TABLE api_tokens_current;
+            CREATE UNIQUE INDEX idx_api_tokens_provider_category_instance
+                ON api_tokens(provider, category, instance_id);
+            CREATE INDEX idx_api_tokens_provider_category_default
+                ON api_tokens(provider, category, is_default);
+
+            DROP TABLE IF EXISTS rag_knowledge_bases;
+            CREATE TABLE rag_knowledge_bases (
+                kb_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                kb_mode TEXT DEFAULT 'category',
+                embedding_model TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_overlap INTEGER NOT NULL,
+                index_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                file_count INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                index_path TEXT,
+                metadata_path TEXT,
+                embedding_provider TEXT DEFAULT 'openai',
+                embedding_dimension INTEGER,
+                chunk_profile_id TEXT,
+                index_dirty_at TEXT,
+                manifest_profile TEXT DEFAULT 'general'
+            );
+
+            DROP TABLE chunk_embeddings;
+            DROP TABLE kb_index_items;
+            DROP TABLE kb_ready_index_state;
+            DROP TABLE kb_index_versions;
+            DROP TABLE file_chunk_sets;
+
+            CREATE TABLE file_chunk_sets (
+                chunk_set_id TEXT PRIMARY KEY,
+                file_url TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                markdown_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ready',
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(file_url, profile_id, markdown_hash),
+                FOREIGN KEY(file_url) REFERENCES files(url) ON DELETE CASCADE,
+                FOREIGN KEY(profile_id) REFERENCES chunk_profiles(profile_id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_file_chunk_sets_file_url ON file_chunk_sets(file_url);
+            CREATE INDEX idx_file_chunk_sets_profile_id ON file_chunk_sets(profile_id);
+            CREATE TABLE chunk_embeddings (
+                chunk_id TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                dim INTEGER NOT NULL DEFAULT 0,
+                vector_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (chunk_id, embedding_model),
+                FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
+            );
+            CREATE TABLE kb_index_versions (
+                index_version_id TEXT PRIMARY KEY,
+                kb_id TEXT NOT NULL,
+                embedding_provider TEXT NOT NULL DEFAULT 'openai',
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                index_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                artifact_path TEXT,
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                built_at TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_kb_index_versions_kb_id ON kb_index_versions(kb_id);
+            CREATE TABLE kb_ready_index_state (
+                kb_id TEXT PRIMARY KEY,
+                index_version_id TEXT NOT NULL,
+                embedding_provider TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                embedding_dimension INTEGER,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+            );
+            CREATE TABLE kb_index_items (
+                index_version_id TEXT NOT NULL,
+                chunk_id TEXT NOT NULL,
+                PRIMARY KEY (index_version_id, chunk_id),
+                FOREIGN KEY(index_version_id) REFERENCES kb_index_versions(index_version_id) ON DELETE CASCADE,
+                FOREIGN KEY(chunk_id) REFERENCES global_chunks(chunk_id) ON DELETE CASCADE
+            );
+            ALTER TABLE catalog_items ADD COLUMN title TEXT;
+            ALTER TABLE catalog_items ADD COLUMN source_site TEXT;
+            ALTER TABLE catalog_items ADD COLUMN original_filename TEXT;
+            ALTER TABLE catalog_items ADD COLUMN local_path TEXT;
+            ALTER TABLE catalog_items ADD COLUMN keywords_json TEXT;
+            INSERT INTO files (url, sha256, title, first_seen, last_seen)
+            VALUES ('https://example.test/v7.pdf', 'v7-sha', 'V7', '2026-08-27', '2026-08-27');
+            PRAGMA user_version=7;
+            """
+        )
+
+
 def _files_count(db_path: Path) -> int:
     with sqlite3.connect(db_path) as conn:
         return int(conn.execute("SELECT COUNT(*) FROM files").fetchone()[0])
@@ -317,6 +440,110 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
     assert repeated["state"] == "current"
     assert repeated["applied_migrations"] == []
     assert _files_count(db_path) == 1
+
+
+def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    from ai_actuarial.sqlite_schema import apply_schema, schema_plan, schema_status
+
+    db_path = tmp_path / "production-v7.db"
+    _production_v7_db(db_path)
+
+    status = schema_status(db_path)
+    assert status["state"] == "needs_migration"
+    assert status["can_apply"] is True
+    assert [action["id"] for action in schema_plan(db_path)["plan"]["actions"]] == [
+        "add_chunk_embedding_identity_v8",
+        "add_kb_index_contract_v9",
+    ]
+
+    with sqlite3.connect(db_path) as conn:
+        tables = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
+        before_counts = {
+            table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            for table in tables
+        }
+
+    applied = apply_schema(db_path)
+    assert applied["state"] == "current"
+    assert applied["applied_migrations"] == [
+        "add_chunk_embedding_identity_v8",
+        "add_kb_index_contract_v9",
+    ]
+    assert schema_status(db_path)["state"] == "current"
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("PRAGMA quick_check").fetchall() == [("ok",)]
+        assert {
+            table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            for table in tables
+        } == before_counts
+
+    repeated = apply_schema(db_path)
+    assert repeated["state"] == "current"
+    assert repeated["applied_migrations"] == []
+
+
+@pytest.mark.parametrize(
+    "unknown_drift",
+    (
+        "ALTER TABLE kb_index_versions ADD COLUMN unexpected_contract TEXT",
+        "CREATE INDEX idx_unexpected_contract ON kb_index_versions(status)",
+        "ALTER TABLE rag_knowledge_bases ADD COLUMN unexpected_kb_contract TEXT",
+        "CREATE INDEX idx_unexpected_kb_contract ON rag_knowledge_bases(name)",
+    ),
+)
+def test_production_v7_with_unknown_drift_remains_fail_closed(
+    tmp_path: Path,
+    unknown_drift: str,
+) -> None:
+    from ai_actuarial.sqlite_schema import schema_plan, schema_status
+
+    db_path = tmp_path / "production-v7-drift.db"
+    _production_v7_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(unknown_drift)
+
+    status = schema_status(db_path)
+    assert status["state"] == "invalid"
+    assert status["can_apply"] is False
+    assert schema_plan(db_path)["blocked"] is True
+
+
+@pytest.mark.parametrize(
+    "unknown_object",
+    (
+        "CREATE VIEW unexpected_v7_view AS SELECT url FROM files",
+        """
+        CREATE TRIGGER unexpected_v7_trigger
+        AFTER INSERT ON files
+        BEGIN
+            SELECT 1;
+        END
+        """,
+    ),
+)
+def test_production_v7_with_unknown_view_or_trigger_remains_fail_closed(
+    tmp_path: Path,
+    unknown_object: str,
+) -> None:
+    from ai_actuarial.sqlite_schema import schema_plan, schema_status
+
+    db_path = tmp_path / "production-v7-unknown-object.db"
+    _production_v7_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(unknown_object)
+
+    status = schema_status(db_path)
+    assert status["state"] == "invalid"
+    assert status["can_apply"] is False
+    assert "unexpected_schema_objects" in status["problems"]
+    assert schema_plan(db_path)["blocked"] is True
 
 
 def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path) -> None:
