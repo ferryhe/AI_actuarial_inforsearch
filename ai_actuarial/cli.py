@@ -25,6 +25,11 @@ from .catalog import (
 )
 from .catalog_incremental import run_incremental_catalog
 from .search import search_all
+from .search_acquisition import (
+    format_acquisition_outcome,
+    summarize_acquisition_outcomes,
+)
+from .shared_runtime import coerce_bool
 from .ai_runtime import get_search_runtime_credentials
 from .storage import Storage
 from .collectors import CollectionConfig
@@ -90,6 +95,16 @@ def _site_configs(cfg: dict) -> list[SiteConfig]:
                 file_exts=s.get("file_exts", defaults.get("file_exts", [])),
                 exclude_keywords=excl_kw,
                 exclude_prefixes=excl_pfx,
+                collect_linked_files=(
+                    coerce_bool(s.get("collect_linked_files"), default=True)
+                    if "collect_linked_files" in s
+                    else None
+                ),
+                collect_page_content=(
+                    coerce_bool(s.get("collect_page_content"), default=False)
+                    if "collect_page_content" in s
+                    else None
+                ),
                 acquisition_tools=s.get("acquisition_tools"),
                 content_selector=s.get("content_selector"),
                 allow_url_patterns=s.get("allow_url_patterns"),
@@ -111,6 +126,19 @@ def cmd_update(args: argparse.Namespace) -> int:
     search_credentials = get_search_runtime_credentials(storage=storage)
 
     all_new: list[dict] = []
+    search_outcomes: list[dict] = []
+    search_summary: dict[str, int] | None = None
+
+    def consume_search_result(result, site_config: SiteConfig) -> None:
+        report = crawler.scan_page_for_files_with_outcome(
+            result.url,
+            site_config,
+            source_site=result.source,
+        )
+        all_new.extend(report.items)
+        outcome = dict(report.outcome)
+        search_outcomes.append(outcome)
+
     sites = _site_configs(cfg)
     if args.site:
         key = args.site.lower()
@@ -143,7 +171,16 @@ def cmd_update(args: argparse.Namespace) -> int:
             max_results = int(search_cfg.get("max_results", 5))
             languages = search_cfg.get("languages", ["en"])
             country = search_cfg.get("country")
-            search_exclude = [k.lower() for k in (site.exclude_keywords or search_cfg.get("exclude_keywords", []))]
+            search_exclude = list(
+                dict.fromkeys(
+                    str(keyword).strip().lower()
+                    for keyword in [
+                        *(site.exclude_keywords or []),
+                        *(search_cfg.get("exclude_keywords", []) or []),
+                    ]
+                    if str(keyword).strip()
+                )
+            )
             site_results = search_all(
                 site.queries,
                 max_results,
@@ -156,8 +193,8 @@ def cmd_update(args: argparse.Namespace) -> int:
                 tavily_key=tavily_key,
             )
             for result in site_results:
-                items = crawler.scan_page_for_files(
-                    result.url,
+                consume_search_result(
+                    result,
                     SiteConfig(
                         name=site.name,
                         url=result.url,
@@ -168,10 +205,11 @@ def cmd_update(args: argparse.Namespace) -> int:
                         file_exts=site.file_exts or cfg["defaults"].get("file_exts", []),
                         exclude_keywords=search_exclude,
                         exclude_prefixes=site.exclude_prefixes or [],
+                        collect_linked_files=site.collect_linked_files,
+                        collect_page_content=site.collect_page_content,
+                        allowed_domain=site.url,
                     ),
-                    source_site=result.source,
                 )
-                all_new.extend(items)
 
     if run_search:
         brave_key = search_credentials.get("brave")
@@ -195,8 +233,8 @@ def cmd_update(args: argparse.Namespace) -> int:
             tavily_key=tavily_key,
         )
         for result in results:
-            items = crawler.scan_page_for_files(
-                result.url,
+            consume_search_result(
+                result,
                 SiteConfig(
                     name="Web Search",
                     url=result.url,
@@ -206,17 +244,34 @@ def cmd_update(args: argparse.Namespace) -> int:
                     keywords=cfg["defaults"].get("keywords", []),
                     file_exts=cfg["defaults"].get("file_exts", []),
                     exclude_keywords=search_exclude,
+                    exclude_prefixes=cfg["defaults"].get("exclude_prefixes", []),
                 ),
-                source_site=result.source,
             )
-            all_new.extend(items)
+
+    if run_search:
+        outcome_count = len(search_outcomes)
+        for index, outcome in enumerate(search_outcomes, start=1):
+            log_level = logging.WARNING if int(outcome.get("failed") or 0) else logging.INFO
+            logger.log(
+                log_level,
+                format_acquisition_outcome(index, outcome_count, outcome),
+            )
+        search_summary = summarize_acquisition_outcomes(search_outcomes)
+        logger.info(
+            "Search acquisition summary: %s",
+            json.dumps(
+                search_summary,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
 
     storage.write_last_run(cfg["paths"]["last_run_new"], all_new)
     _write_timestamped_updates(cfg, all_new)
     storage.close()
 
     logger.info(f"New files: {len(all_new)}")
-    return 0
+    return 1 if search_summary and search_summary["failed"] and not search_summary["downloaded"] else 0
 
 
 def cmd_export(args: argparse.Namespace) -> int:

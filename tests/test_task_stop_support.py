@@ -911,6 +911,7 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
                 "  delay_seconds: 1.25",
                 "  keywords: [actuarial]",
                 "  file_exts: ['.pdf']",
+                "  exclude_prefixes: [internal-]",
                 "search:",
                 "  delay_seconds: 0",
                 "  max_results: 5",
@@ -927,7 +928,20 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
     fake_crawler = MagicMock()
-    fake_crawler.scan_page_for_files.return_value = [{"local_path": str(tmp_path / "report.pdf")}]
+    fake_crawler.scan_page_for_files_with_outcome.return_value = SimpleNamespace(
+        items=[{"local_path": str(tmp_path / "report.pdf")}],
+        outcome={
+            "disposition": "downloaded_new",
+            "url": "https://example.com/report",
+            "final_url": "https://example.com/report.pdf",
+            "http_status": None,
+            "subreason": None,
+            "reason": "downloaded 1 new file",
+            "downloaded": 1,
+            "skipped": 0,
+            "failed": 0,
+        },
+    )
     runtime = NativeTaskRuntime()
     search_result = SimpleNamespace(url="https://example.com/report", source="Search")
     with patch(
@@ -959,9 +973,10 @@ def test_native_task_runtime_search_uses_selected_engine_and_db_credentials(tmp_
     assert args[3] is None
     assert mock_search.call_args.kwargs["languages"] == ["zh"]
     assert mock_search.call_args.kwargs["country"] == "us"
-    site_cfg = fake_crawler.scan_page_for_files.call_args.args[1]
+    site_cfg = fake_crawler.scan_page_for_files_with_outcome.call_args.args[1]
     assert site_cfg.file_exts == [".pdf"]
     assert site_cfg.exclude_keywords == ["newsletter"]
+    assert site_cfg.exclude_prefixes == ["internal-"]
     assert site_cfg.check_database is True
     assert site_cfg.delay_seconds == 0
     assert crawler_cls.call_args.kwargs["default_delay_seconds"] == 0
@@ -989,7 +1004,20 @@ def test_native_task_runtime_search_passes_check_database_false_to_scan_config(t
     from ai_actuarial.task_runtime import NativeTaskRuntime
 
     fake_crawler = MagicMock()
-    fake_crawler.scan_page_for_files.return_value = [{"local_path": str(tmp_path / "report.pdf")}]
+    fake_crawler.scan_page_for_files_with_outcome.return_value = SimpleNamespace(
+        items=[{"local_path": str(tmp_path / "report.pdf")}],
+        outcome={
+            "disposition": "downloaded_new",
+            "url": "https://example.com/report",
+            "final_url": "https://example.com/report.pdf",
+            "http_status": None,
+            "subreason": None,
+            "reason": "downloaded 1 new file",
+            "downloaded": 1,
+            "skipped": 0,
+            "failed": 0,
+        },
+    )
     runtime = NativeTaskRuntime()
     search_result = SimpleNamespace(url="https://example.com/report", source="Search")
     with patch(
@@ -1010,7 +1038,7 @@ def test_native_task_runtime_search_passes_check_database_false_to_scan_config(t
         )
 
     assert result.success is True
-    site_cfg = fake_crawler.scan_page_for_files.call_args.args[1]
+    site_cfg = fake_crawler.scan_page_for_files_with_outcome.call_args.args[1]
     assert site_cfg.check_database is False
 
 
