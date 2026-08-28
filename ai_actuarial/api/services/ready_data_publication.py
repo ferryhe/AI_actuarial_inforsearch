@@ -128,7 +128,7 @@ def _public_timestamp(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _latest_failed_build_attempt(
+def _latest_build_attempt(
     storage: Storage,
     *,
     kb_id: str,
@@ -154,10 +154,10 @@ def _latest_failed_build_attempt(
         return None
     row = storage._conn.execute(
         """
-        SELECT publication_id, error_message, updated_at
+        SELECT publication_id, status, error_message, updated_at
         FROM agentic_ready_publications
         WHERE kb_id = ? AND profile = ?
-          AND status = 'failed'
+          AND status IN ('failed', 'validated')
           AND published_at IS NULL
         ORDER BY updated_at DESC, created_at DESC, publication_id DESC
         LIMIT 1
@@ -168,8 +168,9 @@ def _latest_failed_build_attempt(
         return None
     return {
         "publication_id": row[0],
-        "error_message": row[1] or "",
-        "updated_at": row[2],
+        "status": row[1],
+        "error_message": row[2] or "",
+        "updated_at": row[3],
     }
 
 
@@ -179,9 +180,9 @@ def _public_latest_operation(
     automation_state: str,
     automation_error: str,
     active_publication: Mapping[str, Any] | None,
-    previous_publication: Mapping[str, Any] | None,
-    failed_build_attempt: Mapping[str, Any] | None,
+    latest_build_attempt: Mapping[str, Any] | None,
     last_attempt_publication: Mapping[str, Any] | None,
+    manual_operation: Mapping[str, str] | None,
 ) -> dict[str, Any]:
     automation_at = automation.get("updated_at")
     published_at = (
@@ -191,26 +192,58 @@ def _public_latest_operation(
     )
     parsed_automation_at = _public_timestamp(automation_at)
     parsed_published_at = _public_timestamp(published_at)
-    failed_build_at = (
-        failed_build_attempt.get("updated_at")
-        if isinstance(failed_build_attempt, Mapping)
+    manual_operation_at = (
+        manual_operation.get("operation_at")
+        if isinstance(manual_operation, Mapping)
         else None
     )
-    parsed_failed_build_at = _public_timestamp(failed_build_at)
-    has_failed_build = bool(
-        isinstance(failed_build_at, str) and failed_build_at.strip()
+    parsed_manual_operation_at = _public_timestamp(manual_operation_at)
+    build_attempt_at = (
+        latest_build_attempt.get("updated_at")
+        if isinstance(latest_build_attempt, Mapping)
+        else None
     )
-    failed_build_is_latest = bool(
-        has_failed_build
+    parsed_build_attempt_at = _public_timestamp(build_attempt_at)
+    has_build_attempt = bool(
+        isinstance(build_attempt_at, str) and build_attempt_at.strip()
+    )
+    manual_operation_is_latest = bool(
+        manual_operation
+        and parsed_manual_operation_at is not None
         and (
-            parsed_failed_build_at is None
+            parsed_automation_at is None
+            or parsed_manual_operation_at >= parsed_automation_at
+        )
+        and (
+            parsed_published_at is None
+            or parsed_manual_operation_at >= parsed_published_at
+        )
+        and (
+            parsed_build_attempt_at is None
+            or parsed_manual_operation_at >= parsed_build_attempt_at
+        )
+    )
+    if manual_operation_is_latest:
+        manual_operation_failed = manual_operation.get("state") == "failed"
+        return {
+            "latest_operation_kind": manual_operation.get("kind"),
+            "latest_operation_state": manual_operation.get("state"),
+            "latest_operation_at": manual_operation_at,
+            "latest_operation_error": (
+                "ready_data operation failed" if manual_operation_failed else ""
+            ),
+        }
+    build_attempt_is_latest = bool(
+        has_build_attempt
+        and (
+            parsed_build_attempt_at is None
             or (
                 (
                     not isinstance(automation_at, str)
                     or not automation_at.strip()
                     or (
                         parsed_automation_at is not None
-                        and parsed_failed_build_at > parsed_automation_at
+                        and parsed_build_attempt_at > parsed_automation_at
                     )
                 )
                 and (
@@ -218,19 +251,22 @@ def _public_latest_operation(
                     or not published_at.strip()
                     or (
                         parsed_published_at is not None
-                        and parsed_failed_build_at > parsed_published_at
+                        and parsed_build_attempt_at > parsed_published_at
                     )
                 )
             )
         )
     )
-    if failed_build_is_latest:
+    if build_attempt_is_latest:
+        build_failed = latest_build_attempt.get("status") == "failed"
         return {
             "latest_operation_kind": "build",
-            "latest_operation_state": "failed",
-            "latest_operation_at": failed_build_at,
-            "latest_operation_error": _public_error(
-                failed_build_attempt.get("error_message")
+            "latest_operation_state": "failed" if build_failed else "succeeded",
+            "latest_operation_at": build_attempt_at,
+            "latest_operation_error": (
+                _public_error(latest_build_attempt.get("error_message"))
+                if build_failed
+                else ""
             ),
         }
     last_attempt_at = (
@@ -324,44 +360,16 @@ def _public_latest_operation(
             )
         )
         and (
-            not has_failed_build
+            not has_build_attempt
             or (
-                parsed_failed_build_at is not None
-                and parsed_published_at >= parsed_failed_build_at
+                parsed_build_attempt_at is not None
+                and parsed_published_at >= parsed_build_attempt_at
             )
         )
     )
     if publication_is_latest:
-        active_updated_at = (
-            _public_timestamp(active_publication.get("updated_at"))
-            if isinstance(active_publication, Mapping)
-            else None
-        )
-        active_created_at = (
-            _public_timestamp(active_publication.get("created_at"))
-            if isinstance(active_publication, Mapping)
-            else None
-        )
-        previous_published_at = (
-            _public_timestamp(previous_publication.get("published_at"))
-            if isinstance(previous_publication, Mapping)
-            else None
-        )
-        previous_updated_at = (
-            _public_timestamp(previous_publication.get("updated_at"))
-            if isinstance(previous_publication, Mapping)
-            else None
-        )
-        rollback_evidence = bool(
-            parsed_published_at is not None
-            and active_updated_at == parsed_published_at
-            and previous_updated_at == parsed_published_at
-            and active_created_at is not None
-            and previous_published_at is not None
-            and active_created_at < previous_published_at < parsed_published_at
-        )
         return {
-            "latest_operation_kind": "rollback" if rollback_evidence else "publish",
+            "latest_operation_kind": "publish",
             "latest_operation_state": "succeeded",
             "latest_operation_at": published_at,
             "latest_operation_error": "",
@@ -369,13 +377,16 @@ def _public_latest_operation(
     has_automation_operation = bool(
         isinstance(automation_at, str) and automation_at.strip()
     ) or automation_state != "idle"
-    if not has_automation_operation and has_failed_build:
+    if not has_automation_operation and has_build_attempt:
+        build_failed = latest_build_attempt.get("status") == "failed"
         return {
             "latest_operation_kind": "build",
-            "latest_operation_state": "failed",
-            "latest_operation_at": failed_build_at,
-            "latest_operation_error": _public_error(
-                failed_build_attempt.get("error_message")
+            "latest_operation_state": "failed" if build_failed else "succeeded",
+            "latest_operation_at": build_attempt_at,
+            "latest_operation_error": (
+                _public_error(latest_build_attempt.get("error_message"))
+                if build_failed
+                else ""
             ),
         }
     return {
@@ -637,7 +648,7 @@ def _public_ready_data_state_in_snapshot(
         kb_id=kb_id,
         profile=normalized_profile,
     )
-    failed_build_attempt = _latest_failed_build_attempt(
+    latest_build_attempt = _latest_build_attempt(
         storage,
         kb_id=kb_id,
         profile=normalized_profile,
@@ -701,7 +712,17 @@ def _public_ready_data_state_in_snapshot(
     smoke_source = active_record
     smoke = _public_smoke(smoke_source)
     automation_state = _public_automation_state(automation.get("automation_state"))
-    public_last_error = _public_error(automation.get("last_error"))
+    raw_automation_error = automation.get("last_error")
+    manual_operation = Storage.get_agentic_ready_manual_operation(
+        storage,
+        kb_id=kb_id,
+        profile=normalized_profile,
+    )
+    public_last_error = (
+        ""
+        if manual_operation and manual_operation.get("state") == "succeeded"
+        else _public_error(raw_automation_error)
+    )
     raw_serving_status = (
         serving.get("status").strip().lower()
         if isinstance(serving.get("status"), str)
@@ -765,9 +786,9 @@ def _public_ready_data_state_in_snapshot(
         automation_state=automation_state,
         automation_error=public_last_error,
         active_publication=active_record,
-        previous_publication=previous_record,
-        failed_build_attempt=failed_build_attempt,
+        latest_build_attempt=latest_build_attempt,
         last_attempt_publication=last_attempt_publication,
+        manual_operation=manual_operation,
     )
     return {
         "kb_id": kb_id,
@@ -1028,6 +1049,7 @@ def publish_ready_data_publication(
     publication_id = publication_value.strip()
 
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    record_failed_operation = False
     try:
         if not manager.get_kb(kid):
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
@@ -1052,6 +1074,7 @@ def publish_ready_data_publication(
                 status_code=422,
             )
         if state.get("active_publication_id") != expected_active:
+            record_failed_operation = True
             raise RagAdminError(
                 "publish_failure: ready_data publication state changed; refresh before publish",
                 status_code=409,
@@ -1066,6 +1089,7 @@ def publish_ready_data_publication(
             allowed_output_root=allowed_output_root,
         )
         if not validation["valid"]:
+            record_failed_operation = True
             raise RagAdminError(
                 "publish_failure: ready_data publication failed artifact validation",
                 status_code=422,
@@ -1075,6 +1099,7 @@ def publish_ready_data_publication(
             candidate.get("source_version_id") or ""
         ).strip()
         if not index_version_id or not source_snapshot_fingerprint:
+            record_failed_operation = True
             raise RagAdminError(
                 "publish_failure: ready_data publication lacks exact source identity",
                 status_code=422,
@@ -1085,6 +1110,7 @@ def publish_ready_data_publication(
                 profile=profile,
             )
             if guarded.get("active_publication_id") != expected_active:
+                record_failed_operation = True
                 raise RagAdminError(
                     "publish_failure: ready_data publication state changed; refresh before publish",
                     status_code=409,
@@ -1097,11 +1123,13 @@ def publish_ready_data_publication(
                     index_version_id=index_version_id,
                 )
             except ValueError as exc:
+                record_failed_operation = True
                 raise RagAdminError(f"stale_snapshot: {exc}", status_code=409) from exc
             if (
                 str(current_source.get("source_snapshot_fingerprint") or "")
                 != source_snapshot_fingerprint
             ):
+                record_failed_operation = True
                 raise RagAdminError(
                     "stale_snapshot: Ready Data source changed before explicit publication",
                     status_code=409,
@@ -1112,8 +1140,10 @@ def publish_ready_data_publication(
                     expected_active_publication_id=expected_active,
                 )
             except ValueError as exc:
+                record_failed_operation = True
                 raise RagAdminError(f"publish_failure: {exc}", status_code=422) from exc
             if not published.get("cas_won"):
+                record_failed_operation = True
                 raise RagAdminError(
                     "publish_failure: ready_data publication state changed; refresh before publish",
                     status_code=409,
@@ -1149,7 +1179,16 @@ def publish_ready_data_publication(
             "active_publication_id": current.get("active_publication_id"),
         }
     finally:
-        storage.close()
+        try:
+            if record_failed_operation:
+                storage.record_agentic_ready_manual_operation(
+                    kb_id=kid,
+                    profile=profile,
+                    operation_kind="publish",
+                    operation_state="failed",
+                )
+        finally:
+            storage.close()
 
 
 def rollback_ready_data_publication(
@@ -1180,6 +1219,7 @@ def rollback_ready_data_publication(
     expected_previous = expected_previous_value.strip()
 
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
+    record_failed_operation = False
     try:
         if not manager.get_kb(kid):
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
@@ -1188,6 +1228,7 @@ def rollback_ready_data_publication(
             state.get("active_publication_id") != expected_active
             or state.get("previous_publication_id") != expected_previous
         ):
+            record_failed_operation = True
             raise RagAdminError(
                 "ready_data publication state changed; refresh before rollback",
                 status_code=409,
@@ -1202,6 +1243,7 @@ def rollback_ready_data_publication(
             )
             or previous.get("status") != "previous"
         ):
+            record_failed_operation = True
             raise RagAdminError(
                 "previous ready_data publication is not eligible for rollback",
                 status_code=422,
@@ -1240,11 +1282,13 @@ def rollback_ready_data_publication(
                 validate_previous_publication=validate_previous,
             )
         except ValueError as exc:
+            record_failed_operation = True
             raise RagAdminError(
                 "previous ready_data publication failed integrity validation",
                 status_code=422,
             ) from exc
         if not rolled.get("cas_won"):
+            record_failed_operation = True
             raise RagAdminError(
                 "ready_data publication state changed; refresh before rollback",
                 status_code=409,
@@ -1255,4 +1299,13 @@ def rollback_ready_data_publication(
             profile=profile,
         )
     finally:
-        storage.close()
+        try:
+            if record_failed_operation:
+                storage.record_agentic_ready_manual_operation(
+                    kb_id=kid,
+                    profile=profile,
+                    operation_kind="rollback",
+                    operation_state="failed",
+                )
+        finally:
+            storage.close()

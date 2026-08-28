@@ -259,6 +259,7 @@ def _post_ready_build_core(
     *,
     json: dict[str, object] | None = None,
     prepare_index: bool = True,
+    publish: bool = True,
 ) -> _CoreResponse:
     marker = "/api/rag/knowledge-bases/"
     suffix = "/agentic-ready-manifest/build"
@@ -295,7 +296,7 @@ def _post_ready_build_core(
             db_path=str(db_path),
             kb_id=kb_id,
             payload=request_payload,
-            publish=True,
+            publish=publish,
         )
         return _CoreResponse(payload)
     except rag_admin_service.RagAdminError as exc:
@@ -2762,7 +2763,7 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     after_failed_rollback = client.get(
         "/api/rag/knowledge-bases/kb-publication-controls/agentic-ready-manifest"
     ).json()
-    assert after_failed_rollback["publication_state"]["latest_operation_kind"] == "build"
+    assert after_failed_rollback["publication_state"]["latest_operation_kind"] == "rollback"
     assert after_failed_rollback["publication_state"]["latest_operation_state"] == "failed"
     assert (
         after_failed_rollback["publication_state"]["latest_operation_error"]
@@ -2793,7 +2794,7 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     assert rolled["manifest"]["latest_operation_kind"] == "rollback"
     assert rolled["manifest"]["latest_operation_state"] == "succeeded"
     assert rolled["manifest"]["latest_operation_error"] == ""
-    assert rolled["manifest"]["last_error"] == "ready_data operation failed"
+    assert rolled["manifest"]["last_error"] == ""
 
     evidence = Storage(str(tmp_path / "index.db"))
     try:
@@ -2802,6 +2803,10 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
             profile="general",
         )
         raw_automation = evidence.get_agentic_ready_automation_state(
+            kb_id="kb-publication-controls",
+            profile="general",
+        )
+        raw_manual_operation = evidence.get_agentic_ready_manual_operation(
             kb_id="kb-publication-controls",
             profile="general",
         )
@@ -2816,9 +2821,13 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     ) < datetime.fromisoformat(
         raw_rollback["previous_publication"]["published_at"]
     ) < datetime.fromisoformat(rollback_at)
-    assert datetime.fromisoformat(raw_automation["updated_at"]) < datetime.fromisoformat(
-        rollback_at
-    )
+    assert raw_automation["updated_at"] == automation_failed_at
+    assert raw_automation["last_error"] == "simulated candidate operation failure"
+    assert raw_manual_operation == {
+        "kind": "rollback",
+        "state": "succeeded",
+        "operation_at": rollback_at,
+    }
 
     listed_after_rollback = next(
         item
@@ -2896,6 +2905,463 @@ def test_ready_manifest_public_projection_and_rollback_are_safe_and_cas_guarded(
     assert forbidden.status_code == 403, forbidden.text
 
 
+@pytest.mark.parametrize(
+    ("failure_case", "expected_status"),
+    (("artifact", 422), ("source", 409), ("cas", 409)),
+)
+def test_failed_explicit_publish_is_latest_operation_without_displacing_active(
+    tmp_path: Path,
+    monkeypatch,
+    failure_case: str,
+    expected_status: int,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = f"kb-failed-publish-{failure_case}"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": f"Failed Publish {failure_case}",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    active = _post_ready_build_core(
+        client,
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                (f"Publish candidate {failure_case}", seed["alpha_url"]),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id=kb_id,
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+    candidate = _post_ready_build_core(
+        client,
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+        publish=False,
+    ).json()["candidate_publication"]
+
+    if failure_case == "artifact":
+        from ai_actuarial.agentic_rag import ready_data_builder
+
+        original_validate = ready_data_builder.validate
+        candidate_output = Path(str(candidate["output_dir"])).resolve()
+
+        def invalidate_candidate(output_dir: str) -> dict[str, object]:
+            if Path(output_dir).resolve() == candidate_output:
+                return {
+                    "valid": False,
+                    "errors": ["secret artifact /workspace/private/publish.db"],
+                    "warnings": [],
+                }
+            return original_validate(output_dir)
+
+        monkeypatch.setattr(ready_data_builder, "validate", invalidate_candidate)
+    elif failure_case == "source":
+        storage = Storage(str(tmp_path / "index.db"))
+        try:
+            with storage.transaction(immediate=True):
+                storage._conn.execute(
+                    "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                    ("Source changed after candidate", seed["alpha_url"]),
+                )
+                storage.mark_agentic_ready_source_event(
+                    kb_id=kb_id,
+                    profile="general",
+                    reason="metadata_updated",
+                )
+        finally:
+            storage.close()
+
+    failed = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/publish",
+        json={
+            "profile": "general",
+            "publication_id": candidate["publication_id"],
+            "expected_active_publication_id": (
+                "arp_stale_active" if failure_case == "cas" else active["publication_id"]
+            ),
+        },
+    )
+    assert failed.status_code == expected_status, failed.text
+
+    status = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json()
+    listed = next(
+        item
+        for item in client.get("/api/rag/knowledge-bases").json()["knowledge_bases"]
+        if item["kb_id"] == kb_id
+    )["agentic_ready_manifest"]
+    detailed = client.get(f"/api/rag/knowledge-bases/{kb_id}").json()[
+        "knowledge_base"
+    ]["agentic_ready_manifest"]
+    for manifest in (status["manifest"], listed, detailed):
+        state = manifest["publication_state"]
+        assert state["active_publication_id"] == active["publication_id"]
+        assert state["serving_usable"] is True
+        assert state["latest_operation_kind"] == "publish"
+        assert state["latest_operation_state"] == "failed"
+        assert state["latest_operation_error"] == "ready_data operation failed"
+        assert manifest["latest_operation_kind"] == "publish"
+        assert manifest["latest_operation_state"] == "failed"
+        assert manifest["latest_operation_error"] == "ready_data operation failed"
+        assert "/workspace/private" not in json.dumps(manifest, sort_keys=True)
+
+    evidence = Storage(str(tmp_path / "index.db"))
+    try:
+        preserved = evidence.get_agentic_ready_automation_state(
+            kb_id=kb_id,
+            profile="general",
+            include_claim_token=True,
+        )
+        manual_operation = evidence.get_agentic_ready_manual_operation(
+            kb_id=kb_id,
+            profile="general",
+        )
+    finally:
+        evidence.close()
+    assert preserved["automation_state"] == "awaiting_publish"
+    assert preserved["last_attempt_publication_id"] == candidate["publication_id"]
+    assert preserved["claim_token"] is None
+    assert preserved["claimed_at"] is None
+    assert preserved["lease_expires_at"] is None
+    assert preserved["last_error"] == ""
+    assert manual_operation
+    assert manual_operation["kind"] == "publish"
+    assert manual_operation["state"] == "failed"
+
+    if failure_case == "cas":
+        enabled = client.put(
+            f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-automation",
+            json={
+                "profile": "general",
+                "automatic_build_enabled": True,
+                "automatic_publish_enabled": True,
+            },
+        )
+        assert enabled.status_code == 200, enabled.text
+        from ai_actuarial.api.services.ready_data_automation import (
+            run_ready_data_automation_once,
+        )
+
+        retried = run_ready_data_automation_once(
+            db_path=str(tmp_path / "index.db"),
+            heartbeat_interval_seconds=0,
+        )
+        assert retried["status"] == "published"
+        assert retried["candidate_publication"]["publication_id"] == candidate[
+            "publication_id"
+        ]
+        refreshed = client.get(
+            f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+        ).json()["publication_state"]
+        assert refreshed["latest_operation_kind"] == "publish"
+        assert refreshed["latest_operation_state"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("failure_case", "expected_status"),
+    (("validation", 422), ("cas", 409)),
+)
+def test_failed_explicit_rollback_is_latest_operation_without_changing_slots(
+    tmp_path: Path,
+    monkeypatch,
+    failure_case: str,
+    expected_status: int,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = f"kb-failed-rollback-{failure_case}"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": f"Failed Rollback {failure_case}",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first, second = _build_public_rollback_pair(
+        client,
+        db_path=tmp_path / "index.db",
+        kb_id=kb_id,
+        file_url=seed["alpha_url"],
+    )
+    if failure_case == "validation":
+        from ai_actuarial.agentic_rag import ready_data_builder
+
+        original_validate = ready_data_builder.validate
+        previous_output = Path(str(first["output_dir"])).resolve()
+
+        def invalidate_previous(output_dir: str) -> dict[str, object]:
+            if Path(output_dir).resolve() == previous_output:
+                return {
+                    "valid": False,
+                    "errors": ["secret rollback /workspace/private/rollback.db"],
+                    "warnings": [],
+                }
+            return original_validate(output_dir)
+
+        monkeypatch.setattr(ready_data_builder, "validate", invalidate_previous)
+
+    failed = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": (
+                "arp_stale_active" if failure_case == "cas" else second["publication_id"]
+            ),
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert failed.status_code == expected_status, failed.text
+
+    status = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json()
+    listed = next(
+        item
+        for item in client.get("/api/rag/knowledge-bases").json()["knowledge_bases"]
+        if item["kb_id"] == kb_id
+    )["agentic_ready_manifest"]
+    detailed = client.get(f"/api/rag/knowledge-bases/{kb_id}").json()[
+        "knowledge_base"
+    ]["agentic_ready_manifest"]
+    for manifest in (status["manifest"], listed, detailed):
+        state = manifest["publication_state"]
+        assert state["active_publication_id"] == second["publication_id"]
+        assert state["previous_publication_id"] == first["publication_id"]
+        assert state["serving_usable"] is True
+        assert state["latest_operation_kind"] == "rollback"
+        assert state["latest_operation_state"] == "failed"
+        assert state["latest_operation_error"] == "ready_data operation failed"
+        assert manifest["latest_operation_kind"] == "rollback"
+        assert manifest["latest_operation_state"] == "failed"
+        assert manifest["latest_operation_error"] == "ready_data operation failed"
+        assert "/workspace/private" not in json.dumps(manifest, sort_keys=True)
+
+
+def test_older_awaiting_candidate_auto_publish_is_not_inferred_as_rollback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = "kb-old-candidate-publish-kind"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": "Old Candidate Publish Kind",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    first = _post_ready_build_core(
+        client,
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                "UPDATE catalog_items SET summary = ? WHERE file_url = ?",
+                ("Second publication source", seed["alpha_url"]),
+            )
+            storage.mark_agentic_ready_source_event(
+                kb_id=kb_id,
+                profile="general",
+                reason="metadata_updated",
+            )
+    finally:
+        storage.close()
+    second = _post_ready_build_core(
+        client,
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    ).json()["candidate_publication"]
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage.mark_agentic_ready_source_event(
+            kb_id=kb_id,
+            profile="general",
+            reason="metadata_updated",
+        )
+    finally:
+        storage.close()
+    awaiting = _post_ready_build_core(
+        client,
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+        publish=False,
+    ).json()["candidate_publication"]
+
+    evidence = Storage(str(tmp_path / "index.db"))
+    try:
+        before_rollback = evidence.get_agentic_ready_automation_state(
+            kb_id=kb_id,
+            profile="general",
+            include_claim_token=True,
+        )
+    finally:
+        evidence.close()
+    failed_rollback = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": "arp_stale_active",
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert failed_rollback.status_code == 409, failed_rollback.text
+    evidence = Storage(str(tmp_path / "index.db"))
+    try:
+        after_failed_rollback = evidence.get_agentic_ready_automation_state(
+            kb_id=kb_id,
+            profile="general",
+            include_claim_token=True,
+        )
+        failed_rollback_operation = evidence.get_agentic_ready_manual_operation(
+            kb_id=kb_id,
+            profile="general",
+        )
+    finally:
+        evidence.close()
+    for field in (
+        "automation_state",
+        "running_generation",
+        "last_attempted_generation",
+        "claim_token",
+        "claimed_at",
+        "lease_expires_at",
+        "last_attempt_publication_id",
+        "last_success_at",
+        "last_error",
+    ):
+        assert after_failed_rollback[field] == before_rollback[field]
+    assert after_failed_rollback["automation_state"] == "awaiting_publish"
+    assert after_failed_rollback["last_attempt_publication_id"] == awaiting[
+        "publication_id"
+    ]
+    assert failed_rollback_operation
+    assert failed_rollback_operation["kind"] == "rollback"
+    assert failed_rollback_operation["state"] == "failed"
+
+    rollback_at = datetime(2031, 8, 27, 14, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        Storage,
+        "_utcnow_iso",
+        staticmethod(lambda: rollback_at.isoformat()),
+    )
+    rolled = client.post(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/rollback",
+        json={
+            "profile": "general",
+            "expected_active_publication_id": second["publication_id"],
+            "expected_previous_publication_id": first["publication_id"],
+        },
+    )
+    assert rolled.status_code == 200, rolled.text
+    assert rolled.json()["publication_state"]["latest_operation_kind"] == "rollback"
+    assert datetime.fromisoformat(str(awaiting["created_at"])) < rollback_at
+    evidence = Storage(str(tmp_path / "index.db"))
+    try:
+        after_successful_rollback = evidence.get_agentic_ready_automation_state(
+            kb_id=kb_id,
+            profile="general",
+            include_claim_token=True,
+        )
+        successful_rollback_operation = evidence.get_agentic_ready_manual_operation(
+            kb_id=kb_id,
+            profile="general",
+        )
+    finally:
+        evidence.close()
+    for field in (
+        "automation_state",
+        "running_generation",
+        "last_attempted_generation",
+        "claim_token",
+        "claimed_at",
+        "lease_expires_at",
+        "last_attempt_publication_id",
+        "last_success_at",
+        "last_error",
+    ):
+        assert after_successful_rollback[field] == before_rollback[field]
+    assert successful_rollback_operation == {
+        "kind": "rollback",
+        "state": "succeeded",
+        "operation_at": rollback_at.isoformat(),
+    }
+    enabled = client.put(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-automation",
+        json={
+            "profile": "general",
+            "automatic_build_enabled": True,
+            "automatic_publish_enabled": True,
+        },
+    )
+    assert enabled.status_code == 200, enabled.text
+
+    automation_at = rollback_at + timedelta(seconds=1)
+    publication_at = rollback_at + timedelta(seconds=2)
+    monkeypatch.setattr(
+        Storage,
+        "_utcnow_iso",
+        staticmethod(lambda: publication_at.isoformat()),
+    )
+    from ai_actuarial.api.services.ready_data_automation import (
+        run_ready_data_automation_once,
+    )
+
+    published = run_ready_data_automation_once(
+        db_path=str(tmp_path / "index.db"),
+        heartbeat_interval_seconds=0,
+        clock=lambda: automation_at,
+    )
+    assert published["status"] == "published"
+    assert published["candidate_publication"]["publication_id"] == awaiting[
+        "publication_id"
+    ]
+
+    status = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    ).json()
+    listed = next(
+        item
+        for item in client.get("/api/rag/knowledge-bases").json()["knowledge_bases"]
+        if item["kb_id"] == kb_id
+    )["agentic_ready_manifest"]
+    detailed = client.get(f"/api/rag/knowledge-bases/{kb_id}").json()[
+        "knowledge_base"
+    ]["agentic_ready_manifest"]
+    for manifest in (status["manifest"], listed, detailed):
+        state = manifest["publication_state"]
+        assert state["active_publication_id"] == awaiting["publication_id"]
+        assert state["previous_publication_id"] == first["publication_id"]
+        assert state["serving_usable"] is True
+        assert state["latest_operation_kind"] == "publish"
+        assert state["latest_operation_state"] == "succeeded"
+        assert state["latest_operation_error"] == ""
+        assert manifest["latest_operation_kind"] == "publish"
+        assert manifest["latest_operation_state"] == "succeeded"
+
+
 def test_failed_build_candidate_is_latest_operation_without_displacing_active(
     tmp_path: Path,
     monkeypatch,
@@ -2920,10 +3386,21 @@ def test_failed_build_candidate_is_latest_operation_without_displacing_active(
     )
     assert first.status_code == 200, first.text
     active_id = first.json()["candidate_publication"]["publication_id"]
+    enabled = client.put(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-automation",
+        json={
+            "profile": "general",
+            "automatic_build_enabled": True,
+            "automatic_publish_enabled": True,
+        },
+    )
+    assert enabled.status_code == 200, enabled.text
 
     from ai_actuarial.agentic_rag import ready_data_builder
 
     original_validate = ready_data_builder.validate
+    failed_at = datetime(2030, 8, 27, 14, 0, tzinfo=timezone.utc)
+    retry_at = failed_at + timedelta(seconds=1)
 
     def fail_candidate_validation(_output_dir: str) -> dict[str, object]:
         return {
@@ -2936,6 +3413,11 @@ def test_failed_build_candidate_is_latest_operation_without_displacing_active(
         }
 
     monkeypatch.setattr(ready_data_builder, "validate", fail_candidate_validation)
+    monkeypatch.setattr(
+        Storage,
+        "_utcnow_iso",
+        staticmethod(lambda: failed_at.isoformat()),
+    )
     failed = _post_ready_build_core(
         client,
         f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
@@ -2976,6 +3458,64 @@ def test_failed_build_candidate_is_latest_operation_without_displacing_active(
         serialized = json.dumps(manifest, sort_keys=True).lower()
         assert "/workspace/private" not in serialized
         assert "secret-build-claim" not in serialized
+
+    monkeypatch.setattr(
+        Storage,
+        "_utcnow_iso",
+        staticmethod(lambda: retry_at.isoformat()),
+    )
+    retry = _post_ready_build_core(
+        client,
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    )
+    assert retry.status_code == 200, retry.text
+    retry_candidate = retry.json()["candidate_publication"]
+    assert retry_candidate["status"] == "validated"
+    assert retry_candidate["published_at"] is None
+    assert datetime.fromisoformat(failed_candidate["updated_at"]) < datetime.fromisoformat(
+        retry_candidate["updated_at"]
+    )
+    evidence = Storage(str(tmp_path / "index.db"))
+    try:
+        retained_retry = evidence.get_agentic_ready_publication(
+            str(retry_candidate["publication_id"])
+        )
+    finally:
+        evidence.close()
+    assert retained_retry is not None
+    assert retained_retry["retention_class"] == "redundant_duplicate"
+    assert retained_retry["gc_state"] == "eligible"
+
+    retry_status = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    )
+    retry_listed = next(
+        item
+        for item in client.get("/api/rag/knowledge-bases").json()["knowledge_bases"]
+        if item["kb_id"] == kb_id
+    )["agentic_ready_manifest"]
+    retry_detailed = client.get(f"/api/rag/knowledge-bases/{kb_id}").json()[
+        "knowledge_base"
+    ]["agentic_ready_manifest"]
+    assert retry_status.status_code == 200, retry_status.text
+    for manifest in (
+        retry.json()["ready_data_snapshot"]["manifest"],
+        retry_status.json()["manifest"],
+        retry_listed,
+        retry_detailed,
+    ):
+        state = manifest["publication_state"]
+        assert state["active_publication_id"] == active_id
+        assert state["serving_status"] == "ready"
+        assert state["serving_usable"] is True
+        assert state["latest_operation_kind"] == "build"
+        assert state["latest_operation_state"] == "succeeded"
+        assert state["latest_operation_at"] == retry_candidate["updated_at"]
+        assert state["latest_operation_error"] == ""
+        assert manifest["latest_operation_kind"] == "build"
+        assert manifest["latest_operation_state"] == "succeeded"
+        assert manifest["latest_operation_error"] == ""
 
 
 @pytest.mark.parametrize(

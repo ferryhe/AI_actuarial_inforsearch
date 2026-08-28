@@ -120,6 +120,7 @@ class Storage:
             "agentic_ready_slots",
             "agentic_ready_source_state",
             "agentic_ready_automation",
+            "agentic_ready_manual_operation_state",
             "agentic_ready_automation_lock",
             "weekly_update_summaries",
             "rag_knowledge_bases",
@@ -825,6 +826,21 @@ class Storage:
                 FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE,
                 FOREIGN KEY(last_attempt_publication_id)
                     REFERENCES agentic_ready_publications(publication_id) ON DELETE SET NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agentic_ready_manual_operation_state (
+                kb_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                operation_kind TEXT NOT NULL,
+                operation_state TEXT NOT NULL,
+                operation_at TEXT NOT NULL,
+                PRIMARY KEY(kb_id, profile),
+                CHECK(operation_kind IN ('publish', 'rollback')),
+                CHECK(operation_state IN ('succeeded', 'failed')),
+                FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
             )
             """
         )
@@ -6032,6 +6048,69 @@ class Storage:
                 ),
             )
 
+    def record_agentic_ready_manual_operation(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+        operation_kind: str,
+        operation_state: str,
+    ) -> None:
+        """Persist manual-operation evidence without replacing automation work."""
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        normalized_kind = str(operation_kind or "").strip().lower()
+        normalized_state = str(operation_state or "").strip().lower()
+        if normalized_kind not in {"publish", "rollback"}:
+            raise ValueError("invalid ready-data manual operation kind")
+        if normalized_state not in {"succeeded", "failed"}:
+            raise ValueError("invalid ready-data manual operation state")
+        now = self._utcnow_iso()
+        with self.transaction(immediate=True):
+            self._conn.execute(
+                """
+                INSERT INTO agentic_ready_manual_operation_state (
+                    kb_id, profile, operation_kind, operation_state, operation_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(kb_id, profile) DO UPDATE SET
+                    operation_kind = excluded.operation_kind,
+                    operation_state = excluded.operation_state,
+                    operation_at = excluded.operation_at
+                """,
+                (
+                    kb_id,
+                    normalized_profile,
+                    normalized_kind,
+                    normalized_state,
+                    now,
+                ),
+            )
+
+    def get_agentic_ready_manual_operation(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+    ) -> dict[str, str] | None:
+        if not self._table_exists("agentic_ready_manual_operation_state"):
+            return None
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = self._conn.execute(
+            """
+            SELECT operation_kind, operation_state, operation_at
+            FROM agentic_ready_manual_operation_state
+            WHERE kb_id = ? AND profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "kind": str(row[0]),
+            "state": str(row[1]),
+            "operation_at": str(row[2]),
+        }
+
     @staticmethod
     def _agentic_ready_automation_timestamp(now: datetime | None = None) -> str:
         value = now or datetime.now(timezone.utc)
@@ -7655,6 +7734,12 @@ class Storage:
                 (previous_id,),
             )
             self._publish_agentic_ready_manifest_row(previous)
+            self.record_agentic_ready_manual_operation(
+                kb_id=kb_id,
+                profile=normalized_profile,
+                operation_kind="rollback",
+                operation_state="succeeded",
+            )
 
         state = self.get_agentic_ready_publication_state(kb_id=kb_id, profile=normalized_profile)
         state["rolled_back"] = True
