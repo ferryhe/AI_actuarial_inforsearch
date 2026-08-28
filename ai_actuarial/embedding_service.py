@@ -369,6 +369,7 @@ def ensure_chunk_embeddings(
     generator: EmbeddingGeneratorProtocol | None = None,
     batch_size: int | None = None,
     stop_check: Callable[[], bool] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> EnsureEmbeddingsResult:
     started_at = _now()
     chunk_rows = list(chunks)
@@ -387,6 +388,22 @@ def ensure_chunk_embeddings(
     failed = 0
     errors: list[dict[str, Any]] = []
     stopped = False
+
+    def report_progress() -> None:
+        if progress_callback is None:
+            return
+        processed = len(existing["valid"]) + generated + invalid_regenerated + failed
+        progress_callback(
+            processed,
+            len(chunk_rows),
+            (
+                f"Embedding progress: {processed}/{len(chunk_rows)} processed "
+                f"(generated={generated}, reused={len(existing['valid'])}, "
+                f"invalid_regenerated={invalid_regenerated}, failed={failed})"
+            ),
+        )
+
+    report_progress()
     effective_batch_size = max(
         1,
         int(batch_size or identity.config.embedding_batch_size or 1),
@@ -410,31 +427,32 @@ def ensure_chunk_embeddings(
         except Exception:  # provider exceptions must never enter task history or logs verbatim
             failed += len(batch)
             errors.extend(_safe_error(chunk, identity, "provider_error") for chunk in batch)
-            continue
-        if not isinstance(vectors, list) or len(vectors) != len(batch):
-            failed += len(batch)
-            errors.extend(
-                _safe_error(chunk, identity, "provider_count_mismatch") for chunk in batch
-            )
-            continue
-        valid_rows: list[dict[str, Any]] = []
-        valid_chunks: list[Mapping[str, Any]] = []
-        for chunk, vector in zip(batch, vectors):
-            if not _valid_provider_vector(vector, identity.dimension):
-                failed += 1
-                errors.append(_safe_error(chunk, identity, "invalid_embedding_vector"))
-                continue
-            valid_rows.append({"chunk_id": chunk["chunk_id"], "vector": vector})
-            valid_chunks.append(chunk)
-        storage.batch_upsert_chunk_embeddings(
-            valid_rows,
-            identity=identity.as_dict(),
-        )
-        for chunk in valid_chunks:
-            if str(chunk["chunk_id"]) in invalid_ids:
-                invalid_regenerated += 1
+        else:
+            if not isinstance(vectors, list) or len(vectors) != len(batch):
+                failed += len(batch)
+                errors.extend(
+                    _safe_error(chunk, identity, "provider_count_mismatch") for chunk in batch
+                )
             else:
-                generated += 1
+                valid_rows: list[dict[str, Any]] = []
+                valid_chunks: list[Mapping[str, Any]] = []
+                for chunk, vector in zip(batch, vectors):
+                    if not _valid_provider_vector(vector, identity.dimension):
+                        failed += 1
+                        errors.append(_safe_error(chunk, identity, "invalid_embedding_vector"))
+                        continue
+                    valid_rows.append({"chunk_id": chunk["chunk_id"], "vector": vector})
+                    valid_chunks.append(chunk)
+                storage.batch_upsert_chunk_embeddings(
+                    valid_rows,
+                    identity=identity.as_dict(),
+                )
+                for chunk in valid_chunks:
+                    if str(chunk["chunk_id"]) in invalid_ids:
+                        invalid_regenerated += 1
+                    else:
+                        generated += 1
+        report_progress()
         if stop_check is not None and stop_check():
             stopped = True
             break
