@@ -43,6 +43,11 @@ from ai_actuarial.rag.kb_index import (
     resolve_kb_bound_chunks,
 )
 from ai_actuarial.search import search_all
+from ai_actuarial.search_acquisition import (
+    format_acquisition_outcome,
+    format_acquisition_summary,
+    summarize_acquisition_outcomes,
+)
 from ai_actuarial.shared_runtime import append_task_log, coerce_bool, get_sites_config_path, load_yaml, parse_int_clamped, task_log_path
 from ai_actuarial.pipeline_baton import PIPELINE_STEPS, PipelineBaton
 from ai_actuarial.storage import Storage
@@ -1158,6 +1163,8 @@ class NativeTaskRuntime:
             "search_exclude_keywords": list(site_config.exclude_keywords or []),
             "check_database": bool(data.get("check_database", True)),
         }
+        if site_config.exclude_prefixes:
+            task_data["search_exclude_prefixes"] = list(site_config.exclude_prefixes)
         if site_config.collect_linked_files is not None:
             task_data["collect_linked_files"] = site_config.collect_linked_files
         if site_config.collect_page_content is not None:
@@ -1449,6 +1456,14 @@ class NativeTaskRuntime:
         if use_defaults:
             exclude_keywords = self._dedupe_list(exclude_keywords + self._coerce_list(search_cfg.get("exclude_keywords")))
 
+        exclude_prefixes = self._coerce_list(data.get("search_exclude_prefixes")) or self._coerce_list(
+            data.get("exclude_prefixes")
+        )
+        if use_defaults:
+            exclude_prefixes = self._dedupe_list(
+                exclude_prefixes + self._coerce_list(defaults.get("exclude_prefixes"))
+            )
+
         credentials = get_search_runtime_credentials(storage=storage)
         engine = str(data.get("engine") or "auto").strip().lower() or "auto"
         if engine in {"all", "auto"}:
@@ -1473,7 +1488,7 @@ class NativeTaskRuntime:
             serper_key=selected_credentials.get("serper"),
             tavily_key=selected_credentials.get("tavily"),
         )
-        unique_results = self._dedupe_search_results(results, site_filter=site_filter)
+        discovery_results = list(results)
 
         crawler = Crawler(
             storage,
@@ -1482,54 +1497,113 @@ class NativeTaskRuntime:
             stop_check=lambda: self._stop_requested(task_id),
             default_delay_seconds=delay_seconds,
         )
-        errors: list[str] = []
-        items_found = 0
-        items_downloaded = 0
-        items_skipped = 0
-        total = len(unique_results)
+        acquisition_outcomes: list[dict[str, Any]] = []
+        total = len(discovery_results)
         progress(0, total, f"Scanning {total} search results")
-        for index, result in enumerate(unique_results, start=1):
-            if self._stop_requested(task_id):
-                errors.append("Task stopped by user")
-                break
-            try:
-                site_config = SiteConfig(
-                    name=str(data.get("name") or "Search Result"),
-                    url=result.url,
-                    max_pages=1,
-                    max_depth=1,
-                    delay_seconds=delay_seconds,
-                    keywords=keywords,
-                    file_exts=file_exts,
-                    exclude_keywords=exclude_keywords,
-                    collect_linked_files=(
-                        coerce_bool(data.get("collect_linked_files"), default=True)
-                        if "collect_linked_files" in data
-                        else None
-                    ),
-                    collect_page_content=(
-                        coerce_bool(data.get("collect_page_content"), default=False)
-                        if "collect_page_content" in data
-                        else None
-                    ),
-                    check_database=bool(data.get("check_database", True)),
-                )
-                new_items = crawler.scan_page_for_files(result.url, site_config, source_site=result.source)
-                items_found += len(new_items)
-                for item in new_items:
-                    if item.get("local_path"):
-                        items_downloaded += 1
-                    else:
-                        items_skipped += 1
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"Error scanning search result {result.url}: {exc}")
+        for index, result in enumerate(discovery_results, start=1):
+            site_config = SiteConfig(
+                name=str(data.get("name") or "Search Result"),
+                url=result.url,
+                max_pages=1,
+                max_depth=1,
+                delay_seconds=delay_seconds,
+                keywords=keywords,
+                file_exts=file_exts,
+                exclude_keywords=exclude_keywords,
+                exclude_prefixes=exclude_prefixes,
+                allowed_domain=site_filter or None,
+                collect_linked_files=(
+                    coerce_bool(data.get("collect_linked_files"), default=True)
+                    if "collect_linked_files" in data
+                    else None
+                ),
+                collect_page_content=(
+                    coerce_bool(data.get("collect_page_content"), default=False)
+                    if "collect_page_content" in data
+                    else None
+                ),
+                check_database=bool(data.get("check_database", True)),
+            )
+            report = crawler.scan_page_for_files_with_outcome(
+                result.url,
+                site_config,
+                source_site=result.source,
+            )
+            outcome = dict(report.outcome)
+            acquisition_outcomes.append(outcome)
+            outcome_level = "ERROR" if int(outcome.get("failed") or 0) else "INFO"
+            if int(outcome.get("downloaded") or 0) and int(outcome.get("failed") or 0):
+                outcome_level = "WARNING"
+            append_task_log(
+                task_id,
+                outcome_level,
+                format_acquisition_outcome(index, total, outcome),
+            )
             progress(index, total, f"Scanned search result {index}/{total}")
 
+        acquisition_summary = summarize_acquisition_outcomes(acquisition_outcomes)
+        append_task_log(
+            task_id,
+            "INFO",
+            f"Search acquisition summary: {format_acquisition_summary(acquisition_summary)}",
+        )
+        failed_outcomes = [
+            (index, outcome)
+            for index, outcome in enumerate(acquisition_outcomes, start=1)
+            if int(outcome.get("failed") or 0)
+        ]
+        errors = [
+            (
+                f"Search result {index} acquisition {outcome.get('disposition')}: "
+                f"{outcome.get('reason')} (url={outcome.get('url')})"
+            )
+            for index, outcome in failed_outcomes
+        ]
+        warnings = list(errors) if acquisition_summary["downloaded"] and errors else []
+        if warnings:
+            count = len(failed_outcomes)
+            append_task_log(
+                task_id,
+                "WARNING",
+                f"Search acquisition completed with {count} failed result{'s' if count != 1 else ''}",
+            )
+        elif errors:
+            append_task_log(
+                task_id,
+                "ERROR",
+                f"Search acquisition failed for {len(failed_outcomes)} result(s)",
+            )
+
+        search_no_results = acquisition_summary["total"] == 0
+        no_op_reason = None
+        if search_no_results:
+            no_op_reason = "search_no_results"
+        elif not acquisition_summary["downloaded"] and not acquisition_summary["failed"]:
+            active_noop_dispositions = [
+                name
+                for name in ("already_exists", "filtered", "no_eligible_file_found")
+                if acquisition_summary[name]
+            ]
+            no_op_reason = (
+                active_noop_dispositions[0]
+                if len(active_noop_dispositions) == 1
+                else "already_exists_or_filtered"
+            )
+        stopped = any(
+            outcome.get("disposition") == "stopped_or_timeout" and outcome.get("subreason") == "stopped"
+            for outcome in acquisition_outcomes
+        )
+        success = bool(
+            search_no_results
+            or not acquisition_summary["failed"]
+            or acquisition_summary["downloaded"]
+        )
+
         return CollectionResult(
-            success=(not errors or items_found > 0),
-            items_found=items_found,
-            items_downloaded=items_downloaded,
-            items_skipped=items_skipped,
+            success=success,
+            items_found=acquisition_summary["downloaded"],
+            items_downloaded=acquisition_summary["downloaded"],
+            items_skipped=acquisition_summary["skipped"],
             errors=errors,
             metadata={
                 "source_type": "search",
@@ -1537,6 +1611,12 @@ class NativeTaskRuntime:
                 "query": query,
                 "search_results": total,
                 "site_filter": site_filter,
+                "acquisition_outcomes": acquisition_outcomes,
+                "acquisition_summary": acquisition_summary,
+                "search_no_results": search_no_results,
+                "no_op_reason": no_op_reason,
+                "warnings": warnings,
+                "stopped": stopped,
             },
         )
 

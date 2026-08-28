@@ -7,16 +7,23 @@ import os
 import random
 import re
 import socket
+import sqlite3
 import ssl
 import time
 import xml.etree.ElementTree as ET
 import hashlib
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 
 from .security import SafeUrlResolution, UnsafeUrlError, resolve_safe_http_url
+from .search_acquisition import (
+    SearchAcquisitionReport,
+    make_acquisition_outcome,
+    normalize_acquisition_url,
+    safe_outcome_url,
+)
 from .storage import Storage
 from .utils import extract_metadata, html_to_text, normalize_url, same_domain
 
@@ -34,8 +41,25 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_FILE_EXTS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
+_ARTIFACT_CONTENT_TYPES = {
+    ".pdf": {"application/pdf", "application/x-pdf"},
+    ".doc": {"application/msword", "application/vnd.ms-word"},
+    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    ".ppt": {"application/vnd.ms-powerpoint"},
+    ".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+    ".xls": {"application/vnd.ms-excel"},
+    ".xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+}
 _MAX_REDIRECT_HOPS = 10
 _REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+
+
+class _StagingIOError(OSError):
+    pass
+
+
+class _AcquisitionStopped(RuntimeError):
+    pass
 
 
 class _PinnedHTTPResponse:
@@ -122,6 +146,7 @@ class SiteConfig:
     allow_url_patterns: list[str] | None = None  # Regex allow-list for sub-page URLs (Scrapy-style); if set, only matching sub-pages are queued
     queries: list[str] | None = None  # Site-specific search queries to supplement or bypass direct crawling (useful for anti-bot-protected sites)
     check_database: bool = True
+    allowed_domain: str | None = None  # Search acquisition scope; None keeps legacy crawling behavior
 
 
 class Crawler:
@@ -202,9 +227,14 @@ class Crawler:
         *,
         delay_seconds: float | None = None,
     ) -> tuple[Path, dict[str, str], str, str, int]:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        tmp_dir = target_dir / "_tmp"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
+        if self.stop_check and self.stop_check():
+            raise _AcquisitionStopped("task stopped by user")
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            tmp_dir = target_dir / "_tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise _StagingIOError(str(exc)) from exc
         tmp_path = tmp_dir / f"download_{time.time_ns()}.part"
         hasher = hashlib.sha256()
         size = 0
@@ -226,16 +256,42 @@ class Crawler:
                         continue
                     self._raise_for_status(current_url, self._response_code(resp))
                     final_url = resp.geturl()
-                    with open(tmp_path, "wb") as f:
+                    try:
+                        staging_file = open(tmp_path, "wb")
+                    except OSError as exc:
+                        raise _StagingIOError(str(exc)) from exc
+                    try:
                         while True:
+                            if self.stop_check and self.stop_check():
+                                raise _AcquisitionStopped("task stopped by user")
                             chunk = resp.read(1024 * 128)
+                            if self.stop_check and self.stop_check():
+                                raise _AcquisitionStopped("task stopped by user")
                             if not chunk:
                                 break
-                            f.write(chunk)
+                            try:
+                                staging_file.write(chunk)
+                            except OSError as exc:
+                                raise _StagingIOError(str(exc)) from exc
                             hasher.update(chunk)
                             size += len(chunk)
+                    except BaseException:
+                        try:
+                            staging_file.close()
+                        except OSError:
+                            pass
+                        raise
+                    try:
+                        staging_file.flush()
+                        staging_file.close()
+                    except OSError as exc:
+                        try:
+                            staging_file.close()
+                        except OSError:
+                            pass
+                        raise _StagingIOError(str(exc)) from exc
                 success = True
-                logger.debug("Downloaded %s (%d bytes)", current_url, size)
+                logger.debug("Downloaded %s (%d bytes)", safe_outcome_url(current_url), size)
                 return tmp_path, headers, final_url, hasher.hexdigest(), size
 
             raise UnsafeUrlError(f"Too many redirects while downloading {url}")
@@ -820,6 +876,8 @@ class Crawler:
         page_title: str | None,
         published_time: str | None,
         cfg: SiteConfig,
+        *,
+        duplicate_counts: Counter[str] | None = None,
     ) -> dict | None:
         """Extract and store text content from an HTML page as a Markdown file.
 
@@ -839,8 +897,12 @@ class Crawler:
             File-metadata dict on success, or ``None`` if the page should be
             skipped (already stored, content too short, etc.).
         """
-        if cfg.check_database and self.storage.file_exists(url):
-            return None
+        if cfg.check_database:
+            duplicate_reason = self._existing_url_subreason(url)
+            if duplicate_reason:
+                if duplicate_counts is not None:
+                    duplicate_counts[duplicate_reason] += 1
+                return None
 
         text_content = self._extract_text_from_html(html, url)
         if not text_content:
@@ -851,8 +913,12 @@ class Crawler:
 
         sha256 = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
         if cfg.check_database and self.storage.file_exists_by_hash(sha256):
+            if duplicate_counts is not None:
+                duplicate_counts["content_hash"] += 1
             logger.debug(
-                "Skipping page %s: same content already stored (sha256=%s)", url, sha256
+                "Skipping page %s: same content already stored (sha256=%s)",
+                safe_outcome_url(url),
+                sha256,
             )
             return None
 
@@ -865,48 +931,53 @@ class Crawler:
         path_part = parsed.path.strip("/").replace("/", "_") or "index"
         safe_name = self._sanitize_filename(path_part)[:100] or "page"
         path = self._resolve_conflict(target_dir, f"{safe_name}.md")
-        path.write_text(text_content, encoding="utf-8")
-
-        bytes_size = len(text_content.encode("utf-8"))
-
-        # Store relative path to keep it consistent with file downloads
-        base_dir = Path(self.download_dir).parent.resolve()
+        created_path = path
         try:
-            relative_path = str(path.resolve().relative_to(base_dir))
-        except ValueError:
-            relative_path = str(path.resolve())
+            path.write_text(text_content, encoding="utf-8")
 
-        ts = self.storage.now()
-        self.storage._conn.execute(
-            """
-            INSERT OR IGNORE INTO files (
-                url, sha256, title, source_site, source_page_url,
-                original_filename, local_path, bytes, content_type,
-                published_time, first_seen, last_seen, crawl_time
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                url,
-                sha256,
-                page_title,
-                cfg.name,
-                url,
-                path.name,
-                relative_path,
-                bytes_size,
-                "text/markdown",
-                published_time,
-                ts,
-                ts,
-                ts,
-            ),
-        )
-        self.storage._conn.commit()
+            bytes_size = len(text_content.encode("utf-8"))
+
+            # Store relative path to keep it consistent with file downloads
+            base_dir = Path(self.download_dir).parent.resolve()
+            try:
+                relative_path = str(path.resolve().relative_to(base_dir))
+            except ValueError:
+                relative_path = str(path.resolve())
+
+            with self.storage.transaction(immediate=True):
+                ts = self.storage.now()
+                self.storage._conn.execute(
+                    """
+                    INSERT OR IGNORE INTO files (
+                        url, sha256, title, source_site, source_page_url,
+                        original_filename, local_path, bytes, content_type,
+                        published_time, first_seen, last_seen, crawl_time
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        url,
+                        sha256,
+                        page_title,
+                        cfg.name,
+                        url,
+                        path.name,
+                        relative_path,
+                        bytes_size,
+                        "text/markdown",
+                        published_time,
+                        ts,
+                        ts,
+                        ts,
+                    ),
+                )
+        except Exception:
+            self._remove_temp_file(created_path)
+            raise
 
         logger.info(
             "Saved page content: %s (%d bytes) -> %s",
-            page_title or url,
+            page_title or safe_outcome_url(url),
             bytes_size,
             path,
         )
@@ -973,79 +1044,96 @@ class Crawler:
 
         # Check if hash already exists in DB (Global Deduplication)
         if self.storage.file_exists_by_hash(sha256):
-            logger.info("Dropping file %s (SHA256 %s already exists in DB)", url, sha256)
+            logger.info(
+                "Dropping file %s (SHA256 %s already exists in DB)",
+                safe_outcome_url(url),
+                sha256,
+            )
             if tmp_path.exists():
                 tmp_path.unlink()
             return None
 
         blob = self.storage.get_blob(sha256)
-        if blob and blob.get("canonical_path"):
-            canonical = Path(blob["canonical_path"])
-            if canonical.exists() and path != canonical:
-                try:
-                    os.link(canonical, path)
-                    local_path = str(path)
-                except Exception:
-                    local_path = str(canonical)
-            else:
-                local_path = str(canonical)
-            if tmp_path.exists():
-                tmp_path.unlink()
-        else:
-            if path.exists():
-                path = self._resolve_conflict(target_dir, safe_name)
-            tmp_path.replace(path)
-            local_path = str(path)
-            self.storage.upsert_blob(
-                sha256=sha256,
-                canonical_path=str(path),
-                bytes_size=bytes_size,
-                content_type=headers.get("content-type"),
-            )
-
-        # Store relative path for consistency with FileCollector
-        # Relative to parent of download_dir (typically the 'data' directory)
-        base_dir = Path(self.download_dir).parent.resolve()
-        local_path_resolved = Path(local_path).resolve()
+        created_path: Path | None = None
         try:
-            relative_path = str(local_path_resolved.relative_to(base_dir))
-        except ValueError:
-            # Fallback to absolute path if relative path cannot be determined
-            relative_path = str(local_path_resolved)
+            with self.storage.transaction(immediate=True):
+                if blob and blob.get("canonical_path"):
+                    canonical = Path(blob["canonical_path"])
+                    if canonical.exists() and path != canonical:
+                        try:
+                            os.link(canonical, path)
+                            created_path = path
+                            local_path = str(path)
+                        except Exception:
+                            local_path = str(canonical)
+                    else:
+                        local_path = str(canonical)
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                else:
+                    if path.exists():
+                        path = self._resolve_conflict(target_dir, safe_name)
+                    tmp_path.replace(path)
+                    created_path = path
+                    local_path = str(path)
+                    self.storage.upsert_blob(
+                        sha256=sha256,
+                        canonical_path=str(path),
+                        bytes_size=bytes_size,
+                        content_type=headers.get("content-type"),
+                    )
 
-        # Select the best available title using three signals:
-        # 1. link_text: anchor text from the HTML link — the most document-specific label.
-        # 2. page_title: HTML page title — good when each document has its own page, but
-        #    unhelpful when many files are listed on a generic page (e.g. the institution's
-        #    home/publications page).  Skip it when it equals the site name (cfg.name) to
-        #    avoid storing the institution name as the document title.
-        # 3. original_filename / URL basename: always available last resort.
-        clean_link_text = link_text.strip() if link_text else None
-        useful_page_title: str | None = None
-        if page_title:
-            site_name = (cfg.name or "").strip().lower()
-            if not (site_name and page_title.strip().lower() == site_name):
-                useful_page_title = page_title
-        title = clean_link_text or useful_page_title or original_filename or os.path.basename(parsed.path)
-        content_type = headers.get("content-type")
-        last_modified = headers.get("last-modified")
-        etag = headers.get("etag")
-        source_site = source_site_override or cfg.name
-        self.storage.upsert_file(
-            url=url,
-            sha256=sha256,
-            title=title,
-            source_site=source_site,
-            source_page_url=source_page_url,
-            original_filename=original_filename,
-            local_path=relative_path,
-            bytes_size=bytes_size,
-            content_type=content_type,
-            last_modified=last_modified,
-            etag=etag,
-            published_time=published_time,
+                # Store relative path for consistency with FileCollector
+                # Relative to parent of download_dir (typically the 'data' directory)
+                base_dir = Path(self.download_dir).parent.resolve()
+                local_path_resolved = Path(local_path).resolve()
+                try:
+                    relative_path = str(local_path_resolved.relative_to(base_dir))
+                except ValueError:
+                    # Fallback to absolute path if relative path cannot be determined
+                    relative_path = str(local_path_resolved)
+
+                # Select the best available title using three signals:
+                # 1. link_text: anchor text from the HTML link — the most document-specific label.
+                # 2. page_title: HTML page title — good when each document has its own page, but
+                #    unhelpful when many files are listed on a generic page (e.g. the institution's
+                #    home/publications page).  Skip it when it equals the site name (cfg.name) to
+                #    avoid storing the institution name as the document title.
+                # 3. original_filename / URL basename: always available last resort.
+                clean_link_text = link_text.strip() if link_text else None
+                useful_page_title: str | None = None
+                if page_title:
+                    site_name = (cfg.name or "").strip().lower()
+                    if not (site_name and page_title.strip().lower() == site_name):
+                        useful_page_title = page_title
+                title = clean_link_text or useful_page_title or original_filename or os.path.basename(parsed.path)
+                content_type = headers.get("content-type")
+                last_modified = headers.get("last-modified")
+                etag = headers.get("etag")
+                source_site = source_site_override or cfg.name
+                self.storage.upsert_file(
+                    url=url,
+                    sha256=sha256,
+                    title=title,
+                    source_site=source_site,
+                    source_page_url=source_page_url,
+                    original_filename=original_filename,
+                    local_path=relative_path,
+                    bytes_size=bytes_size,
+                    content_type=content_type,
+                    last_modified=last_modified,
+                    etag=etag,
+                    published_time=published_time,
+                )
+        except Exception:
+            self._remove_temp_file(created_path)
+            raise
+        logger.info(
+            "Saved file: %s (%d bytes) -> %s",
+            original_filename or safe_outcome_url(url),
+            bytes_size,
+            local_path,
         )
-        logger.info("Saved file: %s (%d bytes) -> %s", original_filename or url, bytes_size, local_path)
         return {
             "url": url,
             "sha256": sha256,
@@ -1079,122 +1167,969 @@ class Crawler:
                 return alt
         return folder / f"{stem}_{int(time.time())}{suffix}"
 
+    @staticmethod
+    def _http_status_from_exception(exc: Exception) -> int | None:
+        match = re.search(r"\b(?:HTTP(?: Error)?\s*)?(\d{3})\b", str(exc), re.IGNORECASE)
+        if not match:
+            return None
+        status = int(match.group(1))
+        return status if 100 <= status <= 599 else None
+
+    @staticmethod
+    def _remove_temp_file(path: Path | None) -> None:
+        if path is None or not path.exists():
+            return
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+    def _failure_outcome(
+        self,
+        url: str,
+        exc: Exception,
+        *,
+        final_url: str | None = None,
+        phase: str = "download",
+    ) -> dict[str, object]:
+        status = self._http_status_from_exception(exc)
+        text = str(exc).lower()
+        if isinstance(exc, _AcquisitionStopped):
+            return make_acquisition_outcome(
+                "stopped_or_timeout",
+                url=url,
+                final_url=final_url,
+                subreason="stopped",
+                reason="task stopped by user",
+                failed=1,
+            )
+        if phase == "storage" or isinstance(exc, _StagingIOError):
+            return make_acquisition_outcome(
+                "storage_failed",
+                url=url,
+                final_url=final_url,
+                http_status=status,
+                subreason="storage",
+                reason="storage operation failed",
+                failed=1,
+            )
+        if status in {401, 403, 429}:
+            return make_acquisition_outcome(
+                "access_blocked",
+                url=url,
+                final_url=final_url,
+                http_status=status,
+                subreason="http_status",
+                reason=f"HTTP {status} access blocked",
+                failed=1,
+            )
+        if isinstance(exc, (TimeoutError, socket.timeout)) or "timed out" in text or "timeout" in text:
+            return make_acquisition_outcome(
+                "stopped_or_timeout",
+                url=url,
+                final_url=final_url,
+                http_status=status,
+                subreason="timeout",
+                reason="request timed out",
+                failed=1,
+            )
+        access_markers = (
+            ("challenge", "challenge"),
+            ("captcha", "challenge"),
+            ("login", "login"),
+            ("cookie", "cookie"),
+            ("javascript", "javascript"),
+        )
+        for marker, subreason in access_markers:
+            if marker in text:
+                return make_acquisition_outcome(
+                    "access_blocked",
+                    url=url,
+                    final_url=final_url,
+                    http_status=status,
+                    subreason=subreason,
+                    reason=f"access blocked by {subreason} requirement",
+                    failed=1,
+                )
+        return make_acquisition_outcome(
+            "download_failed",
+            url=url,
+            final_url=final_url,
+            http_status=status,
+            subreason="network",
+            reason="request or download failed",
+            failed=1,
+        )
+
+    @staticmethod
+    def _access_page_subreason(data: bytes, headers: dict[str, str]) -> str | None:
+        content_type = str(headers.get("content-type") or "").lower()
+        if "html" not in content_type and not data.lstrip().lower().startswith(b"<"):
+            return None
+        sample = data[:16384].decode("utf-8", errors="ignore").lower()
+        strong_markers = (
+            ("cf-chl-", "challenge"),
+            ("verify you are human", "challenge"),
+            ("captcha", "challenge"),
+            ("<title>sign in", "login"),
+            ("<title>login", "login"),
+            ("login required", "login"),
+            ("cookies are required", "cookie"),
+            ("enable cookies", "cookie"),
+            ("enable javascript", "javascript"),
+        )
+        for marker, subreason in strong_markers:
+            if marker in sample:
+                return subreason
+        return None
+
+    @staticmethod
+    def _content_type_mismatch(url: str, headers: dict[str, str]) -> bool:
+        content_type = str(headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        if not content_type or content_type == "application/octet-stream":
+            return False
+        if content_type in {
+            "text/html",
+            "application/xhtml+xml",
+            "application/json",
+        }:
+            return True
+        extension = Path(urlparse(url).path).suffix.lower()
+        expected_types = _ARTIFACT_CONTENT_TYPES.get(extension)
+        return bool(expected_types and content_type not in expected_types)
+
+    def _staged_access_page_subreason(self, path: Path, headers: dict[str, str]) -> str | None:
+        try:
+            with path.open("rb") as staged_file:
+                sample = staged_file.read(16384)
+        except OSError as exc:
+            raise _StagingIOError(str(exc)) from exc
+        return self._access_page_subreason(sample, headers)
+
+    def _existing_url_subreason(self, *urls: str) -> str | None:
+        seen: set[str] = set()
+        for candidate in urls:
+            raw = str(candidate or "").strip()
+            if not raw or raw in seen:
+                continue
+            seen.add(raw)
+            if self.storage.file_exists(raw):
+                return "url"
+            normalized = normalize_acquisition_url(raw)
+            if normalized and normalized != raw and normalized not in seen:
+                seen.add(normalized)
+                if self.storage.file_exists(normalized):
+                    return "normalized_url"
+        return None
+
+    def _url_filter_subreason(
+        self,
+        url: str,
+        exclude: list[str],
+        exclude_prefixes: list[str],
+    ) -> str | None:
+        if exclude and self._is_excluded(url, exclude):
+            return "keyword"
+        if exclude_prefixes and self._has_excluded_prefix(os.path.basename(url), exclude_prefixes):
+            return "path"
+        return None
+
+    @staticmethod
+    def _normalized_filter_host(value: str | None) -> str:
+        raw = str(value or "").strip().lower().removeprefix("site:")
+        if not raw:
+            return ""
+        candidate = raw if "://" in raw else f"//{raw}"
+        try:
+            host = str(urlsplit(candidate).hostname or "").strip(".")
+        except ValueError:
+            return ""
+        return host.removeprefix("www.")
+
+    def _outside_allowed_domain(self, url: str, allowed_domain: str | None) -> bool:
+        allowed = self._normalized_filter_host(allowed_domain)
+        if not allowed:
+            return False
+        host = self._normalized_filter_host(url)
+        return not host or (host != allowed and not host.endswith(f".{allowed}"))
+
+    def _downloaded_name_filter_subreason(
+        self,
+        url: str,
+        headers: dict[str, str],
+        exclude: list[str],
+        exclude_prefixes: list[str],
+    ) -> str | None:
+        disposition = str(headers.get("content-disposition") or "")
+        match = re.search(r'filename="?([^";]+)"?', disposition, re.IGNORECASE)
+        filename = match.group(1).strip() if match else (os.path.basename(urlparse(url).path) or "")
+        if exclude and self._is_excluded(filename, exclude):
+            return "keyword"
+        if exclude_prefixes and self._has_excluded_prefix(filename, exclude_prefixes):
+            return "path"
+        return None
+
     def scan_page_for_files(
         self, url: str, cfg: SiteConfig, source_site: str, progress_callback=None
     ) -> list[dict]:
+        """Legacy list contract retained for URL collection and external callers."""
+        return self._scan_page_for_files_with_outcome(
+            url,
+            cfg,
+            source_site,
+            progress_callback=progress_callback,
+            legacy_exceptions=True,
+        ).items
+
+    def scan_page_for_files_with_outcome(
+        self,
+        url: str,
+        cfg: SiteConfig,
+        source_site: str,
+        progress_callback=None,
+    ) -> SearchAcquisitionReport:
+        try:
+            return self._scan_page_for_files_with_outcome(
+                url,
+                cfg,
+                source_site,
+                progress_callback=progress_callback,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=self._failure_outcome(url, exc, phase="storage"),
+            )
+
+    def _scan_page_for_files_with_outcome(
+        self,
+        url: str,
+        cfg: SiteConfig,
+        source_site: str,
+        progress_callback=None,
+        *,
+        legacy_exceptions: bool = False,
+    ) -> SearchAcquisitionReport:
         if progress_callback:
-            progress_callback(None, None, f"Scanning: {url}")
-            
+            progress_callback(None, None, f"Scanning: {safe_outcome_url(url)}")
+        if self.stop_check and self.stop_check():
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "stopped_or_timeout",
+                    url=url,
+                    subreason="stopped",
+                    reason="task stopped by user",
+                    failed=1,
+                ),
+            )
+        if self._outside_allowed_domain(url, cfg.allowed_domain):
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "filtered",
+                    url=url,
+                    subreason="domain",
+                    reason="filtered by domain rule",
+                    skipped=1,
+                ),
+            )
+
         exts = {e.lower() for e in (cfg.file_exts or [])} or DEFAULT_FILE_EXTS
         keywords = [k.lower() for k in (cfg.keywords or [])]
         exclude = [k.lower() for k in (cfg.exclude_keywords or [])]
         exclude_prefixes = [p.lower() for p in (cfg.exclude_prefixes or [])]
+        requested_file = self._is_file_url(url, exts)
+        if self._is_file_url(url, DEFAULT_FILE_EXTS) and not requested_file:
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "filtered",
+                    url=url,
+                    subreason="extension",
+                    reason="direct document filtered by extension rule",
+                    skipped=1,
+                ),
+            )
         try:
             data, headers, final_url = self._request(url, delay_seconds=cfg.delay_seconds)
-        except Exception:
-            return []
+        except Exception as exc:  # noqa: BLE001
+            return SearchAcquisitionReport(items=[], outcome=self._failure_outcome(url, exc))
 
-        if exclude and self._is_excluded(final_url, exclude):
-            return []
-        if exclude_prefixes and self._has_excluded_prefix(os.path.basename(final_url), exclude_prefixes):
-            return []
+        if self.stop_check and self.stop_check():
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "stopped_or_timeout",
+                    url=url,
+                    final_url=final_url,
+                    subreason="stopped",
+                    reason="task stopped by user",
+                    failed=1,
+                ),
+            )
 
-        if self._is_file_url(final_url, exts):
+        final_is_file = self._is_file_url(final_url, exts)
+        if self._is_file_url(final_url, DEFAULT_FILE_EXTS) and not final_is_file:
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "filtered",
+                    url=url,
+                    final_url=final_url,
+                    subreason="extension",
+                    reason="direct document filtered by extension rule",
+                    skipped=1,
+                ),
+            )
+
+        blocked_subreason = self._access_page_subreason(data, headers)
+        if blocked_subreason:
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "access_blocked",
+                    url=url,
+                    final_url=final_url,
+                    subreason=blocked_subreason,
+                    reason=f"access blocked by {blocked_subreason} requirement",
+                    failed=1,
+                ),
+            )
+
+        filter_subreason = self._url_filter_subreason(final_url, exclude, exclude_prefixes)
+        if filter_subreason:
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "filtered",
+                    url=url,
+                    final_url=final_url,
+                    subreason=filter_subreason,
+                    reason=f"filtered by {filter_subreason} rule",
+                    skipped=1,
+                ),
+            )
+
+        if requested_file and (not final_is_file or self._content_type_mismatch(final_url, headers)):
+            subreason = "redirect" if not final_is_file else "content_type"
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "redirect_or_content_type_mismatch",
+                    url=url,
+                    final_url=final_url,
+                    subreason=subreason,
+                    reason=f"file request ended with {subreason} mismatch",
+                    failed=1,
+                ),
+            )
+
+        if final_is_file:
             if cfg.collect_linked_files is False:
-                return []
-            if cfg.check_database and self.storage.file_exists(final_url):
-                return []
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "filtered",
+                        url=url,
+                        final_url=final_url,
+                        subreason="collection_disabled",
+                        reason="linked file collection is disabled",
+                        skipped=1,
+                    ),
+                )
+            if cfg.check_database:
+                duplicate_reason = self._existing_url_subreason(url, final_url)
+                if duplicate_reason:
+                    return SearchAcquisitionReport(
+                        items=[],
+                        outcome=make_acquisition_outcome(
+                            "already_exists",
+                            url=url,
+                            final_url=final_url,
+                            subreason=duplicate_reason,
+                            reason=f"file already exists by {duplicate_reason}",
+                            skipped=1,
+                        ),
+                    )
             parsed = urlparse(final_url)
-            domain = parsed.netloc.replace(":", "_")
-            target_dir = Path(self.download_dir) / domain
-            tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
-                final_url,
-                target_dir,
-                delay_seconds=cfg.delay_seconds,
-            )
-            if exclude and self._is_excluded(ffinal, exclude):
-                if tmp_path.exists():
-                    tmp_path.unlink()
-                return []
-            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
-                if tmp_path.exists():
-                    tmp_path.unlink()
-                return []
-            item = self._handle_file(
+            target_dir = Path(self.download_dir) / parsed.netloc.replace(":", "_")
+            try:
+                tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
+                    final_url,
+                    target_dir,
+                    delay_seconds=cfg.delay_seconds,
+                )
+            except _AcquisitionStopped as exc:
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=self._failure_outcome(url, exc, final_url=final_url),
+                )
+            except Exception as exc:  # noqa: BLE001
+                if legacy_exceptions:
+                    raise
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=self._failure_outcome(url, exc, final_url=final_url),
+                )
+            if self.stop_check and self.stop_check():
+                self._remove_temp_file(tmp_path)
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "stopped_or_timeout",
+                        url=url,
+                        final_url=ffinal,
+                        subreason="stopped",
+                        reason="task stopped by user",
+                        failed=1,
+                    ),
+                )
+            staged_is_file = self._is_file_url(ffinal, exts)
+            if self._is_file_url(ffinal, DEFAULT_FILE_EXTS) and not staged_is_file:
+                self._remove_temp_file(tmp_path)
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "filtered",
+                        url=url,
+                        final_url=ffinal,
+                        subreason="extension",
+                        reason="download filtered by extension rule",
+                        skipped=1,
+                    ),
+                )
+            try:
+                blocked_subreason = self._staged_access_page_subreason(tmp_path, fheaders)
+            except Exception as exc:  # noqa: BLE001
+                self._remove_temp_file(tmp_path)
+                if legacy_exceptions:
+                    raise
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=self._failure_outcome(url, exc, final_url=ffinal),
+                )
+            if blocked_subreason:
+                self._remove_temp_file(tmp_path)
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "access_blocked",
+                        url=url,
+                        final_url=ffinal,
+                        subreason=blocked_subreason,
+                        reason=f"access blocked by {blocked_subreason} requirement",
+                        failed=1,
+                    ),
+                )
+            if not staged_is_file or self._content_type_mismatch(ffinal, fheaders):
+                self._remove_temp_file(tmp_path)
+                subreason = "redirect" if not staged_is_file else "content_type"
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "redirect_or_content_type_mismatch",
+                        url=url,
+                        final_url=ffinal,
+                        subreason=subreason,
+                        reason=f"download ended with {subreason} mismatch",
+                        failed=1,
+                    ),
+                )
+            filter_subreason = self._url_filter_subreason(ffinal, exclude, exclude_prefixes)
+            filter_subreason = filter_subreason or self._downloaded_name_filter_subreason(
                 ffinal,
-                tmp_path,
                 fheaders,
-                sha256,
-                bytes_size,
-                cfg,
-                source_page_url=None,
-                source_site_override=source_site,
+                exclude,
+                exclude_prefixes,
             )
-            return [item] if item else []
+            if filter_subreason:
+                self._remove_temp_file(tmp_path)
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "filtered",
+                        url=url,
+                        final_url=ffinal,
+                        subreason=filter_subreason,
+                        reason=f"download filtered by {filter_subreason} rule",
+                        skipped=1,
+                    ),
+                )
+            if cfg.check_database:
+                try:
+                    hash_exists = self.storage.file_exists_by_hash(sha256)
+                except (OSError, sqlite3.Error) as exc:
+                    self._remove_temp_file(tmp_path)
+                    if legacy_exceptions:
+                        raise
+                    return SearchAcquisitionReport(
+                        items=[],
+                        outcome=self._failure_outcome(
+                            url,
+                            exc,
+                            final_url=ffinal,
+                            phase="storage",
+                        ),
+                    )
+                if hash_exists:
+                    self._remove_temp_file(tmp_path)
+                    return SearchAcquisitionReport(
+                        items=[],
+                        outcome=make_acquisition_outcome(
+                            "already_exists",
+                            url=url,
+                            final_url=ffinal,
+                            subreason="content_hash",
+                            reason="file already exists by content hash",
+                            skipped=1,
+                        ),
+                    )
+            if self.stop_check and self.stop_check():
+                self._remove_temp_file(tmp_path)
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "stopped_or_timeout",
+                        url=url,
+                        final_url=ffinal,
+                        subreason="stopped",
+                        reason="task stopped by user",
+                        failed=1,
+                    ),
+                )
+            try:
+                item = self._handle_file(
+                    ffinal,
+                    tmp_path,
+                    fheaders,
+                    sha256,
+                    bytes_size,
+                    cfg,
+                    source_page_url=None,
+                    source_site_override=source_site,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._remove_temp_file(tmp_path)
+                if legacy_exceptions:
+                    raise
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=self._failure_outcome(
+                        url,
+                        exc,
+                        final_url=ffinal,
+                        phase="storage",
+                    ),
+                )
+            if item:
+                return SearchAcquisitionReport(
+                    items=[item],
+                    outcome=make_acquisition_outcome(
+                        "downloaded_new",
+                        url=url,
+                        final_url=ffinal,
+                        reason="downloaded 1 new file",
+                        downloaded=1,
+                    ),
+                )
+            duplicate_reason = self._existing_url_subreason(ffinal) if cfg.check_database else None
+            if duplicate_reason or (cfg.check_database and self.storage.file_exists_by_hash(sha256)):
+                return SearchAcquisitionReport(
+                    items=[],
+                    outcome=make_acquisition_outcome(
+                        "already_exists",
+                        url=url,
+                        final_url=ffinal,
+                        subreason=duplicate_reason or "content_hash",
+                        reason="file became a duplicate while being stored",
+                        skipped=1,
+                    ),
+                )
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "no_eligible_file_found",
+                    url=url,
+                    final_url=ffinal,
+                    subreason="empty",
+                    reason="file handler produced no eligible file",
+                    skipped=1,
+                ),
+            )
 
-        try:
-            html = data.decode("utf-8", errors="ignore")
-        except Exception:
-            html = ""
-
+        html = data.decode("utf-8", errors="ignore")
         page_title, published_time = extract_metadata(html, final_url)
         page_text = html_to_text(html).lower()
+        if self.stop_check and self.stop_check():
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "stopped_or_timeout",
+                    url=url,
+                    final_url=final_url,
+                    subreason="stopped",
+                    reason="task stopped by user",
+                    failed=1,
+                ),
+            )
         page_relevant = any(k in page_text for k in keywords) if keywords else True
         if exclude and page_title and self._is_excluded(page_title, exclude):
-            return []
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "filtered",
+                    url=url,
+                    final_url=final_url,
+                    subreason="keyword",
+                    reason="page title filtered by keyword rule",
+                    skipped=1,
+                ),
+            )
 
         new_items: list[dict] = []
-        if cfg.collect_page_content and page_relevant:
-            page_item = self._handle_page_content(
-                final_url, html, page_title, published_time, cfg
-            )
-            if page_item:
-                new_items.append(page_item)
+        duplicates: Counter[str] = Counter()
+        filters: Counter[str] = Counter()
+        failures: list[dict[str, object]] = []
+        if cfg.collect_page_content:
+            if not page_relevant:
+                filters["keyword"] += 1
+            else:
+                if self.stop_check and self.stop_check():
+                    return SearchAcquisitionReport(
+                        items=[],
+                        outcome=make_acquisition_outcome(
+                            "stopped_or_timeout",
+                            url=url,
+                            final_url=final_url,
+                            subreason="stopped",
+                            reason="task stopped by user",
+                            failed=1,
+                        ),
+                    )
+                try:
+                    page_item = self._handle_page_content(
+                        final_url,
+                        html,
+                        page_title,
+                        published_time,
+                        cfg,
+                        duplicate_counts=duplicates,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    if legacy_exceptions:
+                        raise
+                    failures.append(self._failure_outcome(url, exc, final_url=final_url, phase="storage"))
+                else:
+                    if page_item:
+                        new_items.append(page_item)
 
         links = self._extract_links(final_url, html, content_selector=cfg.content_selector)
         for link, link_text in links:
-            if cfg.collect_linked_files is False or not self._is_file_url(link, exts):
+            if self.stop_check and self.stop_check():
+                failures.append(
+                    make_acquisition_outcome(
+                        "stopped_or_timeout",
+                        url=url,
+                        final_url=final_url,
+                        subreason="stopped",
+                        reason="task stopped by user",
+                        failed=1,
+                    )
+                )
+                break
+            if not self._is_file_url(link, exts):
+                if self._is_file_url(link, DEFAULT_FILE_EXTS):
+                    filters["extension"] += 1
                 continue
-            if exclude and self._is_excluded(link, exclude):
+            if cfg.collect_linked_files is False:
+                filters["collection_disabled"] += 1
                 continue
-            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(link), exclude_prefixes):
+            filter_subreason = self._url_filter_subreason(link, exclude, exclude_prefixes)
+            if filter_subreason:
+                filters[filter_subreason] += 1
                 continue
             if keywords and not (page_relevant or self._link_matches_keywords(link, link_text, keywords)):
+                filters["keyword"] += 1
                 continue
-            if cfg.check_database and self.storage.file_exists(link):
-                continue
+            if cfg.check_database:
+                try:
+                    duplicate_reason = self._existing_url_subreason(link)
+                except (OSError, sqlite3.Error) as exc:
+                    if legacy_exceptions:
+                        raise
+                    failures.append(self._failure_outcome(url, exc, final_url=link, phase="storage"))
+                    continue
+                if duplicate_reason:
+                    duplicates[duplicate_reason] += 1
+                    continue
+            parsed = urlparse(link)
+            target_dir = Path(self.download_dir) / parsed.netloc.replace(":", "_")
             try:
-                parsed = urlparse(link)
-                domain = parsed.netloc.replace(":", "_")
-                target_dir = Path(self.download_dir) / domain
                 tmp_path, fheaders, ffinal, sha256, bytes_size = self._download_file(
                     link,
                     target_dir,
                     delay_seconds=cfg.delay_seconds,
                 )
-            except Exception:
+            except _AcquisitionStopped as exc:
+                failures.append(self._failure_outcome(url, exc, final_url=link))
+                break
+            except Exception as exc:  # noqa: BLE001
+                if legacy_exceptions:
+                    continue
+                failures.append(self._failure_outcome(url, exc, final_url=link))
                 continue
-            if exclude and self._is_excluded(ffinal, exclude):
-                if tmp_path.exists():
-                    tmp_path.unlink()
+            if self.stop_check and self.stop_check():
+                self._remove_temp_file(tmp_path)
+                failures.append(
+                    make_acquisition_outcome(
+                        "stopped_or_timeout",
+                        url=url,
+                        final_url=ffinal,
+                        subreason="stopped",
+                        reason="task stopped by user",
+                        failed=1,
+                    )
+                )
+                break
+            staged_is_file = self._is_file_url(ffinal, exts)
+            if self._is_file_url(ffinal, DEFAULT_FILE_EXTS) and not staged_is_file:
+                self._remove_temp_file(tmp_path)
+                filters["extension"] += 1
                 continue
-            if exclude_prefixes and self._has_excluded_prefix(os.path.basename(ffinal), exclude_prefixes):
-                if tmp_path.exists():
-                    tmp_path.unlink()
+            try:
+                blocked_subreason = self._staged_access_page_subreason(tmp_path, fheaders)
+            except Exception as exc:  # noqa: BLE001
+                self._remove_temp_file(tmp_path)
+                if legacy_exceptions:
+                    raise
+                failures.append(self._failure_outcome(url, exc, final_url=ffinal))
                 continue
-            item = self._handle_file(
+            if blocked_subreason:
+                self._remove_temp_file(tmp_path)
+                failures.append(
+                    make_acquisition_outcome(
+                        "access_blocked",
+                        url=url,
+                        final_url=ffinal,
+                        subreason=blocked_subreason,
+                        reason=f"access blocked by {blocked_subreason} requirement",
+                        failed=1,
+                    )
+                )
+                continue
+            if not staged_is_file or self._content_type_mismatch(ffinal, fheaders):
+                self._remove_temp_file(tmp_path)
+                failures.append(
+                    make_acquisition_outcome(
+                        "redirect_or_content_type_mismatch",
+                        url=url,
+                        final_url=ffinal,
+                        subreason=("redirect" if not staged_is_file else "content_type"),
+                        reason="linked file download ended with a redirect or content-type mismatch",
+                        failed=1,
+                    )
+                )
+                continue
+            filter_subreason = self._url_filter_subreason(ffinal, exclude, exclude_prefixes)
+            filter_subreason = filter_subreason or self._downloaded_name_filter_subreason(
                 ffinal,
-                tmp_path,
                 fheaders,
-                sha256,
-                bytes_size,
-                cfg,
-                source_page_url=final_url,
-                page_title=page_title,
-                published_time=published_time,
-                source_site_override=source_site,
-                link_text=link_text,
+                exclude,
+                exclude_prefixes,
             )
+            if filter_subreason:
+                self._remove_temp_file(tmp_path)
+                filters[filter_subreason] += 1
+                continue
+            if cfg.check_database:
+                try:
+                    hash_exists = self.storage.file_exists_by_hash(sha256)
+                except (OSError, sqlite3.Error) as exc:
+                    self._remove_temp_file(tmp_path)
+                    if legacy_exceptions:
+                        raise
+                    failures.append(self._failure_outcome(url, exc, final_url=ffinal, phase="storage"))
+                    continue
+                if hash_exists:
+                    self._remove_temp_file(tmp_path)
+                    duplicates["content_hash"] += 1
+                    continue
+            if self.stop_check and self.stop_check():
+                self._remove_temp_file(tmp_path)
+                failures.append(
+                    make_acquisition_outcome(
+                        "stopped_or_timeout",
+                        url=url,
+                        final_url=ffinal,
+                        subreason="stopped",
+                        reason="task stopped by user",
+                        failed=1,
+                    )
+                )
+                break
+            try:
+                item = self._handle_file(
+                    ffinal,
+                    tmp_path,
+                    fheaders,
+                    sha256,
+                    bytes_size,
+                    cfg,
+                    source_page_url=final_url,
+                    page_title=page_title,
+                    published_time=published_time,
+                    source_site_override=source_site,
+                    link_text=link_text,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._remove_temp_file(tmp_path)
+                if legacy_exceptions:
+                    raise
+                failures.append(self._failure_outcome(url, exc, final_url=ffinal, phase="storage"))
+                continue
             if item:
                 new_items.append(item)
-        return new_items
+            elif cfg.check_database:
+                try:
+                    duplicate_reason = self._existing_url_subreason(ffinal)
+                    hash_exists = not duplicate_reason and self.storage.file_exists_by_hash(sha256)
+                except (OSError, sqlite3.Error) as exc:
+                    self._remove_temp_file(tmp_path)
+                    if legacy_exceptions:
+                        raise
+                    failures.append(self._failure_outcome(url, exc, final_url=ffinal, phase="storage"))
+                    continue
+                if duplicate_reason:
+                    duplicates[duplicate_reason] += 1
+                elif hash_exists:
+                    duplicates["content_hash"] += 1
+
+        stopped = next(
+            (
+                row
+                for row in failures
+                if row.get("disposition") == "stopped_or_timeout" and row.get("subreason") == "stopped"
+            ),
+            None,
+        )
+        if stopped:
+            return SearchAcquisitionReport(
+                items=new_items,
+                outcome=make_acquisition_outcome(
+                    "stopped_or_timeout",
+                    url=url,
+                    final_url=stopped.get("final_url") or final_url,
+                    subreason="stopped",
+                    reason="task stopped by user",
+                    downloaded=len(new_items),
+                    failed=1,
+                ),
+            )
+        priority = (
+            "storage_failed",
+            "access_blocked",
+            "redirect_or_content_type_mismatch",
+            "download_failed",
+            "stopped_or_timeout",
+        )
+        selected_failure = (
+            next(row for disposition in priority for row in failures if row.get("disposition") == disposition)
+            if failures
+            else None
+        )
+        if new_items:
+            if selected_failure:
+                return SearchAcquisitionReport(
+                    items=new_items,
+                    outcome=make_acquisition_outcome(
+                        str(selected_failure["disposition"]),
+                        url=url,
+                        final_url=str(selected_failure.get("final_url") or final_url),
+                        http_status=selected_failure.get("http_status"),
+                        subreason=str(selected_failure.get("subreason") or "other"),
+                        reason=(
+                            f"downloaded {len(new_items)} new file(s) with {len(failures)} failed linked "
+                            f"acquisition(s): {selected_failure.get('reason')}"
+                        ),
+                        downloaded=len(new_items),
+                        failed=1,
+                    ),
+                )
+            return SearchAcquisitionReport(
+                items=new_items,
+                outcome=make_acquisition_outcome(
+                    "downloaded_new",
+                    url=url,
+                    final_url=final_url,
+                    reason=f"downloaded {len(new_items)} new file(s)",
+                    downloaded=len(new_items),
+                ),
+            )
+        if selected_failure:
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    str(selected_failure["disposition"]),
+                    url=url,
+                    final_url=str(selected_failure.get("final_url") or final_url),
+                    http_status=selected_failure.get("http_status"),
+                    subreason=str(selected_failure.get("subreason") or "other"),
+                    reason=(
+                        f"{len(failures)} linked acquisition attempt(s) failed: "
+                        f"{selected_failure.get('reason')}"
+                    ),
+                    failed=1,
+                ),
+            )
+        duplicate_count = sum(duplicates.values())
+        duplicate_subreason = duplicates.most_common(1)[0][0] if duplicate_count else "url"
+        if duplicate_count and not filters:
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "already_exists",
+                    url=url,
+                    final_url=final_url,
+                    subreason=duplicate_subreason,
+                    reason=f"{duplicate_count} eligible file(s) already exist by {duplicate_subreason}",
+                    skipped=1,
+                ),
+            )
+        if filters:
+            filter_priority = ("keyword", "path", "extension", "collection_disabled", "domain")
+            subreason = next((name for name in filter_priority if filters[name]), "other")
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "filtered",
+                    url=url,
+                    final_url=final_url,
+                    subreason=subreason,
+                    reason=f"eligible candidates filtered by {subreason} rule",
+                    skipped=1,
+                ),
+            )
+        if duplicate_count:
+            return SearchAcquisitionReport(
+                items=[],
+                outcome=make_acquisition_outcome(
+                    "already_exists",
+                    url=url,
+                    final_url=final_url,
+                    subreason=duplicate_subreason,
+                    reason=f"{duplicate_count} eligible file(s) already exist by {duplicate_subreason}",
+                    skipped=1,
+                ),
+            )
+        return SearchAcquisitionReport(
+            items=[],
+            outcome=make_acquisition_outcome(
+                "no_eligible_file_found",
+                url=url,
+                final_url=final_url,
+                subreason="empty",
+                reason="no eligible file found",
+                skipped=1,
+            ),
+        )
