@@ -561,6 +561,7 @@ def _install_guest_chat_fakes(
     *,
     retrieved_chunks: list[dict[str, object]] | None = None,
     generated_chunks: list[list[dict[str, object]]] | None = None,
+    llm_client_class=None,
 ) -> None:
     import ai_actuarial.api.services.chat as chat_service
 
@@ -685,7 +686,7 @@ def _install_guest_chat_fakes(
             "conversation": SimpleNamespace(ConversationManager=FakeConversationManager),
             "exceptions": FakeExceptionsModule,
             "retrieval": SimpleNamespace(RAGRetriever=FakeRetriever),
-            "llm": SimpleNamespace(LLMClient=FakeLLMClient),
+            "llm": SimpleNamespace(LLMClient=llm_client_class or FakeLLMClient),
             "router": SimpleNamespace(QueryRouter=FakeQueryRouter),
         },
     )
@@ -726,6 +727,67 @@ def test_visitor_chat_query_allows_direct_document_context(tmp_path: Path, monke
     payload = response.json()["data"]
     assert payload["metadata"]["context_notice"]["original_chars"] > 0
     assert payload["citations"][0]["filename"] == "public.pdf"
+
+
+def test_direct_document_internal_recovery_uses_one_quota_and_one_message_pair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import ai_actuarial.api.services.chat as chat_service
+
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+
+    class FakeRecoveringLLMClient:
+        generate_calls = 0
+        provider_calls = 0
+        received_content = ""
+
+        def __init__(self, config, storage=None):
+            pass
+
+        def generate_response(self, query, chunks, mode, conversation_history):
+            type(self).generate_calls += 1
+            type(self).received_content = chunks[0]["content"]
+            type(self).provider_calls += 2  # initial length-empty response plus internal recovery
+            return "Recovered bounded document answer"
+
+    _install_guest_chat_fakes(monkeypatch, llm_client_class=FakeRecoveringLLMClient)
+    client_ip = "203.0.113.255"
+    monkeypatch.setattr(chat_service, "client_ip", lambda request: client_ip)
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Explain this long selected document",
+            "mode": "expert",
+            "document_content": "D" * 16_000,
+            "document_filename": "long-document.pdf",
+        },
+        headers={"X-Auth-Token": "", "X-Forwarded-For": client_ip},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["response"] == "Recovered bounded document answer"
+    assert len(FakeRecoveringLLMClient.received_content) == 15_000
+    assert FakeRecoveringLLMClient.generate_calls == 1
+    assert FakeRecoveringLLMClient.provider_calls == 2
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        assert storage.get_ai_chat_quota_used(
+            chat_service._today_utc(),
+            ip_address=client_ip,
+        ) == 1
+        messages = storage._conn.execute(
+            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY role",
+            ("conv_guest_query",),
+        ).fetchall()
+    finally:
+        storage.close()
+
+    assert sorted((row[0], row[1]) for row in messages) == [
+        ("assistant", "Recovered bounded document answer"),
+        ("user", "Explain this long selected document"),
+    ]
 
 
 def test_chat_batch_canonicalizes_titles_without_sqlite_parameter_or_n_plus_one_queries(

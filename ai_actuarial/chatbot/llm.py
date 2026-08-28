@@ -26,6 +26,30 @@ _OPENAI_MAX_COMPLETION_TOKENS_PREFIXES = (
     "o4",
 )
 
+_MISSING = object()
+
+
+class _TransientEmptyResponse(Exception):
+    """Internal signal for a retryable empty or malformed provider response."""
+
+    def __init__(self, classification: str):
+        super().__init__(classification)
+        self.classification = classification
+
+
+def _is_explicit_azure_gpt5_deployment(
+    provider: str | None,
+    model: str | None,
+) -> bool:
+    """Recognize only Azure deployment names that explicitly name GPT-5."""
+    if str(provider or "").strip().lower() != "azure_openai":
+        return False
+    deployment = f"-{str(model or '').strip().lower().replace('_', '-')}-"
+    return any(
+        marker in deployment
+        for marker in ("-gpt5-", "-gpt5.", "-gpt-5-", "-gpt-5.")
+    )
+
 
 def _uses_max_completion_tokens(provider: str | None, model: str | None) -> bool:
     """Return True for OpenAI chat models that reject deprecated max_tokens."""
@@ -33,14 +57,131 @@ def _uses_max_completion_tokens(provider: str | None, model: str | None) -> bool
     if provider_norm not in {"openai", "azure_openai"}:
         return False
     model_norm = str(model or "").strip().lower().split("/")[-1]
-    return model_norm.startswith(_OPENAI_MAX_COMPLETION_TOKENS_PREFIXES)
+    return model_norm.startswith(
+        _OPENAI_MAX_COMPLETION_TOKENS_PREFIXES
+    ) or _is_explicit_azure_gpt5_deployment(provider, model)
 
 
 def _uses_default_temperature_only(provider: str | None, model: str | None) -> bool:
     """Return True for OpenAI GPT-5 models that reject custom temperature values."""
     provider_norm = str(provider or "").strip().lower()
     model_norm = str(model or "").strip().lower().split("/")[-1]
-    return provider_norm in {"openai", "azure_openai"} and model_norm.startswith("gpt-5")
+    return provider_norm in {"openai", "azure_openai"} and (
+        model_norm.startswith("gpt-5")
+        or _is_explicit_azure_gpt5_deployment(provider, model)
+    )
+
+
+def _supports_reasoning_effort(provider: str | None, model: str | None) -> bool:
+    """Return True when recovery may safely send the reasoning_effort parameter."""
+    return _uses_max_completion_tokens(provider, model)
+
+
+def _matches_known_model(
+    provider: str | None,
+    model: str | None,
+    direct_name: str,
+    azure_markers: tuple[str, ...],
+) -> bool:
+    model_norm = str(model or "").strip().lower().split("/")[-1]
+    if model_norm == direct_name or model_norm.startswith(f"{direct_name}-20"):
+        return True
+    if str(provider or "").strip().lower() != "azure_openai":
+        return False
+    deployment = f"-{model_norm.replace('_', '-')}-"
+    return any(marker in deployment for marker in azure_markers)
+
+
+def _compatible_reasoning_effort(
+    provider: str | None,
+    model: str | None,
+    configured_effort: str | None,
+) -> str | None:
+    """Omit configured efforts known to be invalid for specific OpenAI models."""
+    effort = str(configured_effort or "").strip().lower()
+    if not effort or not _supports_reasoning_effort(provider, model):
+        return None
+    if _matches_known_model(
+        provider,
+        model,
+        "gpt-5-pro",
+        ("-gpt5-pro-", "-gpt-5-pro-"),
+    ):
+        return effort if effort == "high" else None
+    if _matches_known_model(
+        provider,
+        model,
+        "gpt-5.1",
+        ("-gpt5.1-", "-gpt-5.1-"),
+    ):
+        return effort if effort in {"none", "low", "medium", "high"} else None
+    return effort
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _safe_log_value(value: Any) -> str | int | float | bool | None:
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return None
+
+
+def _extract_text_content(content: Any) -> tuple[str | None, str]:
+    if content is _MISSING:
+        return None, "missing_content"
+    if content is None:
+        return None, "null_content"
+    if isinstance(content, str):
+        if not content:
+            return None, "empty_content"
+        if not content.strip():
+            return None, "whitespace_content"
+        return content, "text"
+    if isinstance(content, (list, tuple)):
+        text_parts: list[str] = []
+        for part in content:
+            part_type = str(_field(part, "type", "") or "").strip().lower()
+            if part_type not in {"text", "output_text"}:
+                continue
+            part_text = _field(part, "text", None)
+            if isinstance(part_text, str):
+                text_parts.append(part_text)
+        combined = "".join(text_parts)
+        if not combined:
+            return None, "empty_structured_content"
+        if not combined.strip():
+            return None, "whitespace_content"
+        return combined, "structured_text"
+    return None, "unsupported_content"
+
+
+def _classify_response(response: Any) -> tuple[str | None, str, str | None]:
+    choices = _field(response, "choices", None)
+    if not isinstance(choices, (list, tuple)) or not choices:
+        return None, "missing_choices", None
+    choice = choices[0]
+    finish_reason_value = _field(choice, "finish_reason", None)
+    finish_reason = (
+        finish_reason_value.strip().lower()
+        if isinstance(finish_reason_value, str)
+        else None
+    )
+    if finish_reason == "content_filter":
+        return None, "content_filter", finish_reason
+    message = _field(choice, "message", _MISSING)
+    if message is _MISSING or message is None:
+        return None, "missing_message", finish_reason
+    refusal = _field(message, "refusal", None)
+    if isinstance(refusal, str) and refusal.strip():
+        return None, "refusal", finish_reason
+    content, classification = _extract_text_content(
+        _field(message, "content", _MISSING)
+    )
+    return content, classification, finish_reason
 
 
 class LLMClient:
@@ -143,58 +284,115 @@ class LLMClient:
         # Retry logic
         attempt = 0
         last_error = None
+        recovery_used = False
         
         while attempt < self.config.max_retries:
             try:
+                attempt += 1
                 logger.info(
                     f"Generating response with model={model}, "
                     f"temperature={temperature}, max_tokens={max_tokens}, "
-                    f"attempt={attempt+1}"
+                    f"attempt={attempt}"
                 )
                 
-                request_kwargs: dict[str, Any] = {
-                    "model": model,
-                    "messages": messages,
-                    "stream": stream,
-                }
-                if not _uses_default_temperature_only(self.config.llm_provider, model):
-                    request_kwargs["temperature"] = temperature
-                if _uses_max_completion_tokens(self.config.llm_provider, model):
-                    request_kwargs["max_completion_tokens"] = max_tokens
-                else:
-                    request_kwargs["max_tokens"] = max_tokens
-
-                # Call OpenAI-compatible API
-                response = self.client.chat.completions.create(**request_kwargs)
+                response = self.client.chat.completions.create(
+                    **self._completion_request_kwargs(
+                        messages=messages,
+                        model=model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=stream,
+                    )
+                )
                 
-                # Extract content
                 if stream:
-                    # Streaming not implemented in MVP
                     raise LLMException("Streaming not yet supported")
+
+                is_recovery = False
+                while True:
+                    content, classification, finish_reason = _classify_response(response)
+                    self._log_response_metadata(
+                        response,
+                        model=model,
+                        finish_reason=finish_reason,
+                        classification=classification,
+                        attempt=attempt,
+                        recovery=is_recovery,
+                        successful=content is not None,
+                    )
+                    if content is not None:
+                        return content
+                    if classification == "refusal":
+                        raise LLMException("LLM response was refused")
+                    if classification == "content_filter":
+                        raise LLMException("LLM response was blocked by content filtering")
+                    if (
+                        finish_reason == "length"
+                        and self.config.length_recovery_enabled
+                        and not recovery_used
+                        and attempt < self.config.max_retries
+                    ):
+                        recovery_used = True
+                        is_recovery = True
+                        attempt += 1
+                        try:
+                            response = self.client.chat.completions.create(
+                                **self._completion_request_kwargs(
+                                    messages=messages,
+                                    model=model,
+                                    temperature=temperature,
+                                    max_tokens=self.config.length_recovery_max_tokens,
+                                    stream=stream,
+                                    reasoning_effort=self.config.length_recovery_reasoning_effort,
+                                )
+                            )
+                        except openai.BadRequestError as exc:
+                            raise LLMException(
+                                "LLM length recovery request was rejected due to "
+                                "incompatible parameters"
+                            ) from exc
+                        continue
+                    if finish_reason == "length" and is_recovery:
+                        raise LLMException(
+                            "LLM response remained empty after bounded recovery"
+                        )
+                    if finish_reason == "length":
+                        raise LLMException(
+                            "LLM completion exhausted its output budget without visible content"
+                        )
+                    raise _TransientEmptyResponse(classification)
+
+            except _TransientEmptyResponse as exc:
+                last_error = exc
+                if attempt < self.config.max_retries:
+                    wait_time = self._calculate_backoff(attempt)
+                    logger.warning(
+                        "Retrying empty or malformed LLM response "
+                        "classification=%s wait_seconds=%.1f attempt=%s/%s",
+                        exc.classification,
+                        wait_time,
+                        attempt + 1,
+                        self.config.max_retries,
+                    )
+                    time.sleep(wait_time)
                 else:
-                    content = response.choices[0].message.content
-                
-                if not content:
-                    raise LLMException("Empty response from LLM")
-                
-                logger.info(
-                    f"Generated response successfully "
-                    f"(length={len(content)} chars, "
-                    f"tokens={response.usage.total_tokens if response.usage else 'unknown'})"
-                )
-                
-                return content
+                    raise LLMException(
+                        "LLM response was empty or malformed after "
+                        f"{self.config.max_retries} attempts"
+                    )
+
+            except LLMException:
+                raise
                 
             except openai.AuthenticationError as e:
                 # Authentication errors are not retryable
-                logger.error(f"Authentication error: {e}")
+                logger.error("Authentication error from LLM provider")
                 raise LLMException(
                     "Authentication failed. Please check your API key."
-                )
+                ) from e
             
             except openai.RateLimitError as e:
                 # Rate limit - wait and retry
-                attempt += 1
                 last_error = e
                 
                 if attempt < self.config.max_retries:
@@ -212,7 +410,6 @@ class LLMClient:
             
             except openai.APITimeoutError as e:
                 # Timeout - retry with backoff
-                attempt += 1
                 last_error = e
                 
                 if attempt < self.config.max_retries:
@@ -230,30 +427,96 @@ class LLMClient:
             
             except openai.APIError as e:
                 # General API error - retry
-                attempt += 1
                 last_error = e
                 
                 if attempt < self.config.max_retries:
                     wait_time = self._calculate_backoff(attempt)
                     logger.warning(
-                        f"API error: {e}. Retrying in {wait_time:.1f}s "
+                        f"API error. Retrying in {wait_time:.1f}s "
                         f"(attempt {attempt+1}/{self.config.max_retries})"
                     )
                     time.sleep(wait_time)
                 else:
-                    logger.error(f"Max retries exceeded for API error: {e}")
+                    logger.error("Max retries exceeded for API error")
                     raise LLMException(
                         f"API error after {self.config.max_retries} retries: {e}"
                     )
             
             except Exception as e:
                 # Unexpected error - fail immediately
-                logger.error(f"Unexpected error during LLM generation: {e}")
-                raise LLMException(f"Unexpected error: {e}")
+                logger.error(
+                    "Unexpected error during LLM generation error_type=%s",
+                    type(e).__name__,
+                )
+                raise LLMException("Unexpected LLM generation error") from e
         
         # Should not reach here, but just in case
         raise LLMException(
             f"Failed to generate response after {self.config.max_retries} retries: {last_error}"
+        )
+
+    def _completion_request_kwargs(
+        self,
+        *,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        stream: bool,
+        reasoning_effort: str | None = None,
+    ) -> Dict[str, Any]:
+        request_kwargs: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+        }
+        if not _uses_default_temperature_only(self.config.llm_provider, model):
+            request_kwargs["temperature"] = temperature
+        if _uses_max_completion_tokens(self.config.llm_provider, model):
+            request_kwargs["max_completion_tokens"] = max_tokens
+        else:
+            request_kwargs["max_tokens"] = max_tokens
+        compatible_effort = _compatible_reasoning_effort(
+            self.config.llm_provider,
+            model,
+            reasoning_effort,
+        )
+        if compatible_effort:
+            request_kwargs["reasoning_effort"] = compatible_effort
+        return request_kwargs
+
+    def _log_response_metadata(
+        self,
+        response: Any,
+        *,
+        model: str,
+        finish_reason: str | None,
+        classification: str,
+        attempt: int,
+        recovery: bool,
+        successful: bool,
+    ) -> None:
+        usage = _field(response, "usage", None)
+        completion_details = _field(usage, "completion_tokens_details", None)
+        response_id = _safe_log_value(_field(response, "id", None)) or _safe_log_value(
+            _field(response, "_request_id", None)
+        )
+        log_method = logger.info if successful else logger.warning
+        log_method(
+            "LLM response metadata provider=%s model=%s finish_reason=%s "
+            "classification=%s attempt=%s response_id=%s prompt_tokens=%s "
+            "completion_tokens=%s total_tokens=%s reasoning_tokens=%s recovery=%s",
+            self.config.llm_provider,
+            model,
+            finish_reason,
+            classification,
+            attempt,
+            response_id,
+            _safe_log_value(_field(usage, "prompt_tokens", None)),
+            _safe_log_value(_field(usage, "completion_tokens", None)),
+            _safe_log_value(_field(usage, "total_tokens", None)),
+            _safe_log_value(_field(completion_details, "reasoning_tokens", None)),
+            recovery,
         )
 
     def generate_response(
