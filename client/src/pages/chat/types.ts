@@ -23,6 +23,7 @@ export interface Citation {
 
 export interface RetrievedBlock {
   filename?: string;
+  title?: string;
   kb_id?: string;
   kb_name?: string;
   chunk_id?: string;
@@ -97,6 +98,7 @@ export interface MarkdownResponse {
 
 export interface DocumentContext {
   content: string;
+  title: string;
   filename: string;
   fileUrl: string;
 }
