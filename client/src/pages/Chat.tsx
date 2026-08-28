@@ -34,6 +34,7 @@ import {
   queryChat,
 } from "./chat/api";
 import { useChatSession } from "./chat/useChatSession";
+import { getChatDisplayName, getChatValidName } from "./chat/displayName";
 import type {
   AgenticToolTraceEntry,
   AvailableDocument,
@@ -147,7 +148,7 @@ function TypingIndicator() {
 
 function CitationCard({ citation, index }: { citation: Citation; index: number }) {
   const { t } = useTranslation();
-  const title = citation.title || citation.filename || citation.source || "Source";
+  const title = getChatDisplayName(citation, t("chat.source_fallback"));
   const scoreLabel = formatCitationScore(citation);
   const snippet = citation.content || citation.quote;
   const detailHref = normalizeFileRouteHref(citation.file_detail_url, "detail", citation.file_url || citation.source);
@@ -286,7 +287,7 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
       <div className="mt-3 space-y-3">
         {blocks.map((block, index) => {
           const scoreText = formatRetrievedBlockScore(block);
-          const filename = block.filename || "unknown";
+          const filename = getChatDisplayName(block, t("chat.document_fallback"));
           const kbName = block.kb_name || block.kb_id || "Unknown KB";
           const detailHref = normalizeFileRouteHref(block.file_detail_url, "detail", block.file_url || block.source_url);
           const previewHref = normalizeFileRouteHref(block.file_preview_url, "preview", block.file_url || block.source_url);
@@ -592,7 +593,7 @@ export default function Chat() {
   }
 
   async function askAboutDocument(doc: AvailableDocument) {
-    const questionText = `${t("chat.explain_document")}: "${doc.filename || doc.title}"`;
+    const questionText = `${t("chat.explain_document")}: "${getChatDisplayName(doc, t("chat.document_fallback"))}"`;
     if (canUseConversations) setSidebarTab("conversations");
     await sendMessage({ text: questionText, document: doc });
   }
@@ -617,7 +618,7 @@ export default function Chat() {
       return;
     }
     const filenames = selectedCompareDocs
-      .map((doc) => doc.filename || doc.title)
+      .map((doc) => getChatDisplayName(doc, t("chat.document_fallback")))
       .filter(Boolean)
       .join(", ");
     const questionText = t("chat.compare_documents_prompt").replace("{filenames}", filenames);
@@ -632,7 +633,8 @@ export default function Chat() {
     if (suppliedContent) {
       return {
         content: suppliedContent,
-        filename: doc.filename || doc.title || "Document",
+        title: getChatValidName(doc.title),
+        filename: getChatValidName(doc.filename),
         fileUrl: doc.file_url,
       };
     }
@@ -650,7 +652,8 @@ export default function Chat() {
 
     return {
       content,
-      filename: doc.filename || doc.title || "Document",
+      title: getChatValidName(doc.title),
+      filename: getChatValidName(doc.filename),
       fileUrl: doc.file_url,
     };
   }
@@ -769,12 +772,14 @@ export default function Chat() {
         ...(documentContexts.length > 0
           ? {
               document_content: documentContexts[0].content,
+              document_title: documentContexts[0].title,
               document_filename: documentContexts[0].filename,
               document_file_url: documentContexts[0].fileUrl,
               ...(documentContexts.length > 1
                 ? {
                     document_sources: documentContexts.map((documentContext) => ({
                       content: documentContext.content,
+                      title: documentContext.title,
                       filename: documentContext.filename,
                       file_url: documentContext.fileUrl,
                     })),
@@ -1156,7 +1161,7 @@ export default function Chat() {
                             className="group flex items-start gap-2 px-3 py-2.5 rounded-lg hover:bg-muted cursor-pointer transition-colors"
                             role="button"
                             tabIndex={0}
-                            aria-label={`${t("chat.explain_document")}: ${doc.filename || doc.title}`}
+                            aria-label={`${t("chat.explain_document")}: ${getChatDisplayName(doc, t("chat.document_fallback"))}`}
                             onClick={() => askAboutDocument(doc)}
                             onKeyDown={(event) => {
                               if (event.target !== event.currentTarget) return;
@@ -1170,7 +1175,7 @@ export default function Chat() {
                             <FileText className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground group-hover:text-primary transition-colors" strokeWidth={1.5} />
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium truncate group-hover:text-primary transition-colors">
-                                {doc.filename || doc.title}
+                                {getChatDisplayName(doc, t("chat.document_fallback"))}
                               </p>
                             </div>
                             <button

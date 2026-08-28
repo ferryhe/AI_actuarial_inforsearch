@@ -190,6 +190,97 @@ def _build_file_links(raw_file_url: str, *, return_to: str = "/chat") -> dict[st
     }
 
 
+def _valid_file_name(value: Any) -> str:
+    name = _normalize_text(value)
+    return name if name and name.lower() != "unknown" else ""
+
+
+def _file_lookup_url(value: Any) -> str:
+    raw_url = _normalize_text(value)
+    if not raw_url:
+        return ""
+    parsed = urlparse(raw_url)
+    if parsed.path in {"/file-detail", "/file-preview", "/file_preview"}:
+        query = parse_qs(parsed.query)
+        return _normalize_text((query.get("url") or query.get("file_url") or [""])[0])
+    if raw_url.startswith("/file/"):
+        encoded_source = raw_url[len("/file/") :].split("?", 1)[0]
+        return _normalize_text(unquote(encoded_source))
+    return raw_url
+
+
+def _file_url_basename(value: Any) -> str:
+    file_url = _file_lookup_url(value)
+    if not file_url:
+        return ""
+    path = unquote(urlparse(file_url).path or file_url.split("?", 1)[0])
+    return _valid_file_name(path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1])
+
+
+def _reference_display_name(reference: Mapping[str, Any], fallback: str = "Document") -> str:
+    return (
+        _valid_file_name(reference.get("title"))
+        or _valid_file_name(reference.get("filename"))
+        or fallback
+    )
+
+
+def _canonicalize_file_references(storage: Storage, references: list[dict[str, Any]]) -> None:
+    """Refresh mutable catalog names for a response in one files query."""
+    prepared: list[tuple[dict[str, Any], str]] = []
+    file_urls: list[str] = []
+    seen_urls: set[str] = set()
+    for reference in references:
+        if not isinstance(reference, dict):
+            continue
+        file_url = _file_lookup_url(reference.get("file_url") or reference.get("source_url"))
+        prepared.append((reference, file_url))
+        if file_url and file_url not in seen_urls:
+            seen_urls.add(file_url)
+            file_urls.append(file_url)
+
+    current_files: dict[str, tuple[Any, Any]] = {}
+    if file_urls:
+        rows = storage._conn.execute(
+            """
+            SELECT url, title, original_filename
+            FROM files
+            WHERE url IN (SELECT value FROM json_each(?))
+              AND deleted_at IS NULL
+            """,
+            (json.dumps(file_urls),),
+        ).fetchall()
+        current_files = {str(row[0]): (row[1], row[2]) for row in rows}
+
+    for reference, file_url in prepared:
+        existing_title = _valid_file_name(reference.get("title"))
+        existing_filename = _valid_file_name(reference.get("filename"))
+        basename = _file_url_basename(file_url)
+        current = current_files.get(file_url)
+        if current is not None:
+            current_title = _valid_file_name(current[0])
+            current_filename = _valid_file_name(current[1])
+            reference["title"] = current_title
+            reference["filename"] = current_filename or basename or existing_filename
+        elif file_url:
+            reference["title"] = ""
+            reference["filename"] = existing_filename or basename
+        else:
+            reference["title"] = existing_title
+            reference["filename"] = existing_filename
+
+
+def _chunks_for_llm(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    display_chunks: list[dict[str, Any]] = []
+    for chunk in chunks:
+        display_chunk = dict(chunk)
+        metadata = dict(chunk.get("metadata") or {})
+        metadata["filename"] = _reference_display_name(metadata)
+        display_chunk["metadata"] = metadata
+        display_chunks.append(display_chunk)
+    return display_chunks
+
+
 def _resolve_chat_user(request, auth: AuthContext) -> tuple[str, SessionUpdate | None]:
     token = auth.token or {}
     subject = _normalize_text(token.get("subject"))
@@ -367,6 +458,24 @@ def get_conversation_detail(*, db_path: str, request, auth: AuthContext, convers
             }
             for row in message_rows
         ]
+        references: list[dict[str, Any]] = []
+        for chat_message in messages:
+            citations = chat_message.get("citations")
+            if isinstance(citations, list):
+                references.extend(item for item in citations if isinstance(item, dict))
+            metadata = chat_message.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            retrieved_blocks = metadata.get("retrieved_blocks")
+            if isinstance(retrieved_blocks, str):
+                try:
+                    retrieved_blocks = json.loads(retrieved_blocks)
+                except (TypeError, ValueError):
+                    retrieved_blocks = []
+                metadata["retrieved_blocks"] = retrieved_blocks
+            if isinstance(retrieved_blocks, list):
+                references.extend(item for item in retrieved_blocks if isinstance(item, dict))
+        _canonicalize_file_references(storage, references)
         return {"success": True, "data": {"conversation": conversation, "messages": messages}}, session_update
     finally:
         storage.close()
@@ -581,8 +690,8 @@ def list_available_documents(*, db_path: str, query: Mapping[str, Any]) -> dict[
             documents.append(
                 {
                     "file_url": row[0],
-                    "filename": row[1] or "",
-                    "title": row[2] or row[1] or "",
+                    "filename": _valid_file_name(row[1]),
+                    "title": _valid_file_name(row[2]),
                     "category": row[3] or "",
                     "keywords": parsed_keywords,
                 }
@@ -648,7 +757,8 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
         content = str(chunk.get("content") or "")
         links = _build_file_links(str(metadata.get("file_url") or ""))
         block = {
-            "filename": metadata.get("filename") or "",
+            "title": _valid_file_name(metadata.get("title")),
+            "filename": _valid_file_name(metadata.get("filename")) or _file_url_basename(links["source_url"]),
             "kb_id": metadata.get("kb_id") or "",
             "kb_name": metadata.get("kb_name") or "",
             "chunk_id": metadata.get("chunk_id") or "",
@@ -667,7 +777,8 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
         seen_keys.add(dedupe_key)
         citations.append(
             {
-                "filename": metadata.get("filename") or "",
+                "filename": block["filename"],
+                "title": _valid_file_name(metadata.get("title")),
                 "kb_id": metadata.get("kb_id") or "",
                 "kb_name": metadata.get("kb_name") or "",
                 "chunk_id": metadata.get("chunk_id") or "",
@@ -783,12 +894,13 @@ def _serialize_agentic_evidence(
     retrieved_blocks: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for index, item in enumerate(rows):
-        file_url = _agentic_first_text(item, ("file_url", "source_url", "doc_id"))
+        file_url = _agentic_first_text(item, ("file_url", "source_url"))
         links = _build_file_links(file_url)
         title = _agentic_first_text(
             item,
-            ("title", "filename", "heading", "section_heading", "doc_id", "source"),
-        ) or "Agentic evidence"
+            ("title", "heading", "section_heading"),
+        )
+        filename = _agentic_first_text(item, ("filename",))
         snippet = (
             _agentic_first_text(item, ("summary", "text_snippet", "text", "content", "quote", "heading", "section_heading"))
             or _agentic_relation_text(item)
@@ -796,7 +908,8 @@ def _serialize_agentic_evidence(
         score = _coerce_agentic_score(item.get("score"))
         chunk_id = _agentic_first_text(item, ("section_id", "chunk_id", "doc_id", "target_id"))
         block = {
-            "filename": title,
+            "title": _valid_file_name(title),
+            "filename": _valid_file_name(filename) or _file_url_basename(links["source_url"]),
             "kb_id": kb_id,
             "kb_name": kb_name or kb_id,
             "chunk_id": chunk_id,
@@ -829,7 +942,8 @@ def _agentic_blocks_to_llm_chunks(retrieved_blocks: list[dict[str, Any]]) -> lis
             {
                 "content": content,
                 "metadata": {
-                    "filename": _normalize_text(block.get("filename")) or f"Agentic evidence {index}",
+                    "filename": _reference_display_name(block, f"Agentic evidence {index}"),
+                    "title": _valid_file_name(block.get("title")),
                     "kb_id": _normalize_text(block.get("kb_id")),
                     "kb_name": _normalize_text(block.get("kb_name")),
                     "similarity_score": block.get("score"),
@@ -848,7 +962,7 @@ def _deterministic_agentic_fallback_answer(query: str, retrieved_blocks: list[di
         return _friendly_no_results_message()
     bullets: list[str] = []
     for block in retrieved_blocks[:MAX_AGENTIC_FALLBACK_ITEMS]:
-        title = _normalize_text(block.get("filename")) or "Evidence"
+        title = _reference_display_name(block, "Evidence")
         quote = _normalize_text(block.get("quote") or block.get("content"))
         if len(quote) > 320:
             quote = quote[:320].rstrip() + "…"
@@ -910,6 +1024,7 @@ def _prepare_document_source_chunks(
     document_filename: str,
     document_file_url: str,
     document_sources: list[Any],
+    document_title: str = "",
     max_total_chars: int = MAX_DOCUMENT_CONTEXT_CHARS,
     max_content_chars: int = MAX_DOCUMENT_SOURCE_CONTENT_CHARS,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -917,6 +1032,7 @@ def _prepare_document_source_chunks(
         {
             "file_url": document_file_url,
             "filename": document_filename,
+            "title": document_title,
             "content": document_content,
         }
     ]
@@ -929,17 +1045,19 @@ def _prepare_document_source_chunks(
 
     for index, source in enumerate(sources, start=1):
         source_dict = source if isinstance(source, dict) else {}
-        filename = _bounded_source_text(source_dict.get("filename"), fallback=f"Document {index}") or f"Document {index}"
+        filename = _bounded_source_text(source_dict.get("filename"))
+        title = _bounded_source_text(source_dict.get("title"))
+        display_name = _reference_display_name({"title": title, "filename": filename}, f"Document {index}")
         file_url, file_url_omitted = _bounded_document_source_url(source_dict.get("file_url"))
         if file_url_omitted:
-            omitted_file_url_sources.append(filename)
+            omitted_file_url_sources.append(display_name)
         raw_content = _normalize_text(source_dict.get("content")) or document_content
         original_chars += len(raw_content)
 
         remaining_chars = max(0, max_total_chars - used_chars)
         if remaining_chars == 0:
-            truncated_sources.append(filename)
-            skipped_sources.append(filename)
+            truncated_sources.append(display_name)
+            skipped_sources.append(display_name)
             continue
         content_limit = min(max_content_chars, remaining_chars)
         content = raw_content[:content_limit]
@@ -947,12 +1065,13 @@ def _prepare_document_source_chunks(
             continue
         used_chars += len(content)
         if len(content) < len(raw_content):
-            truncated_sources.append(filename)
+            truncated_sources.append(display_name)
 
         chunks.append(
             {
                 "content": content,
                 "metadata": {
+                    "title": title,
                     "filename": filename,
                     "kb_id": "document_explanation",
                     "kb_name": "Full Document",
@@ -999,7 +1118,8 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
     kb_ids = payload.get("kb_ids")
     conversation_id = _normalize_text(payload.get("conversation_id")) or None
     document_content = _normalize_text(payload.get("document_content"))
-    document_filename = _normalize_text(payload.get("document_filename")) or "Document"
+    document_filename = _normalize_text(payload.get("document_filename"))
+    document_title = _normalize_text(payload.get("document_title"))
     document_file_url = _normalize_text(payload.get("document_file_url"))
     raw_document_sources = payload.get("document_sources")
     document_sources = raw_document_sources if isinstance(raw_document_sources, list) else []
@@ -1096,6 +1216,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 kb_id=agentic_kb_id,
                 kb_name=kb_name,
             )
+            _canonicalize_file_references(storage, [*citations, *retrieved_blocks])
             response_text, synthesis_source = _synthesize_agentic_response(
                 modules=modules,
                 config=config,
@@ -1202,6 +1323,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 document_filename=document_filename,
                 document_file_url=document_file_url,
                 document_sources=document_sources,
+                document_title=document_title,
             )
         else:
             retriever = modules["retrieval"].RAGRetriever(storage, config)
@@ -1252,6 +1374,17 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                     },
                 ) from exc
 
+        _canonicalize_file_references(
+            storage,
+            [
+                metadata
+                for chunk in chunks
+                if isinstance(chunk, dict)
+                for metadata in [chunk.get("metadata")]
+                if isinstance(metadata, dict)
+            ],
+        )
+
         if no_results:
             response_text = _friendly_no_results_message()
             citations: list[dict[str, Any]] = []
@@ -1260,7 +1393,7 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
             llm_client = modules["llm"].LLMClient(config, storage=storage)
             response_text = llm_client.generate_response(
                 query=message,
-                chunks=chunks,
+                chunks=_chunks_for_llm(chunks),
                 mode=mode,
                 conversation_history=conversation_history,
             )

@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 
@@ -6,13 +7,14 @@ CHAT_TSX = ROOT / "pages" / "Chat.tsx"
 CHAT_TYPES_TS = ROOT / "pages" / "chat" / "types.ts"
 CHAT_API_TS = ROOT / "pages" / "chat" / "api.ts"
 CHAT_SESSION_TS = ROOT / "pages" / "chat" / "useChatSession.ts"
+CHAT_DISPLAY_NAME_TS = ROOT / "pages" / "chat" / "displayName.ts"
 I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 
 def read_chat_sources() -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (CHAT_TSX, CHAT_TYPES_TS, CHAT_API_TS, CHAT_SESSION_TS)
+        for path in (CHAT_TSX, CHAT_TYPES_TS, CHAT_API_TS, CHAT_SESSION_TS, CHAT_DISPLAY_NAME_TS)
     )
 
 
@@ -64,6 +66,7 @@ def test_chat_document_explain_posts_markdown_document_context():
     assert "res.data?.markdown" not in src
     assert "sendMessage({ text: questionText, document: doc })" in src
     assert "document_content: documentContexts[0].content" in src
+    assert "document_title: documentContexts[0].title" in src
     assert "document_filename: documentContexts[0].filename" in src
     assert "document_file_url: documentContexts[0].fileUrl" in src
     assert "setInput(questionText)" not in src
@@ -81,7 +84,7 @@ def test_chat_accepts_database_explain_document_route_state():
     assert "navigate(location, { replace: true, state: null })" in src
 
 
-def test_chat_document_sidebar_uses_multi_category_filter_and_filename_only_rows():
+def test_chat_document_sidebar_uses_multi_category_filter_and_canonical_names():
     src = read_chat_sources()
 
     assert "selectedDocCategories" in src
@@ -90,7 +93,8 @@ def test_chat_document_sidebar_uses_multi_category_filter_and_filename_only_rows
     assert "data-testid=\"input-doc-category\"" not in src
     assert "button-toggle-doc-category" in src
     assert "button-clear-doc-categories" in src
-    assert "{doc.filename || doc.title}" in src
+    assert 'getChatDisplayName(doc, t("chat.document_fallback"))' in src
+    assert "{doc.filename || doc.title}" not in src
     assert "doc.keywords.slice(0, 3).join" not in src
 
 
@@ -243,3 +247,74 @@ def test_chat_maps_agentic_evidence_and_renders_tool_trace():
     assert '"chat.agentic_trace_results": "{count} result(s)"' in i18n_src
     assert '"chat.agentic_trace_error": "Error: {error}"' in i18n_src
     assert '"chat.agentic_no_evidence": "No evidence found in ready data for this query."' in i18n_src
+
+
+def test_chat_uses_one_display_name_helper_for_all_document_surfaces():
+    chat_src = CHAT_TSX.read_text(encoding="utf-8")
+    types_src = CHAT_TYPES_TS.read_text(encoding="utf-8")
+    helper_src = CHAT_DISPLAY_NAME_TS.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+
+    assert 'import { getChatDisplayName, getChatValidName } from "./chat/displayName";' in chat_src
+    assert "export function getChatDisplayName" in helper_src
+    assert "export function getChatValidName" in helper_src
+    assert 'normalized.toLowerCase() !== "unknown"' in helper_src
+    assert "source.title" in helper_src
+    assert "source.filename" in helper_src
+    assert "source.file_url" in helper_src
+    assert "source.source_url" in helper_src
+    assert "title?: string" in types_src
+    assert 'getChatDisplayName(citation, t("chat.source_fallback"))' in chat_src
+    assert 'getChatDisplayName(block, t("chat.document_fallback"))' in chat_src
+    assert 'getChatDisplayName(doc, t("chat.document_fallback"))' in chat_src
+    assert '.map((doc) => getChatDisplayName(doc, t("chat.document_fallback")))' in chat_src
+    assert "title: getChatValidName(doc.title)" in chat_src
+    assert "filename: getChatValidName(doc.filename)" in chat_src
+    assert "title: documentContext.title" in chat_src
+    assert 'getChatDisplayName(citation, "Source")' not in chat_src
+    assert 'getChatDisplayName(block, "Document")' not in chat_src
+    assert 'getChatDisplayName(doc, "Document")' not in chat_src
+    assert i18n_src.count('"chat.source_fallback": "Source"') == 1
+    assert i18n_src.count('"chat.document_fallback": "Document"') == 1
+    assert i18n_src.count('"chat.source_fallback": "来源"') == 1
+    assert i18n_src.count('"chat.document_fallback": "文档"') == 1
+    assert "doc.filename || doc.title" not in chat_src
+    assert "citation.title || citation.filename" not in chat_src
+    assert 'block.filename || "unknown"' not in chat_src
+
+
+def test_chat_display_name_helper_runtime_prefers_title_and_rejects_placeholders():
+    project_root = ROOT.parents[1]
+    runner_names = ("tsx.cmd", "tsx")
+    runner = next(
+        (
+            root / "node_modules" / ".bin" / runner_name
+            for root in (project_root, project_root.parents[1])
+            for runner_name in runner_names
+            if (root / "node_modules" / ".bin" / runner_name).exists()
+        ),
+        project_root / "node_modules" / ".bin" / "tsx",
+    )
+    script = """
+      import { getChatDisplayName } from '__HELPER_URI__';
+      const cases = [
+        [getChatDisplayName({ title: ' Curated ', filename: 'original.pdf' }, 'Document'), 'Curated'],
+        [getChatDisplayName({ title: ' unknown ', filename: ' original.pdf ' }, 'Document'), 'original.pdf'],
+        [getChatDisplayName({ title: '', filename: 'UnKnOwN', file_url: 'https://example.test/files/report%20one.pdf?x=1' }, 'Document'), 'report one.pdf'],
+        [getChatDisplayName({ source_url: '/file-detail?url=https%3A%2F%2Fexample.test%2Freports%2Fprimer%2520two.pdf' }, 'Source'), 'primer two.pdf'],
+        [getChatDisplayName({ file_url: '/file/https%3A%2F%2Fexample.test%2Freports%2Froute%2520three.pdf' }, 'Document'), 'route three.pdf'],
+        [getChatDisplayName({ title: '   ', filename: '  ' }, 'Document'), 'Document'],
+        [getChatDisplayName({ title: 'unknown', filename: 'UNKNOWN' }, '文档'), '文档'],
+      ];
+      for (const [actual, expected] of cases) {
+        if (actual !== expected) throw new Error(`${actual} !== ${expected}`);
+      }
+    """.replace("__HELPER_URI__", CHAT_DISPLAY_NAME_TS.as_uri())
+    completed = subprocess.run(
+        [str(runner), "--eval", script],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout

@@ -468,6 +468,11 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
     assert len(docs) == 1
     assert docs[0]["file_url"] == seed["alpha_url"]
 
+    title_search = client.get("/api/chat/available-documents?keywords=Alpha%20Document")
+    assert [doc["file_url"] for doc in title_search.json()["data"]["documents"]] == [seed["alpha_url"]]
+    filename_search = client.get("/api/chat/available-documents?keywords=doc-b.pdf")
+    assert [doc["file_url"] for doc in filename_search.json()["data"]["documents"]] == [seed["beta_url"]]
+
     multi_category = client.get("/api/chat/available-documents?category=AI&category=Risk")
     assert multi_category.status_code == 200, multi_category.text
     multi_docs = multi_category.json()["data"]["documents"]
@@ -478,6 +483,29 @@ def test_fastapi_chat_conversation_and_catalog_surfaces_work(tmp_path: Path, mon
 
     missing = client.get(f"/api/chat/conversations/{conversation_id}")
     assert missing.status_code == 404, missing.text
+
+
+def test_fastapi_chat_available_documents_keeps_catalog_title_and_filename_separate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            "UPDATE files SET title = ? WHERE url = ?",
+            ("", seed["alpha_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    response = client.get("/api/chat/available-documents?keywords=doc-a.pdf")
+
+    assert response.status_code == 200, response.text
+    document = response.json()["data"]["documents"][0]
+    assert document["title"] == ""
+    assert document["filename"] == "doc-a.pdf"
 
 
 def test_visitor_chat_knowledge_bases_show_public_ready_kbs(tmp_path: Path, monkeypatch) -> None:
@@ -532,6 +560,7 @@ def _install_guest_chat_fakes(
     monkeypatch,
     *,
     retrieved_chunks: list[dict[str, object]] | None = None,
+    generated_chunks: list[list[dict[str, object]]] | None = None,
 ) -> None:
     import ai_actuarial.api.services.chat as chat_service
 
@@ -624,6 +653,8 @@ def _install_guest_chat_fakes(
             pass
 
         def generate_response(self, query, chunks, mode, conversation_history):
+            if generated_chunks is not None:
+                generated_chunks.append(json.loads(json.dumps(chunks)))
             return "Guest chat response"
 
     class FakeQueryRouter:
@@ -695,6 +726,369 @@ def test_visitor_chat_query_allows_direct_document_context(tmp_path: Path, monke
     payload = response.json()["data"]
     assert payload["metadata"]["context_notice"]["original_chars"] > 0
     assert payload["citations"][0]["filename"] == "public.pdf"
+
+
+def test_chat_batch_canonicalizes_titles_without_sqlite_parameter_or_n_plus_one_queries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    import ai_actuarial.api.services.chat as chat_service
+
+    references = [
+        {"file_url": seed["alpha_url"], "title": "unknown", "filename": "UNKNOWN"},
+        {"file_url": seed["beta_url"], "filename": "stale-name.pdf"},
+        *[
+            {"file_url": f"https://missing.example/reports/fallback-{index}.pdf", "filename": "unknown"}
+            for index in range(1005)
+        ],
+    ]
+    storage = Storage(str(tmp_path / "index.db"))
+    statements: list[str] = []
+    try:
+        storage._conn.execute(
+            "UPDATE files SET deleted_at = ? WHERE url = ?",
+            ("2026-08-28T00:00:00+00:00", seed["beta_url"]),
+        )
+        storage._conn.commit()
+        storage._conn.set_trace_callback(statements.append)
+        chat_service._canonicalize_file_references(storage, references)
+        chat_service._canonicalize_file_references(storage, [])
+    finally:
+        storage.close()
+
+    file_queries = [statement for statement in statements if "FROM files" in statement]
+    assert len(file_queries) == 1
+    assert references[0]["title"] == "Alpha Document"
+    assert references[0]["filename"] == "doc-a.pdf"
+    assert references[1]["title"] == ""
+    assert references[1]["filename"] == "stale-name.pdf"
+    assert references[-1]["title"] == ""
+    assert references[-1]["filename"] == "fallback-1004.pdf"
+
+
+def test_fastapi_chat_standard_query_and_history_use_fresh_canonical_file_names(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    _install_guest_chat_fakes(
+        monkeypatch,
+        retrieved_chunks=[
+            {
+                "content": "Current immutable index metadata has no mutable names.",
+                "metadata": {
+                    "kb_id": "chat-kb-a",
+                    "kb_name": "Chat KB A",
+                    "chunk_id": "chunk-current-index",
+                    "file_url": seed["alpha_url"],
+                },
+            }
+        ],
+    )
+
+    import ai_actuarial.api.services.chat as chat_service
+
+    original_storage = chat_service.Storage
+    response_file_queries: list[str] = []
+
+    def tracking_storage(db_path: str):
+        tracked = original_storage(db_path)
+        tracked._conn.set_trace_callback(
+            lambda statement: response_file_queries.append(statement) if "FROM files" in statement else None
+        )
+        return tracked
+
+    monkeypatch.setattr(chat_service, "Storage", tracking_storage)
+
+    first = client.post(
+        "/api/chat/query",
+        json={"message": "What is current?", "kb_ids": ["chat-kb-a"], "mode": "expert"},
+        headers={"X-Auth-Token": ""},
+    )
+    assert first.status_code == 200, first.text
+    assert len(response_file_queries) == 1
+    first_data = first.json()["data"]
+    for item in (first_data["citations"][0], first_data["retrieved_blocks"][0]):
+        assert item["title"] == "Alpha Document"
+        assert item["filename"] == "doc-a.pdf"
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            "UPDATE files SET title = ? WHERE url = ?",
+            ("Fresh Curated Alpha", seed["alpha_url"]),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    detail = client.get(
+        f"/api/chat/conversations/{first_data['conversation_id']}",
+        headers={"X-Auth-Token": seed["operator_token"]},
+    )
+    assert detail.status_code == 200, detail.text
+    assistant = next(message for message in detail.json()["data"]["messages"] if message["role"] == "assistant")
+    assert assistant["citations"][0]["title"] == "Fresh Curated Alpha"
+    assert assistant["citations"][0]["filename"] == "doc-a.pdf"
+    assert assistant["metadata"]["retrieved_blocks"][0]["title"] == "Fresh Curated Alpha"
+    assert assistant["metadata"]["retrieved_blocks"][0]["filename"] == "doc-a.pdf"
+
+
+def test_fastapi_chat_history_reenriches_legacy_unknown_without_rewriting_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    created = client.post("/api/chat/conversations", json={"mode": "expert"})
+    assert created.status_code == 201, created.text
+    conversation_id = created.json()["data"]["conversation_id"]
+    stored_citations = [{"file_url": seed["alpha_url"], "filename": "unknown"}]
+    stored_metadata = {
+        "retrieved_blocks": [{"file_url": seed["alpha_url"], "filename": "UNKNOWN", "content": "legacy"}]
+    }
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            """
+            INSERT INTO messages
+            (message_id, conversation_id, role, content, citations, created_at, token_count, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-message",
+                conversation_id,
+                "assistant",
+                "Legacy answer",
+                json.dumps(stored_citations),
+                "2026-08-28T00:00:00+00:00",
+                None,
+                json.dumps(stored_metadata),
+            ),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    import ai_actuarial.api.services.chat as chat_service
+
+    original_storage = chat_service.Storage
+    history_file_queries: list[str] = []
+
+    def tracking_storage(db_path: str):
+        tracked = original_storage(db_path)
+        tracked._conn.set_trace_callback(
+            lambda statement: history_file_queries.append(statement) if "FROM files" in statement else None
+        )
+        return tracked
+
+    monkeypatch.setattr(chat_service, "Storage", tracking_storage)
+    detail = client.get(f"/api/chat/conversations/{conversation_id}")
+    assert detail.status_code == 200, detail.text
+    assert len(history_file_queries) == 1
+    message = detail.json()["data"]["messages"][0]
+    assert message["citations"][0] == {
+        "file_url": seed["alpha_url"],
+        "filename": "doc-a.pdf",
+        "title": "Alpha Document",
+    }
+    assert message["metadata"]["retrieved_blocks"][0]["title"] == "Alpha Document"
+    assert message["metadata"]["retrieved_blocks"][0]["filename"] == "doc-a.pdf"
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        row = storage._conn.execute(
+            "SELECT citations, metadata FROM messages WHERE message_id = ?",
+            ("legacy-message",),
+        ).fetchone()
+    finally:
+        storage.close()
+    assert json.loads(row[0]) == stored_citations
+    assert json.loads(row[1]) == stored_metadata
+
+
+def test_fastapi_chat_direct_document_uses_curated_title_for_llm_and_separate_response_names(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    generated_chunks: list[list[dict[str, object]]] = []
+    _install_guest_chat_fakes(monkeypatch, generated_chunks=generated_chunks)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Explain the selected document",
+            "mode": "expert",
+            "document_content": "Canonical direct content.",
+            "document_filename": "unknown",
+            "document_file_url": seed["alpha_url"],
+        },
+        headers={"X-Auth-Token": ""},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert generated_chunks[0][0]["metadata"]["filename"] == "Alpha Document"
+    assert data["citations"][0]["title"] == "Alpha Document"
+    assert data["citations"][0]["filename"] == "doc-a.pdf"
+    assert data["retrieved_blocks"][0]["title"] == "Alpha Document"
+    assert data["retrieved_blocks"][0]["filename"] == "doc-a.pdf"
+
+
+def test_fastapi_chat_direct_missing_file_uses_url_basename_without_neutral_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    generated_chunks: list[list[dict[str, object]]] = []
+    _install_guest_chat_fakes(monkeypatch, generated_chunks=generated_chunks)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Explain the missing document",
+            "mode": "expert",
+            "document_content": "Missing catalog row content.",
+            "document_title": " unknown ",
+            "document_file_url": "https://missing.example/reports/report%20one.pdf",
+        },
+        headers={"X-Auth-Token": ""},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert generated_chunks[0][0]["metadata"]["filename"] == "report one.pdf"
+    for item in (data["citations"][0], data["retrieved_blocks"][0]):
+        assert item["title"] == ""
+        assert item["filename"] == "report one.pdf"
+
+
+def test_chat_agentic_missing_file_uses_url_basename_and_keeps_name_fields_separate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    import ai_actuarial.api.services.chat as chat_service
+
+    citations, retrieved_blocks = chat_service._serialize_agentic_evidence(
+        [
+            {
+                "file_url": "https://missing.example/reports/report%20one.pdf",
+                "doc_id": "doc-reg",
+                "source": "doc_summaries",
+                "content": "Agentic evidence content.",
+            }
+        ],
+        kb_id="chat-kb-a",
+    )
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        chat_service._canonicalize_file_references(storage, [*citations, *retrieved_blocks])
+    finally:
+        storage.close()
+
+    for item in (citations[0], retrieved_blocks[0]):
+        assert item["title"] == ""
+        assert item["filename"] == "report one.pdf"
+
+
+def test_chat_no_name_or_url_keeps_standard_and_history_name_fields_empty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
+    import ai_actuarial.api.services.chat as chat_service
+
+    citations, retrieved_blocks = chat_service._serialize_citations(
+        [
+            {
+                "content": "Nameless legacy content.",
+                "metadata": {"title": " unknown ", "filename": "UNKNOWN"},
+            }
+        ]
+    )
+    for item in (citations[0], retrieved_blocks[0]):
+        assert item["title"] == ""
+        assert item["filename"] == ""
+
+    created = client.post("/api/chat/conversations", json={"mode": "expert"})
+    assert created.status_code == 201, created.text
+    conversation_id = created.json()["data"]["conversation_id"]
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        storage._conn.execute(
+            """
+            INSERT INTO messages
+            (message_id, conversation_id, role, content, citations, created_at, token_count, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "nameless-history-message",
+                conversation_id,
+                "assistant",
+                "Nameless history answer",
+                json.dumps([{"title": "unknown", "filename": "UNKNOWN"}]),
+                "2026-08-28T00:00:00+00:00",
+                None,
+                json.dumps({"retrieved_blocks": [{"title": " ", "filename": "unknown"}]}),
+            ),
+        )
+        storage._conn.commit()
+    finally:
+        storage.close()
+
+    detail = client.get(f"/api/chat/conversations/{conversation_id}")
+    assert detail.status_code == 200, detail.text
+    message = detail.json()["data"]["messages"][0]
+    for item in (message["citations"][0], message["metadata"]["retrieved_blocks"][0]):
+        assert item["title"] == ""
+        assert item["filename"] == ""
+
+
+def test_fastapi_chat_comparison_uses_each_current_curated_title(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    generated_chunks: list[list[dict[str, object]]] = []
+    _install_guest_chat_fakes(monkeypatch, generated_chunks=generated_chunks)
+
+    response = client.post(
+        "/api/chat/query",
+        json={
+            "message": "Compare Alpha Document and Beta Document",
+            "mode": "comparison",
+            "document_content": "Alpha content.",
+            "document_title": "Stale Alpha Title",
+            "document_filename": "doc-a.pdf",
+            "document_file_url": seed["alpha_url"],
+            "document_sources": [
+                {
+                    "title": "Stale Alpha Title",
+                    "filename": "doc-a.pdf",
+                    "file_url": seed["alpha_url"],
+                    "content": "Alpha content.",
+                },
+                {
+                    "title": "Stale Beta Title",
+                    "filename": "doc-b.pdf",
+                    "file_url": seed["beta_url"],
+                    "content": "Beta content.",
+                },
+            ],
+        },
+        headers={"X-Auth-Token": ""},
+    )
+    assert response.status_code == 200, response.text
+    assert [chunk["metadata"]["filename"] for chunk in generated_chunks[0]] == [
+        "Alpha Document",
+        "Beta Document",
+    ]
+    data = response.json()["data"]
+    assert [(item["title"], item["filename"]) for item in data["citations"]] == [
+        ("Alpha Document", "doc-a.pdf"),
+        ("Beta Document", "doc-b.pdf"),
+    ]
 
 
 def test_fastapi_chat_knowledge_bases_defaults_manifest_profile_for_legacy_schema(monkeypatch) -> None:
@@ -831,6 +1225,15 @@ def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(tmp_pat
     client, _app, _seed = _build_test_client(tmp_path, monkeypatch)
     ready_dir = Path(client.app.state.db_path).parent / "agentic_ready_data" / "kbs" / "chat-kb-a" / "regulation" / "1"
     _write_chat_agentic_ready_data(ready_dir)
+    import ai_actuarial.api.services.chat as chat_service
+
+    synthesized_blocks: list[dict[str, object]] = []
+
+    def fake_synthesize_agentic_response(**kwargs):
+        synthesized_blocks.extend(json.loads(json.dumps(kwargs["retrieved_blocks"])))
+        return "Canonical agentic answer", "llm"
+
+    monkeypatch.setattr(chat_service, "_synthesize_agentic_response", fake_synthesize_agentic_response)
 
     response = client.post(
         "/api/chat/query",
@@ -859,6 +1262,13 @@ def test_fastapi_chat_query_agentic_mode_persists_conversation_and_trace(tmp_pat
     assert "similarity_score" not in data["retrieved_blocks"][0]
     assert "score" in data["citations"][0]
     assert "similarity_score" not in data["citations"][0]
+    assert data["citations"][0]["title"] == "Alpha Document"
+    assert data["citations"][0]["filename"] == "doc-a.pdf"
+    assert data["retrieved_blocks"][0]["title"] == "Alpha Document"
+    assert data["retrieved_blocks"][0]["filename"] == "doc-a.pdf"
+    assert synthesized_blocks[0]["title"] == "Alpha Document"
+    assert synthesized_blocks[0]["filename"] == "doc-a.pdf"
+    assert chat_service._agentic_blocks_to_llm_chunks(synthesized_blocks)[0]["metadata"]["filename"] == "Alpha Document"
 
     detail = client.get(f"/api/chat/conversations/{data['conversation_id']}")
     assert detail.status_code == 200, detail.text
@@ -1306,7 +1716,8 @@ def test_fastapi_chat_query_flow_works_with_native_service_contract(tmp_path: Pa
     assert payload["message_id"] == "msg_assistant"
     assert "Solvency II" in payload["response"]
     assert payload["metadata"]["model"] == "fake-chat-model"
-    assert payload["citations"][0]["filename"] == "solvency.pdf"
+    assert payload["citations"][0]["title"] == "Alpha Document"
+    assert payload["citations"][0]["filename"] == "doc-a.pdf"
 
 
 
