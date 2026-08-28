@@ -1,5 +1,9 @@
 export interface TaskContractResult {
   contract_version?: number;
+  files?: Array<{
+    file_url?: string;
+    status?: string;
+  }>;
   chunk_sets?: Array<{
     chunk_set_id?: string;
     chunk_count?: number;
@@ -8,6 +12,8 @@ export interface TaskContractResult {
   provider?: string;
   model?: string;
   dimension?: number;
+  expected_count?: number;
+  ready_count?: number;
   generated?: number;
   reused?: number;
   invalid_regenerated?: number;
@@ -24,6 +30,12 @@ export interface Task {
   current_activity: string;
   items_processed: number;
   items_total: number;
+  items_downloaded?: number;
+  items_skipped?: number;
+  catalog_scanned?: number;
+  catalog_ok?: number;
+  catalog_skipped?: number;
+  catalog_errors?: number;
   errors?: string[];
   result?: TaskContractResult;
 }

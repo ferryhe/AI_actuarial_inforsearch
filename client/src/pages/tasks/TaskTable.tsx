@@ -1,7 +1,8 @@
 import { Zap, History } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { TaskTableProps } from "./Tasks.types";
-import { statusBadge, formatDate, TaskResultSummary } from "./TaskCard";
+import { statusBadge, formatDate } from "./TaskCard";
+import { TaskMetrics as TaskResultSummary, getTaskItemCount } from "./TaskMetrics";
 
 export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
   const { t } = useTranslation();
@@ -26,9 +27,7 @@ export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
         <span>{t("tasks.col.items")}</span>
       </div>
       {historyTasks.map((task, i) => {
-        const itemCount = task.type === "catalog"
-          ? (task.catalog_ok ?? task.items_processed ?? 0)
-          : (task.items_downloaded ?? task.items_processed ?? 0);
+        const itemCount = getTaskItemCount(task);
         const hasErrors = task.errors && task.errors.length > 0;
         return (
           <div key={i} className="border-t border-border hover:bg-muted/20 transition-colors"
@@ -53,23 +52,7 @@ export function TaskTable({ historyTasks, onViewLog }: TaskTableProps) {
                 )}
               </div>
             </div>
-            <div className="px-4 pb-2"><TaskResultSummary type={task.type} result={task.result} /></div>
-            {/* Extra stats row for catalog tasks */}
-            {task.type === "catalog" && (task.catalog_scanned != null || task.catalog_ok != null) && (
-              <div className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-                {task.catalog_scanned != null && <span>{t("tasks.stats.scanned")}: {task.catalog_scanned}</span>}
-                {task.catalog_ok != null && <span className="text-emerald-600 dark:text-emerald-400">{t("tasks.stats.ok")}: {task.catalog_ok}</span>}
-                {task.catalog_skipped != null && <span>{t("tasks.stats.skipped")}: {task.catalog_skipped}</span>}
-                {task.catalog_errors != null && task.catalog_errors > 0 && <span className="text-red-500">{t("tasks.stats.errors")}: {task.catalog_errors}</span>}
-              </div>
-            )}
-            {/* Items stats for non-catalog tasks */}
-            {task.type !== "catalog" && ((task.items_downloaded ?? 0) > 0 || (task.items_skipped ?? 0) > 0) && (
-              <div className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-                {(task.items_downloaded ?? 0) > 0 && <span>{t("tasks.stats.downloaded")}: {task.items_downloaded}</span>}
-                {(task.items_skipped ?? 0) > 0 && <span>{t("tasks.stats.skipped")}: {task.items_skipped}</span>}
-              </div>
-            )}
+            <TaskResultSummary task={{ ...task, result: task.result }} t={t} className="px-4 pb-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground" />
             {/* Error summary */}
             {hasErrors && (
               <div className="px-4 pb-2 text-[11px] text-red-500 truncate">

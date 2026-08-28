@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Clock3, History, ListTodo, Globe, Loader2, AlertCircle } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { useTranslation } from "@/components/Layout";
+import { TaskMetrics } from "./tasks/TaskMetrics";
+import type { TaskContractResult } from "./tasks/Tasks.types";
 
 interface TaskItem {
   id: string;
@@ -14,6 +17,12 @@ interface TaskItem {
   items_processed?: number;
   items_total?: number;
   items_downloaded?: number;
+  items_skipped?: number;
+  catalog_scanned?: number;
+  catalog_ok?: number;
+  catalog_skipped?: number;
+  catalog_errors?: number;
+  result?: TaskContractResult;
 }
 
 interface SiteConfig {
@@ -60,6 +69,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 export default function NativeTasks() {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sites, setSites] = useState<SiteConfig[]>([]);
@@ -194,6 +204,7 @@ export default function NativeTasks() {
                       <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(task.progress || 0, 100)}%` }} />
                     </div>
                     <div className="mt-2 text-xs text-muted-foreground">{task.items_processed || 0}/{task.items_total || "?"} · {Math.round(task.progress || 0)}%</div>
+                    <TaskMetrics task={task} t={t} className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground" />
                   </div>
                 ))}
               </div>
@@ -218,7 +229,7 @@ export default function NativeTasks() {
                       </div>
                       <StatusPill status={task.status} />
                     </div>
-                    <div className="mt-2 text-xs text-muted-foreground">处理 {task.items_processed || 0} 项 · 下载 {task.items_downloaded || 0} 项</div>
+                    <TaskMetrics task={task} t={t} className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground" />
                   </div>
                 ))}
               </div>
