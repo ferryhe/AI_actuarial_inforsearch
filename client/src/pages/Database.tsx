@@ -38,7 +38,7 @@ interface FileItem {
   last_seen: string;
   category: string | null;
   summary: string | null;
-  markdown_content: string | null;
+  has_markdown: boolean;
   markdown_source: string | null;
   bytes: number | null;
   deleted_at: string | null;
@@ -872,7 +872,7 @@ export default function DatabasePage() {
           </div>
 
           {files.map((file, i) => {
-            const hasMd = !!file.markdown_content || !!file.markdown_source;
+            const hasMd = file.has_markdown;
             const isDeleted = !!file.deleted_at;
             const isSelected = selectedUrls.includes(file.url);
 

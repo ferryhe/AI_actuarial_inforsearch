@@ -292,6 +292,10 @@ def test_fastapi_native_read_routes_keep_public_reads_available_under_require_au
     assert "local_path" not in public_files_body["files"][0]
     assert "sha256" not in public_files_body["files"][0]
     assert "markdown_content" not in public_files_body["files"][0]
+    assert {
+        item["title"]: item["has_markdown"]
+        for item in public_files_body["files"]
+    } == {"Alpha Document": True, "Beta Document": False}
 
     public_deleted = client.get("/api/files?include_deleted=true")
     assert public_deleted.status_code == 401
@@ -305,7 +309,11 @@ def test_fastapi_native_read_routes_keep_public_reads_available_under_require_au
     assert authorized_body["total"] == 2
     assert "local_path" in authorized_body["files"][0]
     assert "sha256" in authorized_body["files"][0]
-    assert "markdown_content" in authorized_body["files"][0]
+    assert "markdown_content" not in authorized_body["files"][0]
+    assert {
+        item["title"]: item["has_markdown"]
+        for item in authorized_body["files"]
+    } == {"Alpha Document": True, "Beta Document": False}
 
 
 def test_fastapi_sources_file_detail_and_markdown_match_legacy_contract(tmp_path: Path, monkeypatch) -> None:
