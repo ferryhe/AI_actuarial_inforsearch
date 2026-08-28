@@ -2999,10 +2999,11 @@ class Storage:
         
         # Join with catalog_items when query/category filters need catalog fields,
         # and later for result projection even without filters.
+        catalog_join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
         join_clause = ""
 
         if query:
-            join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+            join_clause = catalog_join_clause
             filters.append(
                 "(LOWER(IFNULL(f.title, '')) LIKE ? "
                 "OR LOWER(IFNULL(f.original_filename, '')) LIKE ? "
@@ -3020,7 +3021,7 @@ class Storage:
             params.append(f"%{source.lower()}%")
         
         if category:
-            join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+            join_clause = catalog_join_clause
             if category == '__uncategorized__':
                 filters.append(
                     "("
@@ -3053,7 +3054,7 @@ class Storage:
         # Get files with catalog data using validated column mapping
         # Always use LEFT JOIN to return category columns even if not filtering
         if not join_clause:
-            join_clause = "LEFT JOIN catalog_items c ON c.file_url = f.url"
+            join_clause = catalog_join_clause
         
         order_clause = f"{order_column} {order_dir.upper()}"
         query_sql = f"""
@@ -3062,7 +3063,12 @@ class Storage:
                    f.last_modified, f.etag, f.published_time, f.first_seen,
                    f.last_seen, f.crawl_time, f.deleted_at,
                    c.category, c.summary, c.keywords,
-                   c.markdown_content, c.markdown_source, c.markdown_updated_at,
+                   CASE
+                       WHEN TRIM(IFNULL(c.markdown_source, '')) != ''
+                         OR c.markdown_updated_at IS NOT NULL
+                       THEN 1 ELSE 0
+                   END AS has_markdown,
+                   c.markdown_source, c.markdown_updated_at,
                    c.rag_chunk_count, c.rag_indexed_at
             FROM files f
             {join_clause}
@@ -3095,7 +3101,7 @@ class Storage:
                 "category": row[16],
                 "summary": row[17],
                 "keywords": json.loads(row[18]) if row[18] else [],
-                "markdown_content": row[19],
+                "has_markdown": bool(row[19]),
                 "markdown_source": row[20],
                 "markdown_updated_at": row[21],
                 "rag_chunk_count": row[22] or 0,

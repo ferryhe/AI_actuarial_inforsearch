@@ -23,6 +23,7 @@ PUBLIC_FILE_LIST_FIELDS: tuple[str, ...] = (
     "category",
     "summary",
     "keywords",
+    "has_markdown",
     "markdown_source",
     "markdown_updated_at",
     "rag_chunk_count",
@@ -34,7 +35,6 @@ SENSITIVE_FILE_FIELDS: tuple[str, ...] = (
     "local_path",
     "etag",
     "deleted_at",
-    "markdown_content",
 )
 
 FILE_LIST_FIELDS: tuple[str, ...] = PUBLIC_FILE_LIST_FIELDS + SENSITIVE_FILE_FIELDS

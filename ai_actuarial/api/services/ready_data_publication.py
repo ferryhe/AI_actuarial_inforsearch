@@ -134,6 +134,9 @@ def _latest_build_attempt(
     kb_id: str,
     profile: str,
 ) -> dict[str, Any] | None:
+    prefetched = getattr(storage, "get_agentic_ready_latest_build_attempt", None)
+    if callable(prefetched):
+        return prefetched(kb_id, profile)
     columns = frozenset(
         str(row[1])
         for row in storage._conn.execute(
@@ -438,6 +441,9 @@ def _has_unknown_stale_severity(value: Any) -> bool:
 
 
 def _current_ready_index_version_id(storage: Storage, *, kb_id: str) -> str | None:
+    prefetched = getattr(storage, "get_ready_index_version_id", None)
+    if callable(prefetched):
+        return prefetched(kb_id)
     row = storage._conn.execute(
         "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ? LIMIT 1",
         (kb_id,),
@@ -713,8 +719,7 @@ def _public_ready_data_state_in_snapshot(
     smoke = _public_smoke(smoke_source)
     automation_state = _public_automation_state(automation.get("automation_state"))
     raw_automation_error = automation.get("last_error")
-    manual_operation = Storage.get_agentic_ready_manual_operation(
-        storage,
+    manual_operation = storage.get_agentic_ready_manual_operation(
         kb_id=kb_id,
         profile=normalized_profile,
     )
@@ -983,11 +988,13 @@ def _read_public_ready_data_snapshot_in_current_transaction(
     kb_id: str,
     profile: str,
     include_legacy_output_dir: bool = True,
+    include_ready_build_input: bool = True,
 ) -> dict[str, Any]:
     manifest = _build_agentic_manifest_status(
         storage=storage,
         kb_id=kb_id,
         profile=profile,
+        include_ready_build_input=include_ready_build_input,
     )
     publication_state = _public_ready_data_state_in_snapshot(
         storage,
@@ -1012,6 +1019,7 @@ def read_public_ready_data_snapshot(
     kb_id: str,
     profile: str,
     include_legacy_output_dir: bool = True,
+    include_ready_build_input: bool = True,
 ) -> dict[str, Any]:
     with storage.transaction():
         return _read_public_ready_data_snapshot_in_current_transaction(
@@ -1019,6 +1027,7 @@ def read_public_ready_data_snapshot(
             kb_id=kb_id,
             profile=profile,
             include_legacy_output_dir=include_legacy_output_dir,
+            include_ready_build_input=include_ready_build_input,
         )
 
 

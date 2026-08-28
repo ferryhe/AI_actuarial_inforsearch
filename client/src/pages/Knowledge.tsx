@@ -641,18 +641,19 @@ export default function Knowledge() {
   };
 
   const handleBuildAgenticManifest = async (kbId: string) => {
-    const readyBuildInput = kbs.find((item) => (
-      String(item.kb_id || item.id || "").trim() === kbId
-    ))?.agentic_ready_manifest?.ready_build_input;
-    if (!readyBuildInput) {
-      setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", "KB Index is not ready"));
-      return;
-    }
     const mutationManifestVersion = ++readyDataListManifestVersion.current;
     setBuildingManifestKb(kbId);
     setKbActionError(null);
     setKbActionNotice(null);
     try {
+      const manifestResponse = await apiGet<{ manifest?: AgenticReadyManifest }>(
+        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest`
+      );
+      const readyBuildInput = manifestResponse.manifest?.ready_build_input;
+      if (!readyBuildInput) {
+        setKbActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", "KB Index is not ready"));
+        return;
+      }
       const res = await apiPost<{
         job_id?: string;
         ready_data_snapshot?: { manifest?: AgenticReadyManifest };

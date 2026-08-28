@@ -10,6 +10,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping
 
 from ai_actuarial.ai_runtime import build_embedding_fingerprint, infer_embedding_dimension, infer_embedding_provider, resolve_ai_function_runtime
@@ -911,6 +912,11 @@ def _storage_has_table(storage: Any, table: str) -> bool:
 
 
 def _kb_agentic_source_status(storage: Storage, *, kb_id: str) -> dict[str, Any]:
+    prefetched = getattr(storage, "get_kb_agentic_source_status", None)
+    if callable(prefetched):
+        status = prefetched(kb_id)
+        if status is not None:
+            return status
     kb_updated_at = None
     if _storage_has_table(storage, "rag_knowledge_bases"):
         row = storage._conn.execute(
@@ -1053,6 +1059,7 @@ def _build_agentic_manifest_status(
     storage: Storage,
     kb_id: str,
     profile: str,
+    include_ready_build_input: bool = True,
 ) -> dict[str, Any]:
     normalized_profile = _manifest_profile(profile)
     profile_def = PROFILES[normalized_profile]
@@ -1070,7 +1077,7 @@ def _build_agentic_manifest_status(
         profile=normalized_profile,
     )
     ready_build_input: dict[str, Any] | None = None
-    if _storage_has_table(storage, "kb_ready_index_state"):
+    if include_ready_build_input and _storage_has_table(storage, "kb_ready_index_state"):
         ready_index = storage._conn.execute(
             "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = ?",
             (kb_id,),
@@ -1206,7 +1213,12 @@ def _build_agentic_manifest_status(
     return payload
 
 
-def _decorate_kb_agentic_manifest(storage: Storage, payload: dict[str, Any]) -> dict[str, Any]:
+def _decorate_kb_agentic_manifest(
+    storage: Storage,
+    payload: dict[str, Any],
+    *,
+    include_ready_build_input: bool = True,
+) -> dict[str, Any]:
     kb_id = _norm(payload.get("kb_id"))
     profile = _manifest_profile(payload.get("manifest_profile") or "general")
     if _storage_has_table(storage, "kb_ready_index_state"):
@@ -1216,6 +1228,7 @@ def _decorate_kb_agentic_manifest(storage: Storage, payload: dict[str, Any]) -> 
             storage,
             kb_id=kb_id,
             profile=profile,
+            include_ready_build_input=include_ready_build_input,
         )
         manifest = ready_data_snapshot["manifest"]
     else:
@@ -1223,6 +1236,7 @@ def _decorate_kb_agentic_manifest(storage: Storage, payload: dict[str, Any]) -> 
             storage=storage,
             kb_id=kb_id,
             profile=profile,
+            include_ready_build_input=include_ready_build_input,
         )
     payload["manifest_profile"] = profile
     payload["agentic_ready_manifest"] = manifest
@@ -1315,34 +1329,40 @@ def _build_kb_embedding_status(
         "binding_error": "",
     }
     if kb_id:
-        try:
-            snapshot = resolve_kb_bound_chunks(storage, kb_id)
-            chunk_ids = [str(row["chunk_id"]) for row in snapshot["chunks"]]
-            coverage["bound_file_count"] = int(snapshot["bound_file_count"])
-            coverage["bound_chunk_count"] = int(snapshot["bound_chunk_count"])
-            if not storage._table_exists("chunk_embeddings"):
-                coverage["missing_embeddings"] = len(chunk_ids)
-            else:
-                try:
-                    identity = resolve_server_embedding_identity(
-                        storage,
-                        str(kb_payload.get("embedding_identity_key") or "") or None,
-                    )
-                    embedding_rows = storage.read_valid_chunk_embeddings(
-                        chunk_ids,
-                        identity=identity.as_dict(),
-                    )
-                    coverage["ready_embeddings"] = len(embedding_rows["valid"])
-                    coverage["missing_embeddings"] = (
-                        len(embedding_rows["missing_chunk_ids"])
-                        + len(embedding_rows["invalid_chunk_ids"])
-                    )
-                except ValueError as exc:
+        if isinstance(storage, _KBListStorageView):
+            coverage = storage.get_kb_embedding_metadata_coverage(
+                kb_id,
+                kb_payload=kb_payload,
+            )
+        else:
+            try:
+                snapshot = resolve_kb_bound_chunks(storage, kb_id)
+                chunk_ids = [str(row["chunk_id"]) for row in snapshot["chunks"]]
+                coverage["bound_file_count"] = int(snapshot["bound_file_count"])
+                coverage["bound_chunk_count"] = int(snapshot["bound_chunk_count"])
+                if not storage._table_exists("chunk_embeddings"):
                     coverage["missing_embeddings"] = len(chunk_ids)
-                    coverage["binding_error"] = str(exc)
-        except KBIndexContractError as exc:
-            coverage["invalid_bindings"] = 1
-            coverage["binding_error"] = str(exc)
+                else:
+                    try:
+                        identity = resolve_server_embedding_identity(
+                            storage,
+                            str(kb_payload.get("embedding_identity_key") or "") or None,
+                        )
+                        embedding_rows = storage.read_valid_chunk_embeddings(
+                            chunk_ids,
+                            identity=identity.as_dict(),
+                        )
+                        coverage["ready_embeddings"] = len(embedding_rows["valid"])
+                        coverage["missing_embeddings"] = (
+                            len(embedding_rows["missing_chunk_ids"])
+                            + len(embedding_rows["invalid_chunk_ids"])
+                        )
+                    except ValueError as exc:
+                        coverage["missing_embeddings"] = len(chunk_ids)
+                        coverage["binding_error"] = str(exc)
+            except KBIndexContractError as exc:
+                coverage["invalid_bindings"] = 1
+                coverage["binding_error"] = str(exc)
     index_status = str(latest_index.get("status") or "").strip().lower()
     if not has_index or index_status in {"pending", "queued", "running", "building", "indexing"}:
         availability = "building"
@@ -1899,6 +1919,21 @@ class _KBListStorageView:
         self.db_path = db_path
         self._conn = conn
         self._agentic_ready_publication_columns_cache: frozenset[str] | None = None
+        self._table_names_cache: frozenset[str] | None = None
+        self._prepared = False
+        self._chunk_profiles: dict[str, dict[str, Any]] = {}
+        self._binding_profiles: dict[str, list[dict[str, Any]]] = {}
+        self._composition: dict[str, dict[str, Any]] = {}
+        self._coverage: dict[str, dict[str, Any]] = {}
+        self._source_status: dict[str, dict[str, Any]] = {}
+        self._manifests: dict[tuple[str, str], dict[str, Any]] = {}
+        self._publications: dict[str, dict[str, Any]] = {}
+        self._slots: dict[tuple[str, str], Any] = {}
+        self._automation_rows: dict[tuple[str, str], Any] = {}
+        self._source_rows: dict[tuple[str, str], Any] = {}
+        self._manual_operations: dict[tuple[str, str], dict[str, str]] = {}
+        self._ready_index_ids: dict[str, str | None] = {}
+        self._latest_build_attempts: dict[tuple[str, str], dict[str, Any] | None] = {}
 
     @staticmethod
     def _parse_iso_to_utc(value: str | None) -> datetime | None:
@@ -1931,6 +1966,500 @@ class _KBListStorageView:
     def close(self) -> None:
         self._conn.close()
 
+    @staticmethod
+    def _list_key(kb_id: str, profile: str) -> tuple[str, str]:
+        return (str(kb_id), str(profile or "general").strip().lower() or "general")
+
+    @staticmethod
+    def _in_clause(values: Iterable[str]) -> tuple[str, tuple[str, ...]]:
+        params = tuple(dict.fromkeys(str(value) for value in values))
+        return ",".join("?" for _ in params), params
+
+    def prepare(self, kb_payloads: Iterable[Mapping[str, Any]]) -> None:
+        payloads = [dict(payload) for payload in kb_payloads]
+        self._prepared = True
+        if not payloads:
+            return
+        kb_ids = [str(payload["kb_id"]) for payload in payloads]
+        keys = [
+            self._list_key(payload["kb_id"], payload.get("manifest_profile") or "general")
+            for payload in payloads
+        ]
+        clause, kb_params = self._in_clause(kb_ids)
+
+        if self._table_exists("chunk_profiles"):
+            for row in self._conn.execute(
+                """
+                SELECT profile_id, name, chunk_size, chunk_overlap, splitter, tokenizer,
+                       version, config_hash, config_json, created_at, updated_at
+                FROM chunk_profiles
+                """
+            ):
+                self._chunk_profiles[str(row[0])] = {
+                    "profile_id": row[0], "name": row[1], "chunk_size": row[2],
+                    "chunk_overlap": row[3], "splitter": row[4], "tokenizer": row[5],
+                    "version": row[6], "config_hash": row[7], "config_json": row[8],
+                    "created_at": row[9], "updated_at": row[10],
+                }
+        if (
+            self._table_exists("kb_chunk_bindings")
+            and self._table_exists("file_chunk_sets")
+            and self._table_exists("chunk_profiles")
+        ):
+            for row in self._conn.execute(
+                f"""SELECT b.kb_id, s.profile_id
+                    FROM kb_chunk_bindings b
+                    LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                    WHERE b.kb_id IN ({clause})""",
+                kb_params,
+            ):
+                self._binding_profiles.setdefault(str(row[0]), []).append({"profile_id": row[1]})
+
+        composition_parts: dict[str, dict[str, Any]] = {kb_id: {} for kb_id in kb_ids}
+        if self._table_exists("kb_chunk_bindings"):
+            for row in self._conn.execute(
+                f"""SELECT kb_id, COUNT(DISTINCT file_url), COUNT(DISTINCT chunk_set_id),
+                           MAX(bound_at),
+                           SUM(CASE WHEN binding_mode = 'follow_latest' THEN 1 ELSE 0 END),
+                           SUM(CASE WHEN binding_mode = 'pin' OR binding_mode IS NULL THEN 1 ELSE 0 END)
+                    FROM kb_chunk_bindings WHERE kb_id IN ({clause}) GROUP BY kb_id""",
+                kb_params,
+            ):
+                composition_parts[str(row[0])].update(
+                    binding_file_count=int(row[1] or 0), chunk_set_count=int(row[2] or 0),
+                    latest_binding_at=row[3], follow_latest_count=int(row[4] or 0),
+                    pin_count=int(row[5] or 0),
+                )
+            if self._table_exists("file_chunk_sets"):
+                for row in self._conn.execute(
+                    f"""SELECT b.kb_id, COUNT(*)
+                        FROM kb_chunk_bindings b
+                        LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                        WHERE b.kb_id IN ({clause}) AND s.profile_id IS NOT NULL
+                          AND b.chunk_set_id != (
+                            SELECT s2.chunk_set_id FROM file_chunk_sets s2
+                            WHERE s2.file_url = b.file_url AND s2.profile_id = s.profile_id
+                            ORDER BY s2.updated_at DESC, s2.created_at DESC LIMIT 1)
+                        GROUP BY b.kb_id""",
+                    kb_params,
+                ):
+                    composition_parts[str(row[0])]["outdated_binding_count"] = int(row[1] or 0)
+        latest_indexes: dict[str, Any] = {}
+        if self._table_exists("kb_index_versions"):
+            for row in self._conn.execute(
+                f"""SELECT i.kb_id, i.embedding_provider, i.embedding_model,
+                           i.embedding_dimension, i.index_type, i.status, i.chunk_count,
+                           i.built_at, i.created_at
+                    FROM kb_index_versions i
+                    WHERE i.kb_id IN ({clause}) AND NOT EXISTS (
+                        SELECT 1 FROM kb_index_versions newer
+                        WHERE newer.kb_id = i.kb_id
+                          AND COALESCE(newer.built_at, newer.created_at) >
+                              COALESCE(i.built_at, i.created_at))""",
+                kb_params,
+            ):
+                latest_indexes[str(row[0])] = row
+        kb_rows = {
+            str(row[0]): row
+            for row in self._conn.execute(
+                f"""SELECT kb_id, embedding_provider, embedding_model, embedding_dimension,
+                           chunk_count, file_count, updated_at, index_dirty_at
+                    FROM rag_knowledge_bases WHERE kb_id IN ({clause})""",
+                kb_params,
+            )
+        }
+        rag_stats: dict[str, Any] = {}
+        pending_counts: dict[str, int] = {}
+        if self._table_exists("rag_kb_files"):
+            rag_stats = {
+                str(row[0]): row
+                for row in self._conn.execute(
+                    f"""SELECT kb_id, COUNT(*),
+                               SUM(CASE WHEN indexed_at IS NOT NULL AND indexed_at != '' THEN 1 ELSE 0 END),
+                               MAX(indexed_at), MAX(added_at)
+                        FROM rag_kb_files WHERE kb_id IN ({clause}) GROUP BY kb_id""",
+                    kb_params,
+                )
+            }
+            if self._table_exists("catalog_items"):
+                pending_counts = {
+                    str(row[0]): int(row[1] or 0)
+                    for row in self._conn.execute(
+                        f"""SELECT kf.kb_id, COUNT(*) FROM rag_kb_files kf
+                            LEFT JOIN catalog_items c ON c.file_url = kf.file_url
+                            WHERE kf.kb_id IN ({clause}) AND (
+                              kf.indexed_at IS NULL OR kf.indexed_at = '' OR
+                              (c.markdown_updated_at IS NOT NULL AND c.markdown_updated_at > kf.indexed_at))
+                            GROUP BY kf.kb_id""",
+                        kb_params,
+                    )
+                }
+        for kb_id in kb_ids:
+            part = composition_parts[kb_id]
+            kb_row = kb_rows.get(kb_id)
+            latest = latest_indexes.get(kb_id)
+            rag_row = rag_stats.get(kb_id)
+            kb_provider = (kb_row[1] if kb_row else "") or infer_embedding_provider(kb_row[2] if kb_row else "", fallback="openai") or "openai"
+            kb_model = (kb_row[2] if kb_row else "") or ""
+            kb_dimension = (kb_row[3] if kb_row and kb_row[3] not in (None, "") else infer_embedding_dimension(kb_model))
+            kb_chunk_count = int((kb_row[4] if kb_row else 0) or 0)
+            kb_file_count = int((rag_row[1] if rag_row else (kb_row[5] if kb_row else 0)) or 0)
+            kb_updated_at = kb_row[6] if kb_row else None
+            index_dirty_at = kb_row[7] if kb_row else None
+            indexed_file_count = int((rag_row[2] if rag_row else (kb_file_count if kb_chunk_count > 0 else 0)) or 0)
+            legacy_index_time = (rag_row[3] if rag_row else None) or kb_updated_at
+            has_index = bool(latest) or indexed_file_count > 0 or kb_chunk_count > 0
+            latest_index_time = ((latest[7] or latest[8]) if latest else legacy_index_time) if has_index else None
+            binding_file_count = int(part.get("binding_file_count") or 0)
+            effective_file_count = max(binding_file_count, kb_file_count)
+            outdated = int(part.get("outdated_binding_count") or 0)
+            pending = pending_counts.get(kb_id, 0)
+            dirty_after_index = bool(index_dirty_at and (not latest_index_time or index_dirty_at > latest_index_time))
+            needs_reindex = bool(
+                (effective_file_count > 0 and (pending > 0 or outdated > 0 or not has_index or
+                 (part.get("latest_binding_at") and latest_index_time and part["latest_binding_at"] > latest_index_time)))
+                or (has_index and dirty_after_index)
+            )
+            latest_payload = None
+            if latest:
+                latest_payload = {
+                    "embedding_provider": latest[1] or infer_embedding_provider(latest[2], fallback="openai") or "openai",
+                    "embedding_model": latest[2],
+                    "embedding_dimension": latest[3] if latest[3] not in (None, "") else infer_embedding_dimension(latest[2]),
+                    "index_type": latest[4], "status": latest[5], "chunk_count": latest[6] or 0,
+                    "built_at": latest[7] or latest[8],
+                }
+            elif has_index:
+                latest_payload = {"embedding_provider": kb_provider, "embedding_model": kb_model,
+                                  "embedding_dimension": kb_dimension, "index_type": "Flat", "status": "ready",
+                                  "chunk_count": kb_chunk_count, "built_at": latest_index_time, "source": "legacy"}
+            self._composition[kb_id] = {
+                "kb_id": kb_id, "file_count": effective_file_count,
+                "binding_file_count": binding_file_count, "kb_file_count": kb_file_count,
+                "indexed_file_count": indexed_file_count, "pending_file_count": pending,
+                "chunk_set_count": int(part.get("chunk_set_count") or 0), "has_index": has_index,
+                "latest_binding_at": part.get("latest_binding_at"), "index_dirty_at": index_dirty_at,
+                "dirty_after_index": dirty_after_index,
+                "binding_mode_counts": {"follow_latest": int(part.get("follow_latest_count") or 0), "pin": int(part.get("pin_count") or 0)},
+                "outdated_binding_count": outdated, "new_chunk_versions_available": outdated > 0,
+                "needs_reindex": needs_reindex, "latest_index": latest_payload,
+            }
+
+        self._prepare_coverage(payloads, clause, kb_params)
+        self._prepare_source_status(kb_ids, clause, kb_params, kb_rows, rag_stats)
+        self._prepare_agentic(keys, clause, kb_params)
+
+    def _prepare_coverage(
+        self,
+        payloads: list[dict[str, Any]],
+        clause: str,
+        kb_params: tuple[str, ...],
+    ) -> None:
+        defaults = {
+            "bound_file_count": 0, "bound_chunk_count": 0, "ready_embeddings": 0,
+            "missing_embeddings": 0, "invalid_bindings": 0, "binding_error": "",
+        }
+        self._coverage = {str(payload["kb_id"]): dict(defaults) for payload in payloads}
+        required = ("rag_kb_files", "kb_chunk_bindings", "file_chunk_sets", "global_chunks")
+        if not all(self._table_exists(table) for table in required):
+            return
+        has_embeddings = self._table_exists("chunk_embeddings")
+        identity = None
+        if has_embeddings:
+            try:
+                identity = resolve_server_embedding_identity(self)
+            except ValueError as exc:
+                identity_error = str(exc)
+            else:
+                identity_error = ""
+        else:
+            identity_error = ""
+        identity_rows: list[tuple[Any, ...]] = []
+        for payload in payloads:
+            kb_id = str(payload["kb_id"])
+            requested_key = str(payload.get("embedding_identity_key") or "")
+            allow_ready = int(bool(identity and (not requested_key or requested_key == identity.embedding_identity_key)))
+            if identity_error:
+                self._coverage[kb_id]["binding_error"] = identity_error
+            elif identity and requested_key and not allow_ready:
+                self._coverage[kb_id]["binding_error"] = "embedding_identity_key is not allowed by the current server configuration"
+            identity_rows.append(
+                (kb_id, str(payload.get("chunk_profile_id") or ""), allow_ready,
+                 identity.provider if identity else "", identity.model if identity else "",
+                 identity.dimension if identity else 0, identity.config_fingerprint if identity else "",
+                 identity.embedding_identity_key if identity else requested_key)
+            )
+        values_sql = ",".join("(?,?,?,?,?,?,?,?)" for _ in identity_rows)
+        params = tuple(value for row in identity_rows for value in row)
+        embedding_join = (
+            "LEFT JOIN chunk_embeddings e ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = t.identity_key"
+            if has_embeddings else ""
+        )
+        ready_sql = (
+            "COALESCE(SUM(CASE WHEN t.allow_ready = 1 AND e.embedding_provider = t.provider "
+            "AND e.embedding_model = t.model AND e.dimension = t.dimension "
+            "AND e.config_fingerprint = t.fingerprint AND e.status = 'ready' THEN 1 ELSE 0 END), 0)"
+            if has_embeddings else "0"
+        )
+        for row in self._conn.execute(
+            f"""WITH targets(kb_id, selected_profile_id, allow_ready, provider, model,
+                               dimension, fingerprint, identity_key) AS (VALUES {values_sql}),
+                     counts AS (SELECT chunk_set_id, COUNT(*) AS actual_count
+                                FROM global_chunks GROUP BY chunk_set_id),
+                     members AS (SELECT kb_id, COUNT(*) AS member_count
+                                 FROM rag_kb_files GROUP BY kb_id),
+                     bindings AS (SELECT kb_id, COUNT(*) AS binding_count
+                                  FROM kb_chunk_bindings GROUP BY kb_id)
+                SELECT t.kb_id, COUNT(DISTINCT b.file_url), COUNT(g.chunk_id), {ready_sql},
+                       COALESCE(m.member_count, 0), COALESCE(bc.binding_count, 0),
+                       COALESCE(MAX(CASE WHEN b.kb_id IS NOT NULL AND (
+                         kf.file_url IS NULL OR s.chunk_set_id IS NULL OR s.file_url != b.file_url OR
+                         (t.selected_profile_id != '' AND s.profile_id != t.selected_profile_id) OR
+                         s.status != 'ready' OR s.chunk_count <= 0 OR
+                         s.chunk_count != COALESCE(counts.actual_count, 0)) THEN 1 ELSE 0 END), 0)
+                FROM targets t
+                LEFT JOIN kb_chunk_bindings b ON b.kb_id = t.kb_id
+                LEFT JOIN rag_kb_files kf ON kf.kb_id = b.kb_id AND kf.file_url = b.file_url
+                LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+                LEFT JOIN counts ON counts.chunk_set_id = s.chunk_set_id
+                LEFT JOIN global_chunks g ON g.chunk_set_id = s.chunk_set_id
+                {embedding_join}
+                LEFT JOIN members m ON m.kb_id = t.kb_id
+                LEFT JOIN bindings bc ON bc.kb_id = t.kb_id
+                GROUP BY t.kb_id""",
+            params,
+        ):
+            kb_id = str(row[0])
+            coverage = self._coverage[kb_id]
+            member_count, binding_count = int(row[4] or 0), int(row[5] or 0)
+            if member_count == 0 or int(row[1] or 0) != member_count or binding_count != member_count or bool(row[6]):
+                coverage.update(invalid_bindings=1, binding_error="KB chunk binding metadata is invalid")
+                continue
+            coverage.update(
+                bound_file_count=int(row[1] or 0), bound_chunk_count=int(row[2] or 0),
+                ready_embeddings=int(row[3] or 0),
+                missing_embeddings=int(row[2] or 0) - int(row[3] or 0),
+            )
+
+    def _prepare_source_status(
+        self,
+        kb_ids: list[str],
+        clause: str,
+        kb_params: tuple[str, ...],
+        kb_rows: Mapping[str, Any],
+        rag_stats: Mapping[str, Any],
+    ) -> None:
+        doc_rows: dict[str, Any] = {}
+        binding_chunks: dict[str, Any] = {}
+        file_chunks: dict[str, Any] = {}
+        if self._table_exists("rag_kb_files") and self._table_exists("catalog_items"):
+            has_files = self._table_exists("files")
+            files_join = "LEFT JOIN files f ON f.url = kf.file_url" if has_files else ""
+            files_select = "MAX(f.last_seen), MAX(f.crawl_time)" if has_files else "NULL, NULL"
+            doc_rows = {
+                str(row[0]): row
+                for row in self._conn.execute(
+                    f"""SELECT kf.kb_id,
+                               COUNT(DISTINCT CASE WHEN c.status = 'ok' THEN c.file_url END),
+                               MAX(c.updated_at), MAX(c.markdown_updated_at), {files_select}
+                        FROM rag_kb_files kf JOIN catalog_items c ON c.file_url = kf.file_url
+                        {files_join} WHERE kf.kb_id IN ({clause}) GROUP BY kf.kb_id""",
+                    kb_params,
+                )
+            }
+            if self._table_exists("file_chunk_sets"):
+                file_chunks = {
+                    str(row[0]): row[1]
+                    for row in self._conn.execute(
+                        f"""SELECT kf.kb_id, MAX(s.updated_at) FROM rag_kb_files kf
+                            JOIN catalog_items c ON c.file_url = kf.file_url AND c.status = 'ok'
+                            LEFT JOIN file_chunk_sets s ON s.file_url = kf.file_url
+                            WHERE kf.kb_id IN ({clause}) GROUP BY kf.kb_id""",
+                        kb_params,
+                    )
+                }
+                if self._table_exists("kb_chunk_bindings"):
+                    binding_chunks = {
+                        str(row[0]): (int(row[1] or 0), row[2])
+                        for row in self._conn.execute(
+                            f"""SELECT b.kb_id, COUNT(*), MAX(s.updated_at)
+                                FROM kb_chunk_bindings b
+                                JOIN rag_kb_files kf ON kf.kb_id = b.kb_id AND kf.file_url = b.file_url
+                                JOIN catalog_items c ON c.file_url = b.file_url AND c.status = 'ok'
+                                JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id AND s.file_url = b.file_url
+                                WHERE b.kb_id IN ({clause}) GROUP BY b.kb_id""",
+                            kb_params,
+                        )
+                    }
+        for kb_id in kb_ids:
+            doc = doc_rows.get(kb_id)
+            binding = binding_chunks.get(kb_id)
+            latest_chunk_at = binding[1] if binding and binding[0] else file_chunks.get(kb_id)
+            rag = rag_stats.get(kb_id)
+            kb_row = kb_rows.get(kb_id)
+            self._source_status[kb_id] = {
+                "current_doc_count": int(doc[1] or 0) if doc else 0,
+                "latest_source_at": _latest_iso(
+                    self, kb_row[6] if kb_row else None, rag[4] if rag else None,
+                    latest_chunk_at, *(doc[2:6] if doc else ()),
+                ),
+            }
+
+    def _prepare_agentic(
+        self,
+        keys: list[tuple[str, str]],
+        clause: str,
+        kb_params: tuple[str, ...],
+    ) -> None:
+        key_set = set(keys)
+        if self._table_exists("agentic_ready_manifests"):
+            for row in self._conn.execute(
+                f"""SELECT manifest_id, kb_id, profile, profile_version, status, output_dir,
+                           artifact_files_json, doc_count, section_count, built_at, source_db,
+                           schema_versions_json, error_message, created_at, updated_at,
+                           publication_id, index_version_id, source_version_kind,
+                           source_version_id, artifact_digest
+                    FROM agentic_ready_manifests WHERE kb_id IN ({clause})""",
+                kb_params,
+            ):
+                key = self._list_key(row[1], row[2])
+                if key in key_set:
+                    self._manifests[key] = self._agentic_manifest_row_to_dict(row)
+        referenced_publication_ids: set[str] = set()
+        if self._table_exists("agentic_ready_slots"):
+            for row in self._conn.execute(
+                f"""SELECT kb_id, profile, active_publication_id, previous_publication_id,
+                           automatic_build_enabled, automatic_publish_enabled,
+                           publication_revision, updated_at
+                    FROM agentic_ready_slots WHERE kb_id IN ({clause})""",
+                kb_params,
+            ):
+                key = self._list_key(row[0], row[1])
+                if key in key_set:
+                    self._slots[key] = row[2:]
+                    referenced_publication_ids.update(
+                        str(publication_id)
+                        for publication_id in row[2:4]
+                        if publication_id
+                    )
+        if self._table_exists("agentic_ready_publications"):
+            publication_columns = self._agentic_ready_publication_columns()
+            attempt_sql = "p.attempt_disposition" if "attempt_disposition" in publication_columns else "''"
+            smoke_sql = "p.smoke_result_json" if "smoke_result_json" in publication_columns else "'{}'"
+            referenced_ids = tuple(sorted(referenced_publication_ids))
+            referenced_clause = ", ".join("?" for _ in referenced_ids)
+            referenced_sql = (
+                f"p.publication_id IN ({referenced_clause}) OR "
+                if referenced_ids
+                else ""
+            )
+            for row in self._conn.execute(
+                f"""SELECT p.publication_id, p.kb_id, p.index_version_id, p.profile,
+                           p.profile_version, p.source_version_kind, p.source_version_id,
+                           p.status, p.output_dir, p.artifact_files_json, p.doc_count,
+                           p.section_count, p.built_at, p.artifact_digest, p.source_db,
+                           p.schema_versions_json, p.error_message, p.validated_at,
+                           p.published_at, {attempt_sql}, p.created_at, p.updated_at,
+                           g.retention_class, g.state, g.marked_at, g.claim_token,
+                           g.quarantine_dir, g.claimed_at, g.lease_expires_at,
+                           g.deleted_at, g.last_error, g.updated_at, {smoke_sql}
+                    FROM agentic_ready_publications p
+                    LEFT JOIN agentic_ready_publication_gc g ON g.publication_id = p.publication_id
+                    WHERE {referenced_sql}p.publication_id IN (
+                        SELECT publication_id FROM (
+                            SELECT publication_id, ROW_NUMBER() OVER (
+                                PARTITION BY kb_id, profile
+                                ORDER BY updated_at DESC, created_at DESC, publication_id DESC
+                            ) AS rn
+                            FROM agentic_ready_publications
+                            WHERE kb_id IN ({clause})
+                              AND status IN ('failed', 'validated')
+                              AND published_at IS NULL
+                        ) WHERE rn = 1
+                    )""",
+                referenced_ids + kb_params,
+            ):
+                key = self._list_key(row[1], row[3])
+                if key not in key_set:
+                    continue
+                publication = self._agentic_publication_row_to_dict(row)
+                self._publications[str(row[0])] = publication
+                if row[7] in {"failed", "validated"} and row[18] is None:
+                    current = self._latest_build_attempts.get(key)
+                    candidate_order = (str(row[21] or ""), str(row[20] or ""), str(row[0]))
+                    current_order = current.get("_order", ("", "", "")) if current else ("", "", "")
+                    if candidate_order > current_order:
+                        self._latest_build_attempts[key] = {
+                            "publication_id": row[0], "status": row[7],
+                            "error_message": row[16] or "", "updated_at": row[21],
+                            "_order": candidate_order,
+                        }
+        for key in keys:
+            attempt = self._latest_build_attempts.get(key)
+            if attempt:
+                attempt.pop("_order", None)
+            else:
+                self._latest_build_attempts[key] = None
+        if self._table_exists("agentic_ready_source_state"):
+            for row in self._conn.execute(
+                f"""SELECT kb_id, profile, event_generation, pending_evaluation_generation,
+                           evaluated_generation, pending_severity, pending_reasons_json,
+                           evaluated_severity, evaluated_reasons_json,
+                           evaluated_source_version_kind, evaluated_source_version_id,
+                           evaluated_at, created_at, updated_at
+                    FROM agentic_ready_source_state WHERE kb_id IN ({clause})""",
+                kb_params,
+            ):
+                key = self._list_key(row[0], row[1])
+                if key in key_set:
+                    self._source_rows[key] = row[2:]
+        required = {"agentic_ready_slots", "agentic_ready_automation", "agentic_ready_source_state"}
+        if all(self._table_exists(table) for table in required):
+            for row in self._conn.execute(
+                f"""SELECT s.kb_id, s.profile, a.automation_state, a.running_generation,
+                           a.last_attempted_generation, a.claim_token, a.claimed_at,
+                           a.lease_expires_at, a.last_attempt_publication_id, a.last_success_at,
+                           a.last_error, a.updated_at, s.automatic_build_enabled,
+                           s.automatic_publish_enabled, ss.event_generation,
+                           ss.pending_evaluation_generation, ss.evaluated_generation
+                    FROM agentic_ready_slots s
+                    LEFT JOIN agentic_ready_automation a ON a.kb_id = s.kb_id AND a.profile = s.profile
+                    LEFT JOIN agentic_ready_source_state ss ON ss.kb_id = s.kb_id AND ss.profile = s.profile
+                    WHERE s.kb_id IN ({clause})""",
+                kb_params,
+            ):
+                key = self._list_key(row[0], row[1])
+                if key in key_set:
+                    self._automation_rows[key] = row[2:]
+        if self._table_exists("agentic_ready_manual_operation_state"):
+            for row in self._conn.execute(
+                f"""SELECT kb_id, profile, operation_kind, operation_state, operation_at
+                    FROM agentic_ready_manual_operation_state WHERE kb_id IN ({clause})""",
+                kb_params,
+            ):
+                key = self._list_key(row[0], row[1])
+                if key in key_set:
+                    self._manual_operations[key] = {"kind": str(row[2]), "state": str(row[3]), "operation_at": str(row[4])}
+        if self._table_exists("kb_ready_index_state"):
+            self._ready_index_ids.update(
+                {str(row[0]): (str(row[1]) if row[1] else None)
+                 for row in self._conn.execute(
+                     f"SELECT kb_id, index_version_id FROM kb_ready_index_state WHERE kb_id IN ({clause})",
+                     kb_params,
+                 )}
+            )
+        for kb_id, _profile in keys:
+            self._ready_index_ids.setdefault(kb_id, None)
+
+    def get_kb_agentic_source_status(self, kb_id: str) -> dict[str, Any] | None:
+        return self._source_status.get(kb_id) if self._prepared else None
+
+    def get_ready_index_version_id(self, kb_id: str) -> str | None:
+        return self._ready_index_ids.get(kb_id)
+
+    def get_agentic_ready_latest_build_attempt(self, kb_id: str, profile: str) -> dict[str, Any] | None:
+        return self._latest_build_attempts.get(self._list_key(kb_id, profile))
+
     @contextmanager
     def transaction(self, *, immediate: bool = False):
         if immediate:
@@ -1945,16 +2474,167 @@ class _KBListStorageView:
                 self._conn.rollback()
 
     def _table_exists(self, table: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ? LIMIT 1",
-            (table,),
-        ).fetchone()
-        return row is not None
+        if self._table_names_cache is None:
+            self._table_names_cache = frozenset(
+                str(row[0])
+                for row in self._conn.execute(
+                    "SELECT name FROM sqlite_schema WHERE type = 'table'"
+                )
+            )
+        return table in self._table_names_cache
 
     def _table_columns(self, table: str) -> frozenset[str]:
         if not self._table_exists(table):
             return frozenset()
         return frozenset(str(row[1]) for row in self._conn.execute(f"PRAGMA table_info({table})"))
+
+    def get_agentic_ready_manual_operation(
+        self,
+        *,
+        kb_id: str,
+        profile: str,
+    ) -> dict[str, str] | None:
+        if self._prepared:
+            return self._manual_operations.get(self._list_key(kb_id, profile))
+        if not self._table_exists("agentic_ready_manual_operation_state"):
+            return None
+        normalized_profile = str(profile or "general").strip().lower() or "general"
+        row = self._conn.execute(
+            """
+            SELECT operation_kind, operation_state, operation_at
+            FROM agentic_ready_manual_operation_state
+            WHERE kb_id = ? AND profile = ?
+            LIMIT 1
+            """,
+            (kb_id, normalized_profile),
+        ).fetchone()
+        if not row:
+            return None
+        return {"kind": str(row[0]), "state": str(row[1]), "operation_at": str(row[2])}
+
+    def get_kb_embedding_metadata_coverage(
+        self,
+        kb_id: str,
+        *,
+        kb_payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if self._prepared:
+            return dict(self._coverage.get(kb_id) or {})
+        coverage = {
+            "bound_file_count": 0,
+            "bound_chunk_count": 0,
+            "ready_embeddings": 0,
+            "missing_embeddings": 0,
+            "invalid_bindings": 0,
+            "binding_error": "",
+        }
+        binding_tables = (
+            "rag_kb_files",
+            "kb_chunk_bindings",
+            "file_chunk_sets",
+            "global_chunks",
+        )
+        if not all(self._table_exists(table) for table in binding_tables):
+            return coverage
+
+        selected_profile_id = str(kb_payload.get("chunk_profile_id") or "").strip()
+        has_embeddings = self._table_exists("chunk_embeddings")
+        embedding_params: tuple[Any, ...] = ()
+        embedding_join = ""
+        ready_count_sql = "0"
+        if has_embeddings:
+            try:
+                identity = resolve_server_embedding_identity(
+                    self,
+                    str(kb_payload.get("embedding_identity_key") or "") or None,
+                )
+                allow_ready = 1
+            except ValueError as exc:
+                identity = SimpleNamespace(
+                    provider=str(kb_payload.get("embedding_provider") or ""),
+                    model=str(kb_payload.get("embedding_model") or ""),
+                    dimension=int(kb_payload.get("embedding_dimension") or 0),
+                    config_fingerprint="",
+                    embedding_identity_key=str(
+                        kb_payload.get("embedding_identity_key") or ""
+                    ),
+                )
+                allow_ready = 0
+                coverage["binding_error"] = str(exc)
+            ready_count_sql = """COALESCE(SUM(CASE
+                       WHEN ? = 1
+                        AND e.embedding_provider = ?
+                        AND e.embedding_model = ?
+                        AND e.dimension = ?
+                        AND e.config_fingerprint = ?
+                        AND e.status = 'ready'
+                       THEN 1 ELSE 0 END), 0)"""
+            embedding_join = """LEFT JOIN chunk_embeddings e
+              ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = ?"""
+            embedding_params = (
+                allow_ready,
+                identity.provider,
+                identity.model,
+                identity.dimension,
+                identity.config_fingerprint,
+            )
+        row = self._conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT b.file_url), COUNT(g.chunk_id),
+                   {ready_count_sql},
+                   (SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?),
+                   (SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?),
+                   COALESCE(MAX(CASE
+                       WHEN kf.file_url IS NULL
+                         OR s.chunk_set_id IS NULL
+                         OR s.file_url != b.file_url
+                         OR (? != '' AND s.profile_id != ?)
+                         OR s.status != 'ready'
+                         OR s.chunk_count <= 0
+                         OR s.chunk_count != COALESCE(counts.actual_count, 0)
+                       THEN 1 ELSE 0 END), 0)
+            FROM kb_chunk_bindings b
+            LEFT JOIN rag_kb_files kf
+              ON kf.kb_id = b.kb_id AND kf.file_url = b.file_url
+            LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+            LEFT JOIN (
+                SELECT chunk_set_id, COUNT(*) AS actual_count
+                FROM global_chunks
+                GROUP BY chunk_set_id
+            ) counts ON counts.chunk_set_id = s.chunk_set_id
+            LEFT JOIN global_chunks g ON g.chunk_set_id = s.chunk_set_id
+            {embedding_join}
+            WHERE b.kb_id = ?
+            """,
+            (
+                *embedding_params,
+                kb_id,
+                kb_id,
+                selected_profile_id,
+                selected_profile_id,
+                *((identity.embedding_identity_key,) if has_embeddings else ()),
+                kb_id,
+            ),
+        ).fetchone()
+        member_count = int(row[3] or 0)
+        binding_count = int(row[4] or 0)
+        invalid_structure = bool(row[5])
+        if (
+            member_count == 0
+            or int(row[0] or 0) != member_count
+            or binding_count != member_count
+            or invalid_structure
+        ):
+            coverage["invalid_bindings"] = 1
+            coverage["binding_error"] = "KB chunk binding metadata is invalid"
+            return coverage
+        coverage["bound_file_count"] = int(row[0] or 0)
+        coverage["bound_chunk_count"] = int(row[1] or 0)
+        coverage["ready_embeddings"] = int(row[2] or 0)
+        coverage["missing_embeddings"] = (
+            coverage["bound_chunk_count"] - coverage["ready_embeddings"]
+        )
+        return coverage
 
     def get_llm_provider(
         self,
@@ -1992,6 +2672,8 @@ class _KBListStorageView:
         return [dict(zip(Storage._LLM_TOKEN_COLS, row)) for row in cur.fetchall()]
 
     def get_chunk_profile(self, profile_id: str) -> dict[str, Any] | None:
+        if self._prepared:
+            return self._chunk_profiles.get(profile_id)
         if not self._table_exists("chunk_profiles"):
             return None
         row = self._conn.execute(
@@ -2021,6 +2703,8 @@ class _KBListStorageView:
         }
 
     def list_kb_chunk_bindings(self, kb_id: str) -> list[dict[str, Any]]:
+        if self._prepared:
+            return self._binding_profiles.get(kb_id, [])
         if (
             not self._table_exists("kb_chunk_bindings")
             or not self._table_exists("file_chunk_sets")
@@ -2081,6 +2765,8 @@ class _KBListStorageView:
         return out
 
     def get_kb_composition_status(self, kb_id: str) -> dict[str, Any]:
+        if self._prepared:
+            return self._composition.get(kb_id, {})
         binding_file_count = 0
         chunk_set_count = 0
         latest_binding_at = None
@@ -2314,6 +3000,8 @@ class _KBListStorageView:
         kb_id: str,
         profile: str = "general",
     ) -> dict[str, Any] | None:
+        if self._prepared:
+            return self._manifests.get(self._list_key(kb_id, profile))
         if not self._table_exists("agentic_ready_manifests"):
             return None
         normalized_profile = str(profile or "general").strip().lower() or "general"
@@ -2332,7 +3020,39 @@ class _KBListStorageView:
         ).fetchone()
         return self._agentic_manifest_row_to_dict(row) if row else None
 
+    def _agentic_publication_row_to_dict(self, row: Any) -> dict[str, Any]:
+        try:
+            artifact_files = json.loads(row[9] or "[]")
+        except Exception:
+            artifact_files = []
+        try:
+            schema_versions = json.loads(row[15] or "{}")
+        except Exception:
+            schema_versions = {}
+        try:
+            smoke_result = json.loads(row[32] or "{}")
+        except Exception:
+            smoke_result = {}
+        return {
+            "publication_id": row[0], "kb_id": row[1], "index_version_id": row[2],
+            "source_version_kind": row[5], "source_version_id": row[6], "profile": row[3],
+            "profile_version": row[4], "status": row[7], "output_dir": row[8] or "",
+            "artifact_files": artifact_files if isinstance(artifact_files, list) else [],
+            "doc_count": row[10] or 0, "section_count": row[11] or 0, "built_at": row[12],
+            "artifact_digest": row[13] or "", "source_db": row[14] or "",
+            "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
+            "smoke_result": smoke_result if isinstance(smoke_result, dict) else {},
+            "error_message": row[16] or "", "validated_at": row[17], "published_at": row[18],
+            "attempt_disposition": row[19] or "", "created_at": row[20], "updated_at": row[21],
+            "retention_class": row[22] or "", "gc_state": row[23] or "", "gc_marked_at": row[24],
+            "gc_claim_token": row[25] or "", "gc_quarantine_dir": row[26] or "",
+            "gc_claimed_at": row[27], "gc_lease_expires_at": row[28], "gc_deleted_at": row[29],
+            "gc_last_error": row[30] or "", "gc_updated_at": row[31],
+        }
+
     def get_agentic_ready_publication(self, publication_id: str) -> dict[str, Any] | None:
+        if self._prepared:
+            return self._publications.get(publication_id)
         if not self._table_exists("agentic_ready_publications"):
             return None
         publication_columns = self._agentic_ready_publication_columns()
@@ -2368,53 +3088,7 @@ class _KBListStorageView:
         ).fetchone()
         if not row:
             return None
-        try:
-            artifact_files = json.loads(row[9] or "[]")
-        except Exception:
-            artifact_files = []
-        try:
-            schema_versions = json.loads(row[15] or "{}")
-        except Exception:
-            schema_versions = {}
-        try:
-            smoke_result = json.loads(row[32] or "{}")
-        except Exception:
-            smoke_result = {}
-        return {
-            "publication_id": row[0],
-            "kb_id": row[1],
-            "index_version_id": row[2],
-            "source_version_kind": row[5],
-            "source_version_id": row[6],
-            "profile": row[3],
-            "profile_version": row[4],
-            "status": row[7],
-            "output_dir": row[8] or "",
-            "artifact_files": artifact_files if isinstance(artifact_files, list) else [],
-            "doc_count": row[10] or 0,
-            "section_count": row[11] or 0,
-            "built_at": row[12],
-            "artifact_digest": row[13] or "",
-            "source_db": row[14] or "",
-            "schema_versions": schema_versions if isinstance(schema_versions, dict) else {},
-            "smoke_result": smoke_result if isinstance(smoke_result, dict) else {},
-            "error_message": row[16] or "",
-            "validated_at": row[17],
-            "published_at": row[18],
-            "attempt_disposition": row[19] or "",
-            "created_at": row[20],
-            "updated_at": row[21],
-            "retention_class": row[22] or "",
-            "gc_state": row[23] or "",
-            "gc_marked_at": row[24],
-            "gc_claim_token": row[25] or "",
-            "gc_quarantine_dir": row[26] or "",
-            "gc_claimed_at": row[27],
-            "gc_lease_expires_at": row[28],
-            "gc_deleted_at": row[29],
-            "gc_last_error": row[30] or "",
-            "gc_updated_at": row[31],
-        }
+        return self._agentic_publication_row_to_dict(row)
 
     def get_agentic_ready_publication_state(
         self,
@@ -2423,8 +3097,8 @@ class _KBListStorageView:
         profile: str = "general",
     ) -> dict[str, Any]:
         normalized_profile = str(profile or "general").strip().lower() or "general"
-        row = None
-        if self._table_exists("agentic_ready_slots"):
+        row = self._slots.get(self._list_key(kb_id, normalized_profile)) if self._prepared else None
+        if not self._prepared and self._table_exists("agentic_ready_slots"):
             row = self._conn.execute(
                 """
                 SELECT active_publication_id, previous_publication_id,
@@ -2483,9 +3157,9 @@ class _KBListStorageView:
             "agentic_ready_automation",
             "agentic_ready_source_state",
         }
-        if not all(self._table_exists(table) for table in required_tables):
+        if not self._prepared and not all(self._table_exists(table) for table in required_tables):
             return default
-        row = self._conn.execute(
+        row = self._automation_rows.get(self._list_key(kb_id, normalized_profile)) if self._prepared else self._conn.execute(
             """
             SELECT a.automation_state, a.running_generation,
                    a.last_attempted_generation, a.claim_token,
@@ -2545,8 +3219,8 @@ class _KBListStorageView:
         profile: str = "general",
     ) -> dict[str, Any]:
         normalized_profile = str(profile or "general").strip().lower() or "general"
-        row = None
-        if self._table_exists("agentic_ready_source_state"):
+        row = self._source_rows.get(self._list_key(kb_id, normalized_profile)) if self._prepared else None
+        if not self._prepared and self._table_exists("agentic_ready_source_state"):
             row = self._conn.execute(
                 """
                 SELECT event_generation, pending_evaluation_generation,
@@ -2978,7 +3652,7 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
             """
         ).fetchall()
         current_embeddings = _current_embeddings_payload(storage=storage)
-        kbs = []
+        filtered_payloads = []
         for row in rows:
             kb_payload = _kb_list_row_payload(row)
             if kb_mode and kb_payload["kb_mode"] != kb_mode:
@@ -2989,12 +3663,22 @@ def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str,
                 or search in (kb_payload["kb_id"] or "").lower()
             ):
                 continue
+            filtered_payloads.append(kb_payload)
+        storage.prepare(filtered_payloads)
+        kbs = []
+        for kb_payload in filtered_payloads:
             payload = _build_kb_embedding_status(
                 storage=storage,
                 kb_payload=_decorate_kb_chunk_profile(storage, kb_payload),
                 current_embeddings=current_embeddings,
             )
-            kbs.append(_decorate_kb_agentic_manifest(storage, payload))
+            kbs.append(
+                _decorate_kb_agentic_manifest(
+                    storage,
+                    payload,
+                    include_ready_build_input=False,
+                )
+            )
         return {"knowledge_bases": kbs, "current_embeddings": current_embeddings}
     finally:
         storage.close()
