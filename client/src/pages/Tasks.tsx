@@ -28,6 +28,7 @@ import { RecategoryForm } from "./tasks/RecategoryForm";
 import { FilterBar } from "./tasks/FilterBar";
 import { TaskCard, statusBadge, formatDate } from "./tasks/TaskCard";
 import { TaskTable } from "./tasks/TaskTable";
+import { TaskMetrics } from "./tasks/TaskMetrics";
 import { Pagination } from "./tasks/Pagination";
 import type { Task, SiteConfig, HistoryTask, LogModal } from "./tasks/Tasks.types";
 
@@ -573,51 +574,21 @@ export default function Tasks() {
                 {logModal.task && (
                   <div className="rounded-lg border border-border bg-muted/30 p-3">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">{t("tasks.log_summary") || "Summary"}</h4>
-                    <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
                       <div className="flex gap-1">
-                        <dt className="text-muted-foreground">{t("tasks.log_status") || "Status"}:</dt>
-                        <dd>{logModal.task.status ? statusBadge(logModal.task.status) : "-"}</dd>
+                        <span className="text-muted-foreground">{t("tasks.log_status") || "Status"}:</span>
+                        <span>{logModal.task.status ? statusBadge(logModal.task.status) : "-"}</span>
                       </div>
                       <div className="flex gap-1">
-                        <dt className="text-muted-foreground">{t("tasks.log_started") || "Started"}:</dt>
-                        <dd>{logModal.task.started_at ? formatDate(logModal.task.started_at) : "-"}</dd>
+                        <span className="text-muted-foreground">{t("tasks.log_started") || "Started"}:</span>
+                        <span>{logModal.task.started_at ? formatDate(logModal.task.started_at) : "-"}</span>
                       </div>
                       <div className="flex gap-1">
-                        <dt className="text-muted-foreground">{t("tasks.log_completed") || "Completed"}:</dt>
-                        <dd>{logModal.task.completed_at ? formatDate(logModal.task.completed_at) : "-"}</dd>
+                        <span className="text-muted-foreground">{t("tasks.log_completed") || "Completed"}:</span>
+                        <span>{logModal.task.completed_at ? formatDate(logModal.task.completed_at) : "-"}</span>
                       </div>
-                      {logModal.task.type === "catalog" ? (
-                        <>
-                          {logModal.task.catalog_scanned != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.scanned") || "Scanned"}:</dt><dd>{logModal.task.catalog_scanned}</dd></div>
-                          )}
-                          {logModal.task.catalog_ok != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.ok") || "OK"}:</dt><dd className="text-emerald-600 dark:text-emerald-400">{logModal.task.catalog_ok}</dd></div>
-                          )}
-                          {logModal.task.catalog_skipped != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.skipped") || "Skipped"}:</dt><dd>{logModal.task.catalog_skipped}</dd></div>
-                          )}
-                          {logModal.task.catalog_errors != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.errors") || "Errors"}:</dt><dd className={logModal.task.catalog_errors > 0 ? "text-red-500" : ""}>{logModal.task.catalog_errors}</dd></div>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          {logModal.task.items_processed != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.log_items_processed") || "Processed"}:</dt><dd>{logModal.task.items_processed}</dd></div>
-                          )}
-                          {logModal.task.items_downloaded != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.downloaded") || "New/Updated"}:</dt><dd>{logModal.task.items_downloaded}</dd></div>
-                          )}
-                          {logModal.task.items_skipped != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.skipped") || "Skipped"}:</dt><dd>{logModal.task.items_skipped}</dd></div>
-                          )}
-                          {logModal.task.errors != null && (
-                            <div className="flex gap-1"><dt className="text-muted-foreground">{t("tasks.stats.errors") || "Errors"}:</dt><dd className={logModal.task.errors.length > 0 ? "text-red-500" : ""}>{logModal.task.errors.length}</dd></div>
-                          )}
-                        </>
-                      )}
-                    </dl>
+                      <TaskMetrics task={logModal.task} t={t} className="contents" labelClassName="text-muted-foreground" />
+                    </div>
                   </div>
                 )}
 
