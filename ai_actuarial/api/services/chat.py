@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from itsdangerous import URLSafeSerializer
 from ai_actuarial.api.client_ip import client_ip
-from ai_actuarial.api.deps import _decode_signed_session, AuthContext
+from ai_actuarial.api.deps import _decode_request_sessions, AuthContext
 from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.config import settings
 from ai_actuarial.storage import Storage
@@ -200,7 +200,15 @@ def _resolve_chat_user(request, auth: AuthContext) -> tuple[str, SessionUpdate |
     if token_id is not None:
         return f"token:{token_id}", None
 
-    session_data = _decode_signed_session(request)
+    _cookie_values, session_payloads = _decode_request_sessions(request)
+    session_data = next(
+        (
+            payload
+            for payload in session_payloads
+            if payload.get("auth_subject") or payload.get("guest_chat_user_id")
+        ),
+        {},
+    )
     session_subject = _normalize_text(session_data.get("auth_subject"))
     if session_subject:
         return f"user:{session_subject}", None

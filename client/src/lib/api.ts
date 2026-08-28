@@ -25,6 +25,8 @@ export function setStoredAuthToken(token: string, persist = false): void {
   window.sessionStorage.setItem("api_write_auth_token", normalized);
   if (persist) {
     window.localStorage.setItem("api_write_auth_token", normalized);
+  } else {
+    window.localStorage.removeItem("api_write_auth_token");
   }
 }
 

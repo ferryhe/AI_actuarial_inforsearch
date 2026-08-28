@@ -29,7 +29,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
-import { ApiError, apiGet, apiPost, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { formatSettingsMutationError } from "@/lib/settings-errors";
 import { MarkdownConversionTab } from "./settings/MarkdownConversionTab";
 
 type SettingsTab = "ai" | "search" | "categories" | "tokens" | "system" | "prompts" | "markdown";
@@ -483,8 +484,8 @@ function AiConfigTab({ lang }: { lang: string }) {
       setApiKeyInput("");
       setBaseUrlInput("");
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.provider_save_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error" });
     } finally {
       setSavingProvider(null);
     }
@@ -497,8 +498,8 @@ function AiConfigTab({ lang }: { lang: string }) {
       await apiDelete(`/api/config/provider-credentials/${providerId}?category=llm`);
       setToast({ message: t("settings.provider_deleted"), type: "success" });
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.provider_delete_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_delete_error"), type: "error" });
     } finally {
       setSavingProvider(null);
     }
@@ -513,8 +514,8 @@ function AiConfigTab({ lang }: { lang: string }) {
         type: "success",
       });
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.provider_save_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error" });
     } finally {
       setMaintenanceBusy(null);
     }
@@ -550,8 +551,8 @@ function AiConfigTab({ lang }: { lang: string }) {
         type: "success",
       });
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.credentials_reencrypt_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.credentials_reencrypt_error"), type: "error" });
     } finally {
       setMaintenanceBusy(null);
     }
@@ -595,10 +596,7 @@ function AiConfigTab({ lang }: { lang: string }) {
       setModelEdits({});
       await fetchData();
     } catch (error) {
-      const message = error instanceof ApiError
-        ? error.detail || error.message || t("settings.models_save_error")
-        : t("settings.models_save_error");
-      setToast({ message, type: "error" });
+      setToast({ message: formatSettingsMutationError(error, t, "settings.models_save_error"), type: "error" });
     } finally {
       setSavingRouting(false);
     }
@@ -1298,8 +1296,8 @@ function PromptsTab() {
       await apiPost("/api/config/ai-models", payload);
       setToast({ message: t("settings.catalog_prompt_saved"), type: "success" });
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.models_save_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.models_save_error"), type: "error" });
       throw new Error("save failed");
     }
   }
@@ -1433,8 +1431,8 @@ function SearchCrawlerTab() {
       setToast({ message: t("settings.defaults_saved"), type: "success" });
       setDirty(false);
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.defaults_save_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.defaults_save_error"), type: "error" });
     } finally {
       setSaving(false);
     }
@@ -1470,8 +1468,8 @@ function SearchCrawlerTab() {
       setToast({ message: t("settings.provider_saved"), type: "success" });
       setSearchKeyEdit(null);
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.provider_save_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_save_error"), type: "error" });
     } finally {
       setSearchKeySaving(false);
     }
@@ -1485,8 +1483,8 @@ function SearchCrawlerTab() {
       await apiDelete(`/api/config/provider-credentials/${providerId}?category=search`);
       setToast({ message: t("settings.provider_deleted"), type: "success" });
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.provider_delete_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.provider_delete_error"), type: "error" });
     } finally {
       setSearchKeySaving(false);
     }
@@ -1716,8 +1714,8 @@ function CategoriesTab() {
       });
       setToast({ message: t("settings.categories_saved"), type: "success" });
       setDirty(false);
-    } catch {
-      setToast({ message: t("settings.categories_save_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.categories_save_error"), type: "error" });
     } finally {
       setSaving(false);
     }
@@ -1913,8 +1911,8 @@ function SystemTab() {
       setDirty(false);
       hasInit.current = false;
       await fetchData();
-    } catch {
-      setToast({ message: t("settings.system_save_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.system_save_error"), type: "error" });
     } finally {
       setSaving(false);
     }
@@ -2071,8 +2069,8 @@ function ApiTokensTab() {
         setToast({ message: t("settings.token_created"), type: "success" });
         await fetchTokens();
       }
-    } catch {
-      setToast({ message: t("settings.token_create_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.token_create_error"), type: "error" });
     } finally {
       setCreating(false);
     }
@@ -2084,8 +2082,8 @@ function ApiTokensTab() {
       await apiPost(`/api/auth/tokens/${tokenId}/revoke`, {});
       setToast({ message: t("settings.token_revoked"), type: "success" });
       await fetchTokens();
-    } catch {
-      setToast({ message: t("settings.token_revoke_error"), type: "error" });
+    } catch (error) {
+      setToast({ message: formatSettingsMutationError(error, t, "settings.token_revoke_error"), type: "error" });
     }
   }
 

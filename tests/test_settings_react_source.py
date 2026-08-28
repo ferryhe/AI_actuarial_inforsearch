@@ -8,11 +8,13 @@ I18N_TS = ROOT / "hooks" / "use-i18n.ts"
 
 def test_settings_model_routing_surfaces_backend_error_detail():
     src = SETTINGS_TSX.read_text(encoding="utf-8")
+    formatter = (ROOT / "lib" / "settings-errors.ts").read_text(encoding="utf-8")
 
-    assert "ApiError" in src
+    assert "formatSettingsMutationError" in src
     assert "catch (error)" in src
-    assert "error instanceof ApiError" in src
-    assert 'error.detail || error.message || t("settings.models_save_error")' in src
+    assert 'formatSettingsMutationError(error, t, "settings.models_save_error")' in src
+    assert "error instanceof ApiError" in formatter
+    assert "formatApiErrorDetail(error)" in formatter
 
 
 def test_settings_model_routing_does_not_round_trip_failed_credentials():

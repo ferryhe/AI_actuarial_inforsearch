@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 from itsdangerous import BadSignature, URLSafeSerializer
+from starlette.requests import cookie_parser
 
 from ai_actuarial.shared_auth import (
     PERMISSIONS,
@@ -34,26 +35,54 @@ def _extract_presented_token(request: Request) -> str | None:
 def _has_presented_auth_material(request: Request) -> bool:
     if _extract_presented_token(request):
         return True
-    cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
-    return bool(request.cookies.get(cookie_name))
+    return bool(_session_cookie_values(request))
 
 
-def _decode_signed_session(request: Request) -> dict[str, Any]:
+def _session_cookie_values(request: Request) -> list[str]:
     cookie_name = str(getattr(request.app.state, "fastapi_session_cookie_name", "session") or "session")
-    cookie_value = request.cookies.get(cookie_name)
+    values: list[str] = []
+    for header in request.headers.getlist("cookie"):
+        for chunk in header.split(";"):
+            parsed = cookie_parser(chunk)
+            if cookie_name in parsed:
+                values.append(parsed[cookie_name])
+    return values
+
+
+def _decode_signed_session(request: Request, cookie_value: str) -> dict[str, Any] | None:
     if not cookie_value:
-        return {}
+        return None
     secret = str(getattr(request.app.state, "fastapi_session_secret", "") or "")
     if not secret:
-        return {}
+        return None
     serializer = URLSafeSerializer(secret, salt="fastapi-session")
     try:
         data = serializer.loads(cookie_value)
     except BadSignature:
-        return {}
+        return None
     except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _decode_request_sessions(request: Request) -> tuple[list[str], list[dict[str, Any]]]:
+    cookie_values = _session_cookie_values(request)
+    session_payloads = [
+        payload
+        for cookie_value in cookie_values
+        if (payload := _decode_signed_session(request, cookie_value)) is not None
+    ]
+    return cookie_values, session_payloads
+
+
+def _session_allows_explicit_token(request: Request) -> bool:
+    cookie_values, session_payloads = _decode_request_sessions(request)
+    session_has_auth_identity = any(
+        "email_user_id" in payload or "auth_token_id" in payload for payload in session_payloads
+    )
+    return not cookie_values or (
+        len(session_payloads) == len(cookie_values) and not session_has_auth_identity
+    )
 
 
 def _validate_token_record(token: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -87,35 +116,74 @@ def _load_auth_context(request: Request) -> AuthContext:
     token: dict[str, Any] | None = None
     storage = Storage(db_path)
     try:
-        session_data = _decode_signed_session(request)
+        _cookie_values, session_payloads = _decode_request_sessions(request)
 
-        email_user_id = session_data.get("email_user_id")
-        if email_user_id is not None:
+        active_email_users: dict[int, dict[str, Any]] = {}
+        for session_data in session_payloads:
+            email_user_id = session_data.get("email_user_id")
+            if email_user_id is None:
+                continue
             try:
                 user = storage.get_user_by_id(int(email_user_id))
             except Exception:
                 user = None
 
             if user and user.get("is_active"):
-                user.pop("password_hash", None)
-                token = {
-                    "id": None,
-                    "subject": user["email"],
-                    "group_name": user["role"],
-                    "is_active": True,
-                    "_email_user_id": user["id"],
-                    "_email_user": user,
-                }
+                active_email_users[int(user["id"])] = user
 
-        if not token:
+        active_session_tokens: dict[int, dict[str, Any]] = {}
+        for session_data in session_payloads:
             token_id = session_data.get("auth_token_id")
-            if token_id is not None:
-                try:
-                    token = storage.get_auth_token_by_id(int(token_id))
-                except Exception:
-                    token = None
+            if token_id is None:
+                continue
+            try:
+                session_token = storage.get_auth_token_by_id(int(token_id))
+            except Exception:
+                session_token = None
+            session_token = _validate_token_record(session_token)
+            if session_token:
+                active_session_tokens[int(session_token["id"])] = session_token
 
-        if not token:
+        ambiguous_email_identity = len(active_email_users) > 1
+        ambiguous_token_identity = len(active_session_tokens) > 1
+        email_user = next(iter(active_email_users.values())) if len(active_email_users) == 1 else None
+        email_can_write_config = bool(
+            email_user and "config.write" in permissions_for_group(str(email_user["role"]))
+        )
+        ambiguous_cross_mode_identity = bool(
+            email_user and active_session_tokens and not email_can_write_config
+        )
+
+        # A valid admin email session remains authoritative over an older
+        # token-mode session. A non-admin email identity cannot silently replace
+        # a concurrently active token identity, so that combination fails closed.
+        if email_user and not ambiguous_cross_mode_identity:
+            email_user.pop("password_hash", None)
+            token = {
+                "id": None,
+                "subject": email_user["email"],
+                "group_name": email_user["role"],
+                "is_active": True,
+                "_email_user_id": email_user["id"],
+                "_email_user": email_user,
+            }
+        elif (
+            not ambiguous_email_identity
+            and not ambiguous_cross_mode_identity
+            and len(active_session_tokens) == 1
+        ):
+            token = next(iter(active_session_tokens.values()))
+
+        # A missing cookie, or a fully valid non-auth session (for example a
+        # guest-chat session), may still use explicit token auth. Invalid signed
+        # material and unresolved session identities fail closed.
+        if (
+            not token
+            and not ambiguous_email_identity
+            and not ambiguous_token_identity
+            and not ambiguous_cross_mode_identity
+            and _session_allows_explicit_token(request)
+        ):
             presented = _extract_presented_token(request)
             if presented:
                 token = storage.get_auth_token_by_hash(hash_token(presented))
