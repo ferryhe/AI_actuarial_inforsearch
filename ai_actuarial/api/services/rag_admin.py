@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import stat
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterable, Mapping
@@ -1208,12 +1209,23 @@ def _build_agentic_manifest_status(
 def _decorate_kb_agentic_manifest(storage: Storage, payload: dict[str, Any]) -> dict[str, Any]:
     kb_id = _norm(payload.get("kb_id"))
     profile = _manifest_profile(payload.get("manifest_profile") or "general")
+    if _storage_has_table(storage, "kb_ready_index_state"):
+        from .ready_data_publication import read_public_ready_data_snapshot
+
+        ready_data_snapshot = read_public_ready_data_snapshot(
+            storage,
+            kb_id=kb_id,
+            profile=profile,
+        )
+        manifest = ready_data_snapshot["manifest"]
+    else:
+        manifest = _build_agentic_manifest_status(
+            storage=storage,
+            kb_id=kb_id,
+            profile=profile,
+        )
     payload["manifest_profile"] = profile
-    payload["agentic_ready_manifest"] = _build_agentic_manifest_status(
-        storage=storage,
-        kb_id=kb_id,
-        profile=profile,
-    )
+    payload["agentic_ready_manifest"] = manifest
     payload["agentic_ready_available"] = bool(payload["agentic_ready_manifest"].get("usable"))
     payload["agentic_fallback_mode"] = payload["agentic_ready_manifest"].get("fallback_mode") or "standard"
     return payload
@@ -1918,6 +1930,19 @@ class _KBListStorageView:
 
     def close(self) -> None:
         self._conn.close()
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = False):
+        if immediate:
+            raise ValueError("KB list storage only supports read transactions")
+        started = not self._conn.in_transaction
+        if started:
+            self._conn.execute("BEGIN")
+        try:
+            yield
+        finally:
+            if started:
+                self._conn.rollback()
 
     def _table_exists(self, table: str) -> bool:
         row = self._conn.execute(
@@ -2872,11 +2897,22 @@ def _kb_list_db_has_user_schema_objects(db_path: str) -> bool:
 
 def _open_kb_list_read_only_connection(db_path: str) -> sqlite3.Connection:
     path = Path(db_path)
+    uri = f"{path.resolve().as_uri()}?mode=ro"
     wal_path = Path(f"{path}-wal")
     immutable = not wal_path.exists() or wal_path.stat().st_size == 0
-    uri = f"{path.resolve().as_uri()}?mode=ro"
     if immutable:
-        uri = f"{uri}&immutable=1"
+        immutable_conn = sqlite3.connect(f"{uri}&immutable=1", uri=True)
+        immutable_conn.execute("PRAGMA query_only=ON")
+        ready_data_schema = immutable_conn.execute(
+            """
+            SELECT 1 FROM sqlite_schema
+            WHERE type = 'table' AND name = 'kb_ready_index_state'
+            LIMIT 1
+            """
+        ).fetchone()
+        if not ready_data_schema or _kb_list_read_schema_problem(immutable_conn) is not None:
+            return immutable_conn
+        immutable_conn.close()
     conn = sqlite3.connect(uri, uri=True)
     conn.execute("PRAGMA query_only=ON")
     return conn

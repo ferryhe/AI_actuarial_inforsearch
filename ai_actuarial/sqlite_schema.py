@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 9
+CURRENT_SQLITE_SCHEMA_VERSION = 10
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -28,6 +28,7 @@ _PARTIAL_MIGRATION_TABLES = frozenset(
 _AUTO_BACKFILL_TABLES = frozenset(
     {
         "agentic_ready_automation",
+        "agentic_ready_manual_operation_state",
         "agentic_ready_automation_lock",
         "agentic_ready_publication_gc",
         "agentic_ready_publications",
@@ -976,6 +977,33 @@ def _accept_version_8_source(
     )
 
 
+def _add_agentic_ready_manual_operation_state_v10(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agentic_ready_manual_operation_state (
+            kb_id TEXT NOT NULL,
+            profile TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            operation_state TEXT NOT NULL,
+            operation_at TEXT NOT NULL,
+            PRIMARY KEY(kb_id, profile),
+            CHECK(operation_kind IN ('publish', 'rollback')),
+            CHECK(operation_state IN ('succeeded', 'failed')),
+            FOREIGN KEY(kb_id) REFERENCES rag_knowledge_bases(kb_id) ON DELETE CASCADE
+        )
+        """
+    )
+    _set_user_version(conn, 10)
+
+
+def _accept_version_9_source(
+    _conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    valid, _, _ = _schema_validation(tables, tolerate_backfill=True)
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -1029,6 +1057,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_kb_index_contract_v9",
         apply=_add_kb_index_contract_v9,
         source_validator=_accept_version_8_source,
+    ),
+    SQLiteSchemaMigration(
+        version=10,
+        migration_id="add_agentic_ready_manual_operation_state_v10",
+        apply=_add_agentic_ready_manual_operation_state_v10,
+        source_validator=_accept_version_9_source,
     ),
 )
 

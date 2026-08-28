@@ -35,6 +35,147 @@ def _run_typescript(script: str) -> None:
     )
 
 
+def test_publication_projection_is_authoritative_for_current_serving_state() -> None:
+    _run_typescript(
+        """
+        const assert = (await import("node:assert/strict")).default;
+        const imported = await import("./client/src/lib/ready-data-ui-state.ts");
+        const {
+          isReadyDataAutomationBusy,
+          readyDataOperationKindTranslationKey,
+          resolveReadyDataOperationState,
+          resolveReadyDataServingState,
+        } = imported.default || imported;
+
+        const operationFailedAfterActivePublish = {
+          kb_id: "kb-serving",
+          profile: "general",
+          status: "stale",
+          usable: false,
+          serving_stale: true,
+          stale_reason: "ready_data operation failed",
+          error_message: "ready_data operation failed",
+          automation_state: "failed",
+          last_error: "ready_data operation failed",
+          latest_operation_kind: "publish",
+          latest_operation_state: "succeeded",
+          latest_operation_error: "",
+          publication_state: {
+            serving_status: "ready",
+            serving_usable: true,
+            serving_stale: false,
+            active_publication_id: "pub-active",
+            previous_publication_id: "pub-previous",
+            active_publication: { publication_id: "pub-active", status: "active" },
+            previous_publication: { publication_id: "pub-previous", status: "previous" },
+            latest_operation_kind: "publish",
+            latest_operation_state: "succeeded",
+            latest_operation_error: "",
+          },
+        };
+        assert.deepEqual(resolveReadyDataServingState(operationFailedAfterActivePublish), {
+          status: "ready",
+          usable: true,
+          stale: false,
+          source: "publication_state",
+        });
+        assert.deepEqual(resolveReadyDataOperationState(operationFailedAfterActivePublish), {
+          kind: "publish",
+          status: "succeeded",
+          error: "",
+          at: null,
+          source: "publication_state",
+        });
+
+        const failedAutomation = {
+          ...operationFailedAfterActivePublish,
+          latest_operation_kind: "automation",
+          latest_operation_state: "failed",
+          latest_operation_error: "ready_data operation failed",
+          publication_state: {
+            ...operationFailedAfterActivePublish.publication_state,
+            latest_operation_kind: "automation",
+            latest_operation_state: "failed",
+            latest_operation_error: "ready_data operation failed",
+          },
+        };
+        assert.deepEqual(resolveReadyDataOperationState(failedAutomation), {
+          kind: "automation",
+          status: "failed",
+          error: "ready_data operation failed",
+          at: null,
+          source: "publication_state",
+        });
+
+        const awaitingManualConfirmation = {
+          ...operationFailedAfterActivePublish,
+          last_error: "empty ready_data requires manual publish confirmation",
+          latest_operation_kind: "build",
+          latest_operation_state: "awaiting_manual_confirmation",
+          latest_operation_error: "",
+          publication_state: {
+            ...operationFailedAfterActivePublish.publication_state,
+            last_error: "empty ready_data requires manual publish confirmation",
+            latest_operation_kind: "build",
+            latest_operation_state: "awaiting_manual_confirmation",
+            latest_operation_error: "",
+          },
+        };
+        assert.equal(
+          resolveReadyDataOperationState(awaitingManualConfirmation).error,
+          "empty ready_data requires manual publish confirmation",
+        );
+        assert.equal(
+          resolveReadyDataOperationState({
+            ...awaitingManualConfirmation,
+            publication_state: undefined,
+          }).error,
+          "empty ready_data requires manual publish confirmation",
+        );
+
+        assert.equal(isReadyDataAutomationBusy("pending"), true);
+        assert.equal(isReadyDataAutomationBusy("running"), true);
+        assert.equal(isReadyDataAutomationBusy("building"), true);
+        assert.equal(isReadyDataAutomationBusy("failed"), false);
+        assert.equal(isReadyDataAutomationBusy("succeeded"), false);
+        assert.equal(readyDataOperationKindTranslationKey("build"), "knowledge.ready_operation_build");
+        assert.equal(readyDataOperationKindTranslationKey("publish"), "knowledge.ready_operation_publish");
+        assert.equal(readyDataOperationKindTranslationKey("rollback"), "knowledge.ready_operation_rollback");
+        assert.equal(readyDataOperationKindTranslationKey("automation"), "knowledge.ready_operation_automation");
+        assert.equal(readyDataOperationKindTranslationKey("unexpected"), "knowledge.ready_operation_none");
+
+        const softStaleActive = {
+          ...operationFailedAfterActivePublish,
+          publication_state: {
+            ...operationFailedAfterActivePublish.publication_state,
+            serving_status: "stale",
+            serving_usable: true,
+            serving_stale: true,
+          },
+        };
+        assert.deepEqual(resolveReadyDataServingState(softStaleActive), {
+          status: "stale",
+          usable: true,
+          stale: true,
+          source: "publication_state",
+        });
+
+        assert.deepEqual(resolveReadyDataServingState({
+          kb_id: "legacy-kb",
+          profile: "general",
+          status: "ready",
+          usable: true,
+          serving_stale: false,
+        }), {
+          status: "ready",
+          usable: true,
+          stale: false,
+          source: "legacy_manifest",
+        });
+        """
+    )
+
+
 def test_delayed_ready_data_mutations_cannot_cross_route_epoch() -> None:
     _run_typescript(
         """
@@ -977,6 +1118,7 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
           isReadyDataKnowledgeListManifestAuthoritative,
           mergeReadyDataKnowledgeList,
           mergeReadyDataKnowledgeManifest,
+          resolveReadyDataOperationState,
           selectReadyDataManifestUpdate,
           selectReadyDataMutationProfile,
           shouldPollReadyDataManifest,
@@ -1004,6 +1146,10 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
           last_attempt_publication_id: "attempt-old",
           last_success_at: "2026-08-20T10:00:00Z",
           last_error: null,
+          latest_operation_kind: "publish",
+          latest_operation_state: "succeeded",
+          latest_operation_at: "2026-08-20T10:00:00Z",
+          latest_operation_error: "",
           current_ready_index_version_id: "index-current-old",
           smoke_status: "passed",
           smoke_checked_at: "2026-08-20T10:01:00Z",
@@ -1014,6 +1160,10 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
           artifact_digest: "digest-active",
           publication_state: {
             publication_revision: 5,
+            latest_operation_kind: "publish",
+            latest_operation_state: "succeeded",
+            latest_operation_at: "2026-08-20T10:00:00Z",
+            latest_operation_error: "",
             active_publication_id: "pub-active",
             previous_publication_id: "pub-previous",
             active_publication: {
@@ -1048,6 +1198,10 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
           last_attempt_publication_id: "attempt-new",
           last_success_at: "2026-08-20T10:02:00Z",
           last_error: "ready_data source evaluation is pending",
+          latest_operation_kind: "build",
+          latest_operation_state: "running",
+          latest_operation_at: "2026-08-20T10:02:00Z",
+          latest_operation_error: "",
           current_ready_index_version_id: "index-current-new",
           smoke_status: "failed",
           smoke_checked_at: "2026-08-20T10:03:00Z",
@@ -1079,11 +1233,19 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
           "last_attempt_publication_id",
           "last_success_at",
           "last_error",
+          "latest_operation_kind",
+          "latest_operation_state",
+          "latest_operation_at",
+          "latest_operation_error",
           "current_ready_index_version_id",
           "smoke_status",
           "smoke_checked_at",
         ]) assert.deepEqual(running[key], compactRunning[key], key);
-        assert.equal(running.publication_state, full.publication_state);
+        assert.equal(running.publication_state.active_publication, full.publication_state.active_publication);
+        assert.equal(running.publication_state.previous_publication, full.publication_state.previous_publication);
+        assert.equal(running.publication_state.latest_operation_kind, "build");
+        assert.equal(running.publication_state.latest_operation_state, "running");
+        assert.equal(running.publication_state.latest_operation_at, "2026-08-20T10:02:00Z");
         assert.equal(running.authoritative_source_version_id, "source-authoritative");
         assert.equal(running.observed_index_version_id, "index-observed");
         assert.equal(running.artifact_digest, "digest-active");
@@ -1101,6 +1263,10 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
           pending_generation: null,
           running_generation: null,
           last_error: null,
+          latest_operation_kind: "build",
+          latest_operation_state: "succeeded",
+          latest_operation_at: "2026-08-20T10:04:00Z",
+          latest_operation_error: "",
         };
         const succeeded = selectReadyDataManifestUpdate(
           running,
@@ -1110,7 +1276,16 @@ def test_same_revision_dynamic_state_and_profile_scoped_list_ordering() -> None:
         );
         assert.equal(succeeded.automation_state, "succeeded");
         assert.equal(succeeded.serving_stale, false);
-        assert.equal(succeeded.publication_state, full.publication_state);
+        assert.equal(succeeded.publication_state.active_publication, full.publication_state.active_publication);
+        assert.equal(succeeded.publication_state.latest_operation_kind, "build");
+        assert.equal(succeeded.publication_state.latest_operation_state, "succeeded");
+        assert.deepEqual(resolveReadyDataOperationState(succeeded), {
+          kind: "build",
+          status: "succeeded",
+          error: "",
+          at: "2026-08-20T10:04:00Z",
+          source: "publication_state",
+        });
         assert.equal(shouldPollReadyDataManifest(succeeded, 0, 12), false);
 
         const generalRevisionEight = {

@@ -19,6 +19,9 @@ from ai_actuarial.api.services.rag_admin import (
 from ai_actuarial.api.services.ready_data_automation import (
     run_ready_data_automation_once,
 )
+from ai_actuarial.api.services.ready_data_publication import (
+    read_public_ready_data_snapshot,
+)
 from ai_actuarial.rag.knowledge_base import KnowledgeBaseManager
 from ai_actuarial.rag.kb_index import resolve_kb_bound_chunks
 from ai_actuarial.storage import Storage
@@ -162,6 +165,7 @@ def _record_candidate(
     status: str = "validated",
     source_version_id: str | None = None,
     index_version_id: str = "idx-test",
+    empty: bool = False,
 ) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
@@ -189,23 +193,23 @@ def _record_candidate(
             status=status,
             output_dir=str(output_dir) if status == "validated" else "",
             artifact_files=artifact_files,
-            doc_count=1,
-            section_count=1,
+            doc_count=0 if empty else 1,
+            section_count=0 if empty else 1,
             built_at="2026-08-19T00:00:00+00:00",
             artifact_digest=artifact_digest,
             source_db=db_path,
             smoke_result={
                 "contract_version": "ready-data-staging-smoke.v1",
-                "status": "passed",
+                "status": "skipped_empty" if empty else "passed",
                 "checked_at": "2026-08-19T00:00:00+00:00",
                 "elapsed_ms": 1,
-                "query_source": "title",
-                "query": "Synthetic automation candidate",
-                "query_sha256": "a" * 64,
-                "matched_doc_id": "doc-auto",
-                "matched_file_url": "https://example.com/auto",
+                "query_source": "" if empty else "title",
+                "query": "" if empty else "Synthetic automation candidate",
+                "query_sha256": "" if empty else "a" * 64,
+                "matched_doc_id": "" if empty else "doc-auto",
+                "matched_file_url": "" if empty else "https://example.com/auto",
                 "failure_reason": "",
-                "catalog_doc_count": 1,
+                "catalog_doc_count": 0 if empty else 1,
             },
             error_message="build failed" if status == "failed" else "",
         )
@@ -495,6 +499,81 @@ def test_enabling_publish_revalidates_and_publishes_existing_candidate(tmp_path:
     assert second["publication_state"]["active_publication_id"] == first[
         "candidate_publication"
     ]["publication_id"]
+    storage = Storage(str(db_path))
+    try:
+        automation = storage.get_agentic_ready_automation_state(
+            kb_id="kb-auto",
+            profile="general",
+        )
+        snapshot = read_public_ready_data_snapshot(
+            storage,
+            kb_id="kb-auto",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert automation["last_attempt_publication_id"] == first[
+        "candidate_publication"
+    ]["publication_id"]
+    assert snapshot["publication_state"]["latest_operation_kind"] == "publish"
+    assert snapshot["publication_state"]["latest_operation_state"] == "succeeded"
+
+
+def test_manual_operation_evidence_does_not_unblock_empty_candidate_confirmation(
+    tmp_path: Path,
+) -> None:
+    db_path = _setup_pending(tmp_path, publish=True)
+    storage = Storage(str(db_path))
+    try:
+        claimed = storage.claim_next_agentic_ready_automation(claim_token="empty-build")
+        assert claimed and claimed["mode"] == "build"
+        index_version_id = storage._conn.execute(
+            "SELECT index_version_id FROM kb_ready_index_state WHERE kb_id = 'kb-auto'"
+        ).fetchone()[0]
+        candidate = _record_candidate(
+            str(db_path),
+            kb_id="kb-auto",
+            generation=int(claimed["generation"]),
+            index_version_id=str(index_version_id),
+            source_version_id="empty-source",
+            empty=True,
+        )
+        finalized = storage.finalize_agentic_ready_automation_build(
+            kb_id="kb-auto",
+            profile="general",
+            generation=int(claimed["generation"]),
+            claim_token=str(claimed["claim_token"]),
+            publication_id=str(candidate["publication_id"]),
+            require_manual_publish_confirmation=True,
+        )
+        assert finalized["action"] == "awaiting_manual_confirmation"
+        assert storage.claim_next_agentic_ready_automation() is None
+
+        storage.record_agentic_ready_manual_operation(
+            kb_id="kb-auto",
+            profile="general",
+            operation_kind="rollback",
+            operation_state="failed",
+        )
+
+        assert storage.claim_next_agentic_ready_automation() is None
+        automation = storage.get_agentic_ready_automation_state(
+            kb_id="kb-auto",
+            profile="general",
+        )
+        assert (
+            automation["last_error"]
+            == "empty ready_data requires manual publish confirmation"
+        )
+        manual_operation = storage.get_agentic_ready_manual_operation(
+            kb_id="kb-auto",
+            profile="general",
+        )
+        assert manual_operation
+        assert manual_operation["kind"] == "rollback"
+        assert manual_operation["state"] == "failed"
+    finally:
+        storage.close()
 
 
 def test_build_and_publish_preserves_previous_slot_and_settles_generation(tmp_path: Path) -> None:

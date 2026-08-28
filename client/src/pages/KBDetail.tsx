@@ -27,14 +27,18 @@ import { cn } from "@/lib/utils";
 import {
   captureReadyDataRequest,
   captureReadyDataRoute,
+  isReadyDataAutomationBusy,
   isReadyDataRequestCurrent,
   isReadyDataRouteCurrent,
   mergeConfirmedReadyDataAutomationForKb,
   normalizeReadyAutomationStatus,
+  readyDataOperationKindTranslationKey,
   readyDataManifestAfterLoad,
   readyDataRollbackErrorKey,
+  resolveReadyDataOperationState,
   resolveReadyDataManifestEpisode,
   resolveReadyDataSafeMutationManifestEpisode,
+  resolveReadyDataServingState,
   runReadyDataRouteMutation,
   runReadyDataRouteRequest,
   scheduleReadyDataPoll,
@@ -49,6 +53,7 @@ import type {
   AgenticReadyManifest,
   ReadyDataAutomationResponse,
   ReadyDataManifestEpisode,
+  ReadyDataServingState,
 } from "@/lib/ready-data-ui-state";
 import { useTranslation } from "@/components/Layout";
 import { ApiError, apiGet, apiPost, apiPut, apiDelete, formatApiErrorDetail } from "@/lib/api";
@@ -213,13 +218,6 @@ function getReadyPublicMessageLabel(value: string | null | undefined, t: Transla
   }
 }
 
-function getManifestDetail(t: Translate, detail?: string | null) {
-  const localizedDetail = getReadyPublicMessageLabel(detail, t);
-  return localizedDetail
-    ? formatTranslated(t, "knowledge.manifest_detail", { detail: localizedDetail })
-    : "";
-}
-
 function getManifestFallbackMode(t: Translate, manifest?: AgenticReadyManifest | null) {
   switch (manifest?.fallback_mode) {
     case "agentic": return t("knowledge.manifest_agentic_mode");
@@ -228,58 +226,50 @@ function getManifestFallbackMode(t: Translate, manifest?: AgenticReadyManifest |
   }
 }
 
-function getManifestFallbackMessage(manifest: AgenticReadyManifest | null | undefined, t: Translate) {
+function getManifestFallbackMessage(
+  manifest: AgenticReadyManifest | null | undefined,
+  serving: ReadyDataServingState,
+  t: Translate,
+) {
   const rawStatus = manifest?.status || "missing";
   const fallback = getManifestFallbackMode(t, manifest);
-  if (rawStatus === "building") return t("knowledge.manifest_building_message");
-  const status = normalizeReadyServingStatus(
-    rawStatus,
-    Boolean(manifest?.usable),
-    Boolean(manifest?.serving_stale),
-  );
-  if (status === "ready" && manifest?.usable) return "";
-  if (status === "unavailable") return t("knowledge.manifest_unavailable_message");
-  if (status === "failed") {
-    return formatTranslated(t, "knowledge.manifest_failed_fallback", {
-      detail: getManifestDetail(t, manifest?.error_message),
-      fallback,
-    });
+  if (serving.usable) {
+    return serving.stale ? t("knowledge.manifest_stale_agentic_serving") : "";
   }
-  if (status === "stale") {
-    if (manifest?.usable && manifest.fallback_mode === "agentic") {
-      return formatTranslated(t, "knowledge.manifest_stale_agentic_serving", {
-        detail: getManifestDetail(t, manifest?.stale_reason),
-      });
-    }
+  if (rawStatus === "building") return t("knowledge.manifest_building_message");
+  if (serving.status === "unavailable") return t("knowledge.manifest_unavailable_message");
+  if (serving.status === "failed") {
+    return formatTranslated(t, "knowledge.manifest_failed_fallback", { detail: "", fallback });
+  }
+  if (serving.status === "stale") {
     return formatTranslated(t, "knowledge.manifest_stale_fallback", {
-      detail: getManifestDetail(t, manifest?.stale_reason),
+      detail: "",
       fallback,
     });
   }
   return formatTranslated(t, "knowledge.manifest_missing_fallback", { fallback });
 }
 
-function getManifestActionLabel(manifest: AgenticReadyManifest | null | undefined, t: Translate) {
+function getManifestActionLabel(
+  manifest: AgenticReadyManifest | null | undefined,
+  automationState: string,
+  t: Translate,
+) {
+  if (isReadyDataAutomationBusy(automationState)) {
+    return t("knowledge.manifest_building_action");
+  }
   const status = manifest?.status || "missing";
   if (status === "ready" || status === "stale" || status === "failed") return t("knowledge.manifest_rebuild");
-  if (status === "building") return t("knowledge.manifest_building_action");
   return t("knowledge.manifest_build");
 }
 
-function normalizeReadyServingStatus(
-  status: unknown,
-  hasActive = false,
-  stale = false,
-): AgenticReadyManifest["status"] {
-  if (status === "building") return hasActive ? (stale ? "stale" : "ready") : "missing";
-  if (["missing", "ready", "stale", "failed", "unavailable"].includes(String(status))) {
-    return status as AgenticReadyManifest["status"];
+function getServingStatusLabel(serving: ReadyDataServingState, t: Translate) {
+  if (serving.usable) {
+    return serving.stale
+      ? t("knowledge.ready_serving_usable_stale")
+      : t("knowledge.ready_serving_usable");
   }
-  return "unavailable";
-}
-
-function getServingStatusLabel(status: string, t: Translate) {
-  switch (status) {
+  switch (serving.status) {
     case "ready": return t("knowledge.ready_serving_ready");
     case "stale": return t("knowledge.ready_serving_stale");
     case "failed":
@@ -1299,22 +1289,21 @@ export default function KBDetail() {
   const manifest = effectiveManifest;
   const activePublication = manifest?.publication_state?.active_publication;
   const previousPublication = manifest?.publication_state?.previous_publication;
-  const manifestStatus = normalizeReadyServingStatus(
-    manifest?.status,
-    Boolean(activePublication),
-    Boolean(manifest?.serving_stale),
-  );
+  const manifestServing = resolveReadyDataServingState(manifest);
+  const manifestStatus = manifestServing.status;
   const manifestProfile = manifest
     ? manifest.profile || meta.manifest_profile || t("knowledge.manifest_default_profile")
     : meta.manifest_profile || t("knowledge.manifest_default_profile");
   const manifestDocCount = manifest ? manifest.doc_count ?? 0 : 0;
   const manifestSectionCount = manifest ? manifest.section_count ?? 0 : 0;
-  const manifestMessage = getManifestFallbackMessage(manifest, t);
+  const manifestMessage = getManifestFallbackMessage(manifest, manifestServing, t);
   const manifestAutomationState = normalizeReadyAutomationStatus(
     manifest?.automation_state,
     manifest?.status,
   );
-  const manifestBusy = manifestBuilding || publishRunning || ["pending", "running", "building"].includes(manifestAutomationState);
+  const manifestAutomationBusy = isReadyDataAutomationBusy(manifestAutomationState);
+  const manifestOperation = resolveReadyDataOperationState(manifest);
+  const manifestBusy = manifestBuilding || publishRunning || manifestAutomationBusy;
   const currentReadyIndexVersion = manifest?.current_ready_index_version_id
     || activePublication?.current_ready_index_version_id;
   const rollbackAvailable = Boolean(
@@ -1353,6 +1342,7 @@ export default function KBDetail() {
               <BookOpen className="w-6 h-6" strokeWidth={1.8} />
             </div>
             <div className="flex-1 min-w-0">
+              <h1 className="text-xl font-serif font-bold tracking-tight" data-testid="text-kb-name">{meta.name}</h1>
               {canManageKnowledge && (
                 <>
                   <input
@@ -1361,7 +1351,7 @@ export default function KBDetail() {
                       setEditName(e.target.value);
                       setHasEdits(true);
                     }}
-                    className="text-xl font-serif font-bold tracking-tight bg-transparent border-none outline-none w-full focus:ring-0 p-0"
+                    className="mt-2 text-sm bg-transparent border border-border rounded-md outline-none w-full focus:ring-1 focus:ring-primary px-2 py-1"
                     data-testid="input-kb-edit-name"
                   />
                   <textarea
@@ -1413,7 +1403,6 @@ export default function KBDetail() {
               )}
               {!canManageKnowledge && (
                 <>
-                  <h1 className="text-xl font-serif font-bold tracking-tight" data-testid="text-kb-name-readonly">{meta.name}</h1>
                   {meta.description && (
                     <p className="mt-2 text-sm text-muted-foreground leading-relaxed" data-testid="text-kb-desc-readonly">{meta.description}</p>
                   )}
@@ -1472,17 +1461,17 @@ export default function KBDetail() {
                     data-testid="badge-agentic-manifest-detail"
                   >
                     <span data-testid="ready-data-serving-status">
-                      {t("knowledge.ready_serving_status")}: {getServingStatusLabel(manifestStatus, t)}
+                      {t("knowledge.ready_serving_status")}: {getServingStatusLabel(manifestServing, t)}
                     </span>
                   </span>
                   <span
                     className={cn(
                       "inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full",
-                      getAutomationStatusClass(manifestAutomationState)
+                      getAutomationStatusClass(manifestOperation.status)
                     )}
                     data-testid="ready-data-automation-status"
                   >
-                    {t("knowledge.ready_automation_status")}: {getAutomationStatusLabel(manifestAutomationState, t)}
+                    {t("knowledge.ready_operation_status")}: {t(readyDataOperationKindTranslationKey(manifestOperation.kind))} · {getAutomationStatusLabel(manifestOperation.status, t)}
                   </span>
                   <span className="text-[11px] text-muted-foreground font-mono">
                     {t("knowledge.manifest_profile_short")}: {manifestProfile}
@@ -1505,9 +1494,9 @@ export default function KBDetail() {
                   {manifestBuilding ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <RefreshCw className={cn("w-4 h-4", manifestStatus === "building" && "animate-spin")} />
+                    <RefreshCw className={cn("w-4 h-4", manifestAutomationBusy && "animate-spin")} />
                   )}
-                  {manifestBuilding ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, t)}
+                  {manifestBuilding ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, manifestAutomationState, t)}
                 </button>
               )}
             </div>
@@ -1548,7 +1537,7 @@ export default function KBDetail() {
             <div className="mt-4 grid gap-3 border-t border-border pt-4 text-[11px] sm:grid-cols-2 lg:grid-cols-3">
               <div><span className="text-muted-foreground">{t("knowledge.ready_last_attempt")}</span><p className="font-mono break-all">{displayValue(manifest?.last_attempt_publication_id)}</p></div>
               <div><span className="text-muted-foreground">{t("knowledge.ready_last_success")}</span><p>{displayTime(manifest?.last_success_at)}</p></div>
-              <div><span className="text-muted-foreground">{t("knowledge.ready_last_error")}</span><p>{displayValue(getReadyPublicMessageLabel(manifest?.last_error, t))}</p></div>
+              <div data-testid="ready-data-last-operation-error"><span className="text-muted-foreground">{t("knowledge.ready_last_error")}</span><p>{displayValue(getReadyPublicMessageLabel(manifestOperation.error, t))}</p></div>
               <div><span className="text-muted-foreground">{t("knowledge.ready_active_publication")}</span><p className="font-mono break-all">{displayValue(activePublication?.publication_id)}</p></div>
               <div><span className="text-muted-foreground">{t("knowledge.ready_previous_publication")}</span><p className="font-mono break-all">{displayValue(previousPublication?.publication_id)}</p></div>
               <div><span className="text-muted-foreground">{t("knowledge.ready_authoritative_source")}</span><p className="font-mono break-all">{displayValue(activePublication?.authoritative_source_version_kind)} / {displayValue(activePublication?.authoritative_source_version_id)}</p></div>
