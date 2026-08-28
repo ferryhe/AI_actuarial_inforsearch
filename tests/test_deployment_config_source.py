@@ -77,3 +77,24 @@ def test_committed_sites_yaml_uses_safe_public_security_defaults():
     assert features["content_security_policy"]
     assert "default-src 'self'" in features["content_security_policy"]
     assert server["host"] == "127.0.0.1"
+
+
+def test_frontend_fonts_do_not_depend_on_google_hosts():
+    client_root = ROOT / "client"
+    frontend_suffixes = {".css", ".html", ".js", ".jsx", ".ts", ".tsx"}
+    google_font_hosts = ("fonts.googleapis.com", "fonts.gstatic.com")
+    violations = []
+
+    for path in client_root.rglob("*"):
+        if not path.is_file() or path.suffix not in frontend_suffixes:
+            continue
+        source = path.read_text(encoding="utf-8")
+        for host in google_font_hosts:
+            if host in source:
+                violations.append(f"{path.relative_to(ROOT).as_posix()}: {host}")
+
+    assert violations == []
+
+    css = (client_root / "src" / "index.css").read_text(encoding="utf-8")
+    assert "system-ui, sans-serif" in css
+    assert "Georgia, serif" in css
