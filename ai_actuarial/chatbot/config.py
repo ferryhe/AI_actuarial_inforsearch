@@ -40,6 +40,14 @@ def _safe_float(value: Any, key: str, default: float) -> float:
         raise ValueError(f"Invalid value for {key}: {value!r}. Expected float.") from exc
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "on"}
+
+
 @dataclass
 class ChatbotConfig:
     """Configuration for the chatbot system."""
@@ -74,6 +82,9 @@ class ChatbotConfig:
     retry_delay: float = 1.0
     exponential_backoff: bool = True
     rate_limit_rpm: int = 60
+    length_recovery_enabled: bool = True
+    length_recovery_max_tokens: int = 4000
+    length_recovery_reasoning_effort: str | None = "low"
 
     # Quality & Validation
     require_citations: bool = True
@@ -120,6 +131,20 @@ class ChatbotConfig:
         self.temperature = float(os.getenv("CHATBOT_TEMPERATURE", str(self.temperature)))
         self.max_tokens = int(os.getenv("CHATBOT_MAX_TOKENS", str(self.max_tokens)))
         self.top_k = int(os.getenv("CHATBOT_TOP_K", str(self.top_k)))
+        self.length_recovery_enabled = _as_bool(
+            os.getenv("CHATBOT_LENGTH_RECOVERY_ENABLED"),
+            self.length_recovery_enabled,
+        )
+        self.length_recovery_max_tokens = _safe_int(
+            os.getenv("CHATBOT_LENGTH_RECOVERY_MAX_TOKENS"),
+            "CHATBOT_LENGTH_RECOVERY_MAX_TOKENS",
+            self.length_recovery_max_tokens,
+        )
+        if "CHATBOT_LENGTH_RECOVERY_REASONING_EFFORT" in os.environ:
+            self.length_recovery_reasoning_effort = (
+                str(os.getenv("CHATBOT_LENGTH_RECOVERY_REASONING_EFFORT") or "").strip().lower()
+                or None
+            )
 
     @classmethod
     def from_env(cls) -> "ChatbotConfig":
@@ -131,6 +156,7 @@ class ChatbotConfig:
         ).strip().lower()
         api_key_env = get_provider_api_key_env_var(provider)
         base_url_env = get_provider_base_url_env_var(provider)
+        recovery_effort_env = os.getenv("CHATBOT_LENGTH_RECOVERY_REASONING_EFFORT")
 
         return cls(
             llm_provider=provider,
@@ -167,6 +193,20 @@ class ChatbotConfig:
             retry_delay=_safe_float(os.getenv("CHATBOT_RETRY_DELAY"), "CHATBOT_RETRY_DELAY", 1.0),
             exponential_backoff=os.getenv("CHATBOT_EXPONENTIAL_BACKOFF", "true").lower() == "true",
             rate_limit_rpm=_safe_int(os.getenv("CHATBOT_RATE_LIMIT_RPM"), "CHATBOT_RATE_LIMIT_RPM", 60),
+            length_recovery_enabled=_as_bool(
+                os.getenv("CHATBOT_LENGTH_RECOVERY_ENABLED"),
+                True,
+            ),
+            length_recovery_max_tokens=_safe_int(
+                os.getenv("CHATBOT_LENGTH_RECOVERY_MAX_TOKENS"),
+                "CHATBOT_LENGTH_RECOVERY_MAX_TOKENS",
+                4000,
+            ),
+            length_recovery_reasoning_effort=(
+                "low"
+                if recovery_effort_env is None
+                else (str(recovery_effort_env).strip().lower() or None)
+            ),
             require_citations=os.getenv("CHATBOT_REQUIRE_CITATIONS", "true").lower() == "true",
             validate_citations=os.getenv("CHATBOT_VALIDATE_CITATIONS", "true").lower() == "true",
             hallucination_check=os.getenv("CHATBOT_HALLUCINATION_CHECK", "true").lower() == "true",
@@ -237,6 +277,19 @@ class ChatbotConfig:
                 retry_delay=_safe_float(section.get("retry_delay"), "chatbot.retry_delay", 1.0),
                 exponential_backoff=bool(section.get("exponential_backoff", True)),
                 rate_limit_rpm=_safe_int(section.get("rate_limit_rpm"), "chatbot.rate_limit_rpm", 60),
+                length_recovery_enabled=_as_bool(
+                    section.get("length_recovery_enabled"),
+                    True,
+                ),
+                length_recovery_max_tokens=_safe_int(
+                    section.get("length_recovery_max_tokens"),
+                    "chatbot.length_recovery_max_tokens",
+                    4000,
+                ),
+                length_recovery_reasoning_effort=(
+                    str(section.get("length_recovery_reasoning_effort", "low") or "").strip().lower()
+                    or None
+                ),
                 require_citations=bool(section.get("require_citations", True)),
                 validate_citations=bool(section.get("validate_citations", True)),
                 hallucination_check=bool(section.get("hallucination_check", True)),
@@ -310,6 +363,35 @@ class ChatbotConfig:
 
         if self.max_tokens < 1:
             errors.append(f"max_tokens must be positive, got {self.max_tokens}")
+
+        if self.length_recovery_max_tokens < 1:
+            errors.append(
+                "length_recovery_max_tokens must be positive, "
+                f"got {self.length_recovery_max_tokens}"
+            )
+        elif (
+            self.length_recovery_enabled
+            and self.length_recovery_max_tokens <= self.max_tokens
+        ):
+            errors.append(
+                "length_recovery_max_tokens must be greater than max_tokens "
+                "when length recovery is enabled, "
+                f"got {self.length_recovery_max_tokens} <= {self.max_tokens}"
+            )
+
+        reasoning_effort = str(self.length_recovery_reasoning_effort or "").strip().lower()
+        if reasoning_effort and reasoning_effort not in {
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+        }:
+            errors.append(
+                "length_recovery_reasoning_effort must be one of "
+                "none, minimal, low, medium, high, xhigh, or empty"
+            )
 
         if self.top_k < 1:
             errors.append(f"top_k must be positive, got {self.top_k}")
