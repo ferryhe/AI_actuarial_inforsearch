@@ -185,7 +185,7 @@ def make_acquisition_outcome(
     if disposition not in ACQUISITION_DISPOSITIONS:
         raise ValueError(f"Unsupported acquisition disposition: {disposition}")
     bounded_subreason = str(subreason or "").strip().lower() or None
-    if bounded_subreason not in _ALLOWED_SUBREASONS:
+    if bounded_subreason is not None and bounded_subreason not in _ALLOWED_SUBREASONS:
         bounded_subreason = "other"
     bounded_status = None
     if http_status is not None:

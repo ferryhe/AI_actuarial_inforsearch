@@ -245,3 +245,17 @@
 - Reviewer probes passed for Python AST parsing, linked-stop target URL retention/cleanup, direct hash-lookup storage failure classification/cleanup, shared outcome reconciliation, scheduled `http_403`, main/update CLI help, and `git diff --check` (only existing CRLF warnings).
 - The reviewer made no file, Git, GitHub, lifecycle-state, sibling-repository, or production change.
 - Next step: rerun final validation, then commit, push, and publish the required Draft-to-Ready PR with `Closes #263`.
+
+## Post-Ready remote feedback
+
+- The Copilot review summary and its unresolved inline thread at `ai_actuarial/search_acquisition.py:189` are one finding. It was classified `valid`, with no ambiguous or invalid fetched items; PR top-level comments and Issue comments were empty, and required `python-smoke` was already successful.
+- Realistic trigger: both direct and linked `downloaded_new` paths omit `subreason`. The constructor declared `subreason: str | None = None`, and Runtime/CLI contract fixtures represent successful outcomes with `subreason=None`, but membership validation converted that absence to `"other"`. Successful acquisitions therefore logged a fabricated catch-all reason instead of no specific reason, reducing AC-6 audit accuracy.
+- The minimal fix preserves absent subreasons as `None` and still maps any unknown non-empty value to the finite `"other"` value. No disposition, counter, error/no-op decision, legacy list behavior, Runtime/CLI flow, or scheduled collector contract changed.
+- Exact RED: `python -m pytest -q tests/test_issue_263_search_acquisition_outcomes.py::test_file_like_url_allows_uninformative_mime` — `2 failed, 3 warnings`; both successful direct-download variants returned `"other"` instead of `None`.
+- Identical GREEN after the one-line contract fix: `2 passed, 3 warnings`.
+- Full Issue #263 specialty file: `83 passed, 3 warnings`.
+- Crawler request-policy, allow-pattern, URL-safety, task-stop, and scheduled collector selection: `66 passed, 3 warnings`; all four scheduled cases passed.
+- `python -m compileall -q ai_actuarial tests/test_issue_263_search_acquisition_outcomes.py tests/test_task_stop_support.py`, main/update CLI help, and `git diff --check HEAD` passed; diff-check emitted only normal Windows CRLF warnings. A focused contract probe confirmed absent → `None` and unknown non-empty → `"other"`.
+- This feedback repair changed only `ai_actuarial/search_acquisition.py`, `tests/test_issue_263_search_acquisition_outcomes.py`, and this status file. No commit, push, PR mutation, review reply/resolve, merge, lifecycle-state mutation, GitHub refetch, sibling/primary checkout access, `graphify-out`, secret, provider, or production action occurred.
+- Residual risk is limited to consumers that may have observed the erroneous successful `"other"` value during the short pre-fix branch lifetime; the branch contract and existing nullable fixtures now agree.
+- Next step: the manager should inspect this diff, record the single feedback item as a valid change, then commit/push and continue the existing PR lifecycle without a second feedback window.

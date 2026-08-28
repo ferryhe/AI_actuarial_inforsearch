@@ -1051,6 +1051,7 @@ def test_file_like_url_allows_uninformative_mime(tmp_path: Path, headers: dict[s
 
     assert report.items == [item]
     assert report.outcome["disposition"] == "downloaded_new"
+    assert report.outcome["subreason"] is None
 
 
 def test_normalized_url_duplicate_is_distinct_from_exact_url_duplicate(tmp_path: Path) -> None:
