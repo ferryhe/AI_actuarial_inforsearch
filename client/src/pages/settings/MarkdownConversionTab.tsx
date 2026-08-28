@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { FileText, Loader2, RefreshCw, Save, AlertTriangle } from "lucide-react";
 import { useTranslation } from "@/components/Layout";
 import { apiGet, apiPost } from "@/lib/api";
+import { formatSettingsMutationError } from "@/lib/settings-errors";
 
 interface MarkdownToolConfig {
   name?: string;
@@ -111,8 +112,8 @@ export function MarkdownConversionTab() {
       const res = await apiPost<MarkdownConversionOptions>("/api/config/markdown-conversion", config);
       setConfig(res.config || config);
       setMessage(t("settings.markdown_saved"));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("settings.markdown_save_error"));
+    } catch (error) {
+      setError(formatSettingsMutationError(error, t, "settings.markdown_save_error"));
     } finally {
       setSaving(false);
     }

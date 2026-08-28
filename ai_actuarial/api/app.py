@@ -21,6 +21,7 @@ from ai_actuarial.storage import Storage
 from ai_actuarial.task_runtime import NativeTaskRuntime
 
 from .logging_config import configure_application_logging
+from .deps import _extract_presented_token, _session_allows_explicit_token
 from .middleware import RateLimitMiddleware
 from .route_inventory import (
     collect_fastapi_api_paths,
@@ -67,11 +68,7 @@ def _env_bool(key: str, default: bool) -> bool:
 
 
 def _presented_api_token(request) -> bool:
-    auth = request.headers.get("Authorization", "") or ""
-    parts = auth.strip().split(None, 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip():
-        return True
-    return bool((request.headers.get("X-API-Token") or request.headers.get("X-Auth-Token") or "").strip())
+    return bool(_extract_presented_token(request)) and _session_allows_explicit_token(request)
 
 
 def _csrf_serializer(request) -> URLSafeSerializer | None:

@@ -29,6 +29,7 @@ export default function Login() {
     }
     setLoading(true);
     try {
+      setStoredAuthToken("", true);
       await apiPost("/api/auth/login", { email, password });
       setStoredAuthToken("", true);
       await refresh();

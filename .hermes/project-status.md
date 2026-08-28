@@ -1,52 +1,47 @@
-# Project Status — Issue #248 Embedding Generation Progress
+# Project Status — Issue #249 Admin Settings Authentication
 
-- Updated: 2026-08-27
+- Updated: 2026-08-28
 - Repository: `AI_actuarial_inforsearch`
-- Worktree: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-248`
-- Branch: `codex/issue-248-embedding-progress` (tracking `origin/main`)
+- Branch: `codex/issue-249-admin-settings-auth`
+- Baseline: `cfa06f3a99b21574f103d9671d91e337aea1db80`
+- Issue: `#249 fix: diagnose and prevent admin settings saves returning Forbidden`
 
-## Delivered behavior
+## Reproduction and delivery
 
-- `ensure_chunk_embeddings()` now accepts an optional backward-compatible progress callback.
-- The callback reports once immediately after valid reuse is counted, then once after each attempted provider batch.
-- Processed counts are monotonic and include reused, generated, invalid-regenerated, and failed chunks.
-- Provider exceptions, count mismatches, and invalid vectors advance batch progress with aggregate-only activity text.
-- `NativeTaskRuntime._run_embedding_generation()` connects the service callback to the existing task progress fields consumed by the active-task API and `TaskCard`.
-- Stopped embedding tasks preserve actual attempted counts and partial progress instead of being finalized as 100% expected/expected.
-- Successful embedding tasks retain the existing strict 100% expected/expected terminal state and existing result-count semantics.
+- Baseline local browser reproduction used a seeded `JG Local` admin fixture with no production credentials.
+- Visible UI showed Settings and Users, but Markdown Save returned sanitized `403 Forbidden` from `POST /api/config/markdown-conversion`.
+- The failing node resolved the request as unauthenticated/reader without `config.write`, while the valid signed JG email session resolved `/api/auth/me` as admin with `config.write`.
+- Post-fix browser smoke showed Markdown Save success, sanitized POST `200`, GET `200`, and refresh/readback preserved `MarkItDown`.
+- No cookie, token, local-storage, session-storage, password, or secret values were inspected or logged.
 
-## TDD evidence
+## Acceptance delivery
 
-- Pre-fix RED: `python -m pytest tests/test_issue_248_embedding_progress.py -q` produced `5 failed, 1 passed`.
-  - Three service tests failed because `progress_callback` was not accepted.
-  - Two runtime tests failed because the callback was not passed to the service.
-- Post-fix GREEN: the same command produced `6 passed`.
+1. Captured the exact sanitized failure contract (`403 Forbidden`) and compared `/api/auth/me` with the Settings POST identity resolution.
+2. A valid admin email session saves Markdown Conversion settings and reads back the same value with stable user, role, and permissions.
+3. Duplicate signed cookies are resolved deterministically: valid admin email sessions are not downgraded by stale token sessions; conflicting active identities fail closed; invalid or inactive siblings do not mask a unique active identity; explicit headers cannot bypass conflicts.
+4. Email login clears stale stored token material. Guest-token CSRF behavior remains compatible, and invalid auth material fails closed.
+5. Settings now distinguishes session, permission, CSRF, validation, config-write, and operation-specific failures while preserving safe backend detail.
+6. All 14 admin-visible Settings mutation paths use the shared error formatter. Non-admin write denial and existing permission/CSRF checks remain unchanged.
+7. Markdown filesystem/YAML write failures return safe JSON `500` detail without internal paths.
 
-## Verification
+## TDD and verification
 
-- Direct embedding service/runtime/API/UI regression selection: `17 passed`.
-- Full KB index call-path suite: `28 passed`.
-- Existing Issue #237 embedding domain plus task API/CLI/UI and Issue #248 tests: `70 passed`; two unrelated pre-existing migration assertions failed because current baseline applies v10 while those assertions end at v9.
-- Required FastAPI authority selection: `13 passed`.
-- Required agentic eval tests: `31 passed`.
-- Required formula-profile CLI eval: `3/3 passed` with all reported rates at expected passing values.
-- Ruff on changed Python files: passed.
-- Compileall on the changed modules/test: passed.
-- `git diff --check`: passed.
+- Initial #249 RED: `6 failed, 2 passed`; initial GREEN and subsequent review fixes expanded the suite.
+- Managed review round 1 accepted five in-scope findings; each received targeted RED/GREEN proof.
+- Managed review round 2 passed with no findings. Authoritative managed `review_count=2` and local review is closed.
+- Repository Codex CLI pre-PR gate found two additional AC-3 duplicate-session cases. Their RED/GREEN evidence was `6 failed, 21 passed` to `27 passed`, then `4 failed, 27 passed` to `31 passed`.
+- Final independent Codex CLI gate: no actionable defects.
+- Final focused auth/settings/authority selection: `59 passed`.
+- Chat endpoints: `30 passed`; ops read/write endpoints: `36 passed`.
+- Required `python-smoke`: `13 passed`.
+- Frontend production build: passed (`2136` modules transformed).
+- Ruff on new/scoped code, compileall, and `git diff --check`: passed. The pre-existing unused `time` import in `chat.py` remains outside #249 scope.
+- In-app Browser post-fix smoke: Settings save success, POST `200`, GET/readback `200`.
 
-## Same-shaped sibling review
+## Scope and current state
 
-- `ai_actuarial/task_runtime.py` is the only production embedding-generation task caller and is connected to the new callback.
-- `ai_actuarial/rag/kb_index.py` also calls `ensure_chunk_embeddings()`; the optional default preserves that independent four-stage indexing workflow, confirmed by its full 28-test suite.
-- Direct service test callers omit the optional callback and remain compatible.
-- `ai_actuarial/rag/embeddings.py` batches provider requests internally but does not own reuse, persistence, stop, or task counts; adding task progress there would duplicate the service-level batch contract.
-- `ai_actuarial/catalog.py` has an unrelated catalog persistence batch loop and is outside the embedding-generation acceptance criteria.
-- `client/src/pages/tasks/TaskCard.tsx` already renders `progress`, `items_processed`, `items_total`, and `current_activity`; no production UI change was needed.
-
-## Scope and worktree state
-
-- Production changes are limited to `ai_actuarial/embedding_service.py` and `ai_actuarial/task_runtime.py`.
-- Regression coverage is isolated in `tests/test_issue_248_embedding_progress.py`.
-- No provider/model/config, chunk identity, persistence schema, generic progress framework, production data, or sibling repository was changed.
-- Implementation is complete and intentionally uncommitted for the Issue manager's local review and lifecycle steps.
-- Known unrelated blocker: two existing v7 migration tests expect migrations only through v9 although the current baseline also applies `add_agentic_ready_manual_operation_state_v10`.
+- Backend changes are limited to FastAPI session resolution, guest-chat session decoding, and safe Markdown write errors.
+- Frontend changes are limited to stored login token cleanup and Settings mutation error presentation.
+- Regression coverage is in `tests/test_issue_249_admin_settings_auth.py` and `tests/test_settings_react_source.py`.
+- No authorization grants, permission/CSRF removal, legacy-token exposure, production operation, secret access, or sibling-repository changes were made.
+- Implementation, browser smoke, managed review, and the separate pre-PR Codex gate are complete. PR publication and remote lifecycle are next.

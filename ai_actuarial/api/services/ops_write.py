@@ -1140,7 +1140,13 @@ def update_categories_config(data: dict[str, Any]) -> dict[str, Any]:
 def update_markdown_conversion_config(data: dict[str, Any]) -> dict[str, Any]:
     payload = _coerce_required_dict(data)
     candidate = payload.get("config") if isinstance(payload.get("config"), dict) else payload
-    normalized = write_markdown_conversion_config(candidate)
+    try:
+        normalized = write_markdown_conversion_config(candidate)
+    except (OSError, yaml.YAMLError) as exc:
+        raise OpsWriteError(
+            "Unable to write Markdown conversion configuration",
+            status_code=500,
+        ) from exc
     _reload_runtime_caches()
     return {
         "success": True,
