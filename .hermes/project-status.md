@@ -8,6 +8,7 @@
 ## Implementation
 
 - Added explicit length-recovery configuration with a bounded recovery token budget and optional model-aware reasoning effort.
+- Enabled length recovery now requires its configured output budget to be strictly greater than the normal output budget; disabled recovery keeps the lower-budget configuration valid.
 - Recovery omits configured reasoning efforts known to be incompatible with `gpt-5.1` and `gpt-5-pro`, while retaining supported configured efforts.
 - Azure deployment names with an explicit `gpt5`/`gpt-5` marker use the GPT-5 request shape; GPT-4 and opaque aliases remain on the conservative default path.
 - A provider HTTP 400 on the bounded recovery request now returns a stable compatibility failure and never falls back to the original token budget.
@@ -32,9 +33,13 @@
 - `python -m compileall -q ai_actuarial/chatbot ai_actuarial/api/services/chat.py` and `git diff --check` passed; only normal Windows line-ending warnings were emitted.
 - Managed review completed three bounded rounds; round 3 passed. After the two pre-PR Codex findings were fixed, a fresh read-only final reviewer rechecked the final diff and returned `PASS` with zero findings, including an independent `144 passed` regression run.
 - The required final Codex CLI review independently completed the same `144 passed` regression run and inspected the final recovery/configuration boundaries. It did not return a final verdict after about 5.5 minutes and was boundedly interrupted; this is recorded as tool non-convergence, not a code or environment failure.
+- Remote feedback disposition: rejected the pre-existing `stream=True` provider-call ordering as outside Issue #255; accepted the recovery-budget relationship because equal or smaller budgets violated AC-2/AC-9.
+- Remote-fix RED: the focused four-case policy matrix produced `2 failed, 2 passed`; enabled equal/smaller budgets did not raise, while defaults and disabled recovery passed.
+- Remote-fix GREEN: the same matrix passed `4/4`; the complete Issue #255 file passed `31`; the related chatbot/API suite passed `147`.
+- Post-fix `python -m compileall -q ai_actuarial/chatbot ai_actuarial/api/services/chat.py` and `git diff --check` passed; only normal Windows line-ending warnings were emitted.
 
 ## Scope and next step
 
 - No live provider call, production operation, sibling repository, or secret access was used.
 - The two similar `catalog_llm.py` response reads are separate catalog-title generation workflows and are excluded from this Chat issue.
-- Implementation is locally verified and independently reviewed. Next: commit, push, and open the Draft PR with `Closes #255`.
+- PR #262 is Ready for review and its single accepted remote fix is locally verified. Next: manager commits and pushes the fix, waits for required checks, then merges without opening a second feedback window.

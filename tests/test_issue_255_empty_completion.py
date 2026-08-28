@@ -415,6 +415,7 @@ def test_recovery_policy_is_explicit_and_validated() -> None:
     assert config.length_recovery_enabled is True
     assert config.length_recovery_max_tokens > config.max_tokens
     assert config.length_recovery_reasoning_effort == "low"
+    assert config.validate() is True
 
     with pytest.raises(ValueError, match="length_recovery_max_tokens must be positive"):
         ChatbotConfig(
@@ -422,6 +423,35 @@ def test_recovery_policy_is_explicit_and_validated() -> None:
             length_recovery_max_tokens=0,
             _apply_env_defaults=False,
         ).validate()
+
+
+@pytest.mark.parametrize("recovery_max_tokens", [1000, 999])
+def test_recovery_policy_requires_larger_budget_when_enabled(
+    recovery_max_tokens: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="length_recovery_max_tokens must be greater than max_tokens",
+    ):
+        ChatbotConfig(
+            api_key="fake",
+            max_tokens=1000,
+            length_recovery_enabled=True,
+            length_recovery_max_tokens=recovery_max_tokens,
+            _apply_env_defaults=False,
+        ).validate()
+
+
+def test_recovery_policy_allows_non_larger_budget_when_disabled() -> None:
+    config = ChatbotConfig(
+        api_key="fake",
+        max_tokens=1000,
+        length_recovery_enabled=False,
+        length_recovery_max_tokens=999,
+        _apply_env_defaults=False,
+    )
+
+    assert config.validate() is True
 
 
 def test_recovery_policy_loads_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:

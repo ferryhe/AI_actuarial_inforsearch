@@ -369,6 +369,15 @@ class ChatbotConfig:
                 "length_recovery_max_tokens must be positive, "
                 f"got {self.length_recovery_max_tokens}"
             )
+        elif (
+            self.length_recovery_enabled
+            and self.length_recovery_max_tokens <= self.max_tokens
+        ):
+            errors.append(
+                "length_recovery_max_tokens must be greater than max_tokens "
+                "when length recovery is enabled, "
+                f"got {self.length_recovery_max_tokens} <= {self.max_tokens}"
+            )
 
         reasoning_effort = str(self.length_recovery_reasoning_effort or "").strip().lower()
         if reasoning_effort and reasoning_effort not in {
