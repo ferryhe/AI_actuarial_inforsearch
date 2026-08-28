@@ -1881,22 +1881,27 @@ class NativeTaskRuntime:
         )
         progress = self._progress_callback(task_id)
         chunks = list(selection["chunks"])
-        progress(0, len(chunks), "Ensuring persisted embeddings")
         ensured = ensure_chunk_embeddings(
             storage=storage,
             chunks=chunks,
             identity=identity,
             batch_size=identity.config.embedding_batch_size,
             stop_check=lambda: self._stop_requested(task_id),
+            progress_callback=progress,
         )
         coverage = embedding_coverage_for_selection(
             storage=storage,
             selection=selection,
             identity=identity,
         )
-        progress(ensured.ready_count, len(chunks), "Embedding persistence complete")
         status = "stopped" if ensured.stopped else (
             "completed" if not ensured.failed else "error"
+        )
+        items_processed = (
+            ensured.reused
+            + ensured.generated
+            + ensured.invalid_regenerated
+            + ensured.failed
         )
         result = {
             "contract_version": 1,
@@ -1933,6 +1938,8 @@ class NativeTaskRuntime:
             metadata={
                 "source_type": "embedding_generation",
                 "stopped": ensured.stopped,
+                "items_processed": items_processed,
+                "items_total": ensured.expected_count,
                 "result": result,
             },
         )
@@ -2282,14 +2289,31 @@ class NativeTaskRuntime:
             if task_data is None:
                 return
             stopped = bool((result.metadata or {}).get("stopped"))
+            items_processed = result.items_found
+            items_total = result.items_found
+            progress = 100
+            if stopped and collection_type == "embedding_generation":
+                items_processed = max(
+                    0,
+                    int((result.metadata or {}).get("items_processed") or 0),
+                )
+                items_total = max(
+                    0,
+                    int((result.metadata or {}).get("items_total") or 0),
+                )
+                if items_total > 0:
+                    items_processed = min(items_processed, items_total)
+                    progress = int((items_processed / items_total) * 100)
+                else:
+                    progress = 0
             task_data.update(
                 {
                     "status": "stopped" if stopped else ("completed" if result.success else "error"),
-                    "progress": 100,
+                    "progress": progress,
                     "completed_at": datetime.now().isoformat(),
                     "current_activity": "Stopped" if stopped else ("Completed" if result.success else "Completed with errors"),
-                    "items_processed": result.items_found,
-                    "items_total": result.items_found,
+                    "items_processed": items_processed,
+                    "items_total": items_total,
                     "items_downloaded": result.items_downloaded,
                     "items_skipped": result.items_skipped,
                     "errors": list(result.errors or []),
