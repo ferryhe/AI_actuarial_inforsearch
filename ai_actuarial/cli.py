@@ -606,6 +606,34 @@ def _print_cli_payload(payload: dict, *, as_json: bool) -> None:
     )
 
 
+def cmd_weekly_explanation(args: argparse.Namespace) -> int:
+    action = str(args.explanation_cmd)
+    if action == "latest":
+        method = "GET"
+        path = "/api/weekly-updates/explanations/latest"
+    else:
+        snapshot_id = urllib.parse.quote(str(args.snapshot_id), safe="")
+        method = "POST" if action in {"generate", "retry"} else "GET"
+        suffix = f"/{action}" if action in {"generate", "retry"} else ""
+        path = f"/api/weekly-updates/{snapshot_id}/explanation{suffix}"
+    try:
+        result = _api_json_request(
+            args.api_url,
+            path,
+            method=method,
+            token=args.token,
+            timeout=args.timeout,
+        )
+    except (RuntimeError, OSError, json.JSONDecodeError, TimeoutError) as exc:
+        _print_cli_payload(
+            {"success": False, "error": str(exc)},
+            as_json=args.json,
+        )
+        return 2
+    _print_cli_payload(result, as_json=args.json)
+    return 0
+
+
 def _wait_for_api_task(args: argparse.Namespace, job_id: str) -> dict:
     deadline = time.monotonic() + max(0.0, float(args.timeout))
     while True:
@@ -1050,6 +1078,53 @@ def build_parser() -> argparse.ArgumentParser:
             help="Emit the stable machine-readable JSON contract",
         )
         p_weekly_action.set_defaults(func=cmd_weekly_snapshot)
+
+    p_weekly_explanation = p_weekly_sub.add_parser(
+        "explanation",
+        help="Generate and read bilingual weekly explanations through the HTTP API",
+    )
+    p_weekly_explanation_sub = p_weekly_explanation.add_subparsers(
+        dest="explanation_cmd",
+        required=True,
+    )
+    explanation_actions = []
+    action_help = {
+        "generate": "Generate a weekly explanation",
+        "retry": "Retry a failed weekly explanation",
+        "get": "Get a weekly explanation by snapshot ID",
+        "latest": "Get the explanation state for the latest ended snapshot",
+    }
+    for action in ("generate", "retry", "get", "latest"):
+        explanation_action = p_weekly_explanation_sub.add_parser(
+            action,
+            help=action_help[action],
+        )
+        if action != "latest":
+            explanation_action.add_argument("snapshot_id", help="Weekly snapshot ID")
+        explanation_actions.append(explanation_action)
+    for explanation_action in explanation_actions:
+        explanation_action.add_argument(
+            "--api-url",
+            default=os.getenv("AI_ACTUARIAL_API_URL", "http://127.0.0.1:5000"),
+            help="FastAPI base URL",
+        )
+        explanation_action.add_argument(
+            "--token",
+            default=os.getenv("AI_ACTUARIAL_API_TOKEN"),
+            help="Bearer token for the FastAPI gateway",
+        )
+        explanation_action.add_argument(
+            "--timeout",
+            type=float,
+            default=30,
+            help="HTTP request timeout in seconds",
+        )
+        explanation_action.add_argument(
+            "--json",
+            action="store_true",
+            help="Emit the stable machine-readable JSON contract",
+        )
+        explanation_action.set_defaults(func=cmd_weekly_explanation)
 
     p_pipeline = sub.add_parser("pipeline", help="Control the fixed five-step pipeline baton")
     p_pipeline_sub = p_pipeline.add_subparsers(dest="pipeline_cmd", required=True)

@@ -65,6 +65,12 @@ interface AiModelsCurrent {
     };
     summarization_prompt?: string;
   };
+  weekly_explanation?: {
+    provider: string;
+    model: string;
+    prompt_version: string;
+    prompt?: string;
+  };
   ocr: { provider: string; model: string };
 }
 
@@ -1313,6 +1319,18 @@ function PromptsTab() {
   return (
     <div className="space-y-6">
       <AnimatePresence>{toast && <Toast {...toast} onClose={() => setToast(null)} />}</AnimatePresence>
+
+      {/* One prompt produces both persisted languages in one model call. */}
+      <PromptEditorCard
+        title={t("settings.weekly_explanation_prompt_title")}
+        hint={t("settings.weekly_explanation_prompt_hint")}
+        defaultText={t("settings.weekly_explanation_prompt_default")}
+        value={currentModels?.weekly_explanation?.prompt || ""}
+        testIdPrefix="weekly-explanation-prompt"
+        onSave={async (v) => {
+          await savePrompt({ weekly_explanation: { prompt: v } });
+        }}
+      />
 
       {/* Catalog system prompt */}
       <PromptEditorCard

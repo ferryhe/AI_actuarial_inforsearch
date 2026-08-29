@@ -17,6 +17,7 @@ from cryptography.fernet import Fernet
 from ai_actuarial import llm_models
 from ai_actuarial.ai_runtime import (
     AI_SUPPORTED_PROVIDERS,
+    DEFAULT_AI_FUNCTION_CONFIG,
     FUNCTION_BINDING_TO_SECTION,
     KNOWN_LLM_PROVIDERS,
     OPTIONAL_API_KEY_SENTINEL,
@@ -110,6 +111,7 @@ _VALID_COLLECTION_TYPES = {
     "embedding_generation",
     "ready_data_build",
     "weekly_summary",
+    "weekly_explanation",
     "rag_indexing",
     "recategory",
 }
@@ -1174,7 +1176,7 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
         storage.close()
     available_models_map = llm_models.get_available_models(provider_credentials=provider_credentials)
 
-    for function in ["catalog", "embeddings", "chatbot", "ocr"]:
+    for function in ["catalog", "embeddings", "chatbot", "weekly_explanation", "ocr"]:
         func_cfg = payload.get(function)
         if not isinstance(func_cfg, dict):
             continue
@@ -1192,16 +1194,52 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
             model = str(func_cfg.get("model") or "").strip()
             if not model:
                 raise OpsWriteError(f"Model for function '{function}' must be a non-empty string.")
-            provider = str(config_data["ai_config"][function].get("provider") or "").strip().lower()
+            if function != "weekly_explanation":
+                provider = str(
+                    config_data["ai_config"][function].get("provider") or ""
+                ).strip().lower()
+                provider_models = available_models_map.get(provider, [])
+                compatible_models = [
+                    item
+                    for item in provider_models
+                    if function in (item.get("types") or [])
+                ]
+                valid_model_names = [
+                    str(item.get("name") or "")
+                    for item in compatible_models
+                    if str(item.get("name") or "")
+                ]
+                if valid_model_names and model not in valid_model_names:
+                    raise OpsWriteError(
+                        f"Model '{model}' is not compatible with function '{function}' "
+                        f"for provider '{provider}'. Valid models: {valid_model_names}"
+                    )
+            config_data["ai_config"][function]["model"] = model
+
+        if function == "weekly_explanation" and ({"provider", "model"} & func_cfg.keys()):
+            weekly_defaults = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]
+            weekly_config = config_data["ai_config"][function]
+            provider = str(
+                weekly_config.get("provider") or weekly_defaults["provider"]
+            ).strip().lower()
+            model = str(weekly_config.get("model") or weekly_defaults["model"]).strip()
+            if not is_chat_provider_supported(provider):
+                raise OpsWriteError(
+                    f"Provider '{provider}' is not supported by the weekly explanation chat runtime"
+                )
             provider_models = available_models_map.get(provider, [])
-            compatible_function = "chatbot" if function == "chatbot" else function
-            compatible_models = [m for m in provider_models if compatible_function in (m.get("types") or [])]
-            valid_model_names = [str(m.get("name") or "") for m in compatible_models if str(m.get("name") or "")]
+            valid_model_names = [
+                str(item.get("name") or "")
+                for item in provider_models
+                if "chatbot" in (item.get("types") or [])
+                and str(item.get("name") or "")
+            ]
             if valid_model_names and model not in valid_model_names:
                 raise OpsWriteError(
-                    f"Model '{model}' is not compatible with function '{function}' for provider '{provider}'. Valid models: {valid_model_names}"
+                    f"Model '{model}' is not compatible with function '{function}' "
+                    f"for provider '{provider}'. Valid models: {valid_model_names}"
                 )
-            config_data["ai_config"][function]["model"] = model
+            _validate_ai_routing_model("chat", provider, model)
 
         if function == "catalog" and "system_prompt" in func_cfg:
             system_prompt = func_cfg.get("system_prompt")
@@ -1230,6 +1268,19 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                 else:
                     config_data["ai_config"][function]["summarization_prompt"] = str(summarization_prompt)
 
+        if function == "weekly_explanation":
+            if "prompt" in func_cfg:
+                prompt = func_cfg.get("prompt")
+                if prompt in (None, ""):
+                    config_data["ai_config"][function].pop("prompt", None)
+                else:
+                    config_data["ai_config"][function]["prompt"] = str(prompt)
+            if "prompt_version" in func_cfg:
+                prompt_version = str(func_cfg.get("prompt_version") or "").strip()
+                if not prompt_version:
+                    raise OpsWriteError("weekly_explanation.prompt_version must be non-empty")
+                config_data["ai_config"][function]["prompt_version"] = prompt_version
+
     _write_config_data(config_data)
     _notify_site_config_updated(bridge, config_data)
     _reload_runtime_caches()
@@ -1244,6 +1295,8 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
 
     current_chatbot = config_data["ai_config"].get("chatbot", {}) or {}
     current_catalog = config_data["ai_config"].get("catalog", {}) or {}
+    current_weekly = config_data["ai_config"].get("weekly_explanation", {}) or {}
+    weekly_defaults = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]
     current_ocr = config_data["ai_config"].get("ocr", {}) or {}
     response_payload: dict[str, Any] = {
         "success": True,
@@ -1268,6 +1321,14 @@ def update_ai_models_config(data: dict[str, Any], *, db_path: str, bridge: Bridg
                     "comparison": (current_chatbot.get("prompts") or {}).get("comparison", ""),
                 },
                 "summarization_prompt": current_chatbot.get("summarization_prompt", ""),
+            },
+            "weekly_explanation": {
+                "provider": current_weekly.get("provider", weekly_defaults["provider"]),
+                "model": current_weekly.get("model", weekly_defaults["model"]),
+                "prompt_version": current_weekly.get(
+                    "prompt_version", weekly_defaults["prompt_version"]
+                ),
+                "prompt": current_weekly.get("prompt", weekly_defaults["prompt"]),
             },
             "ocr": {
                 "provider": current_ocr.get("provider", "local"),
@@ -2014,6 +2075,13 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
             data.pop("relative_period", None)
         if "force" in data:
             data["force"] = coerce_bool(data.get("force"), default=False)
+    if collection_type == "weekly_explanation" and not str(data.get("snapshot_id") or "").strip():
+        _reject_request(
+            "weekly_explanation requires snapshot_id",
+            collection_type=collection_type,
+            data=data,
+            bridge=bridge,
+        )
     if collection_type == "markdown_conversion":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
