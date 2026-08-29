@@ -7,31 +7,23 @@ import {
   Search,
   MessageSquare,
   ArrowRight,
-  FileIcon,
-  Inbox,
   Tags,
   CalendarPlus,
 } from "lucide-react";
+import { WeeklyDashboardSection } from "@/components/WeeklyDashboardSection";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/components/Layout";
 import { apiGet } from "@/lib/api";
 import { buildFileDetailPath } from "@/lib/navigation";
 import { categoryDisplayName } from "@/lib/category-labels";
+import {
+  loadLatestWeeklyDashboard,
+  type WeeklyDashboardData,
+} from "@/lib/weekly-dashboard";
 
 interface Stats {
   total_files: number;
   total_sources: number;
-}
-
-interface FileItem {
-  url: string;
-  title: string;
-  original_filename: string;
-  source_site: string;
-  content_type: string;
-  first_seen: string;
-  last_seen: string;
-  category?: string | null;
 }
 
 interface CategoryOption {
@@ -44,8 +36,6 @@ interface CategoryOption {
 interface CategoriesResponse {
   categories?: Array<string | CategoryOption>;
 }
-
-const WEEKLY_FILE_LIMIT = 8;
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -130,26 +120,6 @@ function QuickAction({
   );
 }
 
-function formatDate(dateStr: string): string {
-  if (!dateStr) return "-";
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  } catch {
-    return dateStr;
-  }
-}
-
-function contentTypeLabel(ct: string): string {
-  if (!ct) return "-";
-  if (ct.includes("pdf")) return "PDF";
-  if (ct.includes("word") || ct.includes("document")) return "DOCX";
-  if (ct.includes("presentation") || ct.includes("powerpoint")) return "PPTX";
-  if (ct.includes("spreadsheet") || ct.includes("excel")) return "XLSX";
-  if (ct.includes("html")) return "HTML";
-  return ct.split("/").pop()?.toUpperCase() || ct;
-}
-
 function normalizeCategories(items: CategoriesResponse["categories"]): CategoryOption[] {
   return (items || [])
     .map((item) => {
@@ -170,13 +140,6 @@ function normalizeCategories(items: CategoriesResponse["categories"]): CategoryO
     .filter((item): item is CategoryOption => item !== null);
 }
 
-interface WeeklyUpdateResponse {
-  summary?: {
-    file_count?: number;
-    files?: FileItem[];
-  } | null;
-}
-
 function databaseCategoryPath(category: string): string {
   const params = new URLSearchParams({ category });
   return `/database?${params.toString()}`;
@@ -186,15 +149,14 @@ export default function Dashboard() {
   const { t, lang } = useTranslation();
   const [, navigate] = useLocation();
   const [stats, setStats] = useState<Stats | null>(null);
-  const [files, setFiles] = useState<FileItem[]>([]);
-  const [weeklyFileCount, setWeeklyFileCount] = useState<number | null>(null);
+  const [weekly, setWeekly] = useState<WeeklyDashboardData | null>(null);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.allSettled([
       apiGet<Stats>("/api/stats"),
-      apiGet<WeeklyUpdateResponse>("/api/weekly-updates/latest"),
+      loadLatestWeeklyDashboard(),
       apiGet<CategoriesResponse>("/api/categories?mode=used"),
     ])
       .then(([statsResult, weeklyResult, categoriesResult]) => {
@@ -204,13 +166,17 @@ export default function Dashboard() {
           console.error(statsResult.reason);
         }
         if (weeklyResult.status === "fulfilled") {
-          const summary = weeklyResult.value.summary;
-          setFiles((summary?.files || []).slice(0, WEEKLY_FILE_LIMIT));
-          setWeeklyFileCount(typeof summary?.file_count === "number" ? summary.file_count : 0);
+          setWeekly(weeklyResult.value);
         } else {
           console.error(weeklyResult.reason);
-          setFiles([]);
-          setWeeklyFileCount(null);
+          setWeekly({
+            status: "unavailable",
+            snapshot: null,
+            files: [],
+            filesUnavailable: true,
+            explanation: null,
+            explanationUnavailable: true,
+          });
         }
         if (categoriesResult.status === "fulfilled") {
           setCategories(normalizeCategories(categoriesResult.value.categories));
@@ -225,8 +191,8 @@ export default function Dashboard() {
     { icon: FileText, label: t("dashboard.materials"), value: stats?.total_files ?? "-", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
     { icon: Building2, label: t("dashboard.sources"), value: stats?.total_sources ?? "-", color: "bg-violet-500/10 text-violet-600 dark:text-violet-400" },
     { icon: Tags, label: t("dashboard.categories"), value: loading ? "-" : categories.length, color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
-    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weeklyFileCount ?? "-"), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
-  ], [categories.length, loading, stats?.total_files, stats?.total_sources, t, weeklyFileCount]);
+    { icon: CalendarPlus, label: t("dashboard.this_week_count"), value: loading ? "-" : (weekly?.snapshot?.file_count ?? "-"), color: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  ], [categories.length, loading, stats?.total_files, stats?.total_sources, t, weekly?.snapshot?.file_count]);
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_materials"), desc: t("dashboard.browse_materials_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
@@ -312,72 +278,12 @@ export default function Dashboard() {
           )}
         </section>
 
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">{t("dashboard.this_week_additions")}</h2>
-            <Link href="/database?order_by=first_seen&order_dir=desc">
-              <span className="text-xs text-primary hover:underline cursor-pointer">{t("dashboard.view_all")}</span>
-            </Link>
-          </div>
-          {loading ? (
-            <div className="space-y-2">
-              {[...Array(4)].map((_, i) => (
-                <div key={i} className="h-14 rounded-lg bg-muted animate-pulse" />
-              ))}
-            </div>
-          ) : files.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-center py-16 rounded-xl border border-dashed border-border bg-card"
-            >
-              <Inbox className="w-12 h-12 mx-auto text-muted-foreground/40 mb-3" />
-              <p className="font-medium text-muted-foreground">{t("dashboard.no_weekly_files")}</p>
-              <p className="text-xs text-muted-foreground/70 mt-1">{t("dashboard.no_weekly_files_desc")}</p>
-            </motion.div>
-          ) : (
-            <div className="rounded-xl border border-border bg-card overflow-hidden">
-              <div className="hidden sm:grid grid-cols-[1fr_150px_80px_100px] gap-4 px-4 py-2.5 bg-muted/50 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                <span>{t("table.title")}</span>
-                <span>{t("table.source")}</span>
-                <span>{t("table.type")}</span>
-                <span>{t("table.date")}</span>
-              </div>
-              {files.map((file, i) => (
-                <motion.div
-                  key={file.url}
-                  custom={i}
-                  variants={fadeUp}
-                  initial="hidden"
-                  animate="visible"
-                  className="grid sm:grid-cols-[1fr_150px_80px_100px] gap-1 sm:gap-4 px-4 py-3 border-t border-border hover:bg-muted/30 transition-colors cursor-pointer"
-                  onClick={() => navigate(buildFileDetailPath(file.url, "/"))}
-                  data-testid={`file-row-${i}`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
-                    <span className="text-sm font-medium truncate">
-                      {file.title || file.original_filename || t("dashboard.untitled_material")}
-                    </span>
-                  </div>
-                  <span className="text-sm text-muted-foreground truncate hidden sm:block">
-                    {file.source_site || "-"}
-                  </span>
-                  <span className="hidden sm:block">
-                    {file.content_type && (
-                      <span className="inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                        {contentTypeLabel(file.content_type)}
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-xs text-muted-foreground hidden sm:block">
-                    {formatDate(file.first_seen)}
-                  </span>
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </section>
+        <WeeklyDashboardSection
+          data={loading ? null : weekly}
+          lang={lang}
+          t={t}
+          onOpenFile={(url) => navigate(buildFileDetailPath(url, "/"))}
+        />
       </div>
     </div>
   );

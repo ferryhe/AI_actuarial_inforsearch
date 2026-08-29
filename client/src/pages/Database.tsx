@@ -28,6 +28,17 @@ import { useTranslation } from "@/components/Layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/lib/api";
 import { categoryDisplayName } from "@/lib/category-labels";
+import {
+  buildDatabaseLocation,
+  buildFilesParams,
+  DATABASE_PAGE_SIZE,
+  parseDatabaseQueryState,
+  type DatabaseQueryState,
+  type SortDir,
+  type SortField,
+} from "@/lib/database-query";
+import { formatWeeklyDateTime } from "@/lib/weekly-dashboard";
+import { getCanonicalDisplayName, getChatValidName } from "./chat/displayName";
 
 interface FileItem {
   url: string;
@@ -35,6 +46,7 @@ interface FileItem {
   original_filename: string;
   source_site: string;
   content_type: string;
+  first_seen: string;
   last_seen: string;
   category: string | null;
   summary: string | null;
@@ -68,7 +80,7 @@ interface CategoryOption {
   count?: number | null;
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = DATABASE_PAGE_SIZE;
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -99,14 +111,15 @@ function contentTypeBadgeColor(ct: string): string {
   return "bg-gray-500/10 text-gray-600 dark:text-gray-400";
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string, lang: string): string {
   if (!dateStr) return "-";
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  } catch {
-    return dateStr;
-  }
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(d);
 }
 
 function formatSize(bytes: number | null | undefined): string {
@@ -115,19 +128,6 @@ function formatSize(bytes: number | null | undefined): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-type SortField = "title" | "source_site" | "content_type" | "last_seen" | "bytes";
-type SortDir = "asc" | "desc";
-
-interface DatabaseQueryState {
-  offset: number;
-  query: string;
-  source: string;
-  category: string;
-  includeDeleted: boolean;
-  orderBy: SortField;
-  orderDir: SortDir;
 }
 
 interface CachedFilesEntry {
@@ -220,33 +220,6 @@ const fileListCache = new FilesCache();
 let databaseMetaCache: CachedMetaEntry | null = null;
 const databaseScrollCache = new ScrollCache();
 
-function buildFilesParams(state: DatabaseQueryState): URLSearchParams {
-  const params = new URLSearchParams({
-    limit: String(PAGE_SIZE),
-    offset: String(state.offset),
-    order_by: state.orderBy,
-    order_dir: state.orderDir,
-  });
-  if (state.query) params.set("query", state.query);
-  if (state.source) params.set("source", state.source);
-  if (state.category) params.set("category", state.category);
-  if (state.includeDeleted) params.set("include_deleted", "true");
-  return params;
-}
-
-function buildDatabaseLocation(state: DatabaseQueryState): string {
-  const page = Math.floor(state.offset / PAGE_SIZE) + 1;
-  const params = new URLSearchParams();
-  params.set("page", String(page));
-  params.set("order_by", state.orderBy);
-  params.set("order_dir", state.orderDir);
-  if (state.query) params.set("query", state.query);
-  if (state.source) params.set("source", state.source);
-  if (state.category) params.set("category", state.category);
-  if (state.includeDeleted) params.set("include_deleted", "true");
-  return `/database?${params.toString()}`;
-}
-
 function getCachedFiles(key: string): FilesResponse | null {
   const entry = fileListCache.get(key);
   return entry ? entry.data : null;
@@ -301,46 +274,27 @@ export default function DatabasePage() {
   const [, navigate] = useLocation();
   const searchStr = useSearch();
 
-  // Parse initial state from URL on first render
-  const initialParams = new URLSearchParams(searchStr);
-  const VALID_SORT_FIELDS: SortField[] = ["title", "source_site", "content_type", "last_seen", "bytes"];
-  const rawOrderBy = initialParams.get("order_by") || "";
-  const rawOrderDir = initialParams.get("order_dir") || "";
-  const initialOffset = (() => {
-    const page = Math.max(1, parseInt(initialParams.get("page") || "1", 10));
-    return (page - 1) * PAGE_SIZE;
-  })();
-  const initialQuery = initialParams.get("query") || "";
-  const initialSource = initialParams.get("source") || "";
-  const initialCategory = initialParams.get("category") || "";
-  const initialIncludeDeleted = initialParams.get("include_deleted") === "true";
-  const initialOrderBy =
-    VALID_SORT_FIELDS.includes(rawOrderBy as SortField) ? (rawOrderBy as SortField) : "last_seen";
-  const initialOrderDir: SortDir = rawOrderDir === "asc" ? "asc" : "desc";
-  const initialRequestKey = buildFilesParams({
-    offset: initialOffset,
-    query: initialQuery,
-    source: initialSource,
-    category: initialCategory,
-    includeDeleted: initialIncludeDeleted,
-    orderBy: initialOrderBy,
-    orderDir: initialOrderDir,
-  }).toString();
+  const initialStateRef = useRef<DatabaseQueryState | null>(null);
+  if (initialStateRef.current === null) {
+    initialStateRef.current = parseDatabaseQueryState(searchStr);
+  }
+  const initialState = initialStateRef.current;
+  const initialRequestKey = buildFilesParams(initialState).toString();
   const initialCachedFiles = getCachedFiles(initialRequestKey);
   const initialCachedMeta = getCachedMeta();
 
   const [files, setFiles] = useState<FileItem[]>(initialCachedFiles?.files || []);
   const [total, setTotal] = useState(initialCachedFiles?.total ?? 0);
   const [loading, setLoading] = useState(!initialCachedFiles);
-  const [offset, setOffset] = useState(initialOffset);
+  const [offset, setOffset] = useState(initialState.offset);
 
-  const [query, setQuery] = useState(initialQuery);
-  const [debouncedQuery, setDebouncedQuery] = useState(initialQuery);
-  const [source, setSource] = useState(initialSource);
-  const [category, setCategory] = useState(initialCategory);
-  const [includeDeleted, setIncludeDeleted] = useState(initialIncludeDeleted);
-  const [orderBy, setOrderBy] = useState<SortField>(initialOrderBy);
-  const [orderDir, setOrderDir] = useState<SortDir>(initialOrderDir);
+  const [query, setQuery] = useState(initialState.query);
+  const [debouncedQuery, setDebouncedQuery] = useState(initialState.query);
+  const [source, setSource] = useState(initialState.source);
+  const [category, setCategory] = useState(initialState.category);
+  const [includeDeleted, setIncludeDeleted] = useState(initialState.includeDeleted);
+  const [orderBy, setOrderBy] = useState<SortField>(initialState.orderBy);
+  const [orderDir, setOrderDir] = useState<SortDir>(initialState.orderDir);
 
   // Track whether state was initialized from URL (avoid double-reset of offset)
   const initializedRef = useRef(false);
@@ -378,6 +332,9 @@ export default function DatabasePage() {
     includeDeleted: !authLoading && canDeleteFiles && includeDeleted,
     orderBy,
     orderDir,
+    snapshotId: initialState.snapshotId,
+    firstSeenFrom: initialState.firstSeenFrom,
+    firstSeenBefore: initialState.firstSeenBefore,
   };
   const requestKey = buildFilesParams(requestState).toString();
   const locationKey = buildDatabaseLocation(requestState);
@@ -430,6 +387,9 @@ export default function DatabasePage() {
         includeDeleted: !authLoading && canDeleteFiles && includeDeleted,
         orderBy,
         orderDir,
+        snapshotId: initialState.snapshotId,
+        firstSeenFrom: initialState.firstSeenFrom,
+        firstSeenBefore: initialState.firstSeenBefore,
       };
       const targetKey = buildFilesParams(targetState).toString();
       const cached = forceNetwork ? null : getCachedFiles(targetKey);
@@ -561,14 +521,15 @@ export default function DatabasePage() {
   }
 
   function explainFile(file: FileItem) {
-    const filename = file.original_filename || file.title || "Document";
+    const displayName = getCanonicalDisplayName(file, t("dashboard.untitled_material"));
+    const filename = getChatValidName(file.original_filename) || displayName;
     databaseScrollCache.set(locationKey, window.scrollY);
     navigate("/chat", {
       state: {
         explainDocument: {
           file_url: file.url,
           filename,
-          title: file.title || filename,
+          title: displayName,
           category: file.category || "",
           keywords: [],
         },
@@ -665,6 +626,18 @@ export default function DatabasePage() {
           )}
         </div>
       </motion.div>
+
+      {initialState.snapshotId && initialState.firstSeenFrom && initialState.firstSeenBefore && (
+        <div
+          className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm break-words [overflow-wrap:anywhere]"
+          data-testid="weekly-period-context"
+        >
+          {t("db.weekly_period_context")
+            .replace("{snapshot}", initialState.snapshotId)
+            .replace("{start}", formatWeeklyDateTime(initialState.firstSeenFrom, lang))
+            .replace("{end}", formatWeeklyDateTime(initialState.firstSeenBefore, lang))}
+        </div>
+      )}
 
       {canDeleteFiles && (files.length > 0 || selectedUrls.length > 0) && (
         <div className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -789,6 +762,8 @@ export default function DatabasePage() {
             >
               <option value="last_seen:desc">{t("db.sort_date_newest")}</option>
               <option value="last_seen:asc">{t("db.sort_date_oldest")}</option>
+              <option value="first_seen:desc">{t("db.sort_first_seen_newest")}</option>
+              <option value="first_seen:asc">{t("db.sort_first_seen_oldest")}</option>
               <option value="title:asc">{t("db.sort_title_az")}</option>
               <option value="source_site:asc">{t("db.sort_source_az")}</option>
               <option value="bytes:desc">{t("db.sort_size_largest")}</option>
@@ -865,8 +840,8 @@ export default function DatabasePage() {
             <button onClick={() => handleSort("bytes")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-bytes">
               {t("table.size")} <SortIcon field="bytes" />
             </button>
-            <button onClick={() => handleSort("last_seen")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-last_seen">
-              {t("table.date")} <SortIcon field="last_seen" />
+            <button onClick={() => handleSort(orderBy === "first_seen" ? "first_seen" : "last_seen")} className="flex items-center gap-1 hover:text-foreground transition-colors text-left" data-testid="sort-date">
+              {orderBy === "first_seen" ? t("db.first_seen") : t("table.date")} <SortIcon field={orderBy === "first_seen" ? "first_seen" : "last_seen"} />
             </button>
             <span>{t("table.actions")}</span>
           </div>
@@ -875,6 +850,9 @@ export default function DatabasePage() {
             const hasMd = file.has_markdown;
             const isDeleted = !!file.deleted_at;
             const isSelected = selectedUrls.includes(file.url);
+            const displayName = getCanonicalDisplayName(file, t("dashboard.untitled_material"));
+            const originalName = getChatValidName(file.original_filename);
+            const displayDate = orderBy === "first_seen" ? file.first_seen : file.last_seen;
 
             return (
               <motion.div
@@ -912,8 +890,8 @@ export default function DatabasePage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" strokeWidth={1.5} />
-                    <span className="text-sm font-medium truncate" data-testid={`text-title-${i}`}>
-                      {file.title || file.original_filename || "Untitled"}
+                    <span className="text-sm font-medium truncate" title={displayName} data-testid={`text-title-${i}`}>
+                      {displayName}
                     </span>
                     {file.content_type && (
                       <span className={cn("hidden sm:inline-block lg:hidden text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0", contentTypeBadgeColor(file.content_type))}>
@@ -926,9 +904,9 @@ export default function DatabasePage() {
                       </span>
                     )}
                   </div>
-                  {file.original_filename && file.original_filename !== file.title && (
+                  {originalName && originalName !== displayName && (
                     <p className="text-xs text-muted-foreground/50 mt-0.5 truncate pl-6" data-testid={`text-filename-${i}`}>
-                      {file.original_filename}
+                      {originalName}
                     </p>
                   )}
                   {file.summary && (
@@ -959,7 +937,7 @@ export default function DatabasePage() {
                 </span>
 
                 <span className="text-xs text-muted-foreground hidden lg:flex items-center" data-testid={`text-date-${i}`}>
-                  {formatDate(file.last_seen)}
+                  {formatDate(displayDate, lang)}
                 </span>
 
                 <div className="hidden lg:flex items-center gap-1.5 justify-end">
@@ -1024,7 +1002,7 @@ export default function DatabasePage() {
                   <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", contentTypeBadgeColor(file.content_type))}>
                     {contentTypeLabel(file.content_type)}
                   </span>
-                  <span className="text-xs text-muted-foreground">{formatDate(file.last_seen)}</span>
+                  <span className="text-xs text-muted-foreground">{formatDate(displayDate, lang)}</span>
                   <span className="text-xs text-muted-foreground">{formatSize(file.bytes)}</span>
                 </div>
                 <div className="flex items-center gap-2 sm:hidden mt-2 pl-6">

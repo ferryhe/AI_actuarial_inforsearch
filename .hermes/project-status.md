@@ -1,165 +1,102 @@
-# Project Status — Issue #267 Weekly Explanations
+# Project Status — Issue #268 Weekly Dashboard
 
 - Updated: 2026-08-29
 - Repository: `AI_actuarial_inforsearch`
-- Branch: `codex/issue-267-weekly-explanations`
-- Baseline/current HEAD/origin/main/merge-base at startup: `6278a67028e998b835a3ab9196c1f82f8e7f2a40`
-- Issue: `#267` generate and persist bilingual AI explanations for weekly snapshots
-- State: Managed Review Round 3 accepted P1 repaired and locally verified; all changes remain uncommitted by explicit user instruction.
-
-## Managed Review Round 3 repair — 2026-08-29
-
-### Accepted finding and repair
-
-- Repaired the default weekly generator's request ownership bound. Its request-scoped OpenAI-compatible SDK options now apply the normalized weekly timeout and set SDK `max_retries=0`, so the existing application `max_retries=1` produces exactly one actual transport request. Length recovery remains disabled.
-- The shared chat runtime was not changed. No schema, storage, public API, task, admin, prompt, or frontend production contract changed in this round.
-- The existing lease remains the same normalized request timeout plus the bounded one-second grace. A real-SQLite concurrent test now uses a 0.1-second weekly timeout while the valid owner remains active for about 0.5 seconds; the contender does not reclaim it and only one generator call occurs. The existing expiry test still proves abandoned claims become atomically retryable, only one concurrent reclaimer wins, and stale token/fingerprint finalization cannot overwrite the replacement.
-- A real OpenAI SDK client backed by `httpx.MockTransport` proves the 0.1-second timeout reaches connect/read/write/pool request options and a retryable 5xx response causes one transport attempt, with no provider or network access.
-
-### Review 3 TDD and verification evidence
-
-- Focused RED before the production edit: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py::test_default_generator_enforces_timeout_and_one_sdk_transport_attempt` — **1 failed, 4 warnings in 3.40s**. Exact failure: `assert 3 == 1`; the SDK issued three POST requests to `/v1/chat/completions`.
-- First focused GREEN after the production edit: the same test — **1 passed, 4 warnings in 1.60s**.
-- Final focused ownership/lease/fencing set: four selected tests — **4 passed, 4 warnings in 2.41s**.
-- Final Issue #267 module: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py` — **23 passed, 4 warnings in 4.65s**.
-- Established affected weekly/schema/runtime/config/admin/task regression: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py tests/test_issue_266_weekly_snapshots.py tests/test_weekly_updates.py tests/test_sqlite_schema_runner.py tests/test_ai_runtime.py tests/test_yaml_config.py tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_settings_react_source.py tests/test_tasks_react_source.py tests/test_task_stop_support.py` — **254 passed, 5 warnings in 27.07s**.
-- Relevant FastAPI/admin regression: `python -m pytest --no-cov -q tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_fastapi_read_endpoints.py tests/test_fastapi_entrypoint.py tests/test_fastapi_react_cleanup.py tests/test_react_fastapi_authority.py` — **57 passed, 5 warnings in 9.65s**.
-- Touched-Python `compileall` — passed.
-- Focused Ruff `--select E9,F63,F7,F82` — passed (`All checks passed!`).
-- `git diff --check` — passed; only expected LF-to-CRLF working-copy warnings.
-- Completed a full dirty-diff self-review against Issue #267 acceptance criteria. Confirmed atomic claim/reclaim, no database write lock across provider calls or poll sleeps, token+fingerprint stale-finalize fencing, terminal ownership clearing, public redaction, v12 migration/Storage parity, task failure isolation, HTTP-only CLI, and the single bilingual prompt remain intact. No additional accepted finding was identified.
-
-### Exact Review 3 repair files and boundaries
-
-- `ai_actuarial/api/services/weekly_explanations.py`
-- `tests/test_issue_267_weekly_explanations.py`
-- `.hermes/project-status.md`
-
-No other file was edited by the Review 3 replacement worker. The worker accessed only the assigned worktree and did not access the primary checkout, sibling repositories/worktrees, Issue #264, Graphify/`graphify-out`, secrets/`.env`, providers/network, production, GitHub, PRs, or Issues. No real provider call, commit, push, PR/Issue mutation, merge, branch cleanup, or remote-feedback fetch was performed.
-
-## Managed Review Round 2 repair — 2026-08-29
-
-### Accepted finding and repair
-
-- Repaired the permanent-busy failure mode for an abandoned durable weekly explanation claim. The already-uncommitted v12 `weekly_explanations` schema now includes internal `claim_expires_at` state; no v13 migration was added.
-- Claim acquisition receives a lease duration derived from the effective generation timeout plus a fixed one-second grace. It stores fixed-microsecond aware UTC RFC3339 timestamps and evaluates expiry inside the conditional SQLite update under a short `BEGIN IMMEDIATE` transaction.
-- A live owner remains exclusive. Once its lease expires, concurrent reclaimers race through the same conditional update and exactly one receives a new token. Finalization still requires the current fingerprint and token, clears token/fingerprint/expiry on terminal success or failure, and prevents an original stale owner from overwriting the replacement result.
-- The busy generation path now retries atomic claim acquisition while polling, so it can reclaim an expired lease and proceed through the injected generator. Provider execution and polling sleeps remain outside database write transactions.
-- Public API shape remains unchanged. `claim_expires_at`, claim token/fingerprint, provider, model, input fingerprint, error, and coverage remain internal.
-
-### Review 2 TDD and verification evidence
-
-- Focused RED before production edits: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py::test_abandoned_weekly_explanation_lease_is_reclaimed_and_retry_recovers` — **1 failed, 4 warnings in 1.58s**. Exact failure: `TypeError: Storage.claim_weekly_explanation() got an unexpected keyword argument 'lease_ttl_seconds'`.
-- First focused GREEN after production repair: the same test — **1 passed, 4 warnings in 1.29s**.
-- Final Issue #267 module: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py` — **22 passed, 4 warnings in 3.84s**.
-- Established affected regression set: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py tests/test_issue_266_weekly_snapshots.py tests/test_weekly_updates.py tests/test_sqlite_schema_runner.py tests/test_ai_runtime.py tests/test_yaml_config.py tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_settings_react_source.py tests/test_tasks_react_source.py tests/test_task_stop_support.py` — **253 passed, 5 warnings in 25.84s**.
-- Relevant FastAPI/admin regression: `python -m pytest --no-cov -q tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_fastapi_read_endpoints.py tests/test_fastapi_entrypoint.py tests/test_fastapi_react_cleanup.py tests/test_react_fastapi_authority.py` — **57 passed, 5 warnings in 8.80s**.
-- Touched-Python `compileall` — passed.
-- Focused Ruff `--select E9,F63,F7,F82` — passed (`All checks passed!`).
-- `git diff --check` — passed; only expected LF-to-CRLF working-copy warnings.
-- Completed line-by-line self-review of the lease schema, atomic reclaim predicate, timeout/grace calculation, busy-loop acquisition, conditional finalize, and public redaction. The existing concurrency test still proves a separate SQLite `BEGIN IMMEDIATE` succeeds while the injected generator is active.
-
-### Exact Review 2 repair files and boundaries
-
-- `ai_actuarial/api/services/weekly_explanations.py`
-- `ai_actuarial/storage.py`
-- `ai_actuarial/sqlite_schema.py`
-- `tests/test_issue_267_weekly_explanations.py`
-- `.hermes/project-status.md`
-
-`tests/test_sqlite_schema_runner.py` required no Round 2 edit; its pre-existing Issue #267 fixture changes were preserved and its full module passed in the affected regression set. No other file was edited by the Round 2 worker.
-
-The worker accessed only the assigned worktree and did not access the primary checkout, sibling repositories/worktrees, Issue #264, Graphify/`graphify-out`, secrets/`.env`, providers/network, production, GitHub, PRs, or Issues. No real provider call, commit, push, PR/Issue mutation, merge, branch deletion, or worktree removal was performed.
-
-## Managed Review Round 1 repair — 2026-08-29
-
-### Accepted findings and repair
-
-- P1 concurrent default idempotency/failure isolation: replaced the read-before-generate and unconditional upsert path with a durable SQLite claim and token-conditional finalize contract. `claim_fingerprint` and `claim_token` were added surgically to the already-uncommitted v12 `weekly_explanations` schema. Claim and finalize each use a short `BEGIN IMMEDIATE` transaction; the provider callback runs after claim commit and before finalize begins. Same-fingerprint concurrent callers wait for the owner result and never invoke the provider twice. A finalize updates only the matching snapshot, fingerprint, and claim token, so a reused/stale token cannot overwrite a complete row. Terminal failures clear the token and remain independently retryable.
-- P2 provider/model validation parity: weekly admin writes now resolve the effective provider and model for provider-only, model-only, and combined changes, reject providers not supported by the existing chat runtime, validate the effective chat model against discovered capabilities, and then apply the existing chat routing-model validation before any config write. `anthropic` plus a Claude chat model is rejected; the supported `mistral` plus `mistral-small-latest` pair is accepted.
-- Public API shape is unchanged. Provider, model, fingerprint, error, coverage, `claim_fingerprint`, and `claim_token` remain internal. An initial claimed placeholder is exposed as `missing`, never as an internal claim state. No UI change was made.
-
-### Review 1 TDD evidence
-
-- Focused RED before production repair: three selected tests — **3 failed, 4 warnings in 1.89s**.
-  - Real SQLite synchronized threads invoked the generator twice and the late timeout won the unconditional upsert race.
-  - `Storage` had no `claim_weekly_explanation` / conditional-finalize contract.
-  - A provider-only `anthropic` weekly admin update returned HTTP 200 instead of HTTP 400.
-- First focused GREEN after production repair: the same three tests — **3 passed, 4 warnings in 2.10s**.
-- Final Issue #267 module: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py` — **21 passed, 4 warnings in 3.65s**.
-- Established affected regression set, including the two new Review 1 tests: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py tests/test_issue_266_weekly_snapshots.py tests/test_weekly_updates.py tests/test_sqlite_schema_runner.py tests/test_ai_runtime.py tests/test_yaml_config.py tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_settings_react_source.py tests/test_tasks_react_source.py tests/test_task_stop_support.py` — **252 passed, 5 warnings in 26.98s**.
-- Relevant FastAPI/admin regression: `python -m pytest --no-cov -q tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_fastapi_read_endpoints.py tests/test_fastapi_entrypoint.py tests/test_fastapi_react_cleanup.py tests/test_react_fastapi_authority.py` — **57 passed, 5 warnings in 9.02s**.
-- Touched-Python `compileall` — passed.
-- Focused Ruff `--select E9,F63,F7,F82` — passed (`All checks passed!`).
-- `git diff --check` — passed; only expected LF-to-CRLF working-copy warnings.
-- Completed a line-by-line review of the repair. The concurrency test also proves a separate SQLite `BEGIN IMMEDIATE` succeeds while the provider callback is active, confirming no database write lock is held across that callback.
-
-### Exact Review 1 repair files
-
-- `ai_actuarial/api/services/weekly_explanations.py`
-- `ai_actuarial/storage.py`
-- `ai_actuarial/api/services/ops_write.py`
-- `ai_actuarial/sqlite_schema.py` — required for the durable claim columns in the uncommitted v12 schema; no new schema version was introduced.
-- `tests/test_issue_267_weekly_explanations.py`
-- `.hermes/project-status.md`
-
-No other implementation, test, fixture, frontend, or configuration file was changed by the Review 1 repair worker. The other dirty files listed below are preserved parts of the pre-existing full Issue #267 implementation.
+- Worktree: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-268`
+- Branch: `codex/issue-268-weekly-dashboard`
+- Startup HEAD / local `origin/main` / merge-base: `e4d4c93a4610197b1808d3a5c24ccad3132cfd20`
+- State: PR #289 is Ready. Its one permitted remote-feedback snapshot found one valid AC-3 issue; the focused TDD repair and full related regression are complete and ready to push.
 
 ## Startup and boundaries
 
-- Read `AGENTS.md` and the previous `.hermes/project-status.md` completely before editing.
-- Startup `git status --short --branch` showed the assigned branch and a clean worktree.
-- Verified HEAD, `origin/main`, and merge-base were the assigned baseline SHA.
-- Directly inspected only this worktree. Graphify and every `graphify-out` path were explicitly forbidden and were not loaded, queried, inspected, created, or used.
-- Primary checkout, sibling repositories, other worktrees, secrets, `.env`, credentials, providers, production, and GitHub/PR/Issue state remained off-limits.
-- No commit, push, PR/Issue mutation, merge, branch deletion, worktree removal, provider call, or production access was performed.
+- Read `AGENTS.md`, the previous `.hermes/project-status.md`, and the complete `karpathy-guidelines/SKILL.md` before editing.
+- Startup `git status --short --branch` was clean on the assigned branch. HEAD, the local `origin/main` ref, and merge-base all matched the assigned baseline.
+- Work was limited to this worktree. The primary checkout, sibling repositories/worktrees, Issue #264, Graphify/`graphify-out`, secrets/`.env`, providers/network, production, and GitHub/PR/Issue state were not inspected or accessed.
+- No commit, push, PR/Issue mutation, merge, branch/worktree deletion, provider call, or lifecycle state change was performed. `.git\issue-to-merge\issue-268.json` was not modified.
 
-## Minimal design and acceptance-criteria map
+## Assumptions and design choices
 
-- AC-1/2: Added an independent `WeeklyExplanationGenerator` protocol and service. One injected call returns strict JSON with non-empty `zh` and `en`. Input is bound to immutable snapshot ID, canonical period, deterministic file count, and bounded URL/title/summary/keywords material inside explicit untrusted-data delimiters. Acquisition lineage and source/search/crawl/job statistics are excluded.
-- AC-3: Added exact SQLite v12 migration `add_weekly_explanations_v12` after v11. It persists snapshot ID, deterministic input fingerprint, both explanations, provider/model/prompt version, generated time, status, internal error, and coverage while preserving v11 data and Storage/schema-runner parity.
-- AC-4/5: Complete matching fingerprints reuse without a generator call. Failed attempts persist independently and can be retried without rebuilding or mutating the snapshot. Latest resolves the current latest published ended snapshot first and never falls back to an older explanation.
-- AC-6: Added one versioned `ai_config.weekly_explanation` prompt and reused existing AI runtime, model validation, and credential resolution. Admin read/write supports one prompt only; Settings provides English and Chinese help for that single bilingual prompt.
-- AC-7/8: Added typed generate, retry, get-by-snapshot-ID, and latest APIs plus matching HTTP-only CLI commands. Public results contain only snapshot ID, status, zh/en, and generated time; audit fields and internal errors remain storage/admin/task evidence only.
-- AC-9: After a successful weekly snapshot task, runtime launches a separate `weekly_explanation` background task bound only to the returned snapshot ID. Child failure does not change the parent task or published snapshot. Duplicate follow-ups are idempotent at generation time.
-- AC-10: No Dashboard/navigation, weekly statistics recomputation, generic AI plugin, language-specific model call, lineage feature, workflow engine, or unrelated UI was added.
+- The existing #266 latest endpoint remains the authority for selecting the latest successful, published, already-ended snapshot. The frontend first reads that lightweight response, then uses only its exact snapshot ID for the file preview and persisted explanation GETs.
+- `snapshot_id` is retained as user/navigation context in Database. Exact `period_start` and `period_end` become the `/api/files` half-open filter boundaries.
+- The existing Chat display-name helper was generalized in place so Chat keeps its existing exports and behavior while Dashboard and Database share the same rule: valid trimmed title, then `original_filename`/`filename`, then decoded URL basename, then localized fallback. Blank and case-insensitive trimmed `unknown` are invalid.
+- The existing #266 weekly file API continues to return a string `title`. When current title and captured original filename are both absent, it now returns an empty string instead of copying the full URL into `title`, allowing the frontend URL-basename rule to run without changing the response field or type.
+- Explanation errors remain independent from snapshot/file data. The UI never invokes generation, retry, task history, model configuration, or storage APIs.
 
-## TDD and verification evidence
+## Acceptance criteria delivered
 
-- Initial RED, before production edits: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py` — **16 failed, 4 warnings in 2.42s**. Missing contracts covered v12, service import, typed routes, CLI, task injection/follow-up, and config/admin behavior.
-- Focused GREEN: the same Issue #267 module after implementation — **19 passed, 4 warnings in 2.81s**.
-- Final affected regression: `python -m pytest --no-cov -q tests/test_issue_267_weekly_explanations.py tests/test_issue_266_weekly_snapshots.py tests/test_weekly_updates.py tests/test_sqlite_schema_runner.py tests/test_ai_runtime.py tests/test_yaml_config.py tests/test_fastapi_ops_read_endpoints.py tests/test_fastapi_ops_write_endpoints.py tests/test_settings_react_source.py tests/test_tasks_react_source.py tests/test_task_stop_support.py` — **250 passed, 5 warnings in 25.83s**.
-- Additional affected FastAPI regression: `python -m pytest --no-cov -q tests/test_fastapi_read_endpoints.py tests/test_fastapi_entrypoint.py tests/test_fastapi_react_cleanup.py tests/test_react_fastapi_authority.py` — **21 passed, 4 warnings in 2.69s**.
-- One attempted regression command named nonexistent `tests/test_route_inventory.py`; pytest exited 1 without running tests. It was immediately corrected to the existing FastAPI files above and is not a product blocker.
-- Frontend `npm test` — exit 0; Vite production build completed with 2,139 modules in 2.01s. Existing chunk-size warning only.
-- Frontend `npm run build` — exit 0; Vite production build completed with 2,139 modules in 1.98s. Existing chunk-size warning only.
+- **AC-1:** Added a typed GET-only weekly dashboard client. It resolves `/api/weekly-updates/latest`, then `/api/weekly-updates/{snapshot_id}/files?limit=8&offset=0` and `/api/weekly-updates/{snapshot_id}/explanation`. The view shows exact response period boundaries separately from snapshot/explanation generation times, the snapshot's full `file_count`, and at most eight rows.
+- **AC-2:** The persisted `lang` supplied by the existing i18n hook selects the already-downloaded `explanation_zh` or `explanation_en` in a pure view-model. Missing, complete-but-empty, read-unavailable, and failed states are deterministic and localized. Those states do not hide snapshot metadata, full count, or file rows. No POST/generate/retry path exists in the client.
+- **AC-3:** Added complete English/Chinese weekly labels and state text. Weekly and period-context dates use explicit `en-US` or `zh-CN` formatting in UTC. Exact RFC3339 values remain in `dateTime`/`title`. Long titles, explanations, IDs, and timestamps use accessible text plus wrapping/overflow containment.
+- **AC-4:** Dashboard and Database use the generalized canonical display-name helper. Runtime tests cover title/original filename/filename/decoded URL/localized fallback, mixed-case `unknown`, and a 600-character title. The exact snapshot file API test edits `files.title`, reloads by the same snapshot ID, and sees the new title without rebuilding snapshot/chunks/embeddings/KB. Chat backend was untouched and Chat frontend regressions pass.
+- **AC-5:** `/api/files` accepts aware RFC3339 `first_seen_from` and `first_seen_before`, validates them as a complete ordered pair, and applies `[from,before)` through SQLite `julianday`. `first_seen` is in backend and frontend sort allowlists. Invalid/blank `order_by`, invalid/blank `order_dir`, malformed/naive, inverted, one-sided, and explicitly empty boundary pairs return stable HTTP 400 JSON instead of fallback/coercion. Tests cover boundary inclusion/exclusion, first-seen sort, pagination, search/source/category composition, and include-deleted permissions.
+- **AC-6:** Dashboard View all writes snapshot ID, exact period boundaries, and descending first-seen sort. Database parses the initial URL once and includes the context in URL serialization, `/api/files` params, request/cache keys, prefetch/pagination, sorting, debounced search, source/category/include-deleted changes, forced refresh, scroll/back location, and detail/preview `from` paths. A localized period banner keeps snapshot context visible.
+- **AC-7:** The weekly surface contains no Search/Crawl/Job acquisition, lineage, or source statistics and adds no generation calls, charts, or report framework.
+- **AC-8:** Added real FastAPI execution and executable TSX client/view-model/state/component tests. Existing source-contract tests remain supplementary. Production frontend build passes.
+
+## TDD evidence
+
+- Initial combined RED command: `python -m pytest --no-cov -q tests/test_issue_268_weekly_dashboard.py; ... tsx ...` first exposed test-harness defects (missing required seed arguments and a nonexistent worktree-local `.bin` path), so it was not accepted as feature evidence.
+- After correcting only the harness, a second run exposed another fixture transaction issue and TSX top-level-await format issue; these were also corrected before accepting RED.
+- Accepted backend RED: `python -m pytest --no-cov -q tests/test_issue_268_weekly_dashboard.py` — **8 failed, 1 passed, 4 warnings**. Period parameters were ignored (the composed query returned 4 instead of 2) and seven invalid sort/boundary cases returned HTTP 200. The one pass proved the baseline already projected an edited current title from an immutable snapshot membership.
+- Accepted frontend RED: `npx --no-install tsx client/src/lib/issue268-weekly-dashboard.test.tsx` — failed with `MODULE_NOT_FOUND` for the not-yet-created `WeeklyDashboardSection` (the typed client/state modules were likewise absent).
+- Self-review boundary RED: after adding explicit-empty coverage, the focused module was **1 failed, 11 passed, 4 warnings** because `first_seen_from=&first_seen_before=` returned 200. The parser was tightened; final focused GREEN is **12 passed, 4 warnings**.
+
+## Final verification
+
+- Final focused/related backend and frontend-source regression:
+  `python -m pytest --no-cov -q tests/test_issue_268_weekly_dashboard.py tests/test_fastapi_read_endpoints.py tests/test_issue_266_weekly_snapshots.py tests/test_issue_267_weekly_explanations.py tests/test_weekly_updates.py tests/test_dashboard_react_source.py tests/test_database_react_source.py tests/test_chat_react_source.py` — **102 passed, 4 warnings in 10.41s**.
+- Executable frontend behavior: `npx --no-install tsx client/src/lib/issue268-weekly-dashboard.test.tsx` — passed, printing `Issue #268 weekly dashboard executable assertions passed`.
+- `npm test` — passed; Vite transformed **2,142 modules** in 1.96s. Existing >500 kB chunk warning only.
+- Independent `npm run build` — passed; Vite transformed **2,142 modules** in 1.89s. Existing >500 kB chunk warning only.
 - Touched-Python `compileall` — passed.
 - Focused Ruff `--select E9,F63,F7,F82` — passed (`All checks passed!`).
-- `git diff --check` — passed; only expected LF-to-CRLF working-copy warnings.
+- `git diff --check` — passed; only expected line-ending warnings.
+- Extra `npx --no-install tsc --noEmit` — failed with **13 pre-existing strict-type errors** in category normalization, Settings `replaceAll`, and scheduled-task state files. No new Issue #268 module appeared in the error list; these out-of-scope errors were not changed.
+- Extra full suite: `python -m pytest --no-cov -q` — **1,790 passed, 9 skipped, 18 failed, 25 warnings in 242.81s**. All Issue #268/#266/#267/read tests passed. The 18 out-of-scope failures were: two old v7 migration expectations that stop at v9, fourteen Ready Data runtime tests whose direct subprocess cannot locate its hard-coded `tsx` executable in this worktree, one old taxonomy migration expectation, and one permissions unit test using a dict where current code expects headers with `getlist`.
 
-## Contract evidence
+## Browser-smoke readiness
 
-- CLI help probes for root, `weekly`, `weekly explanation`, and `generate|retry|get|latest` all exited 0.
-- Fake HTTP CLI tests cover all four methods/paths, JSON success, JSON error with exit 2 and empty stderr, and prove the explanation command does not import/call Storage, the generator service, or AI runtime.
-- Migration tests prove exact v11→v12 planning/application, legacy snapshot preservation, Storage initialization parity, and rejection of a v11-stamped database with a pre-existing v12 table.
-- Generation tests cover success, timeout, empty output, invalid JSON, missing/empty language, extra keys, retry, fingerprint reuse and prompt invalidation, bounded/delimited input, coverage, and exclusion of source lineage.
-- API tests prove typed route ordering, latest isolation after force rebuild, public audit redaction, and that GET or `?language=zh|en` never calls the model.
-- Task tests exercise real threaded follow-up invocation, persistence, duplicate idempotency, and child failure isolation from the completed snapshot task.
-- Admin/config tests prove one prompt, version/default resolution, chatbot-compatible model validation, and persisted admin overrides. Frontend source/build proves one bilingual prompt editor with English and Chinese descriptions.
+- Manager-owned smoke sizes: 320/768/1024/1440, long title, zh/en switch with network observation, and period persistence.
+- Use a disposable local DB/config. Seed files with `first_seen` inside an already-ended period, then publish without a provider call:
+  `python -m ai_actuarial.cli weekly snapshot generate --db <db-path> --period-start <aware-RFC3339> --period-end <aware-RFC3339> --json`.
+- Seed `weekly_explanations` locally for that snapshot using the complete/missing/empty/failed fixture patterns in `tests/test_issue_267_weekly_explanations.py`; do not run explanation generate/retry. Include a current `files.title` longer than the viewport and edit it between normal page reloads to verify live projection.
+- Start API: `python -m ai_actuarial api --host 127.0.0.1 --port 8000`; start UI: `npm run dev`; open `http://127.0.0.1:5173/`.
+- On Dashboard, verify only three weekly GETs (`latest`, exact `{id}/files`, exact `{id}/explanation`) and zero POSTs while toggling language. Follow View all, then exercise paging, sort, search, filters, refresh, detail, preview, and Back while confirming snapshot/period params remain in the address and `/api/files` query.
 
-## Files in scope
+## Manager browser smoke — 2026-08-29
 
-- New: `ai_actuarial/api/services/weekly_explanations.py`
-- New: `tests/test_issue_267_weekly_explanations.py`
-- Modified: `ai_actuarial/ai_runtime.py`, `ai_actuarial/storage.py`, `ai_actuarial/sqlite_schema.py`, `ai_actuarial/api/services/ops_read.py`, `ai_actuarial/api/services/ops_write.py`, `ai_actuarial/api/routers/weekly_updates.py`, `ai_actuarial/task_runtime.py`, `ai_actuarial/cli.py`
-- Modified: `config/yaml_config.py`, `config/sites.yaml`
-- Modified: `client/src/pages/Settings.tsx`, `client/src/hooks/use-i18n.ts`
-- Directly related fixture updates: `tests/test_issue_266_weekly_snapshots.py`, `tests/test_sqlite_schema_runner.py`
-- Status: `.hermes/project-status.md`
+- Started the real FastAPI and Vite applications against a disposable local database containing one ended published snapshot with 12 files and one persisted bilingual explanation produced by a fake in-process generator. No provider/network generation was used.
+- At 320, 768, 1024, and 1440 CSS pixels, the document scroll width equalled the viewport width, the weekly section stayed inside the viewport, and exactly eight preview rows rendered. A 1,331-character mixed English/Chinese canonical title wrapped without horizontal overflow at the narrow and tablet widths.
+- Switching from English to Chinese selected the already-downloaded Chinese explanation and localized labels/dates without adding any resource request. Reload retained the Chinese locale. The API access log contained only GET requests for the weekly snapshot/files/explanation path and zero weekly/explanation/generate/retry POSTs.
+- View all navigated with the exact snapshot ID, period boundaries, and descending `first_seen`. Database search, ascending sort, and the Risk filter retained those parameters in both browser URL and `/api/files` requests. File preview encoded the full period-scoped Database path in `from`, and browser Back restored it exactly.
+- Browser console inspection found no application error; only unrelated browser-extension warnings appeared. FastAPI/Vite listeners and the disposable DB/log/seed directory were removed after the smoke.
+
+## Managed review and mandatory pre-PR gate — 2026-08-29
+
+- Managed Review Round 1 used fresh read-only Codex CLI thread `01a04cf5-1f4a-7201-9854-7a65c52fced5` (session `12034`) and returned **PASS** with no Issue #268 findings or changes. The review cycle state is closed at `local_review_complete`, review count 1.
+- The manager then reran the 102-test related suite, executable TSX behavior test, `npm test`, independent production build, touched-Python compile, focused Ruff, and `git diff --check`; all passed.
+- Mandatory independent pre-PR review used a second fresh read-only Codex CLI thread `01a04cfb-0fb5-79f1-bd26-fe80bc942cbf` (session `84439`) and returned **PASS** with no findings or changes.
+- The gate's own Python rerun could not collect because its read-only sandbox exposed no writable temporary directory. This was recorded as an environment-only check blocker; its TSX behavior test and diff check passed, and the manager's immediately preceding 102-test run remains the authoritative Python evidence.
+
+## PR and unique remote-feedback follow-up — 2026-08-29
+
+- Initial commit `d6fd8840806475bd40cc048fc3c6aa7ac2df445b` was pushed and PR #289 was opened Draft with exact `Closes #268`, then marked Ready. Required `CI/python-smoke` passed for that head.
+- After 959 seconds, the workflow captured its one permitted complete remote snapshot. It contained one current Copilot inline comment (`3886271966`) and no PR or Issue comments. No second feedback fetch is permitted or planned.
+- Fresh read-only classifier thread `01a04d0f-e0bb-70f3-a78c-187ca536bcc1` / session `69454` accepted that comment as a realistic AC-3 defect: when explanation `generated_at` was absent, SSR emitted `<time dateTime="" title="">—</time>`. The Copilot review summary duplicated the same finding; there were no other valid, invalid, or ambiguous findings.
+- The original implementation worker completed a focused TDD repair. RED reproduced the empty time attributes; GREEN keeps semantic `<time>` for exact timestamps and renders the same localized unavailable value in a plain `<span>` when the timestamp is absent. Only the component and its executable regression test changed.
+- Manager post-fix verification: the 102-test related suite passed with 4 existing warnings; the executable TSX behavior test passed; production build passed with 2,142 modules and only the existing large-chunk warning; `git diff --check` passed with expected Windows line-ending notices.
+- The repair changes no layout, sizing, navigation, locale selection, or request behavior. The earlier four-width real-browser smoke therefore remains applicable; the new SSR regression directly covers the changed semantic branch.
+
+## Files changed
+
+- Backend: `ai_actuarial/api/services/read.py`, `ai_actuarial/api/routers/read.py`, `ai_actuarial/storage.py`.
+- Frontend: `client/src/lib/weekly-dashboard.ts`, `client/src/lib/database-query.ts`, `client/src/components/WeeklyDashboardSection.tsx`, `client/src/pages/Dashboard.tsx`, `client/src/pages/Database.tsx`, `client/src/pages/chat/displayName.ts`, `client/src/hooks/use-i18n.ts`.
+- Tests: `tests/test_issue_268_weekly_dashboard.py`, `client/src/lib/issue268-weekly-dashboard.test.tsx`, `tests/test_dashboard_react_source.py`, `tests/test_database_react_source.py`.
+- Status: `.hermes/project-status.md`.
+- `git status` also reports `ai_actuarial/api/routers/weekly_updates.py` as modified after a temporary nullable-title experiment was fully reverted. `git diff`, `git diff --name-only`, and the filtered working-tree/HEAD object hashes show no content difference (`09eef37ad8b29b896e7a077512da0a677b0c5388`); this is a mixed-line-ending/stat artifact, not a delivered change.
 
 ## Risks, blockers, and next action
 
-- No known Issue #267 or Managed Review Round 1 repair blocker remains. Only existing dependency deprecation warnings were observed during the repair validation.
-- The mandatory external Codex CLI review was not run because this worker was explicitly forbidden from provider access and from entering the PR lifecycle. A local line-by-line self-review was completed instead; it removed an unsupported recurring-schedule admission for the snapshot-bound task.
-- The repair worker did not access the primary checkout, sibling repos, other worktrees, secrets/`.env`, providers/network, Graphify/`graphify-out`, GitHub, PRs, Issues, or lifecycle state. No provider call was made.
-- All changes are intentionally uncommitted/unpushed. The lifecycle-owning manager should inspect the dirty worktree and Review 1 evidence, then continue its separately authorized review/commit/PR workflow.
+- No known Issue #268 functional blocker remains. Browser smoke, managed review, the mandatory independent Codex CLI pre-PR review, and the accepted remote-feedback repair passed.
+- The unrelated full-suite and strict-TypeScript failures above remain baseline/tooling blockers outside Issue #268 scope.
+- The focused remote repair remains uncommitted and unpushed. The next authorized action is to commit and push it to PR #289, record the remote fix, monitor required checks without fetching feedback again, then merge and clean up once green.

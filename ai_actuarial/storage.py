@@ -3033,6 +3033,8 @@ class Storage:
         source: str = '',
         category: str = '',
         include_deleted: bool = False,
+        first_seen_from: str | None = None,
+        first_seen_before: str | None = None,
     ) -> tuple[list[dict], int]:
         """Query files with catalog information, filtering and pagination.
         
@@ -3045,6 +3047,8 @@ class Storage:
             source: Source site filter
             category: Category filter
             include_deleted: Whether to include deleted files
+            first_seen_from: Inclusive first-seen RFC3339 boundary
+            first_seen_before: Exclusive first-seen RFC3339 boundary
             
         Returns:
             Tuple of (list of file dicts, total count)
@@ -3109,6 +3113,13 @@ class Storage:
                 # Match exact string, OR start of list, OR end of list, OR middle of list
                 filters.append("(c.category = ? OR c.category LIKE ? OR c.category LIKE ? OR c.category LIKE ?)")
                 params.extend([category, f"{category};%", f"%; {category}", f"%; {category};%"])
+
+        if first_seen_from is not None:
+            filters.append("f.first_seen IS NOT NULL AND julianday(f.first_seen) >= julianday(?)")
+            params.append(first_seen_from)
+        if first_seen_before is not None:
+            filters.append("f.first_seen IS NOT NULL AND julianday(f.first_seen) < julianday(?)")
+            params.append(first_seen_before)
         
         # Avoid empty WHERE which causes SQLite "incomplete input"
         where_clause = " AND ".join(filters) if filters else "1=1"
@@ -3485,7 +3496,7 @@ class Storage:
             SELECT
                 m.file_url,
                 COALESCE(NULLIF(TRIM(f.title), ''),
-                         NULLIF(TRIM(m.original_filename), ''), m.file_url) AS title,
+                         NULLIF(TRIM(m.original_filename), ''), '') AS title,
                 m.original_filename,
                 m.first_seen
             FROM weekly_snapshot_members m

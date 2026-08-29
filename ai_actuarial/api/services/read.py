@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from ai_actuarial.shared_runtime import get_categories_config_path, load_yaml, parse_int_clamped
@@ -47,6 +49,17 @@ PUBLIC_FILE_DETAIL_FIELDS: tuple[str, ...] = PUBLIC_FILE_LIST_FIELDS + (
     "rag_kb_entries",
 )
 
+FILE_LIST_ORDER_FIELDS = frozenset(
+    {"id", "url", "title", "source_site", "bytes", "first_seen", "last_seen", "crawl_time"}
+)
+_RFC3339_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+)
+
+
+class FileListValidationError(ValueError):
+    pass
+
 
 @dataclass(frozen=True, slots=True)
 class FileListQuery:
@@ -58,18 +71,80 @@ class FileListQuery:
     source: str
     category: str
     include_deleted: bool
+    first_seen_from: str | None
+    first_seen_before: str | None
+
+
+def _parse_first_seen_boundary(value: str, *, field: str) -> tuple[str, datetime]:
+    text = str(value or "").strip()
+    if not _RFC3339_RE.fullmatch(text):
+        raise FileListValidationError(
+            f"{field} must be a timezone-aware RFC3339 timestamp"
+        )
+    try:
+        parsed = datetime.fromisoformat(
+            text.replace("t", "T").replace("z", "+00:00").replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise FileListValidationError(
+            f"{field} must be a timezone-aware RFC3339 timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise FileListValidationError(
+            f"{field} must be a timezone-aware RFC3339 timestamp"
+        )
+    normalized = parsed.astimezone(timezone.utc)
+    return normalized.isoformat(), normalized
 
 
 def parse_file_list_query(raw_query: Mapping[str, str | None]) -> FileListQuery:
+    order_by = str(raw_query.get("order_by", "last_seen") or "").strip().lower()
+    order_dir = str(raw_query.get("order_dir", "desc") or "").strip().lower()
+    if order_by not in FILE_LIST_ORDER_FIELDS:
+        raise FileListValidationError("Invalid order_by")
+    if order_dir not in {"asc", "desc"}:
+        raise FileListValidationError("Invalid order_dir")
+
+    first_seen_from_raw = str(raw_query.get("first_seen_from", "") or "").strip()
+    first_seen_before_raw = str(raw_query.get("first_seen_before", "") or "").strip()
+    has_period_boundary = (
+        "first_seen_from" in raw_query or "first_seen_before" in raw_query
+    )
+    first_seen_from = None
+    first_seen_before = None
+    parsed_from = None
+    parsed_before = None
+    if first_seen_from_raw:
+        first_seen_from, parsed_from = _parse_first_seen_boundary(
+            first_seen_from_raw,
+            field="first_seen_from",
+        )
+    if first_seen_before_raw:
+        first_seen_before, parsed_before = _parse_first_seen_boundary(
+            first_seen_before_raw,
+            field="first_seen_before",
+        )
+    if has_period_boundary and not (first_seen_from_raw and first_seen_before_raw):
+        raise FileListValidationError(
+            "first_seen_from and first_seen_before must be provided together"
+        )
+    if parsed_from is not None and parsed_before is not None:
+        if parsed_from >= parsed_before:
+            raise FileListValidationError(
+                "first_seen_from must be before first_seen_before"
+            )
+
     return FileListQuery(
         limit=parse_int_clamped(raw_query.get("limit", 20), default=20, min_value=1, max_value=1000),
         offset=parse_int_clamped(raw_query.get("offset", 0), default=0, min_value=0, max_value=1_000_000),
-        order_by=str(raw_query.get("order_by", "last_seen") or "last_seen"),
-        order_dir=str(raw_query.get("order_dir", "desc") or "desc"),
+        order_by=order_by,
+        order_dir=order_dir,
         query=str(raw_query.get("query", "") or ""),
         source=str(raw_query.get("source", "") or ""),
         category=str(raw_query.get("category", "") or ""),
         include_deleted=str(raw_query.get("include_deleted", "false") or "false").lower() == "true",
+        first_seen_from=first_seen_from,
+        first_seen_before=first_seen_before,
     )
 
 
@@ -178,6 +253,8 @@ def list_files(*, db_path: str, query: FileListQuery, include_sensitive: bool = 
             source=query.source,
             category=query.category,
             include_deleted=query.include_deleted,
+            first_seen_from=query.first_seen_from,
+            first_seen_before=query.first_seen_before,
         )
     finally:
         storage.close()
