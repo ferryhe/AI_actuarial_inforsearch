@@ -194,7 +194,8 @@ def api_get_knowledge_base(
     _auth: AuthContext = Depends(require_permissions("catalog.read")),
 ):
     try:
-        return get_knowledge_base(db_path=_db_path(request), kb_id=kb_id)
+        deep = request.query_params.get("deep", "").strip().lower() in {"1", "true", "yes"}
+        return get_knowledge_base(db_path=_db_path(request), kb_id=kb_id, deep=deep)
     except RagAdminError as exc:
         return _error_response(exc)
 

@@ -2156,9 +2156,18 @@ def test_fastapi_rag_admin_ready_build_launches_real_async_task(
         "/api/rag/knowledge-bases/kb-ready-async"
     )
     assert status.status_code == 200, status.text
-    ready_build_input = status.json()["knowledge_base"]["agentic_ready_manifest"][
-        "ready_build_input"
-    ]
+    # Ordinary detail no longer eagerly computes the Ready Data build selector.
+    assert (
+        status.json()["knowledge_base"]["agentic_ready_manifest"].get(
+            "ready_build_input"
+        )
+        is None
+    )
+    fresh = client.get(
+        "/api/rag/knowledge-bases/kb-ready-async/agentic-ready-manifest?include_ready_build_input=true"
+    )
+    assert fresh.status_code == 200, fresh.text
+    ready_build_input = fresh.json()["manifest"]["ready_build_input"]
     assert ready_build_input["index_version_id"] == ready_index["index_version_id"]
 
     launched = client.post(
@@ -2176,7 +2185,7 @@ def test_fastapi_rag_admin_ready_build_launches_real_async_task(
     assert completed["result"]["publish_status"] == "awaiting_publish"
 
     pending = client.get(
-        "/api/rag/knowledge-bases/kb-ready-async/agentic-ready-manifest"
+        "/api/rag/knowledge-bases/kb-ready-async/agentic-ready-manifest?include_ready_build_input=true"
     )
     assert pending.status_code == 200, pending.text
     pending_manifest = pending.json()["manifest"]

@@ -1299,6 +1299,7 @@ def _build_kb_embedding_status(
     storage: Storage,
     kb_payload: dict[str, Any],
     current_embeddings: Mapping[str, Any] | None = None,
+    deep: bool = False,
 ) -> dict[str, Any]:
     kb_id = str(kb_payload.get("kb_id") or "").strip()
     effective_current_embeddings = dict(current_embeddings) if current_embeddings is not None else _current_embeddings_payload(storage=storage)
@@ -1334,7 +1335,7 @@ def _build_kb_embedding_status(
                 kb_id,
                 kb_payload=kb_payload,
             )
-        else:
+        elif deep:
             try:
                 snapshot = resolve_kb_bound_chunks(storage, kb_id)
                 chunk_ids = [str(row["chunk_id"]) for row in snapshot["chunks"]]
@@ -1363,6 +1364,12 @@ def _build_kb_embedding_status(
             except KBIndexContractError as exc:
                 coverage["invalid_bindings"] = 1
                 coverage["binding_error"] = str(exc)
+        else:
+            coverage = _kb_embedding_metadata_coverage(
+                storage,
+                kb_id,
+                kb_payload=kb_payload,
+            )
     index_status = str(latest_index.get("status") or "").strip().lower()
     if not has_index or index_status in {"pending", "queued", "running", "building", "indexing"}:
         availability = "building"
@@ -1388,6 +1395,137 @@ def _build_kb_embedding_status(
         "index_coverage": coverage,
     }
 
+
+
+def _kb_embedding_metadata_coverage(
+    storage: Any,
+    kb_id: str,
+    *,
+    kb_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bounded metadata-only coverage for a single KB.
+
+    Computes ``index_coverage`` counts (bound files/chunks, ready/missing
+    embeddings, invalid bindings) from immutable metadata tables via aggregate
+    SQL. It must never select or parse ``chunk_embeddings.vector_json`` and must
+    not call ``read_valid_chunk_embeddings``; the deep vector/snapshot validation
+    lives in ``_build_kb_embedding_status(..., deep=True)``.
+    """
+    coverage = {
+        "bound_file_count": 0,
+        "bound_chunk_count": 0,
+        "ready_embeddings": 0,
+        "missing_embeddings": 0,
+        "invalid_bindings": 0,
+        "binding_error": "",
+    }
+    binding_tables = (
+        "rag_kb_files",
+        "kb_chunk_bindings",
+        "file_chunk_sets",
+        "global_chunks",
+    )
+    if not all(storage._table_exists(table) for table in binding_tables):
+        return coverage
+
+    selected_profile_id = str(kb_payload.get("chunk_profile_id") or "").strip()
+    has_embeddings = storage._table_exists("chunk_embeddings")
+    embedding_params: tuple[Any, ...] = ()
+    embedding_join = ""
+    ready_count_sql = "0"
+    if has_embeddings:
+        try:
+            identity = resolve_server_embedding_identity(
+                storage,
+                str(kb_payload.get("embedding_identity_key") or "") or None,
+            )
+            allow_ready = 1
+        except ValueError as exc:
+            identity = SimpleNamespace(
+                provider=str(kb_payload.get("embedding_provider") or ""),
+                model=str(kb_payload.get("embedding_model") or ""),
+                dimension=int(kb_payload.get("embedding_dimension") or 0),
+                config_fingerprint="",
+                embedding_identity_key=str(
+                    kb_payload.get("embedding_identity_key") or ""
+                ),
+            )
+            allow_ready = 0
+            coverage["binding_error"] = str(exc)
+        ready_count_sql = """COALESCE(SUM(CASE
+                       WHEN ? = 1
+                        AND e.embedding_provider = ?
+                        AND e.embedding_model = ?
+                        AND e.dimension = ?
+                        AND e.config_fingerprint = ?
+                        AND e.status = 'ready'
+                       THEN 1 ELSE 0 END), 0)"""
+        embedding_join = """LEFT JOIN chunk_embeddings e
+              ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = ?"""
+        embedding_params = (
+            allow_ready,
+            identity.provider,
+            identity.model,
+            identity.dimension,
+            identity.config_fingerprint,
+        )
+    row = storage._conn.execute(
+        f"""
+        SELECT COUNT(DISTINCT b.file_url), COUNT(g.chunk_id),
+               {ready_count_sql},
+               (SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?),
+               (SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?),
+               COALESCE(MAX(CASE
+                   WHEN kf.file_url IS NULL
+                     OR s.chunk_set_id IS NULL
+                     OR s.file_url != b.file_url
+                     OR (? != '' AND s.profile_id != ?)
+                     OR s.status != 'ready'
+                     OR s.chunk_count <= 0
+                     OR s.chunk_count != COALESCE(counts.actual_count, 0)
+                   THEN 1 ELSE 0 END), 0)
+        FROM kb_chunk_bindings b
+        LEFT JOIN rag_kb_files kf
+          ON kf.kb_id = b.kb_id AND kf.file_url = b.file_url
+        LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
+        LEFT JOIN (
+            SELECT chunk_set_id, COUNT(*) AS actual_count
+            FROM global_chunks
+            GROUP BY chunk_set_id
+        ) counts ON counts.chunk_set_id = s.chunk_set_id
+        LEFT JOIN global_chunks g ON g.chunk_set_id = s.chunk_set_id
+        {embedding_join}
+        WHERE b.kb_id = ?
+        """,
+        (
+            *embedding_params,
+            kb_id,
+            kb_id,
+            selected_profile_id,
+            selected_profile_id,
+            *((identity.embedding_identity_key,) if has_embeddings else ()),
+            kb_id,
+        ),
+    ).fetchone()
+    member_count = int(row[3] or 0)
+    binding_count = int(row[4] or 0)
+    invalid_structure = bool(row[5])
+    if (
+        member_count == 0
+        or int(row[0] or 0) != member_count
+        or binding_count != member_count
+        or invalid_structure
+    ):
+        coverage["invalid_bindings"] = 1
+        coverage["binding_error"] = "KB chunk binding metadata is invalid"
+        return coverage
+    coverage["bound_file_count"] = int(row[0] or 0)
+    coverage["bound_chunk_count"] = int(row[1] or 0)
+    coverage["ready_embeddings"] = int(row[2] or 0)
+    coverage["missing_embeddings"] = (
+        coverage["bound_chunk_count"] - coverage["ready_embeddings"]
+    )
+    return coverage
 
 
 def _request_already_authorized(auth: Any | None) -> bool:
@@ -2520,121 +2658,7 @@ class _KBListStorageView:
     ) -> dict[str, Any]:
         if self._prepared:
             return dict(self._coverage.get(kb_id) or {})
-        coverage = {
-            "bound_file_count": 0,
-            "bound_chunk_count": 0,
-            "ready_embeddings": 0,
-            "missing_embeddings": 0,
-            "invalid_bindings": 0,
-            "binding_error": "",
-        }
-        binding_tables = (
-            "rag_kb_files",
-            "kb_chunk_bindings",
-            "file_chunk_sets",
-            "global_chunks",
-        )
-        if not all(self._table_exists(table) for table in binding_tables):
-            return coverage
-
-        selected_profile_id = str(kb_payload.get("chunk_profile_id") or "").strip()
-        has_embeddings = self._table_exists("chunk_embeddings")
-        embedding_params: tuple[Any, ...] = ()
-        embedding_join = ""
-        ready_count_sql = "0"
-        if has_embeddings:
-            try:
-                identity = resolve_server_embedding_identity(
-                    self,
-                    str(kb_payload.get("embedding_identity_key") or "") or None,
-                )
-                allow_ready = 1
-            except ValueError as exc:
-                identity = SimpleNamespace(
-                    provider=str(kb_payload.get("embedding_provider") or ""),
-                    model=str(kb_payload.get("embedding_model") or ""),
-                    dimension=int(kb_payload.get("embedding_dimension") or 0),
-                    config_fingerprint="",
-                    embedding_identity_key=str(
-                        kb_payload.get("embedding_identity_key") or ""
-                    ),
-                )
-                allow_ready = 0
-                coverage["binding_error"] = str(exc)
-            ready_count_sql = """COALESCE(SUM(CASE
-                       WHEN ? = 1
-                        AND e.embedding_provider = ?
-                        AND e.embedding_model = ?
-                        AND e.dimension = ?
-                        AND e.config_fingerprint = ?
-                        AND e.status = 'ready'
-                       THEN 1 ELSE 0 END), 0)"""
-            embedding_join = """LEFT JOIN chunk_embeddings e
-              ON e.chunk_id = g.chunk_id AND e.embedding_identity_key = ?"""
-            embedding_params = (
-                allow_ready,
-                identity.provider,
-                identity.model,
-                identity.dimension,
-                identity.config_fingerprint,
-            )
-        row = self._conn.execute(
-            f"""
-            SELECT COUNT(DISTINCT b.file_url), COUNT(g.chunk_id),
-                   {ready_count_sql},
-                   (SELECT COUNT(*) FROM rag_kb_files WHERE kb_id = ?),
-                   (SELECT COUNT(*) FROM kb_chunk_bindings WHERE kb_id = ?),
-                   COALESCE(MAX(CASE
-                       WHEN kf.file_url IS NULL
-                         OR s.chunk_set_id IS NULL
-                         OR s.file_url != b.file_url
-                         OR (? != '' AND s.profile_id != ?)
-                         OR s.status != 'ready'
-                         OR s.chunk_count <= 0
-                         OR s.chunk_count != COALESCE(counts.actual_count, 0)
-                       THEN 1 ELSE 0 END), 0)
-            FROM kb_chunk_bindings b
-            LEFT JOIN rag_kb_files kf
-              ON kf.kb_id = b.kb_id AND kf.file_url = b.file_url
-            LEFT JOIN file_chunk_sets s ON s.chunk_set_id = b.chunk_set_id
-            LEFT JOIN (
-                SELECT chunk_set_id, COUNT(*) AS actual_count
-                FROM global_chunks
-                GROUP BY chunk_set_id
-            ) counts ON counts.chunk_set_id = s.chunk_set_id
-            LEFT JOIN global_chunks g ON g.chunk_set_id = s.chunk_set_id
-            {embedding_join}
-            WHERE b.kb_id = ?
-            """,
-            (
-                *embedding_params,
-                kb_id,
-                kb_id,
-                selected_profile_id,
-                selected_profile_id,
-                *((identity.embedding_identity_key,) if has_embeddings else ()),
-                kb_id,
-            ),
-        ).fetchone()
-        member_count = int(row[3] or 0)
-        binding_count = int(row[4] or 0)
-        invalid_structure = bool(row[5])
-        if (
-            member_count == 0
-            or int(row[0] or 0) != member_count
-            or binding_count != member_count
-            or invalid_structure
-        ):
-            coverage["invalid_bindings"] = 1
-            coverage["binding_error"] = "KB chunk binding metadata is invalid"
-            return coverage
-        coverage["bound_file_count"] = int(row[0] or 0)
-        coverage["bound_chunk_count"] = int(row[1] or 0)
-        coverage["ready_embeddings"] = int(row[2] or 0)
-        coverage["missing_embeddings"] = (
-            coverage["bound_chunk_count"] - coverage["ready_embeddings"]
-        )
-        return coverage
+        return _kb_embedding_metadata_coverage(self, kb_id, kb_payload=kb_payload)
 
     def get_llm_provider(
         self,
@@ -3808,15 +3832,23 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
 
 
 
-def get_knowledge_base(*, db_path: str, kb_id: str) -> dict[str, Any]:
+def get_knowledge_base(*, db_path: str, kb_id: str, deep: bool = False) -> dict[str, Any]:
     kid = _kb_id(kb_id)
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
-        payload = _build_kb_embedding_status(storage=storage, kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)))
-        payload = _decorate_kb_agentic_manifest(storage, payload)
+        payload = _build_kb_embedding_status(
+            storage=storage,
+            kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
+            deep=deep,
+        )
+        payload = _decorate_kb_agentic_manifest(
+            storage,
+            payload,
+            include_ready_build_input=False,
+        )
         payload["stats"] = manager.get_kb_stats(kid)
         payload["categories"] = manager.get_kb_categories(kid)
         return {"knowledge_base": payload}
@@ -3832,12 +3864,16 @@ def get_agentic_ready_manifest(*, db_path: str, kb_id: str, query: Mapping[str, 
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
         profile = _manifest_profile((query or {}).get("profile") or getattr(kb, "manifest_profile", "general"))
+        include_ready_build_input = _norm(
+            (query or {}).get("include_ready_build_input")
+        ).lower() in {"1", "true", "yes"}
         from .ready_data_publication import read_public_ready_data_snapshot
 
         return read_public_ready_data_snapshot(
             storage,
             kb_id=kid,
             profile=profile,
+            include_ready_build_input=include_ready_build_input,
         )
     finally:
         storage.close()

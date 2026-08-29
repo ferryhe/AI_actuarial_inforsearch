@@ -644,7 +644,7 @@ export default function Knowledge() {
     setKbActionNotice(null);
     try {
       const manifestResponse = await apiGet<{ manifest?: AgenticReadyManifest }>(
-        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest`
+        `/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest?include_ready_build_input=true`
       );
       const readyBuildInput = manifestResponse.manifest?.ready_build_input;
       if (!readyBuildInput) {

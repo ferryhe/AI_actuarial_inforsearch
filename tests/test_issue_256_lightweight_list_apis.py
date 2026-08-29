@@ -647,7 +647,7 @@ def test_knowledge_build_fetches_fresh_selector_before_posting() -> None:
     end = source.index("const toggleKbCategory", start)
     handler = source[start:end]
 
-    manifest_path = "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest`"
+    manifest_path = "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest?include_ready_build_input=true`"
     build_path = "`/api/rag/knowledge-bases/${encodeURIComponent(kbId)}/agentic-ready-manifest/build`"
     assert manifest_path in handler
     assert "await apiGet" in handler
