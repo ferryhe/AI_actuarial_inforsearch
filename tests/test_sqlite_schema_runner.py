@@ -36,6 +36,20 @@ def _current_db_at_version_zero(db_path: Path) -> None:
         storage.close()
 
 
+def _current_db_at_version_10(
+    db_path: Path,
+    *,
+    snapshot_tables: tuple[str, ...] = (),
+) -> None:
+    storage = Storage(str(db_path))
+    storage.close()
+    with sqlite3.connect(db_path) as conn:
+        for table in ("weekly_snapshot_members", "weekly_snapshots"):
+            if table not in snapshot_tables:
+                conn.execute(f"DROP TABLE {table}")
+        conn.execute("PRAGMA user_version=10")
+
+
 def _production_v7_db(db_path: Path) -> None:
     storage = Storage(str(db_path))
     storage.close()
@@ -418,6 +432,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
     assert _user_version(db_path) == 0
 
@@ -434,6 +449,7 @@ def test_status_plan_apply_version_zero_baseline_preserves_data(tmp_path: Path) 
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
@@ -459,6 +475,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
 
     with sqlite3.connect(db_path) as conn:
@@ -479,6 +496,7 @@ def test_status_plan_apply_production_v7_preserves_rows_and_is_idempotent(
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
     assert schema_status(db_path)["state"] == "current"
     with sqlite3.connect(db_path) as conn:
@@ -528,12 +546,18 @@ def test_v9_manual_operation_state_migration_is_read_compatible_and_idempotent(
             "id": "add_agentic_ready_manual_operation_state_v10",
             "from_version": 9,
             "to_version": 10,
-        }
+        },
+        {
+            "id": "add_weekly_snapshots_v11",
+            "from_version": 10,
+            "to_version": 11,
+        },
     ]
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
     assert applied["applied_migrations"] == [
-        "add_agentic_ready_manual_operation_state_v10"
+        "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
     with sqlite3.connect(db_path) as conn:
         columns = {
@@ -885,6 +909,7 @@ def test_v6_migration_preserves_pipeline_stage_and_child_run_rows(tmp_path: Path
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
 
@@ -922,37 +947,37 @@ def test_schema_runner_plans_registered_old_version_path(tmp_path: Path, monkeyp
     storage = Storage(str(db_path))
     storage.close()
 
-    def apply_v11(conn: sqlite3.Connection) -> None:
-        conn.execute("PRAGMA user_version=11")
+    def apply_v12(conn: sqlite3.Connection) -> None:
+        conn.execute("PRAGMA user_version=12")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 11)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 12)
     monkeypatch.setattr(
         sqlite_schema,
         "SQLITE_SCHEMA_MIGRATIONS",
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=11,
-                migration_id="test_schema_v11",
-                apply=apply_v11,
+                version=12,
+                migration_id="test_schema_v12",
+                apply=apply_v12,
             ),
         ),
     )
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 10
+    assert status["database"]["user_version"] == 11
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v11", "from_version": 10, "to_version": 11}
+        {"id": "test_schema_v12", "from_version": 11, "to_version": 12}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["database"]["user_version"] == 11
-    assert applied["applied_migrations"] == ["test_schema_v11"]
-    assert _user_version(db_path) == 11
+    assert applied["database"]["user_version"] == 12
+    assert applied["applied_migrations"] == ["test_schema_v12"]
+    assert _user_version(db_path) == 12
 
 
 def test_schema_runner_accepts_registered_old_version_source_signature(
@@ -981,11 +1006,11 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
     ) -> bool:
         return tables == v6_signature
 
-    def apply_v11(conn: sqlite3.Connection) -> None:
+    def apply_v12(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=11")
+        conn.execute("PRAGMA user_version=12")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 11)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 12)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -993,9 +1018,9 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=11,
-                migration_id="test_schema_v11_add_marker",
-                apply=apply_v11,
+                version=12,
+                migration_id="test_schema_v12_add_marker",
+                apply=apply_v12,
                 source_validator=accepts_v6_source,
             ),
         ),
@@ -1003,17 +1028,17 @@ def test_schema_runner_accepts_registered_old_version_source_signature(
 
     status = sqlite_schema.schema_status(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == 10
+    assert status["database"]["user_version"] == 11
 
     plan = sqlite_schema.schema_plan(db_path)
     assert plan["plan"]["actions"] == [
-        {"id": "test_schema_v11_add_marker", "from_version": 10, "to_version": 11}
+        {"id": "test_schema_v12_add_marker", "from_version": 11, "to_version": 12}
     ]
 
     applied = sqlite_schema.apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["test_schema_v11_add_marker"]
-    assert _user_version(db_path) == 11
+    assert applied["applied_migrations"] == ["test_schema_v12_add_marker"]
+    assert _user_version(db_path) == 12
 
 
 def test_schema_runner_rejects_mutating_source_validator_during_apply(
@@ -1053,11 +1078,11 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         conn.execute("CREATE TABLE validator_mutation_leak (secret_value TEXT)")
         return True
 
-    def apply_v11(conn: sqlite3.Connection) -> None:
+    def apply_v12(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE files ADD COLUMN schema_runner_v7_marker TEXT")
-        conn.execute("PRAGMA user_version=11")
+        conn.execute("PRAGMA user_version=12")
 
-    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 11)
+    monkeypatch.setattr(sqlite_schema, "CURRENT_SQLITE_SCHEMA_VERSION", 12)
     monkeypatch.setattr(sqlite_schema, "_current_storage_signature", lambda: v7_signature)
     monkeypatch.setattr(
         sqlite_schema,
@@ -1065,9 +1090,9 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
         (
             *sqlite_schema.SQLITE_SCHEMA_MIGRATIONS,
             sqlite_schema.SQLiteSchemaMigration(
-                version=11,
-                migration_id="test_schema_v11_block_mutating_validator",
-                apply=apply_v11,
+                version=12,
+                migration_id="test_schema_v12_block_mutating_validator",
+                apply=apply_v12,
                 source_validator=mutating_validator,
             ),
         ),
@@ -1081,7 +1106,7 @@ def test_schema_runner_rejects_mutating_source_validator_during_apply(
 
     assert validator_calls >= 2
     assert query_only_values and set(query_only_values) == {1}
-    assert _user_version(db_path) == 10
+    assert _user_version(db_path) == 11
     with sqlite3.connect(db_path) as conn:
         assert conn.execute(
             """
@@ -1127,6 +1152,7 @@ def test_schema_runner_accepts_exported_chat_service_optional_schema(
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
 
 
@@ -1358,7 +1384,7 @@ def test_schema_runner_serializes_concurrent_apply(tmp_path: Path) -> None:
         results = list(pool.map(lambda _: apply_schema(db_path), range(2)))
 
     applied = [result["applied_migrations"] for result in results]
-    assert sorted(len(item) for item in applied) == [0, 10]
+    assert sorted(len(item) for item in applied) == [0, 11]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     assert _files_count(db_path) == 1
 
@@ -1423,6 +1449,7 @@ def test_schema_cli_json_contract_for_status_plan_apply(tmp_path: Path) -> None:
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
     assert str(db_path) not in apply_result.stdout
 
@@ -1481,6 +1508,7 @@ def test_legacy_missing_backfill_table_is_migratable(tmp_path: Path) -> None:
         "add_chunk_embedding_identity_v8",
         "add_kb_index_contract_v9",
         "add_agentic_ready_manual_operation_state_v10",
+        "add_weekly_snapshots_v11",
     ]
     assert _user_version(db_path) == CURRENT_SQLITE_SCHEMA_VERSION
     with sqlite3.connect(db_path) as conn:
@@ -1550,6 +1578,89 @@ def test_legacy_missing_non_backfill_column_is_invalid(tmp_path: Path) -> None:
     assert status["state"] == "invalid"
     assert status["blocked"] is True
     assert "missing_columns" in status["problems"]
+
+
+def test_exact_version_10_source_is_migratable(tmp_path: Path) -> None:
+    from ai_actuarial.sqlite_schema import schema_status
+
+    db_path = tmp_path / "exact-v10.db"
+    _current_db_at_version_10(db_path)
+
+    status = schema_status(db_path)
+
+    assert status["state"] == "needs_migration"
+    assert status["can_apply"] is True
+    assert status["blocked"] is False
+
+
+@pytest.mark.parametrize(
+    ("snapshot_tables", "case_name"),
+    [
+        (("weekly_snapshots",), "snapshots-only"),
+        (("weekly_snapshot_members",), "members-only"),
+        (
+            ("weekly_snapshots", "weekly_snapshot_members"),
+            "both-snapshot-tables",
+        ),
+    ],
+)
+def test_version_10_source_with_v11_snapshot_tables_is_invalid(
+    tmp_path: Path,
+    snapshot_tables: tuple[str, ...],
+    case_name: str,
+) -> None:
+    from ai_actuarial.sqlite_schema import schema_status
+
+    db_path = tmp_path / f"v10-{case_name}.db"
+    _current_db_at_version_10(db_path, snapshot_tables=snapshot_tables)
+
+    status = schema_status(db_path)
+
+    assert status["state"] == "invalid"
+    assert status["can_apply"] is False
+    assert status["blocked"] is True
+
+
+def test_version_10_source_missing_auto_backfill_table_is_invalid(
+    tmp_path: Path,
+) -> None:
+    from ai_actuarial.sqlite_schema import schema_status
+
+    db_path = tmp_path / "v10-missing-unrelated-table.db"
+    _current_db_at_version_10(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE agentic_ready_automation_lock")
+
+    status = schema_status(db_path)
+
+    assert status["state"] == "invalid"
+    assert status["can_apply"] is False
+    assert status["blocked"] is True
+    assert "missing_required_tables" in status["problems"]
+
+
+def test_version_10_source_with_unexpected_trigger_is_invalid(tmp_path: Path) -> None:
+    from ai_actuarial.sqlite_schema import schema_status
+
+    db_path = tmp_path / "v10-unexpected-trigger.db"
+    _current_db_at_version_10(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TRIGGER unexpected_v10_trigger
+            AFTER INSERT ON files
+            BEGIN
+                SELECT 1;
+            END
+            """
+        )
+
+    status = schema_status(db_path)
+
+    assert status["state"] == "invalid"
+    assert status["can_apply"] is False
+    assert status["blocked"] is True
+    assert "unexpected_schema_objects" in status["problems"]
 
 
 def test_indexes_equivalent_ignores_column_cid() -> None:

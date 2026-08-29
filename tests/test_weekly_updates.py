@@ -106,7 +106,7 @@ def test_weekly_summary_uses_first_seen_not_last_seen(tmp_path: Path) -> None:
 
     assert summary["file_count"] == 1
     assert [item["url"] for item in summary["files"]] == ["https://current-first-seen.example/current.pdf"]
-    assert summary["files"][0]["summary"] == "Current file summary"
+    assert summary["files"][0]["title"] == "Current First Seen"
     assert summary["metadata"]["content_change_detection"] is False
     assert "files.first_seen" in summary["metadata"]["logic"]
 
@@ -167,7 +167,7 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
     result = runtime._run_collection(
         "task-weekly-summary",
         "weekly_summary",
-        {"period_start": PERIOD_START, "period_end": PERIOD_END, "relative_period": "previous_week"},
+        {"period_start": PERIOD_START, "period_end": PERIOD_END},
     )
 
     assert result.success is True
@@ -181,7 +181,7 @@ def test_native_task_runtime_runs_weekly_summary(tmp_path: Path, monkeypatch) ->
         storage.close()
     assert latest is not None
     assert latest["files"][0]["url"] == "https://current-first-seen.example/current.pdf"
-    assert latest["metadata"]["relative_period"] == "previous_week"
+    assert latest["metadata"]["relative_period"] is None
 
 
 def test_native_task_runtime_weekly_summary_clamps_invalid_max_files(tmp_path: Path, monkeypatch) -> None:

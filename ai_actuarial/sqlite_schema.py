@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 10
+CURRENT_SQLITE_SCHEMA_VERSION = 11
+
+_AWARE_RFC3339_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+)
 
 _CREATE_CURRENT_SCHEMA_ACTION_ID = "create_current_storage_schema"
 _BASELINE_ACTION_ID = "baseline_storage_schema_v1"
@@ -1004,6 +1010,165 @@ def _accept_version_9_source(
     return valid
 
 
+def _canonical_legacy_weekly_boundary(value: Any) -> tuple[datetime, str] | None:
+    text = str(value or "").strip()
+    if not _AWARE_RFC3339_RE.fullmatch(text):
+        return None
+    try:
+        parsed = datetime.fromisoformat(
+            text.replace("t", "T").replace("z", "+00:00").replace("Z", "+00:00")
+        )
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        utc_value = parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+    return utc_value, utc_value.isoformat()
+
+
+def _add_weekly_snapshots_v11(conn: sqlite3.Connection) -> None:
+    """Add immutable weekly snapshots and backfill legacy summary rows."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_snapshots (
+            id TEXT PRIMARY KEY,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'published',
+            file_count INTEGER NOT NULL DEFAULT 0,
+            summary_markdown TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            CHECK(status IN ('published', 'superseded', 'failed'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_snapshot_members (
+            snapshot_id TEXT NOT NULL,
+            file_url TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            original_filename TEXT,
+            ordinal INTEGER NOT NULL,
+            PRIMARY KEY(snapshot_id, file_url),
+            FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_snapshots_published_period
+        ON weekly_snapshots(period_start, period_end)
+        WHERE status = 'published'
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_weekly_snapshots_list
+        ON weekly_snapshots(status, period_end DESC, generated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_weekly_snapshot_members_page
+        ON weekly_snapshot_members(snapshot_id, ordinal)
+        """
+    )
+
+    legacy_rows = conn.execute(
+        """
+        SELECT id, period_start, period_end, generated_at, file_count,
+               files_json, summary_markdown, metadata_json
+        FROM weekly_update_summaries
+        """
+    ).fetchall()
+    valid_legacy_rows: list[tuple[str, str, str, str, sqlite3.Row | tuple[Any, ...]]] = []
+    for row in legacy_rows:
+        start = _canonical_legacy_weekly_boundary(row[1])
+        end = _canonical_legacy_weekly_boundary(row[2])
+        if start is None or end is None or end[0] <= start[0]:
+            continue
+        valid_legacy_rows.append(
+            (start[1], end[1], str(row[3]), str(row[0]), row)
+        )
+    valid_legacy_rows.sort(key=lambda item: item[:4])
+
+    for period_start, period_end, _generated_at, snapshot_id, row in valid_legacy_rows:
+        inserted = conn.execute(
+            """
+            INSERT OR IGNORE INTO weekly_snapshots (
+                id, period_start, period_end, generated_at, status, file_count,
+                summary_markdown, metadata_json
+            ) VALUES (?, ?, ?, ?, 'published', ?, ?, ?)
+            """,
+            (
+                snapshot_id,
+                period_start,
+                period_end,
+                row[3],
+                int(row[4] or 0),
+                row[6],
+                row[7],
+            ),
+        )
+        if inserted.rowcount != 1:
+            continue
+        try:
+            files = json.loads(str(row[5] or "[]"))
+        except json.JSONDecodeError:
+            files = []
+        if not isinstance(files, list):
+            files = []
+        for ordinal, item in enumerate(files):
+            if not isinstance(item, dict):
+                continue
+            file_url = str(item.get("url") or "").strip()
+            if not file_url:
+                continue
+            current = conn.execute(
+                "SELECT first_seen, original_filename FROM files WHERE url = ? LIMIT 1",
+                (file_url,),
+            ).fetchone()
+            first_seen = str(
+                item.get("first_seen")
+                or (current[0] if current else "")
+                or period_start
+            )
+            original_filename = item.get("original_filename") or (
+                current[1] if current else None
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO weekly_snapshot_members (
+                    snapshot_id, file_url, first_seen, original_filename, ordinal
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (snapshot_id, file_url, first_seen, original_filename, ordinal),
+            )
+    _set_user_version(conn, 11)
+
+
+def _accept_version_10_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept the v10 schema before weekly snapshot tables existed."""
+    snapshot_tables = {"weekly_snapshots", "weekly_snapshot_members"}
+    if snapshot_tables.intersection(tables):
+        return False
+    expected = _current_storage_signature()
+    adjusted = dict(tables)
+    for table in snapshot_tables:
+        if table not in adjusted and table in expected:
+            adjusted[table] = expected[table]
+    valid, _, _ = _schema_validation(
+        adjusted,
+        unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
+    )
+    return valid
+
+
 SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
     SQLiteSchemaMigration(
         version=1,
@@ -1063,6 +1228,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_agentic_ready_manual_operation_state_v10",
         apply=_add_agentic_ready_manual_operation_state_v10,
         source_validator=_accept_version_9_source,
+    ),
+    SQLiteSchemaMigration(
+        version=11,
+        migration_id="add_weekly_snapshots_v11",
+        apply=_add_weekly_snapshots_v11,
+        source_validator=_accept_version_10_source,
     ),
 )
 
@@ -1869,6 +2040,20 @@ def _analyze_connection(
         tables,
         unexpected_schema_objects=unexpected_schema_objects,
     )
+    if (
+        valid
+        and version == 10
+        and version < CURRENT_SQLITE_SCHEMA_VERSION
+        and not _migration_accepts_source(conn, tables, start_version=version)
+    ):
+        return _base_payload(
+            state="invalid",
+            user_version=version,
+            schema="unrecognized",
+            can_apply=False,
+            blocked=True,
+            problems=["migration_source_mismatch"],
+        )
     if not valid:
         if version == 0 and _migration_path_from(0) is not None:
             tolerant_valid, _, _ = _schema_validation(
