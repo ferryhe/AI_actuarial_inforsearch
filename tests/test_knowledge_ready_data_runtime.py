@@ -138,6 +138,30 @@ def test_publication_projection_is_authoritative_for_current_serving_state() -> 
         assert.equal(isReadyDataAutomationBusy("building"), true);
         assert.equal(isReadyDataAutomationBusy("failed"), false);
         assert.equal(isReadyDataAutomationBusy("succeeded"), false);
+        const orphanPending = {
+          automation_state: "pending",
+          pending_generation: null,
+          running_generation: null,
+        };
+        const generationPending = {
+          ...orphanPending,
+          pending_generation: 7,
+        };
+        const generationRunning = {
+          ...orphanPending,
+          automation_state: "running",
+          running_generation: 7,
+        };
+        const generationBuilding = {
+          ...orphanPending,
+          automation_state: "building",
+          running_generation: 7,
+        };
+        assert.equal(isReadyDataAutomationBusy(orphanPending), false);
+        assert.equal(isReadyDataAutomationBusy(generationPending), true);
+        assert.equal(isReadyDataAutomationBusy(generationRunning), true);
+        assert.equal(isReadyDataAutomationBusy(generationBuilding), true);
+        assert.equal(isReadyDataAutomationBusy({ automation_state: "pending" }), true);
         assert.equal(readyDataOperationKindTranslationKey("build"), "knowledge.ready_operation_build");
         assert.equal(readyDataOperationKindTranslationKey("publish"), "knowledge.ready_operation_publish");
         assert.equal(readyDataOperationKindTranslationKey("rollback"), "knowledge.ready_operation_rollback");
@@ -326,6 +350,34 @@ def test_automation_confirmation_meta_fallback_and_bounded_polling() -> None:
 
         assert.equal(pollManifest, succeeded);
         assert.equal(shouldPollReadyDataManifest(pollManifest, 1, 12), false);
+
+        const orphanPending = {
+          ...confirmed,
+          automation_state: "pending",
+          pending_generation: null,
+          running_generation: null,
+        };
+        assert.equal(shouldPollReadyDataManifest(orphanPending, 0, 12), false);
+        assert.equal(shouldPollReadyDataManifest({
+          ...orphanPending,
+          pending_generation: 8,
+        }, 0, 12), true);
+        assert.equal(shouldPollReadyDataManifest({
+          ...orphanPending,
+          automation_state: "running",
+          running_generation: 8,
+        }, 0, 12), true);
+        assert.equal(shouldPollReadyDataManifest({
+          ...orphanPending,
+          automation_state: "failed",
+        }, 0, 12), false);
+        assert.equal(shouldPollReadyDataManifest({
+          kb_id: "legacy",
+          profile: "general",
+          status: "ready",
+          usable: true,
+          automation_state: "pending",
+        }, 0, 12), true);
 
         const disabled = mergeConfirmedReadyDataAutomation(confirmed, "A", "general", {
           automation: {

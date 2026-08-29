@@ -245,6 +245,161 @@ def test_index_only_evaluation_does_not_create_false_stale(tmp_path: Path) -> No
         storage.close()
 
 
+def test_source_evaluation_settles_only_orphan_pending_automation(tmp_path: Path) -> None:
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        _create_kb(storage)
+        active = _publish(storage, tmp_path)
+        storage.set_agentic_ready_automation(
+            kb_id="kb-source-state",
+            profile="general",
+            automatic_build_enabled=True,
+            automatic_publish_enabled=False,
+        )
+        marked = storage.mark_agentic_ready_source_event(
+            kb_id="kb-source-state",
+            profile="general",
+            reason="index_committed",
+        )
+        now = storage._utcnow_iso()
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                """
+                INSERT INTO agentic_ready_automation (
+                    kb_id, profile, automation_state, running_generation,
+                    last_attempted_generation, claim_token, claimed_at,
+                    lease_expires_at, last_attempt_publication_id,
+                    last_success_at, last_error, updated_at
+                )
+                VALUES (?, 'general', 'pending', NULL, 0, NULL, NULL, NULL,
+                        NULL, NULL, '', ?)
+                ON CONFLICT(kb_id, profile) DO UPDATE SET
+                    automation_state = 'pending', running_generation = NULL,
+                    claim_token = NULL, claimed_at = NULL,
+                    lease_expires_at = NULL, updated_at = excluded.updated_at
+                """,
+                ("kb-source-state", now),
+            )
+        before = storage.get_agentic_ready_publication_state(
+            kb_id="kb-source-state",
+            profile="general",
+        )
+
+        evaluated = storage.record_agentic_ready_source_evaluation(
+            kb_id="kb-source-state",
+            profile="general",
+            evaluated_generation=int(marked["event_generation"]),
+            source_version_kind="catalog_chunks_snapshot",
+            source_version_id="rdsnap_active",
+        )
+
+        raw_automation = storage._conn.execute(
+            """
+            SELECT automation_state, running_generation, claim_token
+            FROM agentic_ready_automation
+            WHERE kb_id = ? AND profile = 'general'
+            """,
+            ("kb-source-state",),
+        ).fetchone()
+        automation = storage.get_agentic_ready_automation_state(
+            kb_id="kb-source-state",
+            profile="general",
+        )
+        after = storage.get_agentic_ready_publication_state(
+            kb_id="kb-source-state",
+            profile="general",
+        )
+        assert evaluated["pending_evaluation_generation"] is None
+        assert raw_automation == ("succeeded", None, None)
+        assert automation["automation_state"] == "succeeded"
+        assert automation["pending_evaluation_generation"] is None
+        assert automation["running_generation"] is None
+        assert after["active_publication_id"] == active["publication_id"]
+        assert {
+            key: after[key]
+            for key in (
+                "active_publication_id",
+                "previous_publication_id",
+                "publication_revision",
+            )
+        } == {
+            key: before[key]
+            for key in (
+                "active_publication_id",
+                "previous_publication_id",
+                "publication_revision",
+            )
+        }
+    finally:
+        storage.close()
+
+
+def test_source_evaluation_preserves_generation_backed_running_claim(tmp_path: Path) -> None:
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        _create_kb(storage)
+        active = _publish(storage, tmp_path)
+        storage.set_agentic_ready_automation(
+            kb_id="kb-source-state",
+            profile="general",
+            automatic_build_enabled=True,
+            automatic_publish_enabled=False,
+        )
+        marked = storage.mark_agentic_ready_source_event(
+            kb_id="kb-source-state",
+            profile="general",
+            reason="index_committed",
+        )
+        claimed = storage.claim_next_agentic_ready_automation(
+            claim_token="live-generation-claim"
+        )
+        assert claimed is not None
+        before = storage.get_agentic_ready_publication_state(
+            kb_id="kb-source-state",
+            profile="general",
+        )
+
+        storage.record_agentic_ready_source_evaluation(
+            kb_id="kb-source-state",
+            profile="general",
+            evaluated_generation=int(marked["event_generation"]),
+            source_version_kind="catalog_chunks_snapshot",
+            source_version_id="rdsnap_active",
+        )
+
+        automation = storage.get_agentic_ready_automation_state(
+            kb_id="kb-source-state",
+            profile="general",
+            include_claim_token=True,
+        )
+        after = storage.get_agentic_ready_publication_state(
+            kb_id="kb-source-state",
+            profile="general",
+        )
+        assert automation["automation_state"] == "running"
+        assert automation["pending_evaluation_generation"] is None
+        assert automation["running_generation"] == marked["event_generation"]
+        assert automation["claim_token"] == "live-generation-claim"
+        assert after["active_publication_id"] == active["publication_id"]
+        assert {
+            key: after[key]
+            for key in (
+                "active_publication_id",
+                "previous_publication_id",
+                "publication_revision",
+            )
+        } == {
+            key: before[key]
+            for key in (
+                "active_publication_id",
+                "previous_publication_id",
+                "publication_revision",
+            )
+        }
+    finally:
+        storage.close()
+
+
 def test_unchanged_authoritative_source_clears_pending_evaluation(tmp_path: Path) -> None:
     storage = Storage(str(tmp_path / "index.db"))
     try:

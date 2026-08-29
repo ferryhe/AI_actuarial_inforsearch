@@ -142,7 +142,7 @@ def test_knowledge_list_surfaces_agentic_manifest_status_and_build_action():
     assert 't("knowledge.manifest_build_not_ready").replace("{detail}", detail)' in src
     assert 't("knowledge.manifest_build_failed")' in src
     assert "getManifestFallbackMessage(manifest, manifestServing, t)" in src
-    assert "getManifestActionLabel(manifest, manifestAutomationState, t)" in src
+    assert "getManifestActionLabel(manifest, t)" in src
     assert "Agentic manifest profile" not in src
     assert "Agentic manifest build did not produce ready data" not in src
     assert '"knowledge.manifest_profile"' in i18n_src
@@ -173,7 +173,7 @@ def test_kb_detail_surfaces_agentic_manifest_endpoint_status_and_build_action():
     assert 't("knowledge.manifest_build_failed")' in src
     assert 't("knowledge.manifest_built")' in src
     assert "getManifestFallbackMessage(manifest, manifestServing, t)" in src
-    assert "getManifestActionLabel(manifest, manifestAutomationState, t)" in src
+    assert "getManifestActionLabel(manifest, t)" in src
     assert "Agentic manifest build did not produce ready data" not in src
     assert '"knowledge.manifest_built"' in i18n_src
     assert "manifest.profile || meta.manifest_profile" in src
@@ -278,7 +278,8 @@ def test_knowledge_list_separates_serving_and_automation_status():
     assert "resolveReadyDataServingState" in state_src
     assert "resolveReadyDataOperationState" in state_src
     assert "isReadyDataAutomationBusy" in state_src
-    assert "manifestAutomationState" in src
+    assert "normalizeReadyAutomationStatus" in state_src
+    assert "isReadyDataAutomationBusy(manifest)" in src
     assert 'data-testid={`badge-agentic-automation-${kbId}`}' in src
     assert "getServingStatusLabel(manifestServing, t)" in src
     assert "getAutomationStatusLabel(manifestOperation.status, t)" in src
@@ -288,7 +289,6 @@ def test_knowledge_list_separates_serving_and_automation_status():
         assert "readyDataOperationKindTranslationKey" in page_src
         assert "isReadyDataAutomationBusy" in page_src
         assert "function normalizeReadyServingStatus" not in page_src
-        assert "normalizeReadyAutomationStatus" in page_src
         assert 't(`knowledge.ready_serving_' not in page_src
         assert 't(`knowledge.ready_automation_' not in page_src
         assert 'case "unavailable":' in page_src
@@ -315,7 +315,7 @@ def test_knowledge_pages_keep_operation_failures_out_of_serving_messages():
     assert 'data-testid="ready-data-last-operation-error"' in detail_src
     for page_src in (list_src, detail_src):
         assert 'manifestStatus === "building"' not in page_src
-        assert "getManifestActionLabel(manifest, manifestAutomationState, t)" in page_src
+        assert "getManifestActionLabel(manifest, t)" in page_src
         assert 't("knowledge.ready_operation_status")' in page_src
         assert "t(readyDataOperationKindTranslationKey(manifestOperation.kind))" in page_src
 
@@ -344,8 +344,8 @@ def test_knowledge_list_bounds_busy_automation_polling_and_deduplicates_loads():
     assert "window.clearTimeout" in src
     assert "readyDataListPollAttempts.current >= READY_DATA_LIST_MAX_POLL_ATTEMPTS" in src
     assert "void loadData(false).finally" in src
-    assert "isReadyDataAutomationBusy(normalizeReadyAutomationStatus(" in src
-    assert "const automationState = normalizeReadyAutomationStatus(" in detail_src
+    assert "isReadyDataAutomationBusy(kb.agentic_ready_manifest)" in src
+    assert "if (!isReadyDataAutomationBusy(effectiveManifest))" in detail_src
     assert "if (kbPayload)" in src
     assert "if (profilePayload)" in src
     assert "if (ragCategoriesResp && usedCategoriesResp)" in src
@@ -495,8 +495,7 @@ def test_kb_detail_uses_effective_current_kb_manifest_for_render_and_polling():
 
     assert "const effectiveManifest = selectEffectiveReadyDataManifest(" in src
     assert "if (metaKbId === kbId && nested?.kb_id === kbId) return nested;" in state_src
-    assert "effectiveManifest?.automation_state" in src
-    assert "effectiveManifest?.status" in src
+    assert "isReadyDataAutomationBusy(effectiveManifest)" in src
     assert "const manifest = effectiveManifest;" in src
     assert "agenticManifest?.automation_state," not in src
     assert "shouldPollReadyDataManifest(effectiveManifest" in src

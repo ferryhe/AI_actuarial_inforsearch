@@ -6841,8 +6841,15 @@ class Storage:
             }
         build_enabled = bool(row[10])
         pending_generation = int(row[13]) if row[13] is not None else None
+        running_generation = int(row[1]) if row[1] is not None else None
         stored_state = str(row[0] or "")
-        if stored_state:
+        if (
+            stored_state == "pending"
+            and pending_generation is None
+            and running_generation is None
+        ):
+            automation_state = "succeeded"
+        elif stored_state:
             automation_state = stored_state
         elif not build_enabled:
             automation_state = "disabled"
@@ -6854,7 +6861,7 @@ class Storage:
             "kb_id": kb_id,
             "profile": normalized_profile,
             "automation_state": automation_state,
-            "running_generation": int(row[1]) if row[1] is not None else None,
+            "running_generation": running_generation,
             "last_attempted_generation": int(row[2] or 0),
             "claim_token": str(row[3]) if include_claim_token and row[3] else None,
             "claimed_at": row[4],
@@ -7840,6 +7847,17 @@ class Storage:
             )
             if result.rowcount != 1:
                 raise RuntimeError("ready-data source evaluation lost its generation guard")
+            self._conn.execute(
+                """
+                UPDATE agentic_ready_automation
+                SET automation_state = 'succeeded', last_error = ''
+                WHERE kb_id = ? AND profile = ?
+                  AND automation_state = 'pending'
+                  AND running_generation IS NULL
+                  AND claim_token IS NULL
+                """,
+                (kb_id, normalized_profile),
+            )
         return self.get_agentic_ready_source_state(
             kb_id=kb_id,
             profile=normalized_profile,

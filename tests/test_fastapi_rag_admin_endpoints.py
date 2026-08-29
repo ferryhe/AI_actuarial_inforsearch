@@ -1893,6 +1893,114 @@ def test_kb_list_and_detail_embed_authoritative_public_ready_data_state(
         assert manifest["last_error"] == "ready_data operation failed"
 
 
+def test_orphan_pending_is_normalized_across_ready_data_public_projections(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    kb_id = "kb-orphan-pending"
+    created = client.post(
+        "/api/rag/knowledge-bases",
+        json={
+            "kb_id": kb_id,
+            "name": "Orphan Pending KB",
+            "kb_mode": "manual",
+            "file_urls": [seed["alpha_url"]],
+        },
+    )
+    assert created.status_code == 201, created.text
+    built = _post_ready_build_core(
+        client,
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest/build",
+        json={},
+    )
+    assert built.status_code == 200, built.text
+
+    storage = Storage(str(client.app.state.db_path))
+    try:
+        before = storage.get_agentic_ready_publication_state(
+            kb_id=kb_id,
+            profile="general",
+        )
+        now = storage._utcnow_iso()
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                """
+                INSERT INTO agentic_ready_automation (
+                    kb_id, profile, automation_state, running_generation,
+                    last_attempted_generation, claim_token, claimed_at,
+                    lease_expires_at, last_attempt_publication_id,
+                    last_success_at, last_error, updated_at
+                )
+                VALUES (?, 'general', 'pending', NULL, 0, NULL, NULL, NULL,
+                        NULL, NULL, '', ?)
+                ON CONFLICT(kb_id, profile) DO UPDATE SET
+                    automation_state = 'pending', running_generation = NULL,
+                    claim_token = NULL, claimed_at = NULL,
+                    lease_expires_at = NULL, updated_at = excluded.updated_at
+                """,
+                (kb_id, now),
+            )
+            storage._conn.execute(
+                """
+                UPDATE agentic_ready_source_state
+                SET pending_evaluation_generation = NULL
+                WHERE kb_id = ? AND profile = 'general'
+                """,
+                (kb_id,),
+            )
+    finally:
+        storage.close()
+
+    listed_response = client.get("/api/rag/knowledge-bases")
+    detail_response = client.get(f"/api/rag/knowledge-bases/{kb_id}")
+    manifest_response = client.get(
+        f"/api/rag/knowledge-bases/{kb_id}/agentic-ready-manifest"
+    )
+    assert listed_response.status_code == 200, listed_response.text
+    assert detail_response.status_code == 200, detail_response.text
+    assert manifest_response.status_code == 200, manifest_response.text
+    listed = next(
+        item
+        for item in listed_response.json()["knowledge_bases"]
+        if item["kb_id"] == kb_id
+    )["agentic_ready_manifest"]
+    detail = detail_response.json()["knowledge_base"]["agentic_ready_manifest"]
+    dedicated = manifest_response.json()["manifest"]
+
+    for manifest in (listed, detail, dedicated):
+        state = manifest["publication_state"]
+        assert manifest["status"] == "ready"
+        assert manifest["usable"] is True
+        assert manifest["automation_state"] == "succeeded"
+        assert manifest["pending_generation"] is None
+        assert manifest["running_generation"] is None
+        assert manifest["latest_operation_state"] == "succeeded"
+        assert state["serving_status"] == "ready"
+        assert state["serving_usable"] is True
+        assert state["automation_state"] == "succeeded"
+        assert state["pending_generation"] is None
+        assert state["running_generation"] is None
+        assert state["latest_operation_state"] == "succeeded"
+        assert state["active_publication_id"] == before["active_publication_id"]
+        assert state["previous_publication_id"] == before["previous_publication_id"]
+        assert state["publication_revision"] == before["publication_revision"]
+
+    storage = Storage(str(client.app.state.db_path))
+    try:
+        raw_state = storage._conn.execute(
+            """
+            SELECT automation_state
+            FROM agentic_ready_automation
+            WHERE kb_id = ? AND profile = 'general'
+            """,
+            (kb_id,),
+        ).fetchone()
+        assert raw_state == ("pending",)
+    finally:
+        storage.close()
+
+
 @pytest.mark.parametrize("response_path", ("list", "detail"))
 def test_kb_embedded_public_projection_uses_one_sqlite_read_snapshot(
     tmp_path: Path,

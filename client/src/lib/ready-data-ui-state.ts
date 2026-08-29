@@ -389,8 +389,25 @@ export function normalizeReadyAutomationStatus(status: unknown, legacyServingSta
   return "failed";
 }
 
-export function isReadyDataAutomationBusy(status: unknown): boolean {
-  return ["pending", "running", "building"].includes(String(status));
+export function isReadyDataAutomationBusy(
+  statusOrManifest: unknown,
+): boolean {
+  if (!statusOrManifest || typeof statusOrManifest !== "object") {
+    return ["pending", "running", "building"].includes(String(statusOrManifest));
+  }
+  const manifest = statusOrManifest as Partial<AgenticReadyManifest>;
+  const status = normalizeReadyAutomationStatus(
+    manifest.automation_state,
+    manifest.status,
+  );
+  if (!["pending", "running", "building"].includes(status)) return false;
+  const hasGenerationContract = Object.prototype.hasOwnProperty.call(
+    manifest,
+    "pending_generation",
+  ) || Object.prototype.hasOwnProperty.call(manifest, "running_generation");
+  if (!hasGenerationContract) return true;
+  if (status === "pending") return manifest.pending_generation != null;
+  return manifest.running_generation != null;
 }
 
 export function readyDataOperationKindTranslationKey(kind: unknown): string {
@@ -441,8 +458,14 @@ export function mergeConfirmedReadyDataAutomation(
     ),
     automatic_build_enabled: buildEnabled,
     automatic_publish_enabled: publishEnabled,
-    pending_generation: automation.pending_evaluation_generation ?? null,
-    running_generation: automation.running_generation ?? null,
+    ...(Object.prototype.hasOwnProperty.call(
+      automation,
+      "pending_evaluation_generation",
+    ) ? { pending_generation: automation.pending_evaluation_generation ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(
+      automation,
+      "running_generation",
+    ) ? { running_generation: automation.running_generation ?? null } : {}),
     last_attempt_publication_id: automation.last_attempt_publication_id ?? null,
     last_success_at: automation.last_success_at ?? null,
     last_error: automation.last_error ?? null,
@@ -825,11 +848,7 @@ export function shouldPollReadyDataManifest(
   attempts: number,
   maxAttempts: number,
 ): boolean {
-  const state = normalizeReadyAutomationStatus(
-    manifest?.automation_state,
-    manifest?.status,
-  );
-  return ["pending", "running", "building"].includes(state) && attempts < maxAttempts;
+  return isReadyDataAutomationBusy(manifest) && attempts < maxAttempts;
 }
 
 export function scheduleReadyDataPoll<T>(
