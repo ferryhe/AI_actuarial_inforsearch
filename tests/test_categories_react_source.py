@@ -45,7 +45,9 @@ def test_categories_page_uses_fastapi_categories_and_database_filter_links():
 def test_dashboard_links_to_standalone_categories_entry():
     src = DASHBOARD_TSX.read_text(encoding="utf-8")
 
-    assert 'href: "/categories"' in src
+    # The duplicate Start Here quick action was removed; the only
+    # /categories link in the Dashboard is now the Categories preview header.
+    assert 'href: "/categories"' not in src
     assert '<Link href="/categories">' in src
     assert "databaseCategoryPath(category.name)" in src
 
