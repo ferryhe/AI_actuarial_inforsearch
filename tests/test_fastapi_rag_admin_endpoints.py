@@ -6832,7 +6832,7 @@ def test_fastapi_rag_admin_legacy_manifest_ignores_binding_outside_builder_input
     assert status.json()["manifest"]["status"] == "ready"
 
 
-def test_manual_ready_build_clears_captured_hard_generation_after_safe_publish(
+def test_manual_ready_build_settles_orphan_pending_without_overriding_latest_operation(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -6860,6 +6860,26 @@ def test_manual_ready_build_clears_captured_hard_generation_after_safe_publish(
             reason="membership_removed",
         )
         assert marked["serving_allowed"] is False
+        with storage.transaction(immediate=True):
+            storage._conn.execute(
+                """
+                INSERT INTO agentic_ready_automation (
+                    kb_id, profile, automation_state, running_generation,
+                    last_attempted_generation, claim_token, claimed_at,
+                    lease_expires_at, last_attempt_publication_id,
+                    last_success_at, last_error, updated_at
+                )
+                VALUES (?, 'general', 'pending', NULL, 0, NULL, NULL, NULL,
+                        NULL, NULL, '', ?)
+                """,
+                ("kb-manual-generation", "2000-01-01T00:00:00+00:00"),
+            )
+        pending = storage.get_agentic_ready_automation_state(
+            kb_id="kb-manual-generation",
+            profile="general",
+        )
+        assert pending["automation_state"] == "pending"
+        assert pending["pending_evaluation_generation"] == marked["event_generation"]
     finally:
         storage.close()
 
@@ -6874,6 +6894,32 @@ def test_manual_ready_build_clears_captured_hard_generation_after_safe_publish(
     assert manifest["stale_severity"] == "none"
     assert manifest["serving_stale"] is False
     assert manifest["usable"] is True
+    from ai_actuarial.api.services.ready_data_publication import _latest_build_attempt
+
+    storage = Storage(str(tmp_path / "index.db"))
+    try:
+        latest_build_attempt = _latest_build_attempt(
+            storage,
+            kb_id="kb-manual-generation",
+            profile="general",
+        )
+        automation = storage.get_agentic_ready_automation_state(
+            kb_id="kb-manual-generation",
+            profile="general",
+        )
+    finally:
+        storage.close()
+    assert latest_build_attempt is not None
+    assert automation["automation_state"] == "succeeded"
+    assert automation["pending_evaluation_generation"] is None
+    projected = client.get(
+        "/api/rag/knowledge-bases/kb-manual-generation/agentic-ready-manifest"
+    )
+    assert projected.status_code == 200, projected.text
+    publication_state = projected.json()["publication_state"]
+    assert publication_state["latest_operation_kind"] == "build"
+    assert publication_state["latest_operation_state"] == "succeeded"
+    assert publication_state["latest_operation_at"] == latest_build_attempt["updated_at"]
 
 
 def test_manual_ready_build_does_not_clear_generation_created_during_build(

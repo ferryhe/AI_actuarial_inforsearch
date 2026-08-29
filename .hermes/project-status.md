@@ -5,7 +5,7 @@
 - Worktree: `C:\Users\ferry\.codex\worktrees\bec8\AI_actuarial_inforsearch`
 - Branch: `codex/issue-271-ready-data-busy`
 - Baseline HEAD / merge-base / `origin/main`: `ac4a02429e8000e2efdccc3eeafd36ea5f39de90`
-- State: implementation, bounded local review, automated verification, browser smoke, and independent Codex CLI pre-PR review passed; publication pending.
+- State: PR #290 is Ready; the single remote feedback window completed, the only inline suggestion was rejected by a real-path regression, and a focused AC-7 regression test is pending commit/push before final checks and merge.
 
 ## Startup and boundaries
 
@@ -65,6 +65,15 @@
 - Disposable services were stopped after the smoke test. Repository files remain the only intended changes.
 - Independent Codex CLI pre-PR review (`codex review --uncommitted`) passed with no actionable findings. It independently reran `210 passed, 7 skipped`, the production frontend build, and `git diff --check`.
 
+## Publication and remote feedback
+
+- Commit `159430e28742332f6a42e5d65b8aaac3d3989e8d` was pushed and Draft PR #290 was created with exact `Closes #271`; it became Ready at `2026-08-29T11:38:09Z`.
+- After the full ten-minute window, the one permitted manager feedback snapshot was captured at `2026-08-29T11:48:40Z`: `python-smoke` passed, the PR was mergeable, there were no PR or Issue comments, and the only feedback was Copilot inline comment `3886507498` suggesting that orphan settlement refresh `agentic_ready_automation.updated_at`.
+- The same implementation worker first reproduced the suggested timestamp change, then tested it through the real disposable FastAPI/SQLite manual-build path. RED evidence showed that the later automation timestamp incorrectly replaced public Latest operation `build/succeeded` with `automation/succeeded`. Restoring PR-head production behavior made the same path pass. The suggestion is therefore invalid for AC-7/#245: orphan settlement is cleanup, while `updated_at` is also the public operation-ordering timestamp.
+- No production change from the suggestion remains. A focused regression now exercises a real manual build with an orphan pending row and proves settlement still clears the pending generation while Latest operation remains the successful build. Focused GREEN evidence: `2 passed`; related source-state suite: `30 passed`; touched-test Ruff, compile, and diff checks passed.
+- Protocol note: during the post-snapshot independent local CLI review, that CLI autonomously repeated read-only `gh pr list` / `gh issue view` metadata reads despite a local-diff-only intent. The repeated data matched the frozen snapshot, disclosed no new feedback, and made no remote writes. No further feedback fetches will be performed.
+- A second, explicitly local-only Codex CLI gate for the test/status follow-up was started with network and `gh` forbidden; it stayed local and reran the relevant tests successfully. The user then explicitly cancelled that review before its final verdict, so it is recorded as cancelled rather than passed and will not be restarted.
+
 ## Current next action
 
-- Recheck the final diff and working tree, commit and push the reviewed changes, create the Draft PR with `Closes #271`, attach evidence, and mark it Ready. No blocker or decision is currently needed.
+- Independently review the focused regression and this status update, commit and push them, reply to and resolve the addressed inline thread, wait only for required checks on the new head, then merge and perform the authorized branch/worktree cleanup. No blocker or decision is currently needed.
