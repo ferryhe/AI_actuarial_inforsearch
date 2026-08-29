@@ -204,6 +204,23 @@ assert.match(markup, /English explanation/);
 assert.match(markup, /break-words/);
 assert.match(markup, /overflow-wrap:anywhere/);
 
+const missingExplanationMarkup = renderToStaticMarkup(
+  <WeeklyDashboardSection
+    data={{
+      ...componentData,
+      explanation: { ...componentData.explanation!, status: "missing", generated_at: null },
+    }}
+    lang="en"
+    t={tFor("en")}
+    onOpenFile={() => undefined}
+  />,
+);
+assert.match(missingExplanationMarkup, /Not generated/);
+assert.match(missingExplanationMarkup, />—</);
+assert.doesNotMatch(missingExplanationMarkup, /\b(?:dateTime|title)=""/i);
+assert.doesNotMatch(missingExplanationMarkup, /<time[^>]*>—<\/time>/);
+assert.match(missingExplanationMarkup, /<span[^>]*>—<\/span>/);
+
 const failedMarkup = renderToStaticMarkup(
   <WeeklyDashboardSection
     data={{ ...componentData, explanation: { ...componentData.explanation!, status: "failed" } }}

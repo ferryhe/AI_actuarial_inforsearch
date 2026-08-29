@@ -51,11 +51,11 @@ export function WeeklyDashboardSection({
 
   const view = buildWeeklyDashboardView(data, lang, t);
   const snapshot = data.snapshot;
-  const metadata = [
+  const metadata: Array<[string, string, string | null]> = [
     [t("dashboard.weekly_period_start"), view.periodStart, snapshot.period_start],
     [t("dashboard.weekly_period_end"), view.periodEnd, snapshot.period_end],
     [t("dashboard.snapshot_generated_at"), view.snapshotGeneratedAt, snapshot.generated_at],
-    [t("dashboard.explanation_generated_at"), view.explanationGeneratedAt, data.explanation?.generated_at || ""],
+    [t("dashboard.explanation_generated_at"), view.explanationGeneratedAt, data.explanation?.generated_at ?? null],
   ];
 
   return (
@@ -76,9 +76,13 @@ export function WeeklyDashboardSection({
           {metadata.map(([label, value, exact]) => (
             <div key={label} className="min-w-0">
               <div className="text-muted-foreground">{label}</div>
-              <time className="block font-medium break-words [overflow-wrap:anywhere]" dateTime={exact} title={exact}>
-                {value}
-              </time>
+              {exact ? (
+                <time className="block font-medium break-words [overflow-wrap:anywhere]" dateTime={exact} title={exact}>
+                  {value}
+                </time>
+              ) : (
+                <span className="block font-medium break-words [overflow-wrap:anywhere]">{value}</span>
+              )}
             </div>
           ))}
           <div>

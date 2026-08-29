@@ -5,7 +5,7 @@
 - Worktree: `C:\Project\AI_actuarial_inforsearch\.codex-worktrees\issue-268`
 - Branch: `codex/issue-268-weekly-dashboard`
 - Startup HEAD / local `origin/main` / merge-base: `e4d4c93a4610197b1808d3a5c24ccad3132cfd20`
-- State: Implementation, browser smoke, managed review, and mandatory pre-PR gate complete; ready for commit, push, and Draft PR.
+- State: PR #289 is Ready. Its one permitted remote-feedback snapshot found one valid AC-3 issue; the focused TDD repair and full related regression are complete and ready to push.
 
 ## Startup and boundaries
 
@@ -78,6 +78,15 @@
 - Mandatory independent pre-PR review used a second fresh read-only Codex CLI thread `01a04cfb-0fb5-79f1-bd26-fe80bc942cbf` (session `84439`) and returned **PASS** with no findings or changes.
 - The gate's own Python rerun could not collect because its read-only sandbox exposed no writable temporary directory. This was recorded as an environment-only check blocker; its TSX behavior test and diff check passed, and the manager's immediately preceding 102-test run remains the authoritative Python evidence.
 
+## PR and unique remote-feedback follow-up — 2026-08-29
+
+- Initial commit `d6fd8840806475bd40cc048fc3c6aa7ac2df445b` was pushed and PR #289 was opened Draft with exact `Closes #268`, then marked Ready. Required `CI/python-smoke` passed for that head.
+- After 959 seconds, the workflow captured its one permitted complete remote snapshot. It contained one current Copilot inline comment (`3886271966`) and no PR or Issue comments. No second feedback fetch is permitted or planned.
+- Fresh read-only classifier thread `01a04d0f-e0bb-70f3-a78c-187ca536bcc1` / session `69454` accepted that comment as a realistic AC-3 defect: when explanation `generated_at` was absent, SSR emitted `<time dateTime="" title="">—</time>`. The Copilot review summary duplicated the same finding; there were no other valid, invalid, or ambiguous findings.
+- The original implementation worker completed a focused TDD repair. RED reproduced the empty time attributes; GREEN keeps semantic `<time>` for exact timestamps and renders the same localized unavailable value in a plain `<span>` when the timestamp is absent. Only the component and its executable regression test changed.
+- Manager post-fix verification: the 102-test related suite passed with 4 existing warnings; the executable TSX behavior test passed; production build passed with 2,142 modules and only the existing large-chunk warning; `git diff --check` passed with expected Windows line-ending notices.
+- The repair changes no layout, sizing, navigation, locale selection, or request behavior. The earlier four-width real-browser smoke therefore remains applicable; the new SSR regression directly covers the changed semantic branch.
+
 ## Files changed
 
 - Backend: `ai_actuarial/api/services/read.py`, `ai_actuarial/api/routers/read.py`, `ai_actuarial/storage.py`.
@@ -88,6 +97,6 @@
 
 ## Risks, blockers, and next action
 
-- No known Issue #268 functional blocker remains. Browser smoke, managed review, and the mandatory independent Codex CLI pre-PR review passed.
+- No known Issue #268 functional blocker remains. Browser smoke, managed review, the mandatory independent Codex CLI pre-PR review, and the accepted remote-feedback repair passed.
 - The unrelated full-suite and strict-TypeScript failures above remain baseline/tooling blockers outside Issue #268 scope.
-- Changes remain uncommitted and unpushed. The next authorized action is to record verification in lifecycle state, commit, push, and open the Draft PR with `Closes #268`.
+- The focused remote repair remains uncommitted and unpushed. The next authorized action is to commit and push it to PR #289, record the remote fix, monitor required checks without fetching feedback again, then merge and clean up once green.
