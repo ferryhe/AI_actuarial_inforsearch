@@ -218,16 +218,43 @@ def test_chat_agentic_kb_dropdown_labels_ready_data_sections_not_standard_chunks
     assert '"chat.chunks_label": "{count} chunks"' in i18n_src
 
 
-def test_chat_formats_agentic_scores_as_raw_scores_not_similarity_percentages():
+def test_chat_reuses_wrapping_retrieval_indicators_without_showing_raw_scores():
     src = read_chat_sources()
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
 
     assert "score?: number" in src
-    assert "function formatCitationScore" in src
-    assert "formatCitationScore(citation)" in src
-    assert "citation.similarity_score" in src
-    assert "citation.score" in src
-    assert "Score: ${formatRawScore(score)}" in src
-    assert "const score = citation.similarity_score || citation.score" not in src
+    assert "semantic_relevance_100?: number | null" in src
+    assert "keyword_relevance_100?: number | null" in src
+    assert "retrieval_method?: string | null" in src
+    assert 'import { RetrievalIndicators } from "./chat/RetrievalIndicators";' in src
+    assert src.count("<RetrievalIndicators") == 2
+    assert "Score: ${formatRawScore(score)}" not in src
+    assert "Score: {scoreText}" not in src
+    indicator_src = (CHAT_TSX.parent / "chat" / "RetrievalIndicators.tsx").read_text(encoding="utf-8")
+    assert "flex flex-wrap items-center gap-2" in indicator_src
+    assert "whitespace-nowrap" in indicator_src
+    for english, chinese in (
+        ('"chat.relevance.semantic": "Semantic relevance"', '"chat.relevance.semantic": "语义相关度"'),
+        ('"chat.relevance.keyword": "Keyword relevance"', '"chat.relevance.keyword": "关键词相关度"'),
+        ('"chat.relevance.method": "Retrieval method"', '"chat.relevance.method": "检索方式"'),
+        (
+            '"chat.retrieval_method.vector": "Semantic retrieval"',
+            '"chat.retrieval_method.vector": "语义检索"',
+        ),
+        ('"chat.retrieval_method.summaries": "Summaries"', '"chat.retrieval_method.summaries": "摘要"'),
+        ('"chat.retrieval_method.titles": "Titles"', '"chat.retrieval_method.titles": "标题"'),
+        ('"chat.retrieval_method.sections": "Sections"', '"chat.retrieval_method.sections": "章节"'),
+        ('"chat.retrieval_method.relations": "Relations"', '"chat.retrieval_method.relations": "关系"'),
+        ('"chat.retrieval_method.formulas": "Formulas"', '"chat.retrieval_method.formulas": "公式"'),
+        ('"chat.retrieval_method.tables": "Tables"', '"chat.retrieval_method.tables": "表格"'),
+        (
+            '"chat.retrieval_method.calculation_terms": "Calculation terms"',
+            '"chat.retrieval_method.calculation_terms": "计算术语"',
+        ),
+        ('"chat.retrieval_method.other": "Other"', '"chat.retrieval_method.other": "其他"'),
+    ):
+        assert english in i18n_src
+        assert chinese in i18n_src
 
 
 def test_chat_maps_agentic_evidence_and_renders_tool_trace():

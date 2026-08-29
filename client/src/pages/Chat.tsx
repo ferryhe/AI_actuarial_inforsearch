@@ -35,6 +35,7 @@ import {
 } from "./chat/api";
 import { useChatSession } from "./chat/useChatSession";
 import { getChatDisplayName, getChatValidName } from "./chat/displayName";
+import { RetrievalIndicators } from "./chat/RetrievalIndicators";
 import type {
   AgenticToolTraceEntry,
   AvailableDocument,
@@ -100,32 +101,6 @@ function normalizeFileRouteHref(value: string | undefined, kind: "detail" | "pre
     : buildFilePreviewPath(fileUrl, "/chat");
 }
 
-function toFiniteNumber(value: unknown): number | null {
-  if (value == null || value === "") return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function formatRawScore(score: number): string {
-  return score >= 10 ? score.toFixed(1) : score.toFixed(2);
-}
-
-function formatCitationScore(citation: Citation): string {
-  const similarityScore = toFiniteNumber(citation.similarity_score);
-  if (similarityScore != null) {
-    return `${(similarityScore * 100).toFixed(0)}%`;
-  }
-  const score = toFiniteNumber(citation.score);
-  return score != null ? `Score: ${formatRawScore(score)}` : "";
-}
-
-function formatRetrievedBlockScore(block: RetrievedBlock): string {
-  const similarityScore = toFiniteNumber(block.similarity_score);
-  if (similarityScore != null) return similarityScore.toFixed(3);
-  const score = toFiniteNumber(block.score);
-  return score != null ? formatRawScore(score) : "-";
-}
-
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-3 max-w-3xl">
@@ -149,14 +124,13 @@ function TypingIndicator() {
 function CitationCard({ citation, index }: { citation: Citation; index: number }) {
   const { t } = useTranslation();
   const title = getChatDisplayName(citation, t("chat.source_fallback"));
-  const scoreLabel = formatCitationScore(citation);
   const snippet = citation.content || citation.quote;
   const detailHref = normalizeFileRouteHref(citation.file_detail_url, "detail", citation.file_url || citation.source);
   const previewHref = normalizeFileRouteHref(citation.file_preview_url, "preview", citation.file_url || citation.source);
 
   return (
     <div
-      className="inline-flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs max-w-sm hover:border-primary/30 transition-colors"
+      className="inline-flex max-w-full items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs sm:max-w-sm hover:border-primary/30 transition-colors"
       data-testid={`citation-${index}`}
     >
       <FileText className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" strokeWidth={1.8} />
@@ -165,11 +139,14 @@ function CitationCard({ citation, index }: { citation: Citation; index: number }
         {citation.kb_name && (
           <p className="text-muted-foreground mt-0.5">{citation.kb_name}</p>
         )}
-        {scoreLabel && (
-          <p className="text-muted-foreground mt-0.5">
-            {scoreLabel}
-          </p>
-        )}
+        <div className="mt-2">
+          <RetrievalIndicators
+            semanticRelevance100={citation.semantic_relevance_100}
+            keywordRelevance100={citation.keyword_relevance_100}
+            retrievalMethod={citation.retrieval_method}
+            t={t}
+          />
+        </div>
         {snippet && (
           <p className="text-muted-foreground line-clamp-3 mt-1 whitespace-pre-wrap">{snippet}</p>
         )}
@@ -286,7 +263,6 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
       </summary>
       <div className="mt-3 space-y-3">
         {blocks.map((block, index) => {
-          const scoreText = formatRetrievedBlockScore(block);
           const filename = getChatDisplayName(block, t("chat.document_fallback"));
           const kbName = block.kb_name || block.kb_id || "Unknown KB";
           const detailHref = normalizeFileRouteHref(block.file_detail_url, "detail", block.file_url || block.source_url);
@@ -299,7 +275,12 @@ function RetrievedBlocks({ blocks }: { blocks: RetrievedBlock[] }) {
                 <strong className="text-foreground">{filename}</strong>
                 <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">KB: {kbName}</span>
                 <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">Chunk: {block.chunk_id || "n/a"}</span>
-                <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">Score: {scoreText}</span>
+                <RetrievalIndicators
+                  semanticRelevance100={block.semantic_relevance_100}
+                  keywordRelevance100={block.keyword_relevance_100}
+                  retrievalMethod={block.retrieval_method}
+                  t={t}
+                />
                 {(detailHref || previewHref) && (
                   <span className="flex flex-wrap items-center gap-2 ml-auto">
                     {detailHref && (

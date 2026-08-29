@@ -13,8 +13,11 @@ export interface Citation {
   title?: string;
   content?: string;
   quote?: string;
-  score?: number;
-  similarity_score?: number;
+  score?: number | null;
+  similarity_score?: number | null;
+  semantic_relevance_100?: number | null;
+  keyword_relevance_100?: number | null;
+  retrieval_method?: string | null;
   kb_name?: string;
   file_url?: string;
   file_detail_url?: string;
@@ -22,13 +25,17 @@ export interface Citation {
 }
 
 export interface RetrievedBlock {
+  source?: string;
   filename?: string;
   title?: string;
   kb_id?: string;
   kb_name?: string;
   chunk_id?: string;
-  score?: number;
-  similarity_score?: number;
+  score?: number | null;
+  similarity_score?: number | null;
+  semantic_relevance_100?: number | null;
+  keyword_relevance_100?: number | null;
+  retrieval_method?: string | null;
   content?: string;
   quote?: string;
   source_url?: string;

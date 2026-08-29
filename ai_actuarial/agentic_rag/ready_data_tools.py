@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ai_actuarial.retrieval_indicators import build_retrieval_indicators
+
 
 _TOKEN_PART_RE = re.compile(r"[a-z0-9_]+|[\u4e00-\u9fff]+", re.IGNORECASE | re.UNICODE)
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]", re.UNICODE)
@@ -178,17 +180,49 @@ def _field_score(query_tokens: list[str], text: str, weight: float) -> float:
     return sum(weight for token in query_tokens if token in haystack)
 
 
-def _format_result(row: dict[str, Any], *, score: float, source: str) -> dict[str, Any]:
+def _with_retrieval_indicators(
+    result: dict[str, Any],
+    *,
+    score: float,
+    source: str,
+    tool: str,
+    keyword_max: float,
+) -> dict[str, Any]:
+    result.update(
+        build_retrieval_indicators(
+            keyword_score=score,
+            keyword_max=keyword_max,
+            source=source,
+            tool=tool,
+        )
+    )
+    return result
+
+
+def _format_result(
+    row: dict[str, Any],
+    *,
+    score: float,
+    source: str,
+    tool: str,
+    keyword_max: float,
+) -> dict[str, Any]:
     file_url = _norm(row.get("file_url")) or _norm(row.get("doc_id"))
-    return {
-        "file_url": file_url,
-        "doc_id": _norm(row.get("doc_id")) or file_url,
-        "title": _norm(row.get("title")) or file_url,
-        "summary": _norm(row.get("summary")),
-        "category": _norm(row.get("category")),
-        "score": round(float(score), 4),
-        "source": source,
-    }
+    return _with_retrieval_indicators(
+        {
+            "file_url": file_url,
+            "doc_id": _norm(row.get("doc_id")) or file_url,
+            "title": _norm(row.get("title")) or file_url,
+            "summary": _norm(row.get("summary")),
+            "category": _norm(row.get("category")),
+            "score": round(float(score), 4),
+            "source": source,
+        },
+        score=score,
+        source=source,
+        tool=tool,
+        keyword_max=keyword_max,
+    )
 
 
 def _catalog_by_doc(catalog: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -293,6 +327,7 @@ def search_summaries(query: str, *, output_dir: str | Path, limit: int = 10) -> 
 
     docs, catalog_keys, summary_keys = _merge_summary_docs(ready_data["catalog"], ready_data["summaries"])
     section_text = _sections_by_doc(ready_data["sections"])
+    keyword_max = len(query_tokens) * (4.0 + 2.0 + 1.0 + 1.0 + 0.75) + 3.0
     scored: list[dict[str, Any]] = []
     for row in docs:
         doc_id = _doc_key(row)
@@ -314,7 +349,15 @@ def search_summaries(query: str, *, output_dir: str | Path, limit: int = 10) -> 
             source = "doc_catalog"
         else:
             source = "sections"
-        scored.append(_format_result(row, score=score, source=source))
+        scored.append(
+            _format_result(
+                row,
+                score=score,
+                source=source,
+                tool="search_summaries",
+                keyword_max=keyword_max,
+            )
+        )
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["file_url"]))
     return scored[: _limit(limit)]
@@ -331,6 +374,7 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
         return []
 
     by_doc = _catalog_by_doc(ready_data["catalog"])
+    catalog_keyword_max = len(query_tokens) * (5.0 + 1.0 + 0.5 + 0.5 + 0.75) + 4.0
     alias_hits: list[dict[str, Any]] = []
     seen_alias_docs: set[str] = set()
     for alias_row in ready_data["aliases"]:
@@ -340,7 +384,13 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
         doc_id = _doc_key(alias_row)
         row = dict(by_doc.get(doc_id, {}))
         row.update({k: v for k, v in alias_row.items() if v not in (None, "")})
-        result = _format_result(row, score=score, source="title_aliases")
+        result = _format_result(
+            row,
+            score=score,
+            source="title_aliases",
+            tool="search_titles",
+            keyword_max=100.0,
+        )
         result["matched_alias"] = matched_alias
         alias_hits.append(result)
         seen_alias_docs.add(result["doc_id"])
@@ -368,7 +418,15 @@ def search_titles(query: str, *, output_dir: str | Path, limit: int = 10) -> lis
             score += 4.0
         if score <= 0:
             continue
-        scored.append(_format_result(row, score=score, source="doc_catalog"))
+        scored.append(
+            _format_result(
+                row,
+                score=score,
+                source="doc_catalog",
+                tool="search_titles",
+                keyword_max=catalog_keyword_max,
+            )
+        )
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["file_url"]))
     return (alias_hits + scored)[: _limit(limit)]
@@ -387,6 +445,7 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
     catalog = _catalog_by_doc(ready_data["catalog"])
     source = "sections_structured" if ready_data["sections_structured"] else "sections"
     section_rows = ready_data["sections_structured"] or ready_data["sections"]
+    keyword_max = len(query_tokens) * (4.0 + 3.0 + 1.0 + 1.0 + 4.0) + 3.0
     scored: list[dict[str, Any]] = []
     for section in section_rows:
         doc_id = _norm(section.get("doc_id"))
@@ -410,7 +469,8 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
             continue
         file_url = _norm(section.get("file_url")) or _norm(doc.get("file_url")) or doc_id
         scored.append(
-            {
+            _with_retrieval_indicators(
+                {
                 "doc_id": doc_id,
                 "file_url": file_url,
                 "title": _norm(section.get("title")) or _norm(doc.get("title")) or file_url,
@@ -420,7 +480,12 @@ def search_sections(query: str, *, output_dir: str | Path, limit: int = 10) -> l
                 "text_snippet": _text_snippet(text),
                 "score": round(float(score), 4),
                 "source": source,
-            }
+                },
+                score=score,
+                source=source,
+                tool="search_sections",
+                keyword_max=keyword_max,
+            )
         )
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["section_id"]))
@@ -437,6 +502,7 @@ def search_formula_cards(query: str, *, output_dir: str | Path, limit: int = 10)
     if not ready_data:
         return []
 
+    keyword_max = len(query_tokens) * (6.0 + 5.0 + 3.0 + 1.5 + 1.0) + 4.0
     scored: list[dict[str, Any]] = []
     for row in ready_data["formula_cards"]:
         formula_text = _norm(row.get("formula_text"))
@@ -458,7 +524,8 @@ def search_formula_cards(query: str, *, output_dir: str | Path, limit: int = 10)
             continue
         file_url = _norm(row.get("file_url")) or _norm(row.get("doc_id"))
         scored.append(
-            {
+            _with_retrieval_indicators(
+                {
                 "doc_id": _norm(row.get("doc_id")) or file_url,
                 "file_url": file_url,
                 "title": title or file_url,
@@ -471,7 +538,12 @@ def search_formula_cards(query: str, *, output_dir: str | Path, limit: int = 10)
                 "terms": terms,
                 "score": round(float(score), 4),
                 "source": "formula_cards",
-            }
+                },
+                score=score,
+                source="formula_cards",
+                tool="search_formula_cards",
+                keyword_max=keyword_max,
+            )
         )
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["formula_id"]))
@@ -504,6 +576,7 @@ def search_structured_tables(query: str, *, output_dir: str | Path, limit: int =
     if not ready_data:
         return []
 
+    keyword_max = len(query_tokens) * (4.0 + 4.0 + 2.0 + 2.0 + 1.0) + 4.0
     scored: list[dict[str, Any]] = []
     for row in ready_data["tables_structured"]:
         headers = _list_text(row.get("headers"))
@@ -535,7 +608,8 @@ def search_structured_tables(query: str, *, output_dir: str | Path, limit: int =
             continue
         file_url = _norm(row.get("file_url")) or _norm(row.get("doc_id"))
         scored.append(
-            {
+            _with_retrieval_indicators(
+                {
                 "doc_id": _norm(row.get("doc_id")) or file_url,
                 "file_url": file_url,
                 "title": _norm(row.get("title")) or file_url,
@@ -549,7 +623,12 @@ def search_structured_tables(query: str, *, output_dir: str | Path, limit: int =
                 "text_snippet": _text_snippet(table_text),
                 "score": round(float(score), 4),
                 "source": "tables_structured",
-            }
+                },
+                score=score,
+                source="tables_structured",
+                tool="search_structured_tables",
+                keyword_max=keyword_max,
+            )
         )
 
     scored.sort(key=lambda item: (-float(item["score"]), item["title"].lower(), item["table_id"]))
@@ -566,6 +645,7 @@ def search_calculation_terms(query: str, *, output_dir: str | Path, limit: int =
     if not ready_data:
         return []
 
+    keyword_max = len(query_tokens) * (8.0 + 2.0 + 1.0 + 0.5) + 6.0
     scored: list[dict[str, Any]] = []
     for row in ready_data["calculation_terms"]:
         term = _norm(row.get("term"))
@@ -587,7 +667,8 @@ def search_calculation_terms(query: str, *, output_dir: str | Path, limit: int =
             continue
         file_url = _norm(row.get("file_url")) or _norm(row.get("doc_id"))
         scored.append(
-            {
+            _with_retrieval_indicators(
+                {
                 "doc_id": _norm(row.get("doc_id")) or file_url,
                 "file_url": file_url,
                 "title": _norm(row.get("title")) or file_url,
@@ -599,7 +680,12 @@ def search_calculation_terms(query: str, *, output_dir: str | Path, limit: int =
                 "context_snippet": _text_snippet(context),
                 "score": round(float(score), 4),
                 "source": "calculation_terms",
-            }
+                },
+                score=score,
+                source="calculation_terms",
+                tool="search_calculation_terms",
+                keyword_max=keyword_max,
+            )
         )
 
     scored.sort(key=lambda item: (-float(item["score"]), item["term"].lower(), item["term_id"]))
@@ -620,6 +706,7 @@ def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 1
     if not isinstance(relations, list):
         return []
 
+    keyword_max = len(query_tokens) * 2.0 + 5.0
     scored: list[dict[str, Any]] = []
     matched_doc_ids: set[str] = set()
     seen_relation_keys: set[tuple[str, str]] = set()
@@ -648,7 +735,15 @@ def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 1
             result = dict(row)
             result["score"] = round(float(score), 4)
             result["source"] = "relations_graph"
-            scored.append(result)
+            scored.append(
+                _with_retrieval_indicators(
+                    result,
+                    score=score,
+                    source="relations_graph",
+                    tool="trace_relations",
+                    keyword_max=keyword_max,
+                )
+            )
             seen_relation_keys.add((_norm(row.get("relation_type")), _norm(row.get("target_id"))))
 
     if matched_doc_ids:
@@ -664,7 +759,15 @@ def trace_relations(query_or_doc: str, *, output_dir: str | Path, limit: int = 1
             result = dict(row)
             result["score"] = 0.5
             result["source"] = "relations_graph"
-            scored.append(result)
+            scored.append(
+                _with_retrieval_indicators(
+                    result,
+                    score=0.5,
+                    source="relations_graph",
+                    tool="trace_relations",
+                    keyword_max=keyword_max,
+                )
+            )
             seen_relation_keys.add(relation_key)
 
     scored.sort(

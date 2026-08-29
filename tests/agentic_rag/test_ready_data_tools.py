@@ -194,6 +194,19 @@ def test_search_summaries_ranks_summary_hits_and_limits(tmp_path: Path) -> None:
     assert results[0]["summary"].startswith("Capital summary")
     assert results[0]["score"] > 0
     assert results[0]["source"] == "doc_summaries"
+    assert results[0]["semantic_relevance_100"] is None
+    assert 0 <= results[0]["keyword_relevance_100"] <= 100
+    assert results[0]["retrieval_method"] == "summaries"
+
+
+def test_search_summaries_labels_section_only_hits_as_section_retrieval(tmp_path: Path) -> None:
+    _write_ready_data(tmp_path)
+
+    results = search_summaries("calibrated", output_dir=str(tmp_path), limit=5)
+
+    assert len(results) == 1
+    assert results[0]["source"] == "sections"
+    assert results[0]["retrieval_method"] == "sections"
 
 
 def test_search_titles_scores_title_matches(tmp_path: Path) -> None:
@@ -205,6 +218,8 @@ def test_search_titles_scores_title_matches(tmp_path: Path) -> None:
     assert results[0]["title"] == "Reserve Method Note"
     assert results[0]["summary"]
     assert results[0]["source"] == "doc_catalog"
+    assert 0 <= results[0]["keyword_relevance_100"] <= 100
+    assert results[0]["retrieval_method"] == "titles"
 
 
 def test_search_titles_prefers_exact_alias_before_fallback_scoring(tmp_path: Path) -> None:
@@ -231,6 +246,8 @@ def test_search_titles_prefers_exact_alias_before_fallback_scoring(tmp_path: Pat
     assert results[0]["doc_id"] == "doc-reserve"
     assert results[0]["source"] == "title_aliases"
     assert results[0]["matched_alias"] == "RBC Rule 7"
+    assert results[0]["keyword_relevance_100"] == 100
+    assert results[0]["retrieval_method"] == "titles"
 
 
 def test_search_titles_does_not_match_short_numeric_alias_inside_longer_rule_number(tmp_path: Path) -> None:
@@ -311,6 +328,9 @@ def test_search_sections_returns_stable_section_hits_from_l1_artifact(tmp_path: 
             "text_snippet": "Article 19 defines solvency capital requirement factors.",
             "score": results[0]["score"],
             "source": "sections_structured",
+            "semantic_relevance_100": None,
+            "keyword_relevance_100": 60,
+            "retrieval_method": "sections",
         }
     ]
     assert results[0]["score"] > 0
@@ -342,6 +362,9 @@ def test_search_sections_matches_cjk_query_terms_inside_structured_sections(tmp_
     assert results
     assert results[0]["doc_id"] == "doc-capital"
     assert results[0]["source"] == "sections_structured"
+    assert isinstance(results[0]["keyword_relevance_100"], int)
+    assert 0 <= results[0]["keyword_relevance_100"] <= 100
+    assert results[0]["retrieval_method"] == "sections"
     assert "最低资本" in results[0]["text_snippet"]
 
 
@@ -421,6 +444,8 @@ def test_trace_relations_returns_alias_doc_section_edges(tmp_path: Path) -> None
     assert [item["relation_type"] for item in results] == ["alias_of", "document_has_section"]
     assert all(item["doc_id"] == "doc-capital" for item in results)
     assert results[0]["source"] == "relations_graph"
+    assert all(0 <= item["keyword_relevance_100"] <= 100 for item in results)
+    assert all(item["retrieval_method"] == "relations" for item in results)
 
 
 def test_l1_tools_tolerate_missing_optional_artifacts(tmp_path: Path) -> None:
@@ -448,6 +473,9 @@ def test_formula_tools_return_stable_hits_from_l2_artifacts(tmp_path: Path) -> N
             "terms": ["Net Premium", "PV Benefits", "PV Premiums", "mortality rate"],
             "score": formulas[0]["score"],
             "source": "formula_cards",
+            "semantic_relevance_100": None,
+            "keyword_relevance_100": 70,
+            "retrieval_method": "formulas",
         }
     ]
     assert formulas[0]["score"] > 0
@@ -457,11 +485,15 @@ def test_formula_tools_return_stable_hits_from_l2_artifacts(tmp_path: Path) -> N
     assert tables[0]["headers"] == ["Term", "Description"]
     assert tables[0]["rows"] == [{"Term": "q_x", "Description": "mortality rate"}]
     assert tables[0]["source"] == "tables_structured"
+    assert 0 <= tables[0]["keyword_relevance_100"] <= 100
+    assert tables[0]["retrieval_method"] == "tables"
 
     terms = search_calculation_terms("mortality rate", output_dir=str(tmp_path), limit=3)
     assert terms[0]["term"] == "mortality rate"
     assert terms[0]["normalized_term"] == "mortality rate"
     assert terms[0]["source"] == "calculation_terms"
+    assert 0 <= terms[0]["keyword_relevance_100"] <= 100
+    assert terms[0]["retrieval_method"] == "calculation_terms"
 
 
 def test_formula_tools_tolerate_missing_optional_artifacts(tmp_path: Path) -> None:

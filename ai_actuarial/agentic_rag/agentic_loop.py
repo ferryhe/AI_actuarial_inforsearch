@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from ai_actuarial.retrieval_indicators import build_retrieval_indicators
+
 from .planner import ToolStep, plan_tool_steps
 from .ready_data_tools import (
     search_calculation_terms,
@@ -136,6 +138,18 @@ def _citation_record(item: dict[str, Any]) -> dict[str, Any] | None:
         "source": sources[0],
         "sources": sources,
     }
+    if "score" in item:
+        citation["score"] = item.get("score")
+    citation.update(
+        build_retrieval_indicators(
+            similarity_score=item.get("similarity_score"),
+            semantic_relevance_100=item.get("semantic_relevance_100"),
+            keyword_relevance_100=item.get("keyword_relevance_100"),
+            source=item.get("source"),
+            tool=item.get("tool"),
+            retrieval_method=item.get("retrieval_method"),
+        )
+    )
     for key in ("section_id", "formula_id", "table_id", "term_id", "target_id"):
         value = _norm(item.get(key))
         if value:
