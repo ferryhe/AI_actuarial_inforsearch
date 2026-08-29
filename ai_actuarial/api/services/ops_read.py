@@ -6,6 +6,7 @@ from typing import Any
 
 import ai_actuarial.llm_models as llm_models
 from ai_actuarial.ai_runtime import (
+    DEFAULT_AI_FUNCTION_CONFIG,
     KNOWN_LLM_PROVIDERS,
     PROVIDER_BASE_URL_ENV_VARS,
     PROVIDER_ENV_VARS,
@@ -371,6 +372,8 @@ def get_ai_models(*, refresh: bool = False, storage: Storage | None = None) -> d
     ai_config = config_data.get("ai_config") or {}
     chatbot_cfg = ai_config.get("chatbot", {})
     chatbot_prompts = chatbot_cfg.get("prompts", {})
+    weekly_cfg = ai_config.get("weekly_explanation", {})
+    weekly_defaults = DEFAULT_AI_FUNCTION_CONFIG["weekly_explanation"]
     current_config = {
         "catalog": {
             "provider": ai_config.get("catalog", {}).get("provider", "openai"),
@@ -392,6 +395,12 @@ def get_ai_models(*, refresh: bool = False, storage: Storage | None = None) -> d
                 "comparison": chatbot_prompts.get("comparison", ""),
             },
             "summarization_prompt": chatbot_cfg.get("summarization_prompt", ""),
+        },
+        "weekly_explanation": {
+            "provider": weekly_cfg.get("provider", weekly_defaults["provider"]),
+            "model": weekly_cfg.get("model", weekly_defaults["model"]),
+            "prompt_version": weekly_cfg.get("prompt_version", weekly_defaults["prompt_version"]),
+            "prompt": weekly_cfg.get("prompt", weekly_defaults["prompt"]),
         },
         "ocr": {
             "provider": ai_config.get("ocr", {}).get("provider", "local"),

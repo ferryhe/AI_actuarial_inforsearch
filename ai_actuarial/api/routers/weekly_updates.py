@@ -16,6 +16,12 @@ from ..services.weekly_updates import (
     parse_weekly_update_files_query,
     parse_weekly_update_list_query,
 )
+from ..services.weekly_explanations import (
+    generate_weekly_explanation,
+    get_latest_weekly_explanation,
+    get_weekly_explanation,
+    retry_weekly_explanation,
+)
 from .read import _get_db_path
 
 router = APIRouter()
@@ -67,6 +73,18 @@ class WeeklySnapshotFilesModel(BaseModel):
     truncated: bool
 
 
+class WeeklyExplanationModel(BaseModel):
+    snapshot_id: str
+    status: Literal["missing", "complete", "failed"]
+    explanation_zh: str
+    explanation_en: str
+    generated_at: str | None
+
+
+class WeeklyExplanationEnvelopeModel(BaseModel):
+    explanation: WeeklyExplanationModel | None
+
+
 def _not_found_response() -> JSONResponse:
     return JSONResponse(status_code=404, content={"error": "Weekly snapshot not found"})
 
@@ -86,6 +104,82 @@ def api_weekly_updates_latest(
     _auth: AuthContext = Depends(require_permissions("files.read")),
 ) -> dict[str, object]:
     return get_latest_weekly_update_summary(db_path=_get_db_path(request))
+
+
+def _explanation_generator(request: Request):
+    return getattr(request.app.state, "weekly_explanation_generator", None)
+
+
+@router.get(
+    "/weekly-updates/explanations/latest",
+    response_model=WeeklyExplanationEnvelopeModel,
+)
+def api_weekly_explanation_latest(
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("files.read")),
+) -> dict[str, object]:
+    return {
+        "explanation": get_latest_weekly_explanation(db_path=_get_db_path(request))
+    }
+
+
+@router.post(
+    "/weekly-updates/{snapshot_id}/explanation/generate",
+    response_model=WeeklyExplanationEnvelopeModel,
+)
+def api_weekly_explanation_generate(
+    snapshot_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+):
+    try:
+        explanation = generate_weekly_explanation(
+            db_path=_get_db_path(request),
+            snapshot_id=snapshot_id,
+            generator=_explanation_generator(request),
+        )
+    except WeeklySnapshotNotFoundError:
+        return _not_found_response()
+    return {"explanation": explanation}
+
+
+@router.post(
+    "/weekly-updates/{snapshot_id}/explanation/retry",
+    response_model=WeeklyExplanationEnvelopeModel,
+)
+def api_weekly_explanation_retry(
+    snapshot_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
+):
+    try:
+        explanation = retry_weekly_explanation(
+            db_path=_get_db_path(request),
+            snapshot_id=snapshot_id,
+            generator=_explanation_generator(request),
+        )
+    except WeeklySnapshotNotFoundError:
+        return _not_found_response()
+    return {"explanation": explanation}
+
+
+@router.get(
+    "/weekly-updates/{snapshot_id}/explanation",
+    response_model=WeeklyExplanationEnvelopeModel,
+)
+def api_weekly_explanation_detail(
+    snapshot_id: str,
+    request: Request,
+    _auth: AuthContext = Depends(require_permissions("files.read")),
+):
+    try:
+        explanation = get_weekly_explanation(
+            db_path=_get_db_path(request),
+            snapshot_id=snapshot_id,
+        )
+    except WeeklySnapshotNotFoundError:
+        return _not_found_response()
+    return {"explanation": explanation}
 
 
 @router.get(

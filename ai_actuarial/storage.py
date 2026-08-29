@@ -125,6 +125,7 @@ class Storage:
             "weekly_update_summaries",
             "weekly_snapshots",
             "weekly_snapshot_members",
+            "weekly_explanations",
             "rag_knowledge_bases",
             "users",
             "user_quotas",
@@ -917,6 +918,28 @@ class Storage:
                 original_filename TEXT,
                 ordinal INTEGER NOT NULL,
                 PRIMARY KEY(snapshot_id, file_url),
+                FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_explanations (
+                snapshot_id TEXT PRIMARY KEY,
+                input_fingerprint TEXT NOT NULL,
+                explanation_zh TEXT NOT NULL DEFAULT '',
+                explanation_en TEXT NOT NULL DEFAULT '',
+                provider TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                prompt_version TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT NOT NULL DEFAULT '',
+                coverage_json TEXT NOT NULL DEFAULT '{}',
+                claim_fingerprint TEXT NOT NULL DEFAULT '',
+                claim_token TEXT NOT NULL DEFAULT '',
+                claim_expires_at TEXT NOT NULL DEFAULT '',
+                CHECK(status IN ('complete', 'failed')),
                 FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
             )
             """
@@ -3483,6 +3506,229 @@ class Storage:
             for row in cur.fetchall()
         ]
         return files, int(snapshot["file_count"])
+
+    @staticmethod
+    def _decode_weekly_explanation_row(
+        row: sqlite3.Row | tuple[Any, ...] | None,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        keys = [
+            "snapshot_id",
+            "input_fingerprint",
+            "explanation_zh",
+            "explanation_en",
+            "provider",
+            "model",
+            "prompt_version",
+            "generated_at",
+            "status",
+            "error",
+            "coverage_json",
+            "claim_fingerprint",
+            "claim_token",
+            "claim_expires_at",
+        ]
+        data = dict(zip(keys, row))
+        try:
+            coverage = json.loads(str(data.pop("coverage_json") or "{}"))
+        except json.JSONDecodeError:
+            coverage = {}
+        data["coverage"] = coverage if isinstance(coverage, dict) else {}
+        return data
+
+    def get_weekly_explanation(self, *, snapshot_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT snapshot_id, input_fingerprint, explanation_zh, explanation_en,
+                   provider, model, prompt_version, generated_at, status, error,
+                   coverage_json, claim_fingerprint, claim_token, claim_expires_at
+            FROM weekly_explanations
+            WHERE snapshot_id = ?
+            LIMIT 1
+            """,
+            (snapshot_id,),
+        ).fetchone()
+        return self._decode_weekly_explanation_row(row)
+
+    def claim_weekly_explanation(
+        self,
+        explanation: Mapping[str, Any],
+        *,
+        lease_ttl_seconds: float,
+    ) -> dict[str, Any]:
+        snapshot_id = str(explanation.get("snapshot_id") or "").strip()
+        input_fingerprint = str(explanation.get("input_fingerprint") or "").strip()
+        prompt_version = str(explanation.get("prompt_version") or "").strip()
+        if not snapshot_id or not input_fingerprint or not prompt_version:
+            raise ValueError("snapshot_id, input_fingerprint, and prompt_version are required")
+        lease_ttl = max(0.1, float(lease_ttl_seconds))
+        now = datetime.now(timezone.utc)
+        claim_expires_at = (now + timedelta(seconds=lease_ttl)).isoformat(
+            timespec="microseconds"
+        )
+        now_text = now.isoformat(timespec="microseconds")
+        generated_at = str(explanation.get("generated_at") or now_text)
+        coverage = dict(explanation.get("coverage") or {})
+        claim_token = uuid.uuid4().hex
+        state = "busy"
+        with self.transaction(immediate=True):
+            existing = self.get_weekly_explanation(snapshot_id=snapshot_id)
+            if (
+                existing is not None
+                and existing.get("status") == "complete"
+                and existing.get("input_fingerprint") == input_fingerprint
+            ):
+                return {
+                    "state": "complete",
+                    "claim_token": "",
+                    "explanation": existing,
+                }
+            if existing is None:
+                self._conn.execute(
+                    """
+                    INSERT INTO weekly_explanations (
+                        snapshot_id, input_fingerprint, explanation_zh, explanation_en,
+                        provider, model, prompt_version, generated_at, status, error,
+                        coverage_json, claim_fingerprint, claim_token, claim_expires_at
+                    ) VALUES (?, ?, '', '', ?, ?, ?, ?, 'failed', '', ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        input_fingerprint,
+                        str(explanation.get("provider") or ""),
+                        str(explanation.get("model") or ""),
+                        prompt_version,
+                        generated_at,
+                        json.dumps(coverage, ensure_ascii=False, sort_keys=True),
+                        input_fingerprint,
+                        claim_token,
+                        claim_expires_at,
+                    ),
+                )
+                state = "claimed"
+            else:
+                updated = self._conn.execute(
+                    """
+                    UPDATE weekly_explanations
+                    SET claim_fingerprint = ?, claim_token = ?, claim_expires_at = ?
+                    WHERE snapshot_id = ?
+                      AND (
+                          claim_token = '' OR claim_expires_at = ''
+                          OR julianday(claim_expires_at) <= julianday(?)
+                      )
+                    """,
+                    (
+                        input_fingerprint,
+                        claim_token,
+                        claim_expires_at,
+                        snapshot_id,
+                        now_text,
+                    ),
+                )
+                if updated.rowcount == 1:
+                    state = "claimed"
+        current = self.get_weekly_explanation(snapshot_id=snapshot_id)
+        return {
+            "state": state,
+            "claim_token": claim_token if state == "claimed" else "",
+            "explanation": current,
+        }
+
+    def finalize_weekly_explanation(
+        self,
+        explanation: Mapping[str, Any],
+        *,
+        claim_token: str,
+    ) -> dict[str, Any]:
+        snapshot_id = str(explanation.get("snapshot_id") or "").strip()
+        input_fingerprint = str(explanation.get("input_fingerprint") or "").strip()
+        prompt_version = str(explanation.get("prompt_version") or "").strip()
+        normalized_claim_token = str(claim_token or "").strip()
+        status = str(explanation.get("status") or "").strip()
+        if not snapshot_id or not input_fingerprint or not prompt_version or not normalized_claim_token:
+            raise ValueError(
+                "snapshot_id, input_fingerprint, prompt_version, and claim_token are required"
+            )
+        if status not in {"complete", "failed"}:
+            raise ValueError("weekly explanation status must be complete or failed")
+        generated_at = str(explanation.get("generated_at") or self.now())
+        coverage = dict(explanation.get("coverage") or {})
+        with self.transaction(immediate=True):
+            updated = self._conn.execute(
+                """
+                UPDATE weekly_explanations
+                SET input_fingerprint = ?, explanation_zh = ?, explanation_en = ?,
+                    provider = ?, model = ?, prompt_version = ?, generated_at = ?,
+                    status = ?, error = ?, coverage_json = ?,
+                    claim_fingerprint = '', claim_token = '', claim_expires_at = ''
+                WHERE snapshot_id = ?
+                  AND claim_fingerprint = ?
+                  AND claim_token = ?
+                """,
+                (
+                    input_fingerprint,
+                    str(explanation.get("explanation_zh") or ""),
+                    str(explanation.get("explanation_en") or ""),
+                    str(explanation.get("provider") or ""),
+                    str(explanation.get("model") or ""),
+                    prompt_version,
+                    generated_at,
+                    status,
+                    str(explanation.get("error") or ""),
+                    json.dumps(coverage, ensure_ascii=False, sort_keys=True),
+                    snapshot_id,
+                    input_fingerprint,
+                    normalized_claim_token,
+                ),
+            )
+            finalized = updated.rowcount == 1
+        return {
+            "finalized": finalized,
+            "explanation": self.get_weekly_explanation(snapshot_id=snapshot_id),
+        }
+
+    def list_weekly_snapshot_explanation_material(
+        self,
+        *,
+        snapshot_id: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 1), 500))
+        cur = self._conn.execute(
+            """
+            SELECT
+                m.file_url,
+                COALESCE(NULLIF(TRIM(f.title), ''),
+                         NULLIF(TRIM(m.original_filename), ''), m.file_url) AS title,
+                COALESCE(ci.summary, '') AS summary,
+                COALESCE(ci.keywords, '[]') AS keywords
+            FROM weekly_snapshot_members m
+            LEFT JOIN files f ON f.url = m.file_url
+            LEFT JOIN catalog_items ci ON ci.file_url = m.file_url
+            WHERE m.snapshot_id = ?
+            ORDER BY m.ordinal
+            LIMIT ?
+            """,
+            (snapshot_id, safe_limit),
+        )
+        material: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            try:
+                keywords = json.loads(str(row[3] or "[]"))
+            except json.JSONDecodeError:
+                keywords = [str(row[3])]
+            if not isinstance(keywords, list):
+                keywords = [str(keywords)]
+            material.append(
+                {
+                    "url": str(row[0] or ""),
+                    "title": str(row[1] or ""),
+                    "summary": str(row[2] or ""),
+                    "keywords": [str(value) for value in keywords],
+                }
+            )
+        return material
 
     def _decode_weekly_update_summary_row(self, row: sqlite3.Row | tuple[Any, ...] | None) -> dict[str, Any] | None:
         if row is None:

@@ -230,6 +230,7 @@ class NativeTaskRuntime:
         ready_data_poll_interval_seconds: int = 60,
         ready_data_runner: Callable[..., dict[str, Any]] | None = None,
         pipeline_baton_state_path: str = "data/pipeline_baton.json",
+        weekly_explanation_generator: Any | None = None,
     ) -> None:
         self.active_tasks: dict[str, dict[str, Any]] = {}
         self.task_history: list[dict[str, Any]] = self._load_history_from_disk()
@@ -244,6 +245,7 @@ class NativeTaskRuntime:
             int(ready_data_poll_interval_seconds),
         )
         self._ready_data_runner = ready_data_runner
+        self._weekly_explanation_generator = weekly_explanation_generator
         self._ready_data_worker_lock = threading.Lock()
         self._pipeline_baton = PipelineBaton(
             state_path=pipeline_baton_state_path,
@@ -958,6 +960,9 @@ class NativeTaskRuntime:
             if collection_type == "weekly_summary":
                 return self._run_weekly_summary(db_path, data, storage=storage)
 
+            if collection_type == "weekly_explanation":
+                return self._run_weekly_explanation(db_path, data)
+
             if collection_type == "manifest_ingestion":
                 from ai_actuarial.manifest_ingest import ingest_manifest
 
@@ -1073,6 +1078,31 @@ class NativeTaskRuntime:
                 "period_end": summary.get("period_end"),
                 "summary_id": summary.get("id"),
                 "file_count": file_count,
+            },
+        )
+
+    def _run_weekly_explanation(self, db_path: str, data: dict[str, Any]) -> CollectionResult:
+        from ai_actuarial.api.services.weekly_explanations import generate_weekly_explanation
+
+        snapshot_id = str(data.get("snapshot_id") or "").strip()
+        if not snapshot_id:
+            raise RuntimeError("weekly_explanation requires snapshot_id")
+        explanation = generate_weekly_explanation(
+            db_path=db_path,
+            snapshot_id=snapshot_id,
+            generator=self._weekly_explanation_generator,
+        )
+        complete = explanation.get("status") == "complete"
+        return CollectionResult(
+            success=complete,
+            items_found=1,
+            items_downloaded=0,
+            items_skipped=0 if complete else 1,
+            errors=[] if complete else ["Weekly explanation generation failed"],
+            metadata={
+                "snapshot_id": snapshot_id,
+                "explanation_status": explanation.get("status"),
+                "result": explanation,
             },
         )
 
@@ -2457,6 +2487,24 @@ class NativeTaskRuntime:
                         "ERROR",
                         f"Ready Data task launch failed: {exc}",
                     )
+            if collection_type == "weekly_summary" and result.success:
+                snapshot_id = str((result.metadata or {}).get("summary_id") or "").strip()
+                if snapshot_id:
+                    try:
+                        explanation_task_id = self.start_background_task(
+                            "weekly_explanation",
+                            {"snapshot_id": snapshot_id},
+                            task_name=f"Weekly explanation: {snapshot_id}",
+                            extra_fields={"snapshot_id": snapshot_id, "weekly_snapshot_task_id": task_id},
+                        )
+                        task_data["explanation_task_id"] = explanation_task_id
+                    except Exception as exc:  # noqa: BLE001
+                        task_data["explanation_launch_error"] = str(exc)
+                        append_task_log(
+                            task_id,
+                            "ERROR",
+                            f"Weekly explanation task launch failed: {exc}",
+                        )
             self.task_history.append(task_data)
         append_task_log(task_id, "INFO", f"Task finished (type={collection_type}, success={result.success})")
         self._append_history_to_disk(task_data)

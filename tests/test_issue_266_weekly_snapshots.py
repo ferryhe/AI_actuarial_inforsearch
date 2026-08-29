@@ -78,6 +78,7 @@ def _seed_files(db_path: Path, count: int, *, first_seen: str = "2026-03-10T08:0
 
 def _downgrade_to_v10(db_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE weekly_explanations")
         conn.execute("DROP TABLE weekly_snapshot_members")
         conn.execute("DROP TABLE weekly_snapshots")
         conn.execute("PRAGMA user_version=10")
@@ -726,6 +727,7 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
         }
     ]
     with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE IF EXISTS weekly_explanations")
         conn.execute("DROP TABLE IF EXISTS weekly_snapshot_members")
         conn.execute("DROP TABLE IF EXISTS weekly_snapshots")
         conn.execute(
@@ -746,17 +748,23 @@ def test_v11_migration_backfills_legacy_weekly_rows_and_runner_agrees(tmp_path: 
                 json.dumps({"legacy": True}),
             ),
         )
-        conn.execute(f"PRAGMA user_version={CURRENT_SQLITE_SCHEMA_VERSION - 1}")
+        conn.execute("PRAGMA user_version=10")
 
     status = schema_status(db_path)
     plan = schema_plan(db_path)
     assert status["state"] == "needs_migration"
-    assert status["database"]["user_version"] == CURRENT_SQLITE_SCHEMA_VERSION - 1
-    assert plan["plan"]["actions"][-1]["id"] == "add_weekly_snapshots_v11"
+    assert status["database"]["user_version"] == 10
+    assert [action["id"] for action in plan["plan"]["actions"]] == [
+        "add_weekly_snapshots_v11",
+        "add_weekly_explanations_v12",
+    ]
 
     applied = apply_schema(db_path)
     assert applied["state"] == "current"
-    assert applied["applied_migrations"] == ["add_weekly_snapshots_v11"]
+    assert applied["applied_migrations"] == [
+        "add_weekly_snapshots_v11",
+        "add_weekly_explanations_v12",
+    ]
     with sqlite3.connect(db_path) as conn:
         legacy = conn.execute(
             "SELECT id, file_count, files_json FROM weekly_update_summaries WHERE id = ?",

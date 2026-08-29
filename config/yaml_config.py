@@ -198,6 +198,11 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
     embedding_batch_size_default = get_embedding_batch_size_default(embedding_provider, embedding_model)
     similarity_threshold_default = get_similarity_threshold_default(embedding_provider, embedding_model)
 
+    from ai_actuarial.ai_runtime import (
+        DEFAULT_WEEKLY_EXPLANATION_PROMPT,
+        DEFAULT_WEEKLY_EXPLANATION_PROMPT_VERSION,
+    )
+
     return {
         "catalog": {
             "provider": "openai",
@@ -225,6 +230,15 @@ def _extract_ai_config_from_env() -> Dict[str, Any]:
             "enable_query_validation": os.getenv("CHATBOT_ENABLE_QUERY_VALIDATION", "true").lower() == "true",
             "enable_response_validation": os.getenv("CHATBOT_ENABLE_RESPONSE_VALIDATION", "true").lower() == "true",
             "max_query_length": _safe_int(os.getenv("CHATBOT_MAX_QUERY_LENGTH", "1000"), "CHATBOT_MAX_QUERY_LENGTH"),
+        },
+        "weekly_explanation": {
+            "provider": "openai",
+            "model": os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
+            "prompt_version": DEFAULT_WEEKLY_EXPLANATION_PROMPT_VERSION,
+            "prompt": DEFAULT_WEEKLY_EXPLANATION_PROMPT,
+            "timeout_seconds": _safe_int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"), "OPENAI_TIMEOUT_SECONDS"),
+            "temperature": 0,
+            "max_tokens": 1200,
         },
         "ocr": {
             "provider": ocr_provider,

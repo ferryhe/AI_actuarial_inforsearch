@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-CURRENT_SQLITE_SCHEMA_VERSION = 11
+CURRENT_SQLITE_SCHEMA_VERSION = 12
 
 _AWARE_RFC3339_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
@@ -1154,14 +1154,64 @@ def _accept_version_10_source(
     tables: dict[str, TableSignature],
 ) -> bool:
     """Accept the v10 schema before weekly snapshot tables existed."""
-    snapshot_tables = {"weekly_snapshots", "weekly_snapshot_members"}
-    if snapshot_tables.intersection(tables):
+    future_tables = {
+        "weekly_snapshots",
+        "weekly_snapshot_members",
+        "weekly_explanations",
+    }
+    if future_tables.intersection(tables):
         return False
     expected = _current_storage_signature()
     adjusted = dict(tables)
-    for table in snapshot_tables:
+    for table in future_tables:
         if table not in adjusted and table in expected:
             adjusted[table] = expected[table]
+    valid, _, _ = _schema_validation(
+        adjusted,
+        unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
+    )
+    return valid
+
+
+def _add_weekly_explanations_v12(conn: sqlite3.Connection) -> None:
+    """Add persisted bilingual explanations bound to immutable snapshots."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weekly_explanations (
+            snapshot_id TEXT PRIMARY KEY,
+            input_fingerprint TEXT NOT NULL,
+            explanation_zh TEXT NOT NULL DEFAULT '',
+            explanation_en TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            prompt_version TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT NOT NULL DEFAULT '',
+            coverage_json TEXT NOT NULL DEFAULT '{}',
+            claim_fingerprint TEXT NOT NULL DEFAULT '',
+            claim_token TEXT NOT NULL DEFAULT '',
+            claim_expires_at TEXT NOT NULL DEFAULT '',
+            CHECK(status IN ('complete', 'failed')),
+            FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
+        )
+        """
+    )
+    _set_user_version(conn, 12)
+
+
+def _accept_version_11_source(
+    conn: sqlite3.Connection,
+    tables: dict[str, TableSignature],
+) -> bool:
+    """Accept only the exact v11 schema before explanations existed."""
+    explanation_table = "weekly_explanations"
+    if explanation_table in tables:
+        return False
+    expected = _current_storage_signature()
+    adjusted = dict(tables)
+    if explanation_table in expected:
+        adjusted[explanation_table] = expected[explanation_table]
     valid, _, _ = _schema_validation(
         adjusted,
         unexpected_schema_objects=_unexpected_schema_object_counts(conn, tables),
@@ -1234,6 +1284,12 @@ SQLITE_SCHEMA_MIGRATIONS: tuple[SQLiteSchemaMigration, ...] = (
         migration_id="add_weekly_snapshots_v11",
         apply=_add_weekly_snapshots_v11,
         source_validator=_accept_version_10_source,
+    ),
+    SQLiteSchemaMigration(
+        version=12,
+        migration_id="add_weekly_explanations_v12",
+        apply=_add_weekly_explanations_v12,
+        source_validator=_accept_version_11_source,
     ),
 )
 
@@ -2042,7 +2098,7 @@ def _analyze_connection(
     )
     if (
         valid
-        and version == 10
+        and version in {10, 11}
         and version < CURRENT_SQLITE_SCHEMA_VERSION
         and not _migration_accepts_source(conn, tables, start_version=version)
     ):
