@@ -215,6 +215,33 @@ def test_baton_terminal_task_status_stops_round_without_starting_next(tmp_path: 
         assert tasks.started == []
 
 
+def test_scheduled_error_with_downloaded_files_continues_pipeline(tmp_path: Path) -> None:
+    tasks = FakeTasks()
+    tasks.statuses["scheduled-1"] = "error"
+    tasks.results["scheduled-1"] = {"items_downloaded": 2}
+    baton = _service(tmp_path, tasks, ["kb-a"])
+    baton.start("scheduled-1")
+
+    state = baton.tick()["state"]
+
+    assert state["current_step"] == "markdown_conversion"
+    assert state["round_status"] == "running"
+    assert [kind for kind, _, _ in tasks.started] == ["markdown_conversion"]
+
+
+def test_scheduled_error_without_downloaded_files_still_aborts(tmp_path: Path) -> None:
+    tasks = FakeTasks()
+    tasks.statuses["scheduled-1"] = "error"
+    tasks.results["scheduled-1"] = {"items_downloaded": 0}
+    baton = _service(tmp_path, tasks, ["kb-a"])
+    baton.start("scheduled-1")
+
+    state = baton.tick()["state"]
+
+    assert state["round_status"] == "error"
+    assert tasks.started == []
+
+
 def test_zero_category_kbs_completes_after_chunk(tmp_path: Path) -> None:
     tasks = FakeTasks()
     tasks.statuses["scheduled-1"] = "completed"
