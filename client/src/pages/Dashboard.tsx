@@ -196,7 +196,6 @@ export default function Dashboard() {
 
   const quickActions = [
     { icon: Search, title: t("dashboard.browse_materials"), desc: t("dashboard.browse_materials_desc"), href: "/database", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
-    { icon: Tags, title: t("dashboard.browse_categories"), desc: t("dashboard.browse_categories_desc"), href: "/categories", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
     { icon: MessageSquare, title: t("dashboard.ask_agent"), desc: t("dashboard.ask_agent_desc"), href: "/chat", color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" },
   ];
 
@@ -237,7 +236,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold">{t("dashboard.category_entry")}</h2>
             <Link href="/categories">
-              <span className="text-xs text-primary hover:underline cursor-pointer">{t("dashboard.view_all")}</span>
+              <span className="text-xs text-primary hover:underline cursor-pointer">{t("dashboard.view_all_categories")}</span>
             </Link>
           </div>
           {loading ? (

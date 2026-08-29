@@ -64,3 +64,27 @@ def test_dashboard_i18n_has_customer_facing_en_and_zh_labels():
 
     assert "Ask Agent" in src
     assert "询问 Agent" in src
+
+
+def test_dashboard_has_single_categories_link_in_preview_header():
+    src = DASHBOARD_TSX.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+
+    # The duplicate Start Here quick action was removed: no more
+    # `href: "/categories"` (object-shorthand) nor its i18n label.
+    assert 'href: "/categories"' not in src
+    assert 't("dashboard.browse_categories")' not in src
+
+    # The Categories preview header keeps exactly one /categories link.
+    # Match the JSX `href=` attribute (not the object-shorthand `href:`)
+    # so the assertion stays robust to extra attributes on the Link.
+    assert src.count('href="/categories"') == 1
+
+    # i18n: view_all_categories defined once in English and once in Chinese.
+    assert i18n_src.count('"dashboard.view_all_categories"') == 2
+    assert '"View all categories"' in i18n_src
+    assert '"查看全部分类"' in i18n_src
+
+    # Weekly Additions still relies on dashboard.view_all (kept, 2x in i18n).
+    assert i18n_src.count('"dashboard.view_all"') == 2
+
