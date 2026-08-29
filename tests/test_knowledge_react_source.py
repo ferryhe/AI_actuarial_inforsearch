@@ -261,9 +261,10 @@ def test_kb_detail_keeps_ready_build_input_from_dedicated_manifest_get():
     state_src = READY_DATA_UI_STATE_TS.read_text(encoding="utf-8")
 
     assert '"ready_build_input",' in state_src
-    assert "const readyBuildInput = effectiveManifest?.ready_build_input" in src
+    assert "const readyBuildInput = manifestResponse.manifest?.ready_build_input;" in src
     assert "agentic-ready-manifest/build" in src
     assert "readyBuildInput," in src
+    assert "include_ready_build_input=true" in src
 
 
 def test_knowledge_list_separates_serving_and_automation_status():

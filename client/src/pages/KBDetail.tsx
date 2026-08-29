@@ -885,11 +885,6 @@ export default function KBDetail() {
 
   const handleBuildAgenticManifest = async () => {
     if (!kbId) return;
-    const readyBuildInput = effectiveManifest?.ready_build_input;
-    if (!readyBuildInput) {
-      setActionError(t("knowledge.manifest_build_not_ready").replace("{detail}", "KB Index is not ready"));
-      return;
-    }
     const mutationRoute = captureReadyDataRoute(readyDataRoute.current, manifestMounted.current, kbId);
     if (!mutationRoute) return;
     const { kbId: mutationKbId, epoch: mutationEpoch } = mutationRoute;
@@ -898,14 +893,26 @@ export default function KBDetail() {
     setActionNotice(null);
     setActionError(null);
     await runReadyDataRouteMutation({
-      request: () => apiPost<{
-        job_id?: string;
-        ready_data_snapshot?: { manifest?: AgenticReadyManifest };
-        validation?: { valid?: boolean; errors?: string[] };
-      }>(
-        `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/build`,
-        readyBuildInput,
-      ),
+      request: async () => {
+        const manifestResponse = await apiGet<{ manifest?: AgenticReadyManifest }>(
+          `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest?include_ready_build_input=true`
+        );
+        const readyBuildInput = manifestResponse.manifest?.ready_build_input;
+        if (!readyBuildInput) {
+          throw new ApiError(
+            t("knowledge.manifest_build_not_ready").replace("{detail}", "KB Index is not ready"),
+            400,
+          );
+        }
+        return apiPost<{
+          job_id?: string;
+          ready_data_snapshot?: { manifest?: AgenticReadyManifest };
+          validation?: { valid?: boolean; errors?: string[] };
+        }>(
+          `/api/rag/knowledge-bases/${encodeURIComponent(mutationKbId)}/agentic-ready-manifest/build`,
+          readyBuildInput,
+        );
+      },
       isCurrent: () => isCurrentReadyDataRoute(mutationKbId, mutationEpoch),
       onSuccess: async (res) => {
         if (res.job_id) {
