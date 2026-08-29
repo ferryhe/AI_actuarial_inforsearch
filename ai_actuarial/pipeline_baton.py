@@ -194,6 +194,16 @@ class PipelineBaton:
                 if current_step == "rag_indexing":
                     self._record_current_kb(document, succeeded=False, status=task_status)
                     self._start_next_rag_or_complete(document)
+                elif (
+                    current_step == "scheduled"
+                    and task_status == "error"
+                    and self._scheduled_task_downloaded_files(document)
+                ):
+                    # Partial collection success: some sites failed but files
+                    # were still downloaded. Continue the pipeline so the
+                    # collected files flow through markdown -> catalog -> chunk
+                    # -> embed -> index instead of aborting the whole round.
+                    self._start_step(document, "markdown_conversion")
                 else:
                     state["round_status"] = task_status
                 self._save(document)
@@ -319,6 +329,19 @@ class PipelineBaton:
                 kb_index_task_id=task_id,
                 ready_data_task_id=None,
             )
+
+    def _scheduled_task_downloaded_files(self, document: dict[str, Any]) -> bool:
+        """Return True when a partially-failed collection still downloaded files.
+
+        A scheduled collection that ends with status ``error`` may still have
+        collected files (per-site failures are aggregated, not fatal). In that
+        case the downstream pipeline should continue. Only a hard exception or
+        a run that collected nothing leaves ``items_downloaded`` at zero.
+        """
+        task = self._task_result(str(document["state"].get("current_task_id") or ""))
+        if not isinstance(task, dict):
+            return False
+        return int(task.get("items_downloaded") or 0) > 0
 
     @staticmethod
     def _canonical_markdown_files(task: dict[str, Any] | None) -> list[dict[str, Any]]:
