@@ -252,10 +252,9 @@ function getManifestFallbackMessage(
 
 function getManifestActionLabel(
   manifest: AgenticReadyManifest | null | undefined,
-  automationState: string,
   t: Translate,
 ) {
-  if (isReadyDataAutomationBusy(automationState)) {
+  if (isReadyDataAutomationBusy(manifest)) {
     return t("knowledge.manifest_building_action");
   }
   const status = manifest?.status || "missing";
@@ -786,11 +785,7 @@ export default function KBDetail() {
   );
 
   useEffect(() => {
-    const automationState = normalizeReadyAutomationStatus(
-      effectiveManifest?.automation_state,
-      effectiveManifest?.status,
-    );
-    if (!["pending", "running", "building"].includes(automationState)) {
+    if (!isReadyDataAutomationBusy(effectiveManifest)) {
       manifestPollAttempts.current = 0;
       return;
     }
@@ -1301,7 +1296,7 @@ export default function KBDetail() {
     manifest?.automation_state,
     manifest?.status,
   );
-  const manifestAutomationBusy = isReadyDataAutomationBusy(manifestAutomationState);
+  const manifestAutomationBusy = isReadyDataAutomationBusy(manifest);
   const manifestOperation = resolveReadyDataOperationState(manifest);
   const manifestBusy = manifestBuilding || publishRunning || manifestAutomationBusy;
   const currentReadyIndexVersion = manifest?.current_ready_index_version_id
@@ -1496,7 +1491,7 @@ export default function KBDetail() {
                   ) : (
                     <RefreshCw className={cn("w-4 h-4", manifestAutomationBusy && "animate-spin")} />
                   )}
-                  {manifestBuilding ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, manifestAutomationState, t)}
+                  {manifestBuilding ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, t)}
                 </button>
               )}
             </div>

@@ -28,7 +28,6 @@ import {
   isReadyDataAutomationBusy,
   mergeReadyDataKnowledgeList,
   mergeReadyDataKnowledgeManifest,
-  normalizeReadyAutomationStatus,
   readyDataOperationKindTranslationKey,
   resolveReadyDataOperationState,
   resolveReadyDataManifestEpisode,
@@ -241,10 +240,9 @@ function getManifestFallbackMessage(
 
 function getManifestActionLabel(
   manifest: AgenticReadyManifest | undefined,
-  automationState: string,
   t: Translate,
 ) {
-  if (isReadyDataAutomationBusy(automationState)) {
+  if (isReadyDataAutomationBusy(manifest)) {
     return t("knowledge.manifest_building_action");
   }
   const status = manifest?.status || "missing";
@@ -456,10 +454,9 @@ export default function Knowledge() {
     return loadDataInFlight.current;
   }, [applyReadyDataListManifestEpisode]);
 
-  const readyDataListBusy = kbs.some((kb) => isReadyDataAutomationBusy(normalizeReadyAutomationStatus(
-    kb.agentic_ready_manifest?.automation_state,
-    kb.agentic_ready_manifest?.status,
-  )));
+  const readyDataListBusy = kbs.some((kb) => (
+    isReadyDataAutomationBusy(kb.agentic_ready_manifest)
+  ));
 
   const loadSelectableFiles = useCallback((query = "") => {
     if (!kbForm.chunk_profile_id) {
@@ -1231,11 +1228,7 @@ export default function Knowledge() {
             const manifest = kb.agentic_ready_manifest;
             const manifestServing = resolveReadyDataServingState(manifest);
             const manifestStatus = manifestServing.status;
-            const manifestAutomationState = normalizeReadyAutomationStatus(
-              manifest?.automation_state,
-              manifest?.status,
-            );
-            const manifestAutomationBusy = isReadyDataAutomationBusy(manifestAutomationState);
+            const manifestAutomationBusy = isReadyDataAutomationBusy(manifest);
             const manifestOperation = resolveReadyDataOperationState(manifest);
             const manifestProfile = manifest?.profile || kb.manifest_profile || t("knowledge.manifest_default_profile");
             const manifestMessage = getManifestFallbackMessage(manifest, manifestServing, t);
@@ -1335,7 +1328,7 @@ export default function Knowledge() {
                           ) : (
                             <RefreshCw className={cn("w-3.5 h-3.5", manifestAutomationBusy && "animate-spin")} />
                           )}
-                          {buildingManifestKb === kbId ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, manifestAutomationState, t)}
+                          {buildingManifestKb === kbId ? t("knowledge.manifest_building_action") : getManifestActionLabel(manifest, t)}
                         </button>
                       )}
                     </div>
