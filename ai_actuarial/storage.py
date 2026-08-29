@@ -3416,7 +3416,7 @@ class Storage:
                    summary_markdown, metadata_json
             FROM weekly_snapshots
             WHERE status = 'published'
-            ORDER BY julianday(period_end) DESC, julianday(generated_at) DESC
+            ORDER BY period_end DESC, generated_at DESC
             LIMIT ? OFFSET ?
             """,
             (safe_limit, safe_offset),
@@ -3437,8 +3437,8 @@ class Storage:
             SELECT id, period_start, period_end, generated_at, status, file_count,
                    summary_markdown, metadata_json
             FROM weekly_snapshots
-            WHERE status = 'published' AND julianday(period_end) <= julianday(?)
-            ORDER BY julianday(period_end) DESC, julianday(generated_at) DESC
+            WHERE status = 'published' AND period_end <= ?
+            ORDER BY period_end DESC, generated_at DESC
             LIMIT 1
             """,
             (now,),

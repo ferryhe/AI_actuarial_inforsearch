@@ -107,3 +107,17 @@
 - The third-gate worker used one narrow read-only inspection of the current-worktree UTC period helper needed by the focused test, modified no out-of-scope file, and performed no lifecycle, provider, production, or forbidden-repository action. There are no remaining blockers from the obsolete `tests/test_api_smoke.py` prompt typo.
 - The fourth-gate worker changed only the authorized CLI, regression-test, and status files; it preserved every pre-existing dirty file and took no lifecycle, provider, production, secret, primary/sibling checkout, other-worktree, or `graphify-out` action. The accepted AC7 finding is resolved with no remaining implementation/test blocker.
 - The manager correction removed the erroneous trailing period only from the authorized CLI constant, regression expectation, and status wording. No API/service or other out-of-scope file was edited, and no lifecycle action was taken.
+
+## Fresh remote-feedback review at `ef16e4e`
+
+- Required `python-smoke` completed successfully; this was treated only as merge-gate evidence, not as a review finding.
+- Copilot review body: **valid**, mapped to AC-5. The `julianday()` list/latest expressions prevented the declared `(status, period_end DESC, generated_at DESC)` index from satisfying the ordinary API ordering and latest range query.
+- Inline thread at `ai_actuarial/storage.py:3419`: **valid**, mapped to AC-5. It reports the same underlying list/latest index-bypass claim as the review body, so the two items are duplicates rather than independent defects.
+- Period boundaries are normalized to UTC RFC3339 text by the service and v11 migration paths. Current and legacy service-generated `generated_at` values also come from UTC `isoformat()` writes, so direct text comparison preserves the supported data contract.
+- Ordinary 1,000-row query-plan inspection reproduced full scans and `USE TEMP B-TREE FOR ORDER BY` for both pre-fix queries. Direct text comparison uses `idx_weekly_snapshots_list`; latest additionally uses its `period_end` range.
+- RED: `python -m pytest --no-cov -q tests/test_issue_266_weekly_snapshots.py::test_snapshot_list_and_latest_use_declared_list_index` — **1 failed, 4 warnings in 1.64s** because the actual production queries did not use the declared index.
+- GREEN: the identical focused command after the two-expression SQL repair — **1 passed, 4 warnings in 1.14s**.
+- Required five-module regression — **125 passed, 5 warnings in 20.37s**.
+- Independent manager rerun: focused query-plan regression **1 passed, 4 warnings in 1.17s**; required five-module regression **125 passed, 5 warnings in 20.35s**; touched-file compileall, focused Ruff, and `git diff --check` all passed.
+- Touched-file compileall passed; focused Ruff `--select E9,F63,F7,F82` passed; `git diff --check` passed with only expected LF-to-CRLF working-copy warnings.
+- This feedback worker changed only `ai_actuarial/storage.py`, `tests/test_issue_266_weekly_snapshots.py`, and this status file. It performed no commit, push, GitHub/PR/Issue mutation, merge, branch deletion, worktree removal, provider access, production access, or forbidden checkout/repository access.

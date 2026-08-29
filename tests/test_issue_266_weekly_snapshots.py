@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -410,6 +410,57 @@ def test_api_list_latest_detail_and_files_are_typed_and_lightweight(
     }
     routes = {getattr(route, "path", ""): route for route in app.routes}
     assert all(routes[path].response_model is not None for path in typed_paths)
+
+
+def test_snapshot_list_and_latest_use_declared_list_index(tmp_path: Path) -> None:
+    db_path, _config_path = _write_config(tmp_path)
+    period_start = datetime(2020, 1, 6, tzinfo=timezone.utc)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO weekly_snapshots (
+                id, period_start, period_end, generated_at, status
+            ) VALUES (?, ?, ?, ?, 'published')
+            """,
+            (
+                (
+                    f"snapshot-{week}",
+                    (period_start + timedelta(weeks=week)).isoformat(),
+                    (period_start + timedelta(weeks=week + 1)).isoformat(),
+                    (period_start + timedelta(weeks=week + 1, hours=1)).isoformat(),
+                )
+                for week in range(200)
+            ),
+        )
+
+    storage = Storage(str(db_path))
+    statements: list[str] = []
+    try:
+        storage._conn.execute("ANALYZE")
+        storage._conn.set_trace_callback(statements.append)
+        storage.list_weekly_snapshots(limit=20, offset=0)
+        storage.get_latest_weekly_snapshot(
+            now="2030-01-01T00:00:00+00:00",
+        )
+        storage._conn.set_trace_callback(None)
+        queries = [
+            statement
+            for statement in statements
+            if statement.lstrip().startswith("SELECT id, period_start")
+            and "FROM weekly_snapshots" in statement
+        ]
+        plans = [
+            [str(row[3]) for row in storage._conn.execute(f"EXPLAIN QUERY PLAN {query}")]
+            for query in queries
+        ]
+    finally:
+        storage._conn.set_trace_callback(None)
+        storage.close()
+
+    assert len(plans) == 2
+    for plan in plans:
+        assert any("USING INDEX idx_weekly_snapshots_list" in detail for detail in plan)
+        assert all("USE TEMP B-TREE FOR ORDER BY" not in detail for detail in plan)
 
 
 def test_async_weekly_run_validates_and_normalizes_before_enqueue(
