@@ -5,6 +5,7 @@ import csv
 import json
 import logging
 import os
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -41,6 +42,14 @@ from .sqlite_schema import (
     json_dumps,
     schema_plan,
     schema_status,
+)
+from .api.services.weekly_updates import (
+    WeeklySnapshotNotFoundError,
+    WeeklySnapshotValidationError,
+    generate_weekly_update_summary,
+    get_latest_weekly_update_summary,
+    get_weekly_update_summary_files,
+    list_weekly_update_summaries,
 )
 
 logger = logging.getLogger(__name__)
@@ -443,6 +452,66 @@ def cmd_schema(args: argparse.Namespace) -> int:
         state = payload.get("state", "unknown")
         version = (payload.get("database") or {}).get("user_version")
         print(f"SQLite schema state: {state} (user_version={version})")
+    return 0
+
+
+def _weekly_snapshot_db_path(args: argparse.Namespace) -> str:
+    if str(args.db or "").strip():
+        return str(args.db).strip()
+    config = _load_config(args.config)
+    return str((config.get("paths") or {}).get("db") or "data/index.db")
+
+
+def cmd_weekly_snapshot(args: argparse.Namespace) -> int:
+    try:
+        db_path = _weekly_snapshot_db_path(args)
+        if args.snapshot_cmd == "generate":
+            payload = generate_weekly_update_summary(
+                db_path=db_path,
+                period_start=args.period_start,
+                period_end=args.period_end,
+                relative_period=args.relative_period,
+                max_files=args.preview_limit,
+                force=args.force,
+            )
+        elif args.snapshot_cmd == "latest":
+            payload = get_latest_weekly_update_summary(db_path=db_path)
+        elif args.snapshot_cmd == "list":
+            payload = list_weekly_update_summaries(
+                db_path=db_path,
+                limit=args.limit,
+                offset=args.offset,
+            )
+        elif args.snapshot_cmd == "files":
+            payload = get_weekly_update_summary_files(
+                db_path=db_path,
+                snapshot_id=args.snapshot_id,
+                limit=args.limit,
+                offset=args.offset,
+            )
+        else:  # pragma: no cover - argparse enforces the action
+            raise AssertionError(args.snapshot_cmd)
+    except (
+        WeeklySnapshotNotFoundError,
+        WeeklySnapshotValidationError,
+        OSError,
+        RuntimeError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        _print_cli_payload(
+            {
+                "success": False,
+                "error": (
+                    "Weekly snapshot not found"
+                    if isinstance(exc, WeeklySnapshotNotFoundError)
+                    else str(exc)
+                ),
+            },
+            as_json=args.json,
+        )
+        return 2
+    _print_cli_payload(payload, as_json=args.json)
     return 0
 
 
@@ -918,6 +987,69 @@ def build_parser() -> argparse.ArgumentParser:
             help="Emit the stable machine-readable JSON contract",
         )
         p_schema_action.set_defaults(func=cmd_schema)
+
+    p_weekly = sub.add_parser("weekly", help="Operate on weekly resources")
+    p_weekly_sub = p_weekly.add_subparsers(dest="weekly_cmd", required=True)
+    p_weekly_snapshot = p_weekly_sub.add_parser(
+        "snapshot",
+        help="Generate and read weekly file snapshots",
+    )
+    p_weekly_snapshot_sub = p_weekly_snapshot.add_subparsers(
+        dest="snapshot_cmd",
+        required=True,
+    )
+    p_weekly_generate = p_weekly_snapshot_sub.add_parser(
+        "generate",
+        help="Generate or replay one weekly snapshot",
+    )
+    p_weekly_generate.add_argument("--period-start")
+    p_weekly_generate.add_argument("--period-end")
+    p_weekly_generate.add_argument("--relative-period")
+    p_weekly_generate.add_argument(
+        "--preview-limit",
+        type=int,
+        default=500,
+        help="Maximum generated preview rows (max 500)",
+    )
+    p_weekly_generate.add_argument(
+        "--force",
+        action="store_true",
+        help="Explicitly rebuild an already published period",
+    )
+    p_weekly_latest = p_weekly_snapshot_sub.add_parser(
+        "latest",
+        help="Read the latest completed published snapshot",
+    )
+    p_weekly_list = p_weekly_snapshot_sub.add_parser(
+        "list",
+        help="List published snapshot summaries",
+    )
+    p_weekly_list.add_argument("--limit", type=int, default=20)
+    p_weekly_list.add_argument("--offset", type=int, default=0)
+    p_weekly_files = p_weekly_snapshot_sub.add_parser(
+        "files",
+        help="Page through one snapshot's files",
+    )
+    p_weekly_files.add_argument("snapshot_id", help="Weekly snapshot ID")
+    p_weekly_files.add_argument("--limit", type=int, default=100)
+    p_weekly_files.add_argument("--offset", type=int, default=0)
+    for p_weekly_action in (
+        p_weekly_generate,
+        p_weekly_latest,
+        p_weekly_list,
+        p_weekly_files,
+    ):
+        p_weekly_action.add_argument(
+            "--db",
+            default=None,
+            help="SQLite database path (defaults to config paths.db)",
+        )
+        p_weekly_action.add_argument(
+            "--json",
+            action="store_true",
+            help="Emit the stable machine-readable JSON contract",
+        )
+        p_weekly_action.set_defaults(func=cmd_weekly_snapshot)
 
     p_pipeline = sub.add_parser("pipeline", help="Control the fixed five-step pipeline baton")
     p_pipeline_sub = p_pipeline.add_subparsers(dest="pipeline_cmd", required=True)

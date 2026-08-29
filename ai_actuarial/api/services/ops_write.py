@@ -58,6 +58,10 @@ from ai_actuarial.embedding_service import (
 )
 from ai_actuarial.security import UnsafeUrlError, ensure_safe_http_url
 from ai_actuarial.storage import Storage
+from ai_actuarial.api.services.weekly_updates import (
+    WeeklySnapshotValidationError,
+    validate_weekly_snapshot_period,
+)
 from ai_actuarial.web_listening_rule import (
     WebListeningRuleError,
     generate_draft_rule,
@@ -1986,6 +1990,30 @@ def start_collection(data: dict[str, Any], *, bridge: BridgeState, auth_token: d
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():
             _reject_request("Category is required for category-scoped cataloging", collection_type=collection_type, data=data, bridge=bridge)
+    if collection_type == "weekly_summary":
+        try:
+            period = validate_weekly_snapshot_period(
+                period_start=str(data.get("period_start") or "").strip() or None,
+                period_end=str(data.get("period_end") or "").strip() or None,
+                relative_period=str(data.get("relative_period") or "").strip() or None,
+            )
+        except WeeklySnapshotValidationError as exc:
+            _reject_request(
+                str(exc),
+                collection_type=collection_type,
+                data=data,
+                bridge=bridge,
+            )
+        if period.relative_period:
+            data["relative_period"] = period.relative_period
+            data.pop("period_start", None)
+            data.pop("period_end", None)
+        else:
+            data["period_start"] = period.period_start
+            data["period_end"] = period.period_end
+            data.pop("relative_period", None)
+        if "force" in data:
+            data["force"] = coerce_bool(data.get("force"), default=False)
     if collection_type == "markdown_conversion":
         scope_mode = str(data.get("scope_mode") or "index").strip().lower()
         if scope_mode == "category" and not str(data.get("category") or "").strip():

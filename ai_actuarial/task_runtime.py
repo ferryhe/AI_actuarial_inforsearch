@@ -118,12 +118,14 @@ class _FallbackScheduleJob:
         interval: int,
         unit: str,
         at_time: datetime_time | None = None,
+        at_time_zone: str | None = None,
         start_day: str | None = None,
     ) -> None:
         self.job_func = job_func
         self.interval = interval
         self.unit = unit
         self.at_time = at_time
+        self.at_time_zone = at_time_zone
         self.start_day = start_day
         self.next_run = None
         self.last_run = None
@@ -135,6 +137,7 @@ class _FallbackScheduleBuilder:
         self.interval = interval
         self.unit = "days"
         self.at_time: datetime_time | None = None
+        self.at_time_zone: str | None = None
         self.start_day: str | None = None
 
     @property
@@ -163,10 +166,11 @@ class _FallbackScheduleBuilder:
         self.unit = "seconds"
         return self
 
-    def at(self, value: str) -> "_FallbackScheduleBuilder":
+    def at(self, value: str, tz: str | None = None) -> "_FallbackScheduleBuilder":
         parts = str(value or "").split(":")
         if len(parts) >= 2:
             self.at_time = datetime_time(int(parts[0]), int(parts[1]))
+        self.at_time_zone = tz
         return self
 
     def do(self, job_func: Callable[[], None]) -> _FallbackScheduleJob:
@@ -175,6 +179,7 @@ class _FallbackScheduleBuilder:
             interval=self.interval,
             unit=self.unit,
             at_time=self.at_time,
+            at_time_zone=self.at_time_zone,
             start_day=self.start_day,
         )
         self.scheduler.jobs.append(job)
@@ -632,7 +637,11 @@ class NativeTaskRuntime:
                     continue
                 interval = str(task_cfg.get("interval") or "").strip()
                 if interval:
-                    self._register_schedule(interval, make_generic_task_job(task_cfg))
+                    self._register_schedule(
+                        interval,
+                        make_generic_task_job(task_cfg),
+                        at_timezone="UTC" if task_cfg.get("type") == "weekly_summary" else None,
+                    )
             self.scheduler.every(30).minutes.do(self._scheduled_pipeline_baton_tick)
             if self._ready_data_db_path:
                 self.scheduler.every(self._ready_data_poll_interval_seconds).seconds.do(
@@ -717,13 +726,23 @@ class NativeTaskRuntime:
             daemon=True,
         ).start()
 
-    def _register_schedule(self, interval_str: str, job_func: Callable[[], None]) -> None:
+    def _register_schedule(
+        self,
+        interval_str: str,
+        job_func: Callable[[], None],
+        *,
+        at_timezone: str | None = None,
+    ) -> None:
         interval = str(interval_str or "").strip().lower()
         try:
             if interval == "daily":
                 self.scheduler.every().day.at("00:30").do(job_func)
             elif interval == "weekly":
-                self.scheduler.every().monday.at("00:30").do(job_func)
+                weekly_job = self.scheduler.every().monday
+                if at_timezone:
+                    weekly_job.at("00:30", at_timezone).do(job_func)
+                else:
+                    weekly_job.at("00:30").do(job_func)
             elif interval.startswith("daily at "):
                 self.scheduler.every().day.at(interval.replace("daily at ", "", 1).strip()).do(job_func)
             elif interval.startswith("every "):
@@ -1039,7 +1058,8 @@ class NativeTaskRuntime:
             period_start=str(data.get("period_start") or "").strip() or None,
             period_end=str(data.get("period_end") or "").strip() or None,
             relative_period=str(data.get("relative_period") or "").strip() or None,
-            max_files=parse_int_clamped(data.get("max_files"), default=500, min_value=1, max_value=10_000),
+            max_files=parse_int_clamped(data.get("max_files"), default=500, min_value=1, max_value=500),
+            force=coerce_bool(data.get("force"), default=False),
         )
         file_count = int(summary.get("file_count") or 0)
         return CollectionResult(

@@ -123,6 +123,8 @@ class Storage:
             "agentic_ready_manual_operation_state",
             "agentic_ready_automation_lock",
             "weekly_update_summaries",
+            "weekly_snapshots",
+            "weekly_snapshot_members",
             "rag_knowledge_bases",
             "users",
             "user_quotas",
@@ -893,6 +895,34 @@ class Storage:
         )
         self._conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS weekly_snapshots (
+                id TEXT PRIMARY KEY,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'published',
+                file_count INTEGER NOT NULL DEFAULT 0,
+                summary_markdown TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                CHECK(status IN ('published', 'superseded', 'failed'))
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weekly_snapshot_members (
+                snapshot_id TEXT NOT NULL,
+                file_url TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                original_filename TEXT,
+                ordinal INTEGER NOT NULL,
+                PRIMARY KEY(snapshot_id, file_url),
+                FOREIGN KEY(snapshot_id) REFERENCES weekly_snapshots(id) ON DELETE CASCADE
+            )
+            """
+        )
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS pipeline_run (
                 run_id TEXT PRIMARY KEY,
                 correlation_id TEXT NOT NULL DEFAULT '',
@@ -1058,6 +1088,25 @@ class Storage:
             """
             CREATE INDEX IF NOT EXISTS idx_weekly_update_summaries_period
             ON weekly_update_summaries(period_start, period_end)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_weekly_snapshots_published_period
+            ON weekly_snapshots(period_start, period_end)
+            WHERE status = 'published'
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_weekly_snapshots_list
+            ON weekly_snapshots(status, period_end DESC, generated_at DESC)
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_weekly_snapshot_members_page
+            ON weekly_snapshot_members(snapshot_id, ordinal)
             """
         )
         self._ensure_columns(
@@ -3111,6 +3160,54 @@ class Storage:
         
         return files, total
     
+    def count_files_first_seen_between(
+        self,
+        *,
+        period_start: str,
+        period_end: str,
+    ) -> int:
+        """Count non-deleted files first discovered in [period_start, period_end)."""
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM files
+            WHERE deleted_at IS NULL
+              AND first_seen IS NOT NULL
+              AND julianday(first_seen) >= julianday(?)
+              AND julianday(first_seen) < julianday(?)
+            """,
+            (period_start, period_end),
+        ).fetchone()
+        return int(row[0] if row else 0)
+
+    def list_file_identities_first_seen_between(
+        self,
+        *,
+        period_start: str,
+        period_end: str,
+    ) -> list[dict[str, Any]]:
+        """Return stable weekly member identities without preview limiting."""
+        cur = self._conn.execute(
+            """
+            SELECT url, first_seen, original_filename
+            FROM files
+            WHERE deleted_at IS NULL
+              AND first_seen IS NOT NULL
+              AND julianday(first_seen) >= julianday(?)
+              AND julianday(first_seen) < julianday(?)
+            ORDER BY first_seen DESC, url ASC
+            """,
+            (period_start, period_end),
+        )
+        return [
+            {
+                "url": str(row[0]),
+                "first_seen": str(row[1]),
+                "original_filename": row[2],
+            }
+            for row in cur.fetchall()
+        ]
+
     def list_files_first_seen_between(
         self,
         *,
@@ -3130,8 +3227,8 @@ class Storage:
             LEFT JOIN catalog_items ci ON ci.file_url = f.url
             WHERE f.deleted_at IS NULL
               AND f.first_seen IS NOT NULL
-              AND f.first_seen >= ?
-              AND f.first_seen < ?
+              AND julianday(f.first_seen) >= julianday(?)
+              AND julianday(f.first_seen) < julianday(?)
             ORDER BY f.first_seen DESC, f.url ASC
             LIMIT ?
             """,
@@ -3152,6 +3249,240 @@ class Storage:
                 item["keywords"] = []
             files.append(item)
         return files
+
+    @staticmethod
+    def _decode_weekly_snapshot_row(
+        row: sqlite3.Row | tuple[Any, ...] | None,
+        *,
+        include_detail: bool = False,
+    ) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        keys = [
+            "id",
+            "period_start",
+            "period_end",
+            "generated_at",
+            "status",
+            "file_count",
+            "summary_markdown",
+            "metadata_json",
+        ]
+        data = dict(zip(keys, row))
+        try:
+            metadata = json.loads(str(data.pop("metadata_json") or "{}"))
+        except json.JSONDecodeError:
+            metadata = {}
+        data["metadata"] = metadata if isinstance(metadata, dict) else {}
+        if not include_detail:
+            data.pop("summary_markdown", None)
+        return data
+
+    def get_weekly_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        include_detail: bool = False,
+    ) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT id, period_start, period_end, generated_at, status, file_count,
+                   summary_markdown, metadata_json
+            FROM weekly_snapshots
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (snapshot_id,),
+        ).fetchone()
+        return self._decode_weekly_snapshot_row(row, include_detail=include_detail)
+
+    def get_published_weekly_snapshot_for_period(
+        self,
+        *,
+        period_start: str,
+        period_end: str,
+        include_detail: bool = False,
+    ) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT id, period_start, period_end, generated_at, status, file_count,
+                   summary_markdown, metadata_json
+            FROM weekly_snapshots
+            WHERE period_start = ? AND period_end = ? AND status = 'published'
+            LIMIT 1
+            """,
+            (period_start, period_end),
+        ).fetchone()
+        return self._decode_weekly_snapshot_row(row, include_detail=include_detail)
+
+    def publish_weekly_snapshot(
+        self,
+        summary: dict[str, Any],
+        *,
+        members: list[dict[str, Any]],
+        force: bool = False,
+        request_started_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically publish one weekly snapshot while preserving prior success."""
+        period_start = str(summary.get("period_start") or "").strip()
+        period_end = str(summary.get("period_end") or "").strip()
+        if not period_start or not period_end:
+            raise ValueError("period_start and period_end are required")
+
+        with self.transaction(immediate=True):
+            existing = self.get_published_weekly_snapshot_for_period(
+                period_start=period_start,
+                period_end=period_end,
+                include_detail=True,
+            )
+            if existing is not None and not force:
+                return existing
+            if existing is not None and force and request_started_at:
+                try:
+                    existing_at = datetime.fromisoformat(str(existing["generated_at"]))
+                    requested_at = datetime.fromisoformat(request_started_at)
+                except ValueError:
+                    pass
+                else:
+                    if existing_at > requested_at:
+                        return existing
+
+            provisional_generated_at = request_started_at or datetime.now(timezone.utc).isoformat()
+            snapshot_id = str(summary.get("id") or f"weekly-{uuid.uuid4().hex}")
+            file_count = int(summary.get("file_count", len(members)) or 0)
+            metadata = dict(summary.get("metadata") or {})
+            if existing is not None:
+                self._conn.execute(
+                    "UPDATE weekly_snapshots SET status = 'superseded' WHERE id = ?",
+                    (existing["id"],),
+                )
+            self._conn.execute(
+                """
+                INSERT INTO weekly_snapshots (
+                    id, period_start, period_end, generated_at, status, file_count,
+                    summary_markdown, metadata_json
+                ) VALUES (?, ?, ?, ?, 'published', ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    period_start,
+                    period_end,
+                    provisional_generated_at,
+                    file_count,
+                    str(summary.get("summary_markdown") or ""),
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            self._conn.executemany(
+                """
+                INSERT INTO weekly_snapshot_members (
+                    snapshot_id, file_url, first_seen, original_filename, ordinal
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        snapshot_id,
+                        str(member.get("url") or ""),
+                        str(member.get("first_seen") or ""),
+                        member.get("original_filename"),
+                        ordinal,
+                    )
+                    for ordinal, member in enumerate(members)
+                ),
+            )
+            generated_at = self.now()
+            self._conn.execute(
+                "UPDATE weekly_snapshots SET generated_at = ? WHERE id = ?",
+                (generated_at, snapshot_id),
+            )
+
+        return self.get_weekly_snapshot(snapshot_id=snapshot_id, include_detail=True) or {}
+
+    def list_weekly_snapshots(
+        self,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        safe_limit = max(1, min(int(limit or 20), 100))
+        safe_offset = max(0, int(offset or 0))
+        total_row = self._conn.execute(
+            "SELECT COUNT(*) FROM weekly_snapshots WHERE status = 'published'"
+        ).fetchone()
+        total = int(total_row[0] if total_row else 0)
+        cur = self._conn.execute(
+            """
+            SELECT id, period_start, period_end, generated_at, status, file_count,
+                   summary_markdown, metadata_json
+            FROM weekly_snapshots
+            WHERE status = 'published'
+            ORDER BY period_end DESC, generated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (safe_limit, safe_offset),
+        )
+        return [
+            self._decode_weekly_snapshot_row(row, include_detail=False) or {}
+            for row in cur.fetchall()
+        ], total
+
+    def get_latest_weekly_snapshot(
+        self,
+        *,
+        now: str,
+        include_detail: bool = False,
+    ) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT id, period_start, period_end, generated_at, status, file_count,
+                   summary_markdown, metadata_json
+            FROM weekly_snapshots
+            WHERE status = 'published' AND period_end <= ?
+            ORDER BY period_end DESC, generated_at DESC
+            LIMIT 1
+            """,
+            (now,),
+        ).fetchone()
+        return self._decode_weekly_snapshot_row(row, include_detail=include_detail)
+
+    def list_weekly_snapshot_files(
+        self,
+        *,
+        snapshot_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        snapshot = self.get_weekly_snapshot(snapshot_id=snapshot_id)
+        if snapshot is None:
+            raise KeyError(snapshot_id)
+        safe_limit = max(1, min(int(limit or 100), 500))
+        safe_offset = max(0, int(offset or 0))
+        cur = self._conn.execute(
+            """
+            SELECT
+                m.file_url,
+                COALESCE(NULLIF(TRIM(f.title), ''),
+                         NULLIF(TRIM(m.original_filename), ''), m.file_url) AS title,
+                m.original_filename,
+                m.first_seen
+            FROM weekly_snapshot_members m
+            LEFT JOIN files f ON f.url = m.file_url
+            WHERE m.snapshot_id = ?
+            ORDER BY m.ordinal
+            LIMIT ? OFFSET ?
+            """,
+            (snapshot_id, safe_limit, safe_offset),
+        )
+        files = [
+            {
+                "url": str(row[0]),
+                "title": str(row[1]),
+                "original_filename": row[2],
+                "first_seen": str(row[3]),
+            }
+            for row in cur.fetchall()
+        ]
+        return files, int(snapshot["file_count"])
 
     def _decode_weekly_update_summary_row(self, row: sqlite3.Row | tuple[Any, ...] | None) -> dict[str, Any] | None:
         if row is None:
@@ -3217,6 +3548,19 @@ class Storage:
         return self.get_weekly_update_summary(period_start=period_start, period_end=period_end) or {}
 
     def get_weekly_update_summary(self, *, period_start: str, period_end: str) -> dict[str, Any] | None:
+        snapshot = self.get_published_weekly_snapshot_for_period(
+            period_start=period_start,
+            period_end=period_end,
+            include_detail=True,
+        )
+        if snapshot is not None:
+            files, _total = self.list_weekly_snapshot_files(
+                snapshot_id=str(snapshot["id"]),
+                limit=500,
+                offset=0,
+            )
+            snapshot["files"] = files
+            return snapshot
         cur = self._conn.execute(
             """
             SELECT id, period_start, period_end, generated_at, file_count,
@@ -3230,32 +3574,98 @@ class Storage:
         return self._decode_weekly_update_summary_row(cur.fetchone())
 
     def get_latest_weekly_update_summary(self) -> dict[str, Any] | None:
+        snapshot = self.get_latest_weekly_snapshot(
+            now=datetime.now(timezone.utc).isoformat(),
+            include_detail=True,
+        )
+        if snapshot is not None:
+            files, _total = self.list_weekly_snapshot_files(
+                snapshot_id=str(snapshot["id"]),
+                limit=500,
+                offset=0,
+            )
+            snapshot["files"] = files
+            return snapshot
         cur = self._conn.execute(
             """
             SELECT id, period_start, period_end, generated_at, file_count,
                    files_json, summary_markdown, metadata_json
             FROM weekly_update_summaries
-            ORDER BY period_start DESC, generated_at DESC
+            WHERE julianday(period_end) <= julianday(?)
+            ORDER BY julianday(period_end) DESC, julianday(generated_at) DESC
             LIMIT 1
-            """
+            """,
+            (datetime.now(timezone.utc).isoformat(),),
         )
         return self._decode_weekly_update_summary_row(cur.fetchone())
 
     def list_weekly_update_summaries(self, *, limit: int = 20, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
         safe_limit = max(1, min(int(limit or 20), 100))
         safe_offset = max(0, int(offset or 0))
-        total = int(self._conn.execute("SELECT COUNT(*) FROM weekly_update_summaries").fetchone()[0])
+        legacy_not_published = """
+            NOT EXISTS (
+                SELECT 1
+                FROM weekly_snapshots AS snapshot
+                WHERE snapshot.status = 'published'
+                  AND (
+                      snapshot.id = legacy.id
+                      OR (
+                          julianday(snapshot.period_start) = julianday(legacy.period_start)
+                          AND julianday(snapshot.period_end) = julianday(legacy.period_end)
+                      )
+                  )
+            )
+        """
+        total = int(
+            self._conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT id
+                    FROM weekly_snapshots
+                    WHERE status = 'published'
+                    UNION ALL
+                    SELECT legacy.id
+                    FROM weekly_update_summaries AS legacy
+                    WHERE {legacy_not_published}
+                )
+                """
+            ).fetchone()[0]
+        )
         cur = self._conn.execute(
-            """
-            SELECT id, period_start, period_end, generated_at, file_count,
+            f"""
+            SELECT source, id, period_start, period_end, generated_at, file_count,
                    files_json, summary_markdown, metadata_json
-            FROM weekly_update_summaries
-            ORDER BY period_start DESC, generated_at DESC
+            FROM (
+                SELECT 'snapshot' AS source, id, period_start, period_end,
+                       generated_at, file_count, NULL AS files_json,
+                       summary_markdown, metadata_json
+                FROM weekly_snapshots
+                WHERE status = 'published'
+                UNION ALL
+                SELECT 'legacy' AS source, legacy.id, legacy.period_start,
+                       legacy.period_end, legacy.generated_at, legacy.file_count,
+                       legacy.files_json, legacy.summary_markdown, legacy.metadata_json
+                FROM weekly_update_summaries AS legacy
+                WHERE {legacy_not_published}
+            )
+            ORDER BY period_start DESC, generated_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
             (safe_limit, safe_offset),
         )
-        summaries = [self._decode_weekly_update_summary_row(row) or {} for row in cur.fetchall()]
+        summaries: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            source = str(row[0])
+            summary = self._decode_weekly_update_summary_row(row[1:]) or {}
+            if source == "snapshot":
+                files, _total = self.list_weekly_snapshot_files(
+                    snapshot_id=str(summary["id"]),
+                    limit=500,
+                    offset=0,
+                )
+                summary["files"] = files
+            summaries.append(summary)
         return summaries, total
 
     def mark_file_deleted(self, url: str, deleted_time: str) -> None:
