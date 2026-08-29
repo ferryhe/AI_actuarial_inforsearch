@@ -1,6 +1,8 @@
 export interface ChatDisplayNameSource {
   title?: unknown;
+  original_filename?: unknown;
   filename?: unknown;
+  url?: unknown;
   file_url?: unknown;
   source_url?: unknown;
 }
@@ -28,7 +30,7 @@ function unwrapFileUrl(value: unknown): string {
 }
 
 function fileUrlBasename(source: ChatDisplayNameSource): string {
-  const fileUrl = unwrapFileUrl(source.file_url) || unwrapFileUrl(source.source_url);
+  const fileUrl = unwrapFileUrl(source.file_url) || unwrapFileUrl(source.source_url) || unwrapFileUrl(source.url);
   if (!fileUrl) return "";
   try {
     const pathname = new URL(fileUrl, "https://chat.local").pathname;
@@ -43,9 +45,14 @@ function fileUrlBasename(source: ChatDisplayNameSource): string {
   }
 }
 
-export function getChatDisplayName(source: ChatDisplayNameSource, fallback: string): string {
+export function getCanonicalDisplayName(source: ChatDisplayNameSource, fallback: string): string {
   return getChatValidName(source.title)
+    || getChatValidName(source.original_filename)
     || getChatValidName(source.filename)
     || fileUrlBasename(source)
     || fallback;
+}
+
+export function getChatDisplayName(source: ChatDisplayNameSource, fallback: string): string {
+  return getCanonicalDisplayName(source, fallback);
 }

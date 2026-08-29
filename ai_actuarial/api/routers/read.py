@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from ..deps import AuthContext, require_permissions
 from ..services.read import (
+    FileListValidationError,
     get_dashboard_stats,
     get_file_detail,
     get_file_markdown,
@@ -108,7 +109,10 @@ def api_files(
     request: Request,
     auth: AuthContext = Depends(require_permissions("files.read")),
 ) -> dict[str, object]:
-    query = parse_file_list_query(request.query_params)
+    try:
+        query = parse_file_list_query(request.query_params)
+    except FileListValidationError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
     if query.include_deleted and "files.delete" not in auth.permissions:
         detail = "Unauthorized" if not auth.token else "Forbidden"
         status_code = 401 if not auth.token else 403
