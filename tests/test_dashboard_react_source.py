@@ -76,7 +76,9 @@ def test_dashboard_has_single_categories_link_in_preview_header():
     assert 't("dashboard.browse_categories")' not in src
 
     # The Categories preview header keeps exactly one /categories link.
-    assert src.count('<Link href="/categories">') == 1
+    # Match the JSX `href=` attribute (not the object-shorthand `href:`)
+    # so the assertion stays robust to extra attributes on the Link.
+    assert src.count('href="/categories"') == 1
 
     # i18n: view_all_categories defined once in English and once in Chinese.
     assert i18n_src.count('"dashboard.view_all_categories"') == 2
