@@ -259,3 +259,91 @@
 - This feedback repair changed only `ai_actuarial/search_acquisition.py`, `tests/test_issue_263_search_acquisition_outcomes.py`, and this status file. No commit, push, PR mutation, review reply/resolve, merge, lifecycle-state mutation, GitHub refetch, sibling/primary checkout access, `graphify-out`, secret, provider, or production action occurred.
 - Residual risk is limited to consumers that may have observed the erroneous successful `"other"` value during the short pre-fix branch lifetime; the branch contract and existing nullable fixtures now agree.
 - Next step: the manager should inspect this diff, record the single feedback item as a valid change, then commit/push and continue the existing PR lifecycle without a second feedback window.
+
+## Issue #265 implementation worker handoff
+
+### Scope and acceptance mapping
+
+- Added one shared backend indicator contract for nullable 0–100 semantic and keyword relevance plus the stable eight-method retrieval enum and `other` fallback. Invalid, non-numeric, non-finite, and missing semantic inputs stay `None`; legal scores are clamped before rounding.
+- All seven Agentic ready-data tools retain their legacy raw `score`, sorting, thresholds, and recall order while adding `keyword_relevance_100` and `retrieval_method`. Each weighted maximum is derived from that tool's existing formula and the unique `_tokens(query)` context; title aliases retain their native 80–100 scale and exact-match 100. Empty queries do not fabricate relevance.
+- New vector Chat results and Agentic evidence/citations expose the three shared fields while retaining legacy `similarity_score`/`score`. Historical reads safely normalize existing fields and semantic similarity, leave keyword relevance absent when query/tool context is unavailable, and map unknown sources to `other` without mutating stored messages.
+- Citation cards and Retrieved Blocks use the same `RetrievalIndicators` component. It always renders the semantic, keyword, and method badges with `N/100` or an em dash, visible text plus screen-reader labels, wrapping container classes, and non-breaking badge classes. The old user-visible raw `Score` output was removed. English and Chinese labels cover all known methods and `other`; nullable legacy-compatible frontend types were added.
+
+### TDD evidence
+
+- Exact RED command: `python -m pytest -q tests/test_issue_265_retrieval_indicators.py tests/test_chat_react_source.py::test_chat_reuses_wrapping_retrieval_indicators_without_showing_raw_scores; npx tsx client/src/pages/chat/RetrievalIndicators.test.tsx`.
+- RED result: Python collection failed with `ModuleNotFoundError: ai_actuarial.retrieval_indicators`; TypeScript failed with `MODULE_NOT_FOUND: ./RetrievalIndicators`. These were the expected missing shared backend/helper and shared frontend component gaps.
+- A final adjacent-call self-review found that the Agentic synthesis adapter still relabeled legacy raw keyword `score` as `similarity_score`. The focused RED test failed `1 failed, 3 warnings` with the expected missing raw-score metadata contract. The adapter now retains `score` and passes the three normalized fields without manufacturing semantic similarity; the identical focused test passed `1 passed, 3 warnings`.
+- After the scoped implementation and that correction, the final related Python command passed `147 passed, 4 warnings in 19.98s`; the warnings were existing SWIG deprecations and the Starlette `httpx` test-client deprecation.
+
+### Verification
+
+- `python -m pytest --no-cov -q tests/test_issue_265_retrieval_indicators.py tests/agentic_rag/test_ready_data_tools.py tests/agentic_rag/test_planner_agentic_loop.py tests/test_fastapi_agentic_rag_endpoints.py tests/test_fastapi_chat_endpoints.py tests/test_chat_react_source.py` passed: `147 passed, 4 warnings`.
+- `npx tsx client/src/pages/chat/RetrievalIndicators.test.tsx` passed.
+- `npm run build` passed; Vite emitted only the existing advisory that a generated chunk exceeds 500 kB.
+- Focused Ruff syntax/error checks and Python compile checks passed. `git diff --check` passed with only normal Windows LF-to-CRLF notices.
+- Browser smoke used `npm run dev -- --host 127.0.0.1 --port 5179` and a temporary local page mounting the production component. At 320, 768, 1024, and 1440 px, document and indicator scroll widths stayed within client widths, the container computed `flex-wrap: wrap`, all badges computed `white-space: nowrap`, accessible names exposed all three metrics, and the adjacent File detail/Preview links remained present. The temporary page was removed, the viewport reset, and the dev server stopped.
+
+### Decisions, risk, and next step
+
+- No formula or data-contract ambiguity was found. The formulas remained tool-specific: summaries `8.75*n+3`, title catalog `7.75*n+4`, title aliases `100`, sections `13*n+3`, formulas `16.5*n+4`, tables `13*n+4`, calculation terms `11.5*n+6`, and relations `2*n+5`, where `n` is the unique current-query token count including the existing CJK bigram behavior.
+- Adjacent Chat answer rendering, citation links, File Detail/Preview navigation, historical opening, Agentic endpoint serialization, and planner citation construction were checked through related tests or source-contract assertions. Embedding thresholds, retrieval order, business-tool logic, and unrelated UI were intentionally unchanged.
+- Residual risk is limited to browser smoke using a temporary component mount rather than a fully seeded live backend conversation; endpoint/history/link regressions are covered by the related Python and source-policy tests.
+- No commit, push, PR, merge, branch deletion, primary-checkout access, sibling-repository access, `graphify-out` access, GitHub mutation, secret access, or production-resource action occurred. Next step: the manager should inspect this uncommitted diff and run the mandatory fresh pre-PR review before publication work.
+
+## Issue #265 managed review Round 1 repair
+
+- Accepted AC-5 finding: the stable backend enum remains `vector`, but its user-facing English and Chinese labels are now `Semantic retrieval` and `语义检索` instead of the internal implementation terms `Vector` and `向量`. No backend mapping, score contract, component structure, or unrelated copy changed.
+- Test-first RED: after updating the two expected-label fixtures, `python -m pytest --no-cov -q tests/test_chat_react_source.py::test_chat_reuses_wrapping_retrieval_indicators_without_showing_raw_scores` failed `1 failed` because production i18n still contained the old label. The component test passed independently because its translation function is injected and its updated fixture already rendered the intended label.
+- Identical Python source-contract test after the two-line i18n change passed `1 passed`; `npx tsx client/src/pages/chat/RetrievalIndicators.test.tsx` passed.
+- Related indicator/source regression passed `59 passed, 3 warnings`; warnings were the existing SWIG dependency deprecations. `npm run build` passed with only the existing Vite generated-chunk-size advisory.
+- Round 1 repair touched only `client/src/hooks/use-i18n.ts`, `client/src/pages/chat/RetrievalIndicators.test.tsx`, `tests/test_chat_react_source.py`, and this status file. No commit, push, PR, merge, cleanup, review-state mutation, primary/sibling checkout access, or `graphify-out` access occurred.
+
+## Issue #265 managed review Round 2 repair
+
+- Accepted AC-1/AC-2/AC-5 finding: retrieval-method precedence now remains explicit method first, then a known source mapping, then a recognized tool only when the source is ambiguous `doc_catalog`, unknown, or absent. A `search_summaries()` result sourced only from `sections.jsonl` therefore displays `sections`; `doc_catalog` continues to use the tool to resolve summaries versus titles.
+- Test-first RED command: `python -m pytest --no-cov -q tests/test_issue_265_retrieval_indicators.py::test_retrieval_method_mapping_is_stable_and_ambiguous_catalog_is_safe tests/test_issue_265_retrieval_indicators.py::test_explicit_retrieval_method_has_priority_over_source_and_tool tests/agentic_rag/test_ready_data_tools.py::test_search_summaries_labels_section_only_hits_as_section_retrieval`. Result: `2 failed, 15 passed, 3 warnings`; both failures were the expected actual `summaries` versus required `sections`, while explicit-method and catalog-disambiguation guards passed.
+- After reordering only the shared helper checks, the identical command passed `17 passed, 3 warnings`.
+- Full related Issue #265 selection passed `150 passed, 4 warnings`; warnings were existing SWIG and Starlette dependency deprecations. `npx tsx client/src/pages/chat/RetrievalIndicators.test.tsx` and `npm run build` passed; build emitted only the existing generated-chunk-size advisory.
+- Round 2 repair touched only `ai_actuarial/retrieval_indicators.py`, `tests/test_issue_265_retrieval_indicators.py`, `tests/agentic_rag/test_ready_data_tools.py`, and this status file. No enum, formula, sorting, recall, UI, commit, push, PR, merge, cleanup, review-state, primary/sibling checkout, or `graphify-out` change occurred.
+
+## Issue #265 managed review Round 3 repair
+
+- Accepted AC-1/AC-3 finding: `build_retrieval_indicators()` now accepts canonical `semantic_relevance_100`, normalizes it with the existing nullable 0–100 normalizer, and gives any non-`None` canonical input precedence over legacy `similarity_score`. An invalid or NaN canonical value becomes `None` without falling back to raw similarity; only an absent/`None` canonical field derives from similarity.
+- Standard Chat serialization, Agentic evidence serialization, historical reference backfill, and Agentic citation construction now pass their canonical semantic field into the shared helper. Method, keyword, formula, sorting, recall, and UI behavior are unchanged.
+- Test-first RED command: `python -m pytest --no-cov -q tests/test_issue_265_retrieval_indicators.py::test_shared_builder_prefers_explicit_canonical_semantic_relevance tests/test_issue_265_retrieval_indicators.py::test_standard_chat_serializer_preserves_only_canonical_semantic_relevance tests/test_issue_265_retrieval_indicators.py::test_agentic_serializer_preserves_only_canonical_semantic_relevance tests/test_issue_265_retrieval_indicators.py::test_history_backfill_preserves_only_canonical_semantic_relevance tests/test_issue_265_retrieval_indicators.py::test_agentic_citation_preserves_only_canonical_semantic_relevance`. Result: `5 failed, 3 warnings`; the builder rejected the argument and all four data paths replaced 73 with `None`.
+- After the helper and four caller changes, the identical command passed `5 passed, 3 warnings`.
+- Full related Issue #265 selection passed `155 passed, 4 warnings`; warnings were existing SWIG and Starlette dependency deprecations. The TS indicator component test and `npm run build` passed; build emitted only the existing generated-chunk-size advisory.
+- Round 3 repair touched only `ai_actuarial/retrieval_indicators.py`, `ai_actuarial/agentic_rag/agentic_loop.py`, `ai_actuarial/api/services/chat.py`, `tests/test_issue_265_retrieval_indicators.py`, and this status file. No lifecycle, GitHub, review-state, cleanup, primary/sibling checkout, or `graphify-out` action occurred.
+
+## Issue #265 managed review Round 4 repair
+
+- Accepted AC-1/AC-3 finding: standard Chat serialization and historical reference backfill now infer a missing vector source only when the public shared `normalize_semantic_relevance()` accepts the legacy similarity as finite. NaN and invalid strings produce semantic `None` plus method `other`; legal 0 and 0.9 still infer vector. An explicit `source=similarity` still maps to vector even without a score, and the existing `document_explanation` exception is unchanged.
+- Test-first RED command: `python -m pytest --no-cov -q tests/test_issue_265_retrieval_indicators.py::test_standard_chat_infers_vector_only_from_finite_similarity tests/test_issue_265_retrieval_indicators.py::test_history_infers_vector_only_from_finite_similarity tests/test_issue_265_retrieval_indicators.py::test_explicit_similarity_source_maps_to_vector_without_a_score`. Result: `4 failed, 5 passed, 3 warnings`; the four invalid/NaN paths incorrectly returned vector, while all finite and explicit-source guards passed.
+- After replacing the two `is not None` checks with the shared normalizer, the identical command passed `9 passed, 3 warnings`.
+- Full related Issue #265 selection passed `164 passed, 4 warnings`; warnings were existing SWIG and Starlette dependency deprecations. The TS indicator component test and `npm run build` passed; build emitted only the existing generated-chunk-size advisory.
+- Round 4 repair touched only `ai_actuarial/api/services/chat.py`, `tests/test_issue_265_retrieval_indicators.py`, and this status file. No duplicate parsing logic, helper/method/keyword/UI/formula/sorting change, lifecycle/GitHub/review-state action, cleanup, primary/sibling checkout access, or `graphify-out` access occurred.
+
+## Issue #265 mandatory pre-PR gate repair — direct-document indicators
+
+- Accepted AC-1/AC-3 finding: direct `document_content` / `document_sources` chunks carry the compatibility placeholder `similarity_score=1.0` without vector retrieval. Standard Chat serialization and historical read projection now recognize `kb_id=document_explanation` and always publish `semantic_relevance_100=None`, `keyword_relevance_100=None`, and `retrieval_method=other`, while retaining the raw placeholder.
+- Historical projection suppresses branch-generated canonical values already stored on a `document_explanation` citation or retrieved block, including stale semantic, keyword, and vector-method fields. Ordinary finite vector and Agentic paths continue through the existing shared builder unchanged. `_prepare_document_source_chunks()` and its `1.0` placeholder were not modified.
+- Exact test-first RED command: `python -m pytest --no-cov -q tests/test_issue_265_retrieval_indicators.py::test_direct_document_chunks_do_not_fabricate_retrieval_indicators tests/test_issue_265_retrieval_indicators.py::test_history_suppresses_document_explanation_retrieval_indicators tests/test_issue_265_retrieval_indicators.py::test_chat_vector_and_agentic_serializers_share_indicator_contract`. Result: `3 failed, 1 passed, 3 warnings`. Both direct-document parameters returned semantic `100`; history returned method `vector`; the ordinary finite vector/Agentic guard passed, and the raw direct-document `similarity_score=1.0` assertions passed before the canonical failures.
+- After the two narrow projection branches, the identical command passed: `4 passed, 3 warnings`. A same-scope concurrent test covering stale canonical fields on new standard serialization was preserved and also passes in the full selection.
+- Full requested Python selection passed: `168 passed, 4 warnings`; warnings were the existing SWIG and Starlette deprecations. `npx tsx client/src/pages/chat/RetrievalIndicators.test.tsx` passed. `npm run build` passed with only the existing generated-chunk-size advisory. `python -m compileall -q ai_actuarial tests/test_issue_265_retrieval_indicators.py`, focused Ruff `E9/F63/F7/F82`, and `git diff --check` passed; diff-check emitted only Windows LF-to-CRLF notices.
+- Scoped call-site review confirmed `_serialize_citations()` is used for the standard response and `_backfill_retrieval_indicators()` is applied during conversation detail loading to both citations and retrieved blocks. Agentic evidence/citation serialization, shared normalization, ready-data formulas, sorting, recall, UI, labels, and the direct-document placeholder remain excluded and unchanged by this repair.
+- Residual risk is limited to malformed historical direct-document records that lack the stable `kb_id=document_explanation` marker; they cannot be distinguished safely from genuine vector records without expanding the contract. This repair changed only `ai_actuarial/api/services/chat.py`, `tests/test_issue_265_retrieval_indicators.py`, and this status file.
+- No commit, push, PR mutation/creation, merge, branch/worktree cleanup, review-state mutation, primary or sibling checkout access, `graphify-out` access, graphify invocation, secret access, provider call, or production-resource action occurred. Next step: the manager/lifecycle worker should inspect the uncommitted diff and continue the mandatory pre-PR flow.
+
+## Issue #265 fresh mandatory pre-PR Codex review
+
+- A new independent Codex CLI review ran read-only against all staged, unstaged, and untracked changes in session `01a04bba-edbb-7870-8379-47f4600e7286` after the direct-document sentinel repair and its regression coverage.
+- The review completed with exit code 0 and reported: `No realistically reproducible in-scope defects were identified.` No findings were accepted, rejected, or left ambiguous.
+- The review used a read-only sandbox and made no file, Git, GitHub, sibling/primary checkout, `graphify-out`, secret, provider, or production-resource changes. The branch is ready for final local merge-gate validation and publication.
+
+## Issue #265 final local merge-gate validation
+
+- The CI FastAPI smoke selection passed `13 passed, 4 warnings`; warnings were the existing Starlette and SWIG dependency deprecations.
+- The CI Agentic eval test passed `31 passed`. The exact Agentic eval CLI smoke returned `3/3` cases passed with evidence hit, citation coverage, and no-evidence refusal rates all `1.0`, and unsupported-answer rate `0.0`.
+- These results supplement the post-repair Issue #265 related selection (`168 passed, 4 warnings`), TS component test, Vite production build, Python compile, focused Ruff, browser smoke at 320/768/1024/1440 px, and `git diff --check`, all of which passed.
+- No new modified or untracked files appeared during final validation. The only uncommitted files are the expected Issue #265 implementation, tests, and this status update.

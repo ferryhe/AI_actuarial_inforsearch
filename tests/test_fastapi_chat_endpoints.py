@@ -953,6 +953,9 @@ def test_fastapi_chat_history_reenriches_legacy_unknown_without_rewriting_json(
         "file_url": seed["alpha_url"],
         "filename": "doc-a.pdf",
         "title": "Alpha Document",
+        "semantic_relevance_100": None,
+        "keyword_relevance_100": None,
+        "retrieval_method": "other",
     }
     assert message["metadata"]["retrieved_blocks"][0]["title"] == "Alpha Document"
     assert message["metadata"]["retrieved_blocks"][0]["filename"] == "doc-a.pdf"

@@ -15,6 +15,10 @@ from ai_actuarial.api.client_ip import client_ip
 from ai_actuarial.api.deps import _decode_request_sessions, AuthContext
 from ai_actuarial.ai_runtime import infer_embedding_dimension, resolve_ai_function_runtime
 from ai_actuarial.config import settings
+from ai_actuarial.retrieval_indicators import (
+    build_retrieval_indicators,
+    normalize_semantic_relevance,
+)
 from ai_actuarial.storage import Storage
 from ai_actuarial.shared_auth import AI_CHAT_QUOTA
 
@@ -458,6 +462,7 @@ def get_conversation_detail(*, db_path: str, request, auth: AuthContext, convers
             }
             for row in message_rows
         ]
+        _backfill_retrieval_indicators(messages)
         references: list[dict[str, Any]] = []
         for chat_message in messages:
             citations = chat_message.get("citations")
@@ -756,6 +761,23 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
         metadata = chunk.get("metadata") or {}
         content = str(chunk.get("content") or "")
         links = _build_file_links(str(metadata.get("file_url") or ""))
+        source = metadata.get("source")
+        if metadata.get("kb_id") == "document_explanation":
+            indicators = build_retrieval_indicators(retrieval_method="other")
+        else:
+            if (
+                not source
+                and normalize_semantic_relevance(metadata.get("similarity_score")) is not None
+            ):
+                source = "vector"
+            indicators = build_retrieval_indicators(
+                similarity_score=metadata.get("similarity_score"),
+                semantic_relevance_100=metadata.get("semantic_relevance_100"),
+                keyword_relevance_100=metadata.get("keyword_relevance_100"),
+                source=source,
+                tool=metadata.get("tool"),
+                retrieval_method=metadata.get("retrieval_method"),
+            )
         block = {
             "title": _valid_file_name(metadata.get("title")),
             "filename": _valid_file_name(metadata.get("filename")) or _file_url_basename(links["source_url"]),
@@ -769,6 +791,7 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
             "file_detail_url": links["file_detail_url"],
             "file_preview_url": links["file_preview_url"],
             "quote": content[:280].strip(),
+            **indicators,
         }
         retrieved_blocks.append(block)
         dedupe_key = links["source_url"] or str(metadata.get("filename") or metadata.get("chunk_id") or len(citations))
@@ -788,9 +811,56 @@ def _serialize_citations(chunks: list[dict[str, Any]]) -> tuple[list[dict[str, A
                 "file_detail_url": links["file_detail_url"],
                 "file_preview_url": links["file_preview_url"],
                 "quote": content[:280].strip(),
+                **indicators,
             }
         )
     return citations, retrieved_blocks
+
+
+def _backfill_reference_indicators(reference: dict[str, Any]) -> None:
+    if reference.get("kb_id") == "document_explanation":
+        reference.update(build_retrieval_indicators(retrieval_method="other"))
+        return
+    source = reference.get("source")
+    if (
+        not source
+        and not reference.get("retrieval_method")
+        and normalize_semantic_relevance(reference.get("similarity_score")) is not None
+    ):
+        source = "vector"
+    reference.update(
+        build_retrieval_indicators(
+            similarity_score=reference.get("similarity_score"),
+            semantic_relevance_100=reference.get("semantic_relevance_100"),
+            keyword_relevance_100=reference.get("keyword_relevance_100"),
+            source=source,
+            tool=reference.get("tool"),
+            retrieval_method=reference.get("retrieval_method"),
+        )
+    )
+
+
+def _backfill_retrieval_indicators(messages: list[dict[str, Any]]) -> None:
+    for message in messages:
+        citations = message.get("citations")
+        if isinstance(citations, list):
+            for citation in citations:
+                if isinstance(citation, dict):
+                    _backfill_reference_indicators(citation)
+        metadata = message.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        retrieved_blocks = metadata.get("retrieved_blocks")
+        if isinstance(retrieved_blocks, str):
+            try:
+                retrieved_blocks = json.loads(retrieved_blocks)
+            except (TypeError, ValueError):
+                retrieved_blocks = []
+            metadata["retrieved_blocks"] = retrieved_blocks
+        if isinstance(retrieved_blocks, list):
+            for block in retrieved_blocks:
+                if isinstance(block, dict):
+                    _backfill_reference_indicators(block)
 
 
 def _selected_agentic_kb_id(kb_ids: Any) -> str:
@@ -907,6 +977,14 @@ def _serialize_agentic_evidence(
         )
         score = _coerce_agentic_score(item.get("score"))
         chunk_id = _agentic_first_text(item, ("section_id", "chunk_id", "doc_id", "target_id"))
+        indicators = build_retrieval_indicators(
+            similarity_score=item.get("similarity_score"),
+            semantic_relevance_100=item.get("semantic_relevance_100"),
+            keyword_relevance_100=item.get("keyword_relevance_100"),
+            source=item.get("source"),
+            tool=item.get("tool"),
+            retrieval_method=item.get("retrieval_method"),
+        )
         block = {
             "title": _valid_file_name(title),
             "filename": _valid_file_name(filename) or _file_url_basename(links["source_url"]),
@@ -920,6 +998,7 @@ def _serialize_agentic_evidence(
             "file_detail_url": links["file_detail_url"],
             "file_preview_url": links["file_preview_url"],
             "quote": snippet[:280].strip(),
+            **indicators,
         }
         retrieved_blocks.append(block)
         dedupe_key = links["source_url"] or chunk_id or f"agentic-{index}"
@@ -946,7 +1025,10 @@ def _agentic_blocks_to_llm_chunks(retrieved_blocks: list[dict[str, Any]]) -> lis
                     "title": _valid_file_name(block.get("title")),
                     "kb_id": _normalize_text(block.get("kb_id")),
                     "kb_name": _normalize_text(block.get("kb_name")),
-                    "similarity_score": block.get("score"),
+                    "score": block.get("score"),
+                    "semantic_relevance_100": block.get("semantic_relevance_100"),
+                    "keyword_relevance_100": block.get("keyword_relevance_100"),
+                    "retrieval_method": block.get("retrieval_method"),
                     "chunk_id": _normalize_text(block.get("chunk_id")) or f"agentic_{index}",
                     "file_url": _normalize_text(block.get("file_url") or block.get("source_url")),
                     "untrusted_context": True,
