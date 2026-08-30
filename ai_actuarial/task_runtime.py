@@ -1082,16 +1082,26 @@ class NativeTaskRuntime:
         )
 
     def _run_weekly_explanation(self, db_path: str, data: dict[str, Any]) -> CollectionResult:
-        from ai_actuarial.api.services.weekly_explanations import generate_weekly_explanation
+        from ai_actuarial.api.services.weekly_explanations import (
+            generate_weekly_explanation,
+            generate_weekly_explanation_for_period,
+        )
 
         snapshot_id = str(data.get("snapshot_id") or "").strip()
-        if not snapshot_id:
-            raise RuntimeError("weekly_explanation requires snapshot_id")
-        explanation = generate_weekly_explanation(
-            db_path=db_path,
-            snapshot_id=snapshot_id,
-            generator=self._weekly_explanation_generator,
-        )
+        if snapshot_id:
+            explanation = generate_weekly_explanation(
+                db_path=db_path,
+                snapshot_id=snapshot_id,
+                generator=self._weekly_explanation_generator,
+            )
+        else:
+            explanation = generate_weekly_explanation_for_period(
+                db_path=db_path,
+                period_start=str(data.get("period_start") or "").strip() or None,
+                period_end=str(data.get("period_end") or "").strip() or None,
+                relative_period=str(data.get("relative_period") or "").strip() or None,
+                generator=self._weekly_explanation_generator,
+            )
         complete = explanation.get("status") == "complete"
         return CollectionResult(
             success=complete,
@@ -1100,7 +1110,7 @@ class NativeTaskRuntime:
             items_skipped=0 if complete else 1,
             errors=[] if complete else ["Weekly explanation generation failed"],
             metadata={
-                "snapshot_id": snapshot_id,
+                "snapshot_id": explanation.get("snapshot_id") or snapshot_id,
                 "explanation_status": explanation.get("status"),
                 "result": explanation,
             },

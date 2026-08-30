@@ -1126,3 +1126,82 @@ def test_default_config_runtime_and_settings_expose_one_bilingual_prompt() -> No
     )
     assert "weekly_explanations" not in weekly_stats_source
     assert "ai_runtime" not in weekly_stats_source
+
+
+def test_generate_weekly_explanation_for_period_resolves_existing_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weekly_explanations = _weekly_explanations_module()
+    db_path, config_path, _config = _write_config(tmp_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    _seed_files(db_path, count=2)
+    snapshot = _snapshot(db_path)
+    generator = FakeWeeklyExplanationGenerator()
+
+    result = weekly_explanations.generate_weekly_explanation_for_period(
+        db_path=str(db_path),
+        period_start=PERIOD_START,
+        period_end=PERIOD_END,
+        generator=generator,
+    )
+
+    assert result["snapshot_id"] == snapshot["id"]
+    assert result["status"] == "complete"
+    assert result["explanation_zh"] == "中文说明"
+    assert result["explanation_en"] == "English explanation"
+    assert len(generator.calls) == 1
+
+
+def test_generate_weekly_explanation_for_period_waits_for_late_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weekly_explanations = _weekly_explanations_module()
+    db_path, config_path, _config = _write_config(tmp_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    _seed_files(db_path, count=1)
+    generator = FakeWeeklyExplanationGenerator()
+
+    def publish_later() -> None:
+        time.sleep(0.5)
+        _snapshot(db_path)
+
+    thread = threading.Thread(target=publish_later, daemon=True)
+    thread.start()
+
+    result = weekly_explanations.generate_weekly_explanation_for_period(
+        db_path=str(db_path),
+        period_start=PERIOD_START,
+        period_end=PERIOD_END,
+        generator=generator,
+        wait_timeout_seconds=5.0,
+        poll_interval_seconds=0.1,
+    )
+    thread.join(timeout=5)
+
+    assert result["status"] == "complete"
+    assert result["explanation_zh"] == "中文说明"
+    assert len(generator.calls) == 1
+
+
+def test_generate_weekly_explanation_for_period_times_out_without_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    weekly_explanations = _weekly_explanations_module()
+    db_path, config_path, _config = _write_config(tmp_path)
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    _seed_files(db_path, count=1)
+    generator = FakeWeeklyExplanationGenerator()
+
+    with pytest.raises(RuntimeError, match="was not published"):
+        weekly_explanations.generate_weekly_explanation_for_period(
+            db_path=str(db_path),
+            period_start=PERIOD_START,
+            period_end=PERIOD_END,
+            generator=generator,
+            wait_timeout_seconds=0.3,
+            poll_interval_seconds=0.1,
+        )
+    assert len(generator.calls) == 0

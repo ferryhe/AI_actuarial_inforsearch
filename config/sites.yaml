@@ -639,6 +639,13 @@ scheduled_tasks:
     name: Weekly Update Summary
     relative_period: previous_week
     max_files: 500
+- name: Weekly Update Explanation
+  type: weekly_explanation
+  interval: weekly
+  enabled: true
+  params:
+    name: Weekly Update Explanation
+    relative_period: previous_week
 ai_config:
   catalog:
     provider: openai

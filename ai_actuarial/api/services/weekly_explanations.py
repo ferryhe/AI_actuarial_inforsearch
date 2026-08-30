@@ -11,7 +11,10 @@ from ai_actuarial.chatbot.config import ChatbotConfig
 from ai_actuarial.chatbot.llm import LLMClient
 from ai_actuarial.storage import Storage
 
-from .weekly_updates import WeeklySnapshotNotFoundError
+from .weekly_updates import (
+    WeeklySnapshotNotFoundError,
+    validate_weekly_snapshot_period,
+)
 
 
 MAX_MATERIAL_FILES = 60
@@ -380,4 +383,59 @@ def get_latest_weekly_explanation(*, db_path: str) -> dict[str, Any] | None:
         _public_explanation(explanation)
         if explanation is not None
         else _missing_explanation(snapshot_id)
+    )
+
+
+def generate_weekly_explanation_for_period(
+    *,
+    db_path: str,
+    period_start: str | None = None,
+    period_end: str | None = None,
+    relative_period: str | None = None,
+    generator: WeeklyExplanationGenerator | None = None,
+    wait_timeout_seconds: float = 600.0,
+    poll_interval_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Explain the published snapshot for a period, waiting for it to be published.
+
+    The weekly summary and explanation tasks both fire on the same weekly tick, so the
+    summary may not have published its snapshot yet when the explanation starts. Resolve
+    the target snapshot by period and poll (bounded) until it appears, then delegate to
+    ``generate_weekly_explanation``.
+    """
+    period = validate_weekly_snapshot_period(
+        period_start=period_start,
+        period_end=period_end,
+        relative_period=relative_period,
+    )
+    storage = Storage(db_path)
+    try:
+        deadline = time.monotonic() + max(0.0, float(wait_timeout_seconds))
+        interval = max(0.05, float(poll_interval_seconds))
+        snapshot = storage.get_published_weekly_snapshot_for_period(
+            period_start=period.period_start,
+            period_end=period.period_end,
+            include_detail=False,
+        )
+        while snapshot is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    "Weekly snapshot for period "
+                    f"{period.period_start}..{period.period_end} was not published "
+                    f"within {wait_timeout_seconds}s"
+                )
+            time.sleep(min(interval, remaining))
+            snapshot = storage.get_published_weekly_snapshot_for_period(
+                period_start=period.period_start,
+                period_end=period.period_end,
+                include_detail=False,
+            )
+        snapshot_id = str(snapshot["id"])
+    finally:
+        storage.close()
+    return generate_weekly_explanation(
+        db_path=db_path,
+        snapshot_id=snapshot_id,
+        generator=generator,
     )
