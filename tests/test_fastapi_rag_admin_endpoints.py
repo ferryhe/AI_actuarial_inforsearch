@@ -1076,15 +1076,17 @@ def test_fastapi_rag_admin_kb_list_does_not_initialize_rag_runtime(tmp_path: Pat
         storage.close()
 
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    client.headers.pop("X-Auth-Token", None)
 
-    response = client.get(
-        "/api/rag/knowledge-bases",
-        params={"kb_mode": "manual", "search": "offline"},
+    from ai_actuarial.api.deps import AuthContext
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    operator_auth = AuthContext(token=None, permissions=frozenset({"tasks.run"}))
+    body = rag_admin_service.list_knowledge_bases(
+        db_path=str(db_path),
+        query={"kb_mode": "manual", "search": "offline"},
+        auth=operator_auth,
     )
 
-    assert response.status_code == 200, response.text
-    body = response.json()
     assert body["current_embeddings"]["stable_credential_id"] == "openai:llm:env"
     assert [item["kb_id"] for item in body["knowledge_bases"]] == ["kb-offline-list"]
     listed = body["knowledge_bases"][0]
@@ -1681,15 +1683,18 @@ def test_fastapi_rag_admin_kb_list_normalizes_legacy_rows_without_runtime(
 
     monkeypatch.setattr(Storage, "_ensure_rag_kb_embedding_columns", lambda _storage: None)
     _disable_rag_runtime_initialization(monkeypatch, tmp_path)
-    client.headers.pop("X-Auth-Token", None)
 
-    response = client.get(
-        "/api/rag/knowledge-bases",
-        params={"kb_mode": "category", "search": "legacy row"},
+    from ai_actuarial.api.deps import AuthContext
+    from ai_actuarial.api.services import rag_admin as rag_admin_service
+
+    operator_auth = AuthContext(token=None, permissions=frozenset({"tasks.run"}))
+    body = rag_admin_service.list_knowledge_bases(
+        db_path=str(db_path),
+        query={"kb_mode": "category", "search": "legacy row"},
+        auth=operator_auth,
     )
 
-    assert response.status_code == 200, response.text
-    listed = response.json()["knowledge_bases"][0]
+    listed = body["knowledge_bases"][0]
     assert listed["kb_id"] == "kb-legacy-row"
     assert listed["kb_mode"] == "category"
     assert listed["chunk_profile_id"] == ""
@@ -4052,42 +4057,36 @@ def test_ready_manifest_public_projection_fail_closes_sensitive_errors(
     finally:
         storage.close()
 
-    read_only = TestClient(app)
-    read_only.cookies.set(
-        app.state.fastapi_session_cookie_name,
-        _make_session_cookie(app, {"email_user_id": seed["registered_user_id"]}),
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-public-errors/agentic-ready-manifest"
     )
-    for reader in (TestClient(app), read_only):
-        response = reader.get(
-            "/api/rag/knowledge-bases/kb-public-errors/agentic-ready-manifest"
-        )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["manifest"]["error_message"] == "ready_data operation failed"
-        assert body["manifest"]["stale_reason"] == "ready_data operation failed"
-        assert body["publication_state"]["last_error"] == "ready_data operation failed"
-        assert body["publication_state"]["stale_reasons"] == [
-            "chunk_content_updated",
-            "ready_data_source_changed",
-        ]
-        serialized = json.dumps(body, sort_keys=True).lower()
-        for forbidden in (
-            "/workspace/",
-            "/srv/",
-            "fileserver",
-            "c:\\project",
-            "c:/project",
-            "a.txt",
-            "b.txt",
-            "c.txt",
-            "d.txt",
-            "e.txt",
-            "claim-secret",
-            "lease-secret",
-            "output_dir=",
-            "internal-stack",
-        ):
-            assert forbidden not in serialized
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["manifest"]["error_message"] == "ready_data operation failed"
+    assert body["manifest"]["stale_reason"] == "ready_data operation failed"
+    assert body["publication_state"]["last_error"] == "ready_data operation failed"
+    assert body["publication_state"]["stale_reasons"] == [
+        "chunk_content_updated",
+        "ready_data_source_changed",
+    ]
+    serialized = json.dumps(body, sort_keys=True).lower()
+    for forbidden in (
+        "/workspace/",
+        "/srv/",
+        "fileserver",
+        "c:\\project",
+        "c:/project",
+        "a.txt",
+        "b.txt",
+        "c.txt",
+        "d.txt",
+        "e.txt",
+        "claim-secret",
+        "lease-secret",
+        "output_dir=",
+        "internal-stack",
+    ):
+        assert forbidden not in serialized
 
 
 def test_ready_manifest_public_projection_canonicalizes_all_public_state_enums(
@@ -4192,77 +4191,71 @@ def test_ready_manifest_public_projection_canonicalizes_all_public_state_enums(
         Storage, "get_agentic_ready_source_state", poisoned_source_state
     )
 
-    read_only = TestClient(app)
-    read_only.cookies.set(
-        app.state.fastapi_session_cookie_name,
-        _make_session_cookie(app, {"email_user_id": seed["registered_user_id"]}),
+    response = client.get(
+        "/api/rag/knowledge-bases/kb-enum-active/agentic-ready-manifest"
     )
-    for reader in (TestClient(app), read_only):
-        response = reader.get(
-            "/api/rag/knowledge-bases/kb-enum-active/agentic-ready-manifest"
-        )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        manifest = body["manifest"]
-        state = body["publication_state"]
-        assert manifest["status"] in {"missing", "ready", "stale", "failed", "unavailable"}
-        assert manifest["profile"] == "general"
-        assert manifest["fallback_mode"] == "standard"
-        assert state["serving_status"] in {"missing", "ready", "stale", "failed", "unavailable"}
-        assert state["automation_state"] in {
-            "idle",
-            "pending",
-            "running",
-            "building",
-            "awaiting_publish",
-            "awaiting_manual_confirmation",
-            "succeeded",
-            "failed",
-        }
-        assert state["active_publication"]["status"] in {
-            "failed",
-            "validated",
-            "active",
-            "previous",
-        }
-        assert state["active_publication"]["profile"] == "general"
-        assert state["active_publication"]["authoritative_source_version_kind"] == "unknown"
-        assert state["smoke_status"] in {"not_run", "skipped_empty", "failed", "passed"}
-        assert state["active_publication"]["smoke_status"] in {
-            "not_run",
-            "skipped_empty",
-            "failed",
-            "passed",
-        }
-        source_state = manifest["source_state"]
-        assert source_state["state"] in {
-            "legacy_fallback",
-            "pending_evaluation",
-            "stale",
-            "legacy_hard_gate",
-            "fresh",
-        }
-        for severity_name in (
-            "pending_severity",
-            "evaluated_severity",
-            "stale_severity",
-        ):
-            assert source_state[severity_name] in {"none", "soft_stale", "hard_stale"}
-        assert source_state["evaluated_source_version_kind"] == "unknown"
-        assert source_state["active_source_version_kind"] == "unknown"
-        assert manifest["source_version_kind"] == "unknown"
-        serialized = json.dumps(body, sort_keys=True)
-        for raw_value in injected.values():
-            assert raw_value not in serialized
+    assert response.status_code == 200, response.text
+    body = response.json()
+    manifest = body["manifest"]
+    state = body["publication_state"]
+    assert manifest["status"] in {"missing", "ready", "stale", "failed", "unavailable"}
+    assert manifest["profile"] == "general"
+    assert manifest["fallback_mode"] == "standard"
+    assert state["serving_status"] in {"missing", "ready", "stale", "failed", "unavailable"}
+    assert state["automation_state"] in {
+        "idle",
+        "pending",
+        "running",
+        "building",
+        "awaiting_publish",
+        "awaiting_manual_confirmation",
+        "succeeded",
+        "failed",
+    }
+    assert state["active_publication"]["status"] in {
+        "failed",
+        "validated",
+        "active",
+        "previous",
+    }
+    assert state["active_publication"]["profile"] == "general"
+    assert state["active_publication"]["authoritative_source_version_kind"] == "unknown"
+    assert state["smoke_status"] in {"not_run", "skipped_empty", "failed", "passed"}
+    assert state["active_publication"]["smoke_status"] in {
+        "not_run",
+        "skipped_empty",
+        "failed",
+        "passed",
+    }
+    source_state = manifest["source_state"]
+    assert source_state["state"] in {
+        "legacy_fallback",
+        "pending_evaluation",
+        "stale",
+        "legacy_hard_gate",
+        "fresh",
+    }
+    for severity_name in (
+        "pending_severity",
+        "evaluated_severity",
+        "stale_severity",
+    ):
+        assert source_state[severity_name] in {"none", "soft_stale", "hard_stale"}
+    assert source_state["evaluated_source_version_kind"] == "unknown"
+    assert source_state["active_source_version_kind"] == "unknown"
+    assert manifest["source_version_kind"] == "unknown"
+    serialized = json.dumps(body, sort_keys=True)
+    for raw_value in injected.values():
+        assert raw_value not in serialized
 
-        legacy = reader.get(
-            "/api/rag/knowledge-bases/kb-enum-building/agentic-ready-manifest"
-        )
-        assert legacy.status_code == 200, legacy.text
-        legacy_body = legacy.json()
-        assert legacy_body["manifest"]["status"] == "missing"
-        assert legacy_body["publication_state"]["serving_status"] == "missing"
-        assert legacy_body["publication_state"]["automation_state"] == "building"
+    legacy = client.get(
+        "/api/rag/knowledge-bases/kb-enum-building/agentic-ready-manifest"
+    )
+    assert legacy.status_code == 200, legacy.text
+    legacy_body = legacy.json()
+    assert legacy_body["manifest"]["status"] == "missing"
+    assert legacy_body["publication_state"]["serving_status"] == "missing"
+    assert legacy_body["publication_state"]["automation_state"] == "building"
 
 
 def test_ready_manifest_public_projection_keeps_active_ready_while_automation_runs(

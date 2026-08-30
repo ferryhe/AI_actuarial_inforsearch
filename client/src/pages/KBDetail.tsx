@@ -752,7 +752,7 @@ export default function KBDetail() {
         loadStats(),
         loadFiles(),
         loadCategories(),
-        loadAgenticManifest(),
+        ...(canRunKnowledgeTasks ? [loadAgenticManifest()] : []),
       ]),
       isCurrent: () => isReadyDataRequestCurrent(
         readyDataRoute.current,
@@ -764,7 +764,7 @@ export default function KBDetail() {
       onError: () => {},
       onSettled: () => setLoading(false),
     });
-  }, [kbId, loadMeta, loadStats, loadFiles, loadCategories, loadAgenticManifest]);
+  }, [kbId, loadMeta, loadStats, loadFiles, loadCategories, loadAgenticManifest, canRunKnowledgeTasks]);
 
   useEffect(() => {
     if (match) loadAll();

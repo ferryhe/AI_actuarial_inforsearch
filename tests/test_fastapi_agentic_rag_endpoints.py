@@ -276,7 +276,7 @@ def test_fastapi_agentic_rag_title_search_resolves_registry_ready_manifest(tmp_p
     body = response.json()
     assert body["kb_id"] == "kb-a"
     assert body["profile"] == "general"
-    assert body["output_dir"] == str(ready_dir)
+    assert "output_dir" not in body
     assert body["results"][0]["title"] == "Reserve Method Note"
 
 
@@ -320,7 +320,7 @@ def test_fastapi_agentic_rag_title_search_resolves_atomically_published_manifest
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["output_dir"] == str(ready_dir)
+    assert "output_dir" not in response.json()
     assert response.json()["results"][0]["title"] == "Reserve Method Note"
 
 
@@ -385,7 +385,7 @@ def test_fastapi_agentic_rag_section_search_uses_kb_manifest_profile_by_default(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["profile"] == "regulation"
-    assert body["output_dir"] == str(ready_dir)
+    assert "output_dir" not in body
     assert body["results"][0]["section_id"] == "doc-a#article-19"
 
     relation_response = client.post(
@@ -604,7 +604,7 @@ def test_fastapi_agentic_rag_chat_uses_explicit_output_dir(tmp_path: Path, monke
     body = response.json()
     assert body["query"] == "How does Article 19 define required capital?"
     assert body["answer"].startswith("Found ")
-    assert body["output_dir"] == str(ready_dir)
+    assert "output_dir" not in body
     assert body["kb_id"] is None
     assert body["profile"] == "general"
     assert body["evidence"]
@@ -662,7 +662,7 @@ def test_fastapi_agentic_rag_chat_resolves_registry_manifest_profile(
     body = response.json()
     assert body["kb_id"] == "kb-regulation"
     assert body["profile"] == "regulation"
-    assert body["output_dir"] == str(ready_dir)
+    assert "output_dir" not in body
     assert body["evidence"]
     assert any(item["tool"] == "search_sections" for item in body["evidence"])
     assert body["metadata"]["category"] == "document_qa"

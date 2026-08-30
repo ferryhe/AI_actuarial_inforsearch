@@ -256,7 +256,6 @@ def _search_response(
         "limit": limit,
         "count": len(results),
         "results": results,
-        "output_dir": output_dir,
         "kb_id": kb_id or None,
         "profile": profile,
     }
