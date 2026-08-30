@@ -1,8 +1,8 @@
-import { getCanonicalDisplayName } from "../pages/chat/displayName";
+import { getCanonicalDisplayName } from "@/pages/chat/displayName";
 import {
   formatWeeklyDateTime,
   type WeeklyDashboardView,
-} from "../lib/weekly-dashboard";
+} from "@/lib/weekly-dashboard";
 
 interface WeeklyHighlightCardProps {
   view: WeeklyDashboardView;

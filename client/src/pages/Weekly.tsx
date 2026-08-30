@@ -23,6 +23,7 @@ export default function Weekly() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<WeeklyDashboardData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,12 +56,19 @@ export default function Weekly() {
     let cancelled = false;
     setDetailLoading(true);
     setDetail(null);
+    setDetailError(false);
     loadWeeklyUpdateDetail(selectedId)
       .then((data) => {
-        if (!cancelled) setDetail(data);
+        if (!cancelled) {
+          setDetail(data);
+          setDetailError(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setDetail(null);
+        if (!cancelled) {
+          setDetail(null);
+          setDetailError(true);
+        }
       })
       .finally(() => {
         if (!cancelled) setDetailLoading(false);
@@ -149,7 +157,9 @@ export default function Weekly() {
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center">
-                <p className="font-medium text-muted-foreground">{t("weekly.no_highlights")}</p>
+                <p className="font-medium text-muted-foreground">
+                  {detailError ? t("weekly.detail_error") : t("weekly.no_highlights")}
+                </p>
               </div>
             )}
           </section>
