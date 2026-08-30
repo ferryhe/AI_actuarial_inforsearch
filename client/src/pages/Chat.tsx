@@ -603,10 +603,12 @@ export default function Chat() {
       .filter(Boolean)
       .join(", ");
     const questionText = t("chat.compare_documents_prompt").replace("{filenames}", filenames);
-    setMode("comparison");
-    setSidebarTab("conversations");
-    await sendMessage({ text: questionText, documents: selectedCompareDocs, modeOverride: "comparison" });
-    setSelectedCompareDocs([]);
+    const sent = await sendMessage({ text: questionText, documents: selectedCompareDocs, modeOverride: "comparison" });
+    if (sent) {
+      setMode("comparison");
+      setSidebarTab("conversations");
+      setSelectedCompareDocs([]);
+    }
   }
 
   async function loadDocumentMarkdown(doc: AvailableDocument): Promise<DocumentContext> {
@@ -651,9 +653,9 @@ export default function Chat() {
     navigate(location, { replace: true, state: null });
   }, [location, navigate, routeState]);
 
-  async function sendMessage(options?: SendMessageOptions) {
+  async function sendMessage(options?: SendMessageOptions): Promise<boolean> {
     const text = (options?.text ?? input).trim();
-    if (!text || sending) return;
+    if (!text || sending) return false;
 
     const documentInputs = options?.documents?.length
       ? options.documents
@@ -663,12 +665,12 @@ export default function Chat() {
     const shouldUseAgentic = ragMode === "agentic" && documentInputs.length === 0;
     if (ragMode === "agentic" && selectedKbs.length === 0 && shouldUseAgentic) {
       setErrorMsg(t("chat.agentic_requires_kb"));
-      return;
+      return false;
     }
     const selectedAgenticKb = shouldUseAgentic ? knowledgeBases.find((kb) => kb.kb_id === selectedKbs[0]) : undefined;
     if (shouldUseAgentic && (selectedKbs.length !== 1 || !selectedAgenticKb || !isAgenticKbReady(selectedAgenticKb))) {
       setErrorMsg(t("chat.agentic_requires_ready_kb"));
-      return;
+      return false;
     }
 
     // Check guest quota
@@ -676,7 +678,7 @@ export default function Chat() {
       const userMessageCount = messages.filter((m) => m.role === "user").length;
       if (userMessageCount >= GUEST_CHAT_QUOTA) {
         setQuotaWarning(t("chat.quota_exceeded"));
-        return;
+        return false;
       }
       if (userMessageCount === GUEST_CHAT_QUOTA - 1) {
         setQuotaWarning(t("chat.quota_last_message"));
@@ -738,7 +740,7 @@ export default function Chat() {
           },
         };
         setMessages((prev) => [...prev, assistantMsg]);
-        return;
+        return true;
       }
 
       const documentContexts = documentInputs.length > 0
@@ -795,6 +797,7 @@ export default function Chat() {
         setQuotaWarning(t("chat.context_truncated_notice"));
       }
       setMessages((prev) => [...prev, assistantMsg]);
+      return true;
     } catch (err: unknown) {
       const errorDetail = err instanceof Error ? err.message : t("chat.error_sending");
       setErrorMsg(errorDetail);
@@ -803,6 +806,7 @@ export default function Chat() {
         content: errorDetail,
       };
       setMessages((prev) => [...prev, assistantMsg]);
+      return false;
     } finally {
       setSending(false);
     }
@@ -1096,43 +1100,6 @@ export default function Chat() {
                       <div className="text-[10px] text-muted-foreground px-2 py-1">
                         {documents.length} {t("chat.documents_available")}
                       </div>
-                      {selectedCompareDocs.length > 0 && (
-                        <div
-                          className="mx-1 mb-2 rounded-lg border border-border bg-muted/40 p-2"
-                          data-testid="compare-documents-bar"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[11px] text-muted-foreground">
-                              {t("chat.compare_selected_count").replace("{count}", String(selectedCompareDocs.length))}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedCompareDocs([])}
-                              className="p-1 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                              aria-label={t("chat.clear_compare_selection")}
-                              title={t("chat.clear_compare_selection")}
-                              data-testid="button-clear-compare-documents"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={compareSelectedDocuments}
-                            disabled={selectedCompareDocs.length < 2 || sending}
-                            className={cn(
-                              "mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
-                              selectedCompareDocs.length >= 2 && !sending
-                                ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                                : "bg-muted text-muted-foreground cursor-not-allowed"
-                            )}
-                            data-testid="button-compare-selected-documents"
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
-                            {t("chat.compare_documents")}
-                          </button>
-                        </div>
-                      )}
                       {documents.map((doc, i) => {
                         const selectedForCompare = selectedCompareDocs.some((item) => item.file_url === doc.file_url);
                         const compareSelectionLimitReached = !selectedForCompare && selectedCompareDocs.length >= MAX_DOCUMENT_CONTEXT_SOURCES;
@@ -1186,6 +1153,49 @@ export default function Chat() {
                     </>
                   )}
                 </div>
+                {selectedCompareDocs.length > 0 && (
+                  <div className="border-t border-border bg-card/80 backdrop-blur-sm p-2 space-y-2" data-testid="compare-documents-bar">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-muted-foreground" data-testid="compare-selected-count">
+                        {t("chat.compare_selected_count").replace("{count}", String(selectedCompareDocs.length))}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCompareDocs([])}
+                        className="p-1 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label={t("chat.clear_compare_selection")}
+                        title={t("chat.clear_compare_selection")}
+                        data-testid="button-clear-compare-documents"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={compareSelectedDocuments}
+                      disabled={sending}
+                      aria-disabled={selectedCompareDocs.length < 2}
+                      aria-busy={sending}
+                      aria-describedby={selectedCompareDocs.length < 2 ? "compare-disabled-reason" : undefined}
+                      aria-label={sending ? t("chat.compare_sending") : t("chat.compare_documents")}
+                      className={cn(
+                        "inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                        selectedCompareDocs.length >= 2 && !sending
+                          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                          : "bg-muted text-muted-foreground cursor-not-allowed"
+                      )}
+                      data-testid="button-compare-selected-documents"
+                    >
+                      {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      {sending ? t("chat.compare_sending") : t("chat.compare_documents")}
+                    </button>
+                    {selectedCompareDocs.length < 2 && (
+                      <p id="compare-disabled-reason" className="text-[11px] text-muted-foreground" role="status">
+                        {t("chat.compare_requires_two")}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </motion.div>
