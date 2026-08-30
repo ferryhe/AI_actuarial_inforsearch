@@ -345,3 +345,99 @@ def test_chat_display_name_helper_runtime_prefers_title_and_rejects_placeholders
         text=True,
     )
     assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def _brace_block(text: str, marker: str) -> str:
+    """Return the balanced ``{...}`` block whose opening brace follows ``marker``."""
+    open_brace = text.index("{", text.index(marker))
+    depth = 0
+    for i in range(open_brace, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace : i + 1]
+    raise AssertionError(f"unbalanced braces at {marker!r}")
+
+
+def test_chat_comparison_submission_is_explicit_and_failure_safe():
+    chat_src = CHAT_TSX.read_text(encoding="utf-8")
+
+    # sendMessage now reports success/failure so the comparison flow can react
+    assert "async function sendMessage(options?: SendMessageOptions): Promise<boolean>" in chat_src
+    # the catch path must return false (surfaced failure), not swallow it silently
+    assert "return false" in _brace_block(chat_src, "catch (err")
+
+    # compareSelectedDocuments captures the result and only clears selection on success
+    assert (
+        "const sent = await sendMessage({ text: questionText, documents: selectedCompareDocs, modeOverride: \"comparison\" });"
+        in chat_src
+    )
+    fn_block = chat_src[
+        chat_src.index("async function compareSelectedDocuments"): chat_src.index("async function loadDocumentMarkdown")
+    ]
+    assert "await sendMessage" in fn_block
+    # selection is cleared strictly inside the success branch (nested in if(sent)),
+    # never unconditionally after send — the core regression this issue fixes
+    sent_block = _brace_block(fn_block, "if (sent) {")
+    assert "setSelectedCompareDocs([])" in sent_block
+    assert "setMode(\"comparison\")" in sent_block
+    assert "setSidebarTab(\"conversations\")" in sent_block
+
+
+def test_chat_comparison_bar_lives_in_stable_region_not_scroll_area():
+    chat_src = CHAT_TSX.read_text(encoding="utf-8")
+
+    assert 'data-testid="compare-documents-bar"' in chat_src
+    # the old in-scroll bar styling is gone, replaced by a stable footer
+    assert "mx-1 mb-2 rounded-lg border border-border bg-muted/40 p-2" not in chat_src
+    assert "border-t border-border bg-card/80 backdrop-blur-sm p-2 space-y-2" in chat_src
+    # the bar renders after the scrollable document list, i.e. in a stable footer region
+    assert chat_src.index("{documents.map((doc, i) =>") < chat_src.index('data-testid="compare-documents-bar"')
+
+
+def test_chat_comparison_button_states_zero_one_two_plus_and_sending():
+    chat_src = CHAT_TSX.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+
+    # 0 documents -> no comparison action/bar rendered
+    assert "{selectedCompareDocs.length > 0 && (" in chat_src
+    # 1 document -> disabled (native HTML disabled) with an explicit reason
+    assert "disabled={sending || selectedCompareDocs.length < 2}" in chat_src
+    assert 'aria-describedby={selectedCompareDocs.length < 2 ? "compare-disabled-reason" : undefined}' in chat_src
+    assert 'id="compare-disabled-reason"' in chat_src
+    assert "{selectedCompareDocs.length < 2 && (" in chat_src
+    # 2-3 documents -> enabled styling
+    assert "selectedCompareDocs.length >= 2 && !sending" in chat_src
+    # sending -> disabled (prevents double submit) + pending label
+    assert "aria-busy={sending}" in chat_src
+    assert '{sending ? t("chat.compare_sending") : t("chat.compare_documents")}' in chat_src
+    assert 'aria-label={sending ? t("chat.compare_sending") : t("chat.compare_documents")}' in chat_src
+    # pending label exists in both locales
+    assert '"chat.compare_sending": "Sending…"' in i18n_src
+    assert '"chat.compare_sending": "发送中…"' in i18n_src
+
+
+def test_chat_comparison_fourth_document_rejected_with_limit_explanation():
+    chat_src = CHAT_TSX.read_text(encoding="utf-8")
+    types_src = CHAT_TYPES_TS.read_text(encoding="utf-8")
+    i18n_src = I18N_TS.read_text(encoding="utf-8")
+
+    assert "MAX_DOCUMENT_CONTEXT_SOURCES = 3" in types_src
+    assert "current.length >= MAX_DOCUMENT_CONTEXT_SOURCES" in chat_src
+    assert 'setErrorMsg(t("chat.compare_limit_reached"))' in chat_src
+    assert "aria-disabled={compareSelectionLimitReached}" in chat_src
+    assert '"chat.compare_limit_reached": "Select up to 3 files."' in i18n_src
+    assert '"chat.compare_limit_reached": "最多选择 3 个文件。"' in i18n_src
+
+
+def test_chat_comparison_accessible_names_clear_and_submit():
+    chat_src = CHAT_TSX.read_text(encoding="utf-8")
+
+    assert 'data-testid="compare-selected-count"' in chat_src
+    assert 't("chat.compare_selected_count").replace("{count}", String(selectedCompareDocs.length))' in chat_src
+    assert 'aria-label={t("chat.clear_compare_selection")}' in chat_src
+    assert 'data-testid="button-clear-compare-documents"' in chat_src
+    assert 'data-testid="button-compare-selected-documents"' in chat_src
+    assert 't("chat.compare_requires_two")' in chat_src
