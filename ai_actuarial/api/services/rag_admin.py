@@ -3645,27 +3645,137 @@ def _kb_list_row_payload(row: Any) -> dict[str, Any]:
     }
 
 
-def list_knowledge_bases(*, db_path: str, query: Mapping[str, Any]) -> dict[str, Any]:
+def _can_view_kb_diagnostics(auth: Any | None) -> bool:
+    """Whether the caller may see KB build/index diagnostics.
+
+    The HTTP router always resolves an explicit ``AuthContext`` (anonymous
+    resolves to an empty permission set, never ``None``), so only
+    ``tasks.run`` (operator/admin) grants diagnostics. ``auth=None`` occurs
+    only for direct internal callers (scripts, tests) that are not
+    role-gated; those retain the full operator projection.
+    """
+    if auth is None:
+        return True
+    return "tasks.run" in getattr(auth, "permissions", frozenset())
+
+
+def _kb_customer_projection(kb_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Customer-facing KB projection: name/description/category/count only.
+
+    Drops every build/index diagnostic (kb_mode, chunk profile, embedding
+    provider/model/dimension/identity, chunk size/overlap, index type,
+    timestamps, chunk count, current_embeddings, index_coverage,
+    agentic_ready_manifest, …).
+    """
+    return {
+        "kb_id": kb_payload.get("kb_id", ""),
+        "name": kb_payload.get("name", ""),
+        "description": kb_payload.get("description", ""),
+        "category": list(kb_payload.get("category", [])),
+        "file_count": kb_payload.get("file_count", 0),
+    }
+
+
+def _kb_file_customer_projection(file_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Customer-facing KB file projection (no chunk/status/binding metadata)."""
+    return {
+        "file_url": file_payload.get("file_url", ""),
+        "title": file_payload.get("title", ""),
+        "category": file_payload.get("category", ""),
+        "source_site": file_payload.get("source_site", ""),
+    }
+
+
+def _empty_kb_list_result(auth: Any | None) -> dict[str, Any]:
+    result: dict[str, Any] = {"knowledge_bases": []}
+    if _can_view_kb_diagnostics(auth):
+        result["current_embeddings"] = _current_embeddings_payload(storage=None)
+    return result
+
+
+def _kb_customer_categories(conn: Any) -> dict[str, list[str]]:
+    """Map kb_id -> real taxonomy categories from rag_kb_category_mappings."""
+    columns = _kb_list_table_columns(conn, "rag_kb_category_mappings")
+    if not columns:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT kb_id, category FROM rag_kb_category_mappings ORDER BY category"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    result: dict[str, list[str]] = {}
+    for kb_id, category in rows:
+        normalized = _norm(category)
+        if normalized:
+            result.setdefault(str(kb_id), []).append(normalized)
+    return result
+
+
+def _list_knowledge_bases_customer(
+    storage: Any,
+    query: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Lightweight customer list: basic KB fields + real taxonomy category only.
+
+    Uses the read-only connection (no RAG runtime import, no vector reads, no
+    manifest/coverage decoration) so the list stays fast for anonymous/reader
+    roles. Search filters on name/description/kb_id; ``kb_mode`` is a hidden
+    diagnostic and is not filterable here.
+    """
+    search = _norm(query.get("search")).lower()
+    rows = storage._conn.execute(
+        "SELECT kb_id, name, description, file_count "
+        "FROM rag_knowledge_bases ORDER BY created_at DESC"
+    ).fetchall()
+    category_map = _kb_customer_categories(storage._conn)
+    payloads: list[dict[str, Any]] = []
+    for row in rows:
+        kb_id = str(row[0] or "")
+        name = str(row[1] or "")
+        description = str(row[2] or "")
+        if search and not (
+            search in name.lower()
+            or search in description.lower()
+            or search in kb_id.lower()
+        ):
+            continue
+        payloads.append(
+            _kb_customer_projection(
+                {
+                    "kb_id": kb_id,
+                    "name": name,
+                    "description": description,
+                    "category": category_map.get(kb_id, []),
+                    "file_count": row[3],
+                }
+            )
+        )
+    return {"knowledge_bases": payloads}
+
+
+def list_knowledge_bases(
+    *,
+    db_path: str,
+    query: Mapping[str, Any],
+    auth: Any | None = None,
+) -> dict[str, Any]:
     connection_local = db_path in _KB_LIST_CONNECTION_LOCAL_PATHS
     if connection_local or not _kb_list_db_has_user_schema_objects(db_path):
-        return {
-            "knowledge_bases": [],
-            "current_embeddings": _current_embeddings_payload(storage=None),
-        }
+        return _empty_kb_list_result(auth)
     conn = _open_kb_list_read_only_connection(db_path)
     storage = _KBListStorageView(db_path, conn)
     try:
         read_schema_problem = _kb_list_read_schema_problem(storage._conn)
         if read_schema_problem == "missing_kb_table":
-            return {
-                "knowledge_bases": [],
-                "current_embeddings": _current_embeddings_payload(storage=None),
-            }
+            return _empty_kb_list_result(auth)
         if read_schema_problem is not None:
             raise RagAdminError(
                 "Knowledge base list schema requires explicit schema apply",
                 status_code=409,
             )
+        if not _can_view_kb_diagnostics(auth):
+            return _list_knowledge_bases_customer(storage, query)
         kb_mode = _norm(query.get("kb_mode"))
         search = _norm(query.get("search")).lower()
         kb_columns = _kb_list_table_columns(storage._conn, "rag_knowledge_bases") or frozenset()
@@ -3832,13 +3942,31 @@ def create_knowledge_base(*, db_path: str, payload: dict[str, Any], headers: Map
 
 
 
-def get_knowledge_base(*, db_path: str, kb_id: str, deep: bool = False) -> dict[str, Any]:
+def get_knowledge_base(
+    *,
+    db_path: str,
+    kb_id: str,
+    deep: bool = False,
+    auth: Any | None = None,
+) -> dict[str, Any]:
     kid = _kb_id(kb_id)
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         kb = manager.get_kb(kid)
         if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        if not _can_view_kb_diagnostics(auth):
+            return {
+                "knowledge_base": _kb_customer_projection(
+                    {
+                        "kb_id": kb.kb_id,
+                        "name": kb.name,
+                        "description": kb.description,
+                        "category": manager.get_kb_categories(kid),
+                        "file_count": kb.file_count,
+                    }
+                )
+            }
         payload = _build_kb_embedding_status(
             storage=storage,
             kb_payload=_decorate_kb_chunk_profile(storage, _serialize_kb(kb)),
@@ -5120,25 +5248,49 @@ def delete_knowledge_base(*, db_path: str, kb_id: str, headers: Mapping[str, str
 
 
 
-def get_knowledge_base_stats(*, db_path: str, kb_id: str) -> dict[str, Any]:
+def get_knowledge_base_stats(
+    *,
+    db_path: str,
+    kb_id: str,
+    auth: Any | None = None,
+) -> dict[str, Any]:
     kid = _kb_id(kb_id)
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
-        if not manager.get_kb(kid):
+        kb = manager.get_kb(kid)
+        if not kb:
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        if not _can_view_kb_diagnostics(auth):
+            return {"file_count": kb.file_count}
         return manager.get_kb_stats(kid)
     finally:
         storage.close()
 
 
 
-def list_knowledge_base_files(*, db_path: str, kb_id: str, query: Mapping[str, Any]) -> dict[str, Any]:
+def list_knowledge_base_files(
+    *,
+    db_path: str,
+    kb_id: str,
+    query: Mapping[str, Any],
+    auth: Any | None = None,
+) -> dict[str, Any]:
     kid = _kb_id(kb_id)
     status_filter = _norm(query.get("status")).lower()
     _KnowledgeBase, manager, storage = _manager_and_storage(db_path)
     try:
         if not manager.get_kb(kid):
             raise RagAdminError(f"Knowledge base '{kid}' not found", status_code=404)
+        if not _can_view_kb_diagnostics(auth):
+            files = [
+                _kb_file_customer_projection(item)
+                for item in manager.get_kb_files(kid)
+            ]
+            return {
+                "kb_id": kid,
+                "total_files": len(files),
+                "files": files,
+            }
         bindings = storage.list_kb_chunk_bindings(kid)
         latest_binding_by_file: dict[str, dict[str, Any]] = {}
         version_count_cache: dict[tuple[str, str], int] = {}

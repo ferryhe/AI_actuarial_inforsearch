@@ -540,6 +540,16 @@ def _embedding_metadata_matches(
 def list_knowledge_bases(*, db_path: str, auth: AuthContext | None = None) -> dict[str, Any]:
     storage = Storage(db_path)
     try:
+        if not (auth is None or "tasks.run" in getattr(auth, "permissions", frozenset())):
+            rows = storage._conn.execute(
+                "SELECT kb_id, name, description, file_count "
+                "FROM rag_knowledge_bases ORDER BY created_at DESC"
+            ).fetchall()
+            knowledge_bases = [
+                {"kb_id": row[0], "name": row[1], "description": row[2], "file_count": row[3]}
+                for row in rows
+            ]
+            return {"success": True, "data": {"knowledge_bases": knowledge_bases}}
         embeddings_runtime = resolve_ai_function_runtime("embeddings", storage=storage)
         current_embeddings = {
             "provider": embeddings_runtime.provider,
@@ -1341,7 +1351,6 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                 "evidence_count": agentic_metadata.get("evidence_count", len(retrieved_blocks)),
                 "kb_id": agentic_response.get("kb_id") or agentic_kb_id,
                 "profile": agentic_response.get("profile"),
-                "output_dir": agentic_response.get("output_dir"),
             }
             message_id = conversation_manager.add_message(
                 conversation_id,
@@ -1383,7 +1392,6 @@ def query_chat(*, db_path: str, request, auth: AuthContext, payload: dict[str, A
                         "evidence_count": assistant_metadata["evidence_count"],
                         "kb_id": assistant_metadata["kb_id"],
                         "profile": assistant_metadata["profile"],
-                        "output_dir": assistant_metadata["output_dir"],
                     },
                 },
             }, session_update

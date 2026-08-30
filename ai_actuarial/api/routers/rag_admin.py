@@ -169,7 +169,7 @@ def api_list_knowledge_bases(
     _auth: AuthContext = Depends(require_permissions("catalog.read")),
 ):
     try:
-        return list_knowledge_bases(db_path=_db_path(request), query=request.query_params)
+        return list_knowledge_bases(db_path=_db_path(request), query=request.query_params, auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -195,7 +195,7 @@ def api_get_knowledge_base(
 ):
     try:
         deep = request.query_params.get("deep", "").strip().lower() in {"1", "true", "yes"}
-        return get_knowledge_base(db_path=_db_path(request), kb_id=kb_id, deep=deep)
+        return get_knowledge_base(db_path=_db_path(request), kb_id=kb_id, deep=deep, auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -232,7 +232,7 @@ def api_get_knowledge_base_stats(
     _auth: AuthContext = Depends(require_permissions("catalog.read")),
 ):
     try:
-        return get_knowledge_base_stats(db_path=_db_path(request), kb_id=kb_id)
+        return get_knowledge_base_stats(db_path=_db_path(request), kb_id=kb_id, auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
@@ -241,7 +241,7 @@ def api_get_knowledge_base_stats(
 def api_get_agentic_ready_manifest(
     kb_id: str,
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("catalog.read")),
+    _auth: AuthContext = Depends(require_permissions("tasks.run")),
 ):
     try:
         return get_agentic_ready_manifest(db_path=_db_path(request), kb_id=kb_id, query=request.query_params)
@@ -277,7 +277,7 @@ def api_list_knowledge_base_files(
     _auth: AuthContext = Depends(require_permissions("catalog.read")),
 ):
     try:
-        return list_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, query=request.query_params)
+        return list_knowledge_base_files(db_path=_db_path(request), kb_id=kb_id, query=request.query_params, auth=_auth)
     except RagAdminError as exc:
         return _error_response(exc)
 
