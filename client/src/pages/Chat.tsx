@@ -1173,8 +1173,7 @@ export default function Chat() {
                     <button
                       type="button"
                       onClick={compareSelectedDocuments}
-                      disabled={sending}
-                      aria-disabled={selectedCompareDocs.length < 2}
+                      disabled={sending || selectedCompareDocs.length < 2}
                       aria-busy={sending}
                       aria-describedby={selectedCompareDocs.length < 2 ? "compare-disabled-reason" : undefined}
                       aria-label={sending ? t("chat.compare_sending") : t("chat.compare_documents")}

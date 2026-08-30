@@ -403,15 +403,14 @@ def test_chat_comparison_button_states_zero_one_two_plus_and_sending():
 
     # 0 documents -> no comparison action/bar rendered
     assert "{selectedCompareDocs.length > 0 && (" in chat_src
-    # 1 document -> disabled with an explicit reason
-    assert "aria-disabled={selectedCompareDocs.length < 2}" in chat_src
+    # 1 document -> disabled (native HTML disabled) with an explicit reason
+    assert "disabled={sending || selectedCompareDocs.length < 2}" in chat_src
     assert 'aria-describedby={selectedCompareDocs.length < 2 ? "compare-disabled-reason" : undefined}' in chat_src
     assert 'id="compare-disabled-reason"' in chat_src
     assert "{selectedCompareDocs.length < 2 && (" in chat_src
     # 2-3 documents -> enabled styling
     assert "selectedCompareDocs.length >= 2 && !sending" in chat_src
     # sending -> disabled (prevents double submit) + pending label
-    assert "disabled={sending}" in chat_src
     assert "aria-busy={sending}" in chat_src
     assert '{sending ? t("chat.compare_sending") : t("chat.compare_documents")}' in chat_src
     assert 'aria-label={sending ? t("chat.compare_sending") : t("chat.compare_documents")}' in chat_src
