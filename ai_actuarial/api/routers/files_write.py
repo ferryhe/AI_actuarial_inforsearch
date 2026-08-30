@@ -18,6 +18,7 @@ from ..services.files_write import (
     update_file_record,
 )
 from ..services.ops_write import BridgeState, OpsWriteError, start_collection
+from .read import _can_view_sensitive_file_fields
 
 router = APIRouter()
 
@@ -144,12 +145,17 @@ def api_export(
 @router.get("/rag/files/preview")
 def api_rag_files_preview(
     request: Request,
-    _auth: AuthContext = Depends(require_permissions("files.read")),
+    auth: AuthContext = Depends(require_permissions("files.read")),
 ):
     file_url = str(request.query_params.get("file_url", "") or "").strip()
     chunk_set_id = str(request.query_params.get("chunk_set_id", "") or "").strip() or None
     try:
-        return get_rag_file_preview(db_path=_db_path(request), file_url=file_url, chunk_set_id=chunk_set_id)
+        return get_rag_file_preview(
+            db_path=_db_path(request),
+            file_url=file_url,
+            chunk_set_id=chunk_set_id,
+            include_sensitive=_can_view_sensitive_file_fields(auth),
+        )
     except FileWriteError as exc:
         return _json_error(exc)
 

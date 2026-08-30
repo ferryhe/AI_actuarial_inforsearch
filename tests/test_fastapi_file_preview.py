@@ -8,6 +8,8 @@ import yaml
 from fastapi.testclient import TestClient
 
 from ai_actuarial.api.app import create_app
+from ai_actuarial.api.services.files_write import get_rag_file_preview
+from ai_actuarial.api.services.read import SENSITIVE_FILE_FIELDS
 from ai_actuarial.storage import Storage
 
 
@@ -78,24 +80,26 @@ def _seed_storage(db_path: Path, files_dir: Path) -> dict[str, str]:
             status="ok",
         )
         storage.update_file_markdown(file_url, "# Alpha\n\nPreview markdown.", "manual")
-        operator_token = "operator-token"
-        storage.upsert_auth_token_by_hash(
-            subject="operator-token",
-            group_name="operator",
-            token_hash=hashlib.sha256(operator_token.encode("utf-8")).hexdigest(),
-            is_active=True,
-        )
-        admin_token = "admin-token"
-        storage.upsert_auth_token_by_hash(
-            subject="admin-token",
-            group_name="admin",
-            token_hash=hashlib.sha256(admin_token.encode("utf-8")).hexdigest(),
-            is_active=True,
-        )
+        role_tokens = {
+            role: f"{role}-token"
+            for role in ("guest", "registered", "premium", "operator", "admin")
+        }
+        for role, token in role_tokens.items():
+            storage.upsert_auth_token_by_hash(
+                subject=token,
+                group_name=role,
+                token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                is_active=True,
+            )
     finally:
         storage.close()
 
-    return {"file_url": "https://alpha.example/doc-a.pdf", "operator_token": operator_token, "admin_token": admin_token}
+    return {
+        "file_url": "https://alpha.example/doc-a.pdf",
+        "file_sha": file_sha,
+        "local_path": str(alpha_path),
+        **{f"{role}_token": token for role, token in role_tokens.items()},
+    }
 
 
 
@@ -139,6 +143,63 @@ def test_fastapi_file_preview_routes_are_listed_in_native_inventory(tmp_path: Pa
     assert "/api/rag/files/preview" in body["native_paths"]
     assert "/api/files/{file_url:path}/chunk-sets" in body["native_paths"]
     assert "/api/files/{file_url:path}/chunk-sets/generate" in body["native_paths"]
+
+
+def test_file_preview_service_hides_sensitive_fields_by_default(tmp_path: Path, monkeypatch) -> None:
+    _client, app, seed = _build_test_client(tmp_path, monkeypatch)
+
+    public_preview = get_rag_file_preview(
+        db_path=app.state.db_path,
+        file_url=seed["file_url"],
+        chunk_set_id=None,
+    )
+
+    assert set(SENSITIVE_FILE_FIELDS).isdisjoint(public_preview["file_info"])
+
+
+def test_fastapi_file_preview_sensitive_fields_follow_existing_capability_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    client, _app, seed = _build_test_client(tmp_path, monkeypatch)
+    file_url = seed["file_url"]
+
+    anonymous = client.get(
+        "/api/rag/files/preview",
+        params={"file_url": file_url, "include_sensitive": "true"},
+        headers={"X-Include-Sensitive-File-Fields": "true"},
+    )
+    assert anonymous.status_code == 200, anonymous.text
+    anonymous_body = anonymous.json()
+    assert anonymous_body["file_info"]["url"] == file_url
+    assert anonymous_body["markdown"]["content"].startswith("# Alpha")
+    assert set(SENSITIVE_FILE_FIELDS).isdisjoint(anonymous_body["file_info"])
+
+    authenticated_reader = client.request(
+        "GET",
+        "/api/rag/files/preview",
+        params={"file_url": file_url, "include_sensitive": "true"},
+        headers={
+            "Authorization": f"Bearer {seed['guest_token']}",
+            "X-Include-Sensitive-File-Fields": "true",
+        },
+        json={"include_sensitive": True},
+    )
+    assert authenticated_reader.status_code == 200, authenticated_reader.text
+    assert set(SENSITIVE_FILE_FIELDS).isdisjoint(
+        authenticated_reader.json()["file_info"]
+    )
+
+    for role in ("registered", "premium", "operator", "admin"):
+        privileged = client.get(
+            "/api/rag/files/preview",
+            params={"file_url": file_url},
+            headers={"Authorization": f"Bearer {seed[f'{role}_token']}"},
+        )
+        assert privileged.status_code == 200, privileged.text
+        file_info = privileged.json()["file_info"]
+        assert file_info["local_path"] == seed["local_path"]
+        assert file_info["sha256"] == seed["file_sha"]
 
 
 
