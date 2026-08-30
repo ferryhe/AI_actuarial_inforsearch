@@ -13,6 +13,8 @@ from ai_actuarial.embedding_service import validate_chunk_generation_payload
 from ai_actuarial.shared_runtime import get_sites_config_path, load_yaml, parse_int_clamped, resolve_runtime_features
 from ai_actuarial.storage import Storage
 
+from .read import SENSITIVE_FILE_FIELDS
+
 
 class FileWriteError(Exception):
     def __init__(self, message: str, *, status_code: int = 400) -> None:
@@ -437,7 +439,13 @@ def generate_file_chunk_sets(
 
 
 
-def get_rag_file_preview(*, db_path: str, file_url: str, chunk_set_id: str | None) -> dict[str, Any]:
+def get_rag_file_preview(
+    *,
+    db_path: str,
+    file_url: str,
+    chunk_set_id: str | None,
+    include_sensitive: bool = False,
+) -> dict[str, Any]:
     if not file_url:
         raise FileWriteError("file_url parameter is required")
     storage = Storage(db_path)
@@ -479,17 +487,22 @@ def get_rag_file_preview(*, db_path: str, file_url: str, chunk_set_id: str | Non
                     }
                 )
 
+        projected_file_info = {
+            "url": file_info["url"],
+            "title": file_info["title"],
+            "original_filename": file_info.get("original_filename", ""),
+            "local_path": file_info.get("local_path", ""),
+            "content_type": file_info.get("content_type", ""),
+            "bytes": file_info.get("bytes", 0),
+            "sha256": file_info.get("sha256", ""),
+            "last_modified": file_info.get("last_modified", ""),
+        }
+        if not include_sensitive:
+            for field in SENSITIVE_FILE_FIELDS:
+                projected_file_info.pop(field, None)
+
         return {
-            "file_info": {
-                "url": file_info["url"],
-                "title": file_info["title"],
-                "original_filename": file_info.get("original_filename", ""),
-                "local_path": file_info.get("local_path", ""),
-                "content_type": file_info.get("content_type", ""),
-                "bytes": file_info.get("bytes", 0),
-                "sha256": file_info.get("sha256", ""),
-                "last_modified": file_info.get("last_modified", ""),
-            },
+            "file_info": projected_file_info,
             "markdown": {
                 "content": markdown_data.get("markdown_content", ""),
                 "source": markdown_data.get("markdown_source", ""),

@@ -1,79 +1,86 @@
-# Project Status — Issue #271 Ready Data Busy State
+# Project Status — Issue #297 Preview Sensitive Fields
 
-- Updated: 2026-08-29
+- Updated: 2026-08-30
 - Repository: `AI_actuarial_inforsearch`
-- Worktree: `C:\Users\ferry\.codex\worktrees\bec8\AI_actuarial_inforsearch`
-- Branch: `codex/issue-271-ready-data-busy`
-- Baseline HEAD / merge-base / `origin/main`: `ac4a02429e8000e2efdccc3eeafd36ea5f39de90`
-- State: PR #290 is Ready; the single remote feedback window completed, the only inline suggestion was rejected by a real-path regression, and a focused AC-7 regression test is pending commit/push before final checks and merge.
+- Worktree: `C:\Users\ferry\.codex\worktrees\issue-297\AI_actuarial_inforsearch`
+- Branch: `agent/issue-297`
+- Baseline HEAD / merge-base / `origin/main`: `3bb3ebde3bd0d144ba054ae736d9515707d95041`
+- State: fresh read-only reviewer round 1 passed with no valid finding; review-cycle state is `local_review_complete`. Changes remain intentionally uncommitted for manager publication.
 
 ## Startup and boundaries
 
-- Read the complete `issue-to-merge` and `karpathy-guidelines` skills, project `AGENTS.md`, prior project status, Issue #271, linked #245/#256, PR #270, CI, relevant Ready Data code, tests, and history.
-- Startup worktree was clean and detached at the supplied baseline. It was safely switched before editing to the assigned branch, which points to the same baseline.
-- Only this repository and worktree are writable. Sibling repositories, secrets, production data, unrelated branches/worktrees, and unrelated user changes are off-limits.
-- Duplicate-work search was completed by the controller: no equivalent PR or branch exists; merged PR #270 is the non-equivalent #256 lightweight-list change.
-- Review state: `C:\Project\AI_actuarial_inforsearch\.git\issue-to-merge\issue-271.json` (outside the checkout; never commit).
+- Read the complete project `AGENTS.md`, prior `.hermes/project-status.md`, `karpathy-guidelines`, and `graphify` instructions before editing.
+- Startup branch was `agent/issue-297` tracking `origin/main`; the worktree was clean.
+- Only the assigned Issue #297 worktree is writable. The controller checkout, its untracked `graphify-out/`, sibling repositories, secrets, checkout-external review state, branches, PRs, and remotes are off-limits.
+- The assigned worktree had no existing `graphify-out/graph.json`. A rebuild was excluded because it would create out-of-scope artifacts and require subagents, which this task explicitly forbids. Read-only `rg`, source inspection, and `git blame/log` were used for the same-shaped call-site audit.
 
-## Baseline reproduction and history
+## Corrected acceptance interpretation
 
-- A disposable real API/SQLite fixture reproduced the production shape on `ac4a024`: after a successful manual Ready Data build, source evaluation cleared generation 4, Serving was `ready`/usable and Latest operation was `build`/`succeeded`, but Storage, KB list, KB detail, and dedicated manifest still exposed `automation_state=pending` while both pending/running generation fields were null.
-- The first stdin-based reproduction attempt was invalid because Windows multiprocessing could not reload `<stdin>`; a temporary script with a normal module path then reproduced the bug and was removed. The worktree returned clean before this status update.
-- Targeted `git blame`/`git log` traces the source-evaluation settlement to `ec988f1` and the status-only frontend busy predicate to `63d0cb7` / Issue #245. #245 explicitly separates Serving from Latest operation and does not intend generation-free pending to remain busy.
+- Authorization is capability-based through the existing `routers.read._can_view_sensitive_file_fields(AuthContext)` helper, not hard-coded role names.
+- Anonymous and authenticated callers whose existing helper result is false (covered by a `guest` token with `files.read` but no sensitive capability) must not receive any field in `SENSITIVE_FILE_FIELDS`.
+- Registered and premium currently have `files.download`, so the existing helper returns true for them. They retain `local_path` and `sha256`, as do operator and admin. No permission matrix or existing read/download contract changed.
+- Client query parameters, headers, and GET bodies cannot opt into sensitive fields; only the resolved `AuthContext` controls the service flag.
 
-## Numbered acceptance criteria
+## Implementation
 
-- **AC-1:** Orphan pending with null pending/running generation is non-busy in API and UI; Build follows existing permission/selector rules.
-- **AC-2:** Pending with a real pending generation remains busy, disabled, spinning, and polled.
-- **AC-3:** Running/building with a real running generation remains busy, disabled, spinning, and polled.
-- **AC-4:** When generation disappears or a terminal state arrives, Knowledge and KB Detail stop polling and clear Building/spinner UI.
-- **AC-5:** Successful manual build/source evaluation settles orphan pending without changing publication pointers, revision/CAS, or Serving.
-- **AC-6:** Existing production rows work through safe read-time normalization without rebuild or destructive migration.
-- **AC-7:** KB list, KB detail, and manifest/detail expose consistent serving, operation, automation, and generation semantics while preserving #245.
-- **AC-8:** Executable regressions cover orphan pending, real pending, running, succeeded, failed, and legacy payloads in Knowledge and KB Detail.
-- **AC-9:** #256 list performance remains metadata-only; focused backend/runtime/source tests, frontend build, touched-file Ruff/compile, `git diff --check`, and GitHub `python-smoke` pass.
-- **AC-10:** Active/previous publication, CAS, build selector, and Serving semantics remain unchanged.
+- `api_rag_files_preview` now retains the parsed `AuthContext`, reuses `_can_view_sensitive_file_fields`, and passes only that result to the service.
+- `get_rag_file_preview` now accepts `include_sensitive: bool = False`. Its default is fail-closed.
+- The preview service reuses `services.read.SENSITIVE_FILE_FIELDS` and removes every listed field from `file_info` unless the trusted service flag is true.
+- Public preview markdown, chunk-set selection, chunk payload, route status, and public file metadata remain unchanged.
 
-## Scope and non-goals
+## Regression evidence
 
-- Expected scope: `ai_actuarial/storage.py`, Ready Data public projection/list view only if required, `client/src/lib/ready-data-ui-state.ts`, `client/src/pages/Knowledge.tsx`, `client/src/pages/KBDetail.tsx`, and focused Ready Data API/runtime/source tests.
-- Same-shaped sites to inspect: primary `Storage`, `_KBListStorageView`, all `isReadyDataAutomationBusy` call sites, and both list/detail polling paths.
-- Non-goals: schema migration, production rebuild, pointer/CAS/selector changes, Serving changes, broad UI/state-machine refactors, caching, security frameworks, and unrelated cleanup.
+- Valid pre-fix RED command:
+  - `python -m pytest tests/test_fastapi_file_preview.py -k "hides_sensitive_fields_by_default or sensitive_fields_follow_existing_capability_gate" -q`
+  - Result: `2 failed, 4 deselected`; both failed specifically because `file_info` exposed members of `SENSITIVE_FILE_FIELDS` (`local_path` and `sha256`).
+- Post-fix GREEN with the same selector:
+  - Result: `2 passed, 4 deselected`.
+- The regression covers:
+  - service invocation with the default flag hides all `SENSITIVE_FILE_FIELDS`;
+  - anonymous API preview remains 200 and preserves public URL/markdown while hiding sensitive fields;
+  - authenticated guest with query/header/body self-assertions still cannot enable sensitive fields;
+  - registered, premium, operator, and admin retain the correct stored `local_path` and `sha256` because the existing capability helper returns true.
 
-## Verification plan
+## Same-shaped call-site audit
 
-- Worker must capture a new pre-fix failing regression and post-fix pass, then run focused backend Ready Data/API tests, executable TypeScript runtime/source tests, and frontend build.
-- Manager will inspect the complete diff and test evidence, run the bounded fresh-reviewer loop, perform browser smoke for Knowledge and KB Detail, run touched-Python compile/Ruff and `git diff --check`, and run the independent Codex CLI pre-PR review gate before publication.
-- Required remote check: GitHub `python-smoke`. Draft PR must contain exact `Closes #271`, then become Ready. One feedback snapshot is allowed after the full ten-minute Ready window.
+- `services.read.list_files` and `get_file_detail`: already use default-false `include_sensitive` and the same router helper; no change needed.
+- `get_file_chunk_sets` and `generate_file_chunk_sets`: use `get_file_by_url` only for existence checks and do not return the file record; excluded.
+- `get_downloadable_file`: returns a file stream rather than file metadata and requires `files.download`; excluded.
+- `update_file_record` and `export_catalog`: return complete records but their routes require `catalog.write` and `export.read`; current authorized roles are helper-true operator/admin, so they are outside the public preview defect and its AC; excluded.
+- `delete_file_record`: uses the path internally under `files.delete` and does not return the path/hash; excluded.
+- Import-batch `sha256`: describes newly uploaded batch output under `tasks.run`, not a stored-file preview projection; excluded.
+- `get_rag_file_preview`: the sole `file_info` projection with the missing gate; fixed.
 
-## Implementation and local review
+## Local review
 
-- `Storage.get_agentic_ready_automation_state` and the metadata-only list projection normalize stored `pending` with no pending/running generation to `succeeded` on read, preserving existing rows without a migration.
-- Successful source evaluation settles the same orphan state transactionally only when there is no running generation or claim token; publication pointers, revisions, CAS, Serving, and selectors are untouched.
-- The shared frontend busy predicate now uses generation evidence for modern manifests while retaining status-only compatibility for legacy payloads. Knowledge and KB Detail share it for polling, spinner, button state, and action text.
-- New regressions cover orphan pending, real pending/running work, legacy payloads, API projections, source settlement, and both React pages.
-- The implementation worker captured valid RED evidence before the fix, then GREEN evidence after it. Fresh read-only reviewer round 1 passed with no in-scope findings; review-cycle state is `local_review_complete`.
+- Fresh read-only reviewer round 1 completed with PASS.
+- The reviewer reported no valid in-scope finding, so no follow-up code or test change was required.
+- Review-cycle state is `local_review_complete`.
 
 ## Verification results
 
-- Manager focused/backend/API/runtime suite: `259 passed, 8 skipped`.
-- CI-equivalent Python smoke selection: `44 passed`.
-- Frontend production build: passed (`2142` modules transformed; only the existing large-chunk advisory).
-- Touched-file Python compile and Ruff: passed. `git diff --check`: passed (Git only reported checkout line-ending notices).
-- Browser smoke with disposable local SQLite data: orphan pending rendered Latest operation as succeeded, no spinner, and an enabled rebuild button in both Knowledge and KB Detail; a real pending generation remained spinning and disabled.
-- After more than one polling interval on the orphan detail page, the API received no further manifest request. Browser console errors: none.
-- Disposable services were stopped after the smoke test. Repository files remain the only intended changes.
-- Independent Codex CLI pre-PR review (`codex review --uncommitted`) passed with no actionable findings. It independently reran `210 passed, 7 skipped`, the production frontend build, and `git diff --check`.
-
-## Publication and remote feedback
-
-- Commit `159430e28742332f6a42e5d65b8aaac3d3989e8d` was pushed and Draft PR #290 was created with exact `Closes #271`; it became Ready at `2026-08-29T11:38:09Z`.
-- After the full ten-minute window, the one permitted manager feedback snapshot was captured at `2026-08-29T11:48:40Z`: `python-smoke` passed, the PR was mergeable, there were no PR or Issue comments, and the only feedback was Copilot inline comment `3886507498` suggesting that orphan settlement refresh `agentic_ready_automation.updated_at`.
-- The same implementation worker first reproduced the suggested timestamp change, then tested it through the real disposable FastAPI/SQLite manual-build path. RED evidence showed that the later automation timestamp incorrectly replaced public Latest operation `build/succeeded` with `automation/succeeded`. Restoring PR-head production behavior made the same path pass. The suggestion is therefore invalid for AC-7/#245: orphan settlement is cleanup, while `updated_at` is also the public operation-ordering timestamp.
-- No production change from the suggestion remains. A focused regression now exercises a real manual build with an orphan pending row and proves settlement still clears the pending generation while Latest operation remains the successful build. Focused GREEN evidence: `2 passed`; related source-state suite: `30 passed`; touched-test Ruff, compile, and diff checks passed.
-- Protocol note: during the post-snapshot independent local CLI review, that CLI autonomously repeated read-only `gh pr list` / `gh issue view` metadata reads despite a local-diff-only intent. The repeated data matched the frozen snapshot, disclosed no new feedback, and made no remote writes. No further feedback fetches will be performed.
-- A second, explicitly local-only Codex CLI gate for the test/status follow-up was started with network and `gh` forbidden; it stayed local and reran the relevant tests successfully. The user then explicitly cancelled that review before its final verdict, so it is recorded as cancelled rather than passed and will not be restarted.
+- Manager final focused preview plus existing read-contract suite:
+  - `python -m pytest tests/test_fastapi_file_preview.py tests/test_fastapi_read_endpoints.py -q`
+  - Result: `12 passed` with four pre-existing dependency deprecation warnings.
+- Manager CI FastAPI smoke selection: `13 passed`.
+- Manager Agentic eval tests: `31 passed`.
+- Manager CLI eval: `3/3 passed`.
+- Capability facts used by the corrected AC:
+  - `python -m pytest tests/unit/test_permissions.py -k "registered_has_download or premium_has_full_task_view" -q`
+  - Result: `2 passed, 18 deselected`.
+- Non-gating broader permission-file check:
+  - `python -m pytest tests/unit/test_permissions.py -q`
+  - Result: `19 passed, 1 failed`; the unrelated existing test constructs `request.headers` as a plain dict while current `deps._session_cookie_values` calls `.getlist()`, causing `AttributeError`. Neither file is touched by Issue #297, so no out-of-scope fix was made.
+- Touched-file Ruff:
+  - `python -m ruff check ai_actuarial/api/routers/files_write.py ai_actuarial/api/services/files_write.py tests/test_fastapi_file_preview.py`
+  - Result: `All checks passed!`
+- Touched-file compile:
+  - `python -m py_compile ai_actuarial/api/routers/files_write.py ai_actuarial/api/services/files_write.py tests/test_fastapi_file_preview.py`
+  - Result: passed.
+- `git diff --check`: passed; Git emitted only checkout line-ending notices.
+- Manager final Ruff, touched-file `py_compile`, and `git diff --check` all passed.
+- Frontend files were not changed, so a frontend build was not required.
 
 ## Current next action
 
-- Independently review the focused regression and this status update, commit and push them, reply to and resolve the addressed inline thread, wait only for required checks on the new head, then merge and perform the authorized branch/worktree cleanup. No blocker or decision is currently needed.
+- Manager should commit and push the reviewed changes, create the Draft PR, and then mark it Ready under the authorized Issue-to-merge workflow. This worker must not commit, push, create or modify a PR, merge, delete branches, or remove the worktree.
