@@ -3671,7 +3671,7 @@ def _kb_customer_projection(kb_payload: Mapping[str, Any]) -> dict[str, Any]:
         "kb_id": kb_payload.get("kb_id", ""),
         "name": kb_payload.get("name", ""),
         "description": kb_payload.get("description", ""),
-        "category": list(kb_payload.get("category", [])),
+        "categories": list(kb_payload.get("categories") or []),
         "file_count": kb_payload.get("file_count", 0),
     }
 
@@ -3746,7 +3746,7 @@ def _list_knowledge_bases_customer(
                     "kb_id": kb_id,
                     "name": name,
                     "description": description,
-                    "category": category_map.get(kb_id, []),
+                    "categories": category_map.get(kb_id, []),
                     "file_count": row[3],
                 }
             )
@@ -3962,7 +3962,7 @@ def get_knowledge_base(
                         "kb_id": kb.kb_id,
                         "name": kb.name,
                         "description": kb.description,
-                        "category": manager.get_kb_categories(kid),
+                        "categories": manager.get_kb_categories(kid),
                         "file_count": kb.file_count,
                     }
                 )
