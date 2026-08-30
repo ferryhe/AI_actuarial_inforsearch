@@ -12,6 +12,10 @@ export interface WeeklySnapshot {
   metadata: Record<string, unknown>;
 }
 
+export interface WeeklySnapshotDetail extends WeeklySnapshot {
+  summary_markdown: string;
+}
+
 export interface WeeklySnapshotFile {
   url: string;
   title?: string | null;
@@ -50,6 +54,17 @@ interface WeeklySnapshotFilesResponse {
 
 interface WeeklyExplanationResponse {
   explanation: WeeklyExplanation | null;
+}
+
+interface WeeklyUpdateListResponse {
+  summaries: WeeklySnapshot[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+interface WeeklySnapshotDetailEnvelope {
+  summary: WeeklySnapshotDetail;
 }
 
 export type GetJson = <T>(url: string) => Promise<T>;
@@ -106,6 +121,48 @@ export async function loadLatestWeeklyDashboard(
   };
 }
 
+export async function loadWeeklyUpdateList(
+  get: GetJson = apiGet,
+): Promise<WeeklySnapshot[]> {
+  const list = await get<WeeklyUpdateListResponse>("/api/weekly-updates");
+  const summaries = (list.summaries || []).slice();
+  summaries.sort((a, b) => {
+    const aEnd = Date.parse(a.period_end) || 0;
+    const bEnd = Date.parse(b.period_end) || 0;
+    if (bEnd !== aEnd) return bEnd - aEnd;
+    return (Date.parse(b.generated_at) || 0) - (Date.parse(a.generated_at) || 0);
+  });
+  return summaries;
+}
+
+export async function loadWeeklyUpdateDetail(
+  id: string,
+  get: GetJson = apiGet,
+): Promise<WeeklyDashboardData> {
+  const snapshotId = encodeURIComponent(id);
+  const [detailResult, filesResult, explanationResult] = await Promise.allSettled([
+    get<WeeklySnapshotDetailEnvelope>(`/api/weekly-updates/${snapshotId}`),
+    get<WeeklySnapshotFilesResponse>(
+      `/api/weekly-updates/${snapshotId}/files?limit=${WEEKLY_PREVIEW_LIMIT}&offset=0`,
+    ),
+    get<WeeklyExplanationResponse>(`/api/weekly-updates/${snapshotId}/explanation`),
+  ]);
+
+  const snapshot = detailResult.status === "fulfilled" ? detailResult.value.summary : null;
+  return {
+    status: snapshot ? "ready" : "unavailable",
+    snapshot,
+    files: filesResult.status === "fulfilled"
+      ? (filesResult.value.files || []).slice(0, WEEKLY_PREVIEW_LIMIT)
+      : [],
+    filesUnavailable: filesResult.status === "rejected",
+    explanation: explanationResult.status === "fulfilled"
+      ? explanationResult.value.explanation
+      : null,
+    explanationUnavailable: explanationResult.status === "rejected",
+  };
+}
+
 export function buildWeeklyDatabasePath(snapshot: WeeklySnapshot): string {
   const params = new URLSearchParams({
     snapshot_id: snapshot.id,
@@ -132,14 +189,34 @@ export function formatWeeklyDateTime(value: string | null | undefined, lang: str
   }).format(parsed);
 }
 
+function formatWeeklyDate(value: string | null | undefined, lang: string): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(parsed);
+}
+
+export function formatWeeklyPeriodLabel(
+  start: string | null | undefined,
+  end: string | null | undefined,
+  lang: string,
+): string {
+  const startLabel = formatWeeklyDate(start, lang);
+  const endLabel = formatWeeklyDate(end, lang);
+  if (startLabel === "—" && endLabel === "—") return "—";
+  return `${startLabel} – ${endLabel}`;
+}
+
 export interface WeeklyDashboardView {
   snapshot: WeeklySnapshot | null;
   files: WeeklySnapshotFile[];
   fileCount: number;
-  periodStart: string;
-  periodEnd: string;
-  snapshotGeneratedAt: string;
-  explanationGeneratedAt: string;
+  filesUnavailable: boolean;
   explanationState: WeeklyExplanationState;
   explanationText: string;
 }
@@ -175,10 +252,7 @@ export function buildWeeklyDashboardView(
     snapshot: data.snapshot,
     files: data.files.slice(0, WEEKLY_PREVIEW_LIMIT),
     fileCount: data.snapshot?.file_count ?? 0,
-    periodStart: formatWeeklyDateTime(data.snapshot?.period_start, lang),
-    periodEnd: formatWeeklyDateTime(data.snapshot?.period_end, lang),
-    snapshotGeneratedAt: formatWeeklyDateTime(data.snapshot?.generated_at, lang),
-    explanationGeneratedAt: formatWeeklyDateTime(explanation?.generated_at, lang),
+    filesUnavailable: data.filesUnavailable,
     explanationState,
     explanationText,
   };

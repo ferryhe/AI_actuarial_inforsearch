@@ -17,6 +17,7 @@ import Register from "@/pages/Register";
 import SettingsPage from "@/pages/Settings";
 import Tasks from "@/pages/Tasks";
 import Users from "@/pages/Users";
+import Weekly from "@/pages/Weekly";
 
 /** Redirects to /login when require_auth is enabled and the user is not signed in. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -73,6 +74,11 @@ function Router() {
               </RequirePermission>
             </Route>
             <Route path="/database" component={Database} />
+            <Route path="/weekly">
+              <RequirePermission permission="files.read">
+                <Weekly />
+              </RequirePermission>
+            </Route>
             <Route path="/categories">
               <RequirePermission permission="files.read">
                 <Categories />
