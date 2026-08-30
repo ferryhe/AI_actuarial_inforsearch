@@ -94,7 +94,8 @@ const englishView = buildWeeklyDashboardView(loaded, "en", tFor("en"));
 const chineseView = buildWeeklyDashboardView(loaded, "zh", tFor("zh"));
 assert.equal(englishView.explanationText, "English explanation");
 assert.equal(chineseView.explanationText, "中文说明");
-assert.notEqual(englishView.periodStart, chineseView.periodStart);
+assert.equal(englishView.fileCount, 12);
+assert.equal(chineseView.fileCount, 12);
 assert.equal(calls.length, callsBeforeLocaleSwitch, "locale switching must not perform another request");
 
 const viewAll = new URL(buildWeeklyDatabasePath(snapshot), "https://app.test");
@@ -180,14 +181,7 @@ const markup = renderToStaticMarkup(
       ...translations.en,
       "dashboard.this_week_additions": "Latest weekly additions",
       "dashboard.view_all": "View all",
-      "dashboard.weekly_period_start": "Period start",
-      "dashboard.weekly_period_end": "Period end",
-      "dashboard.snapshot_generated_at": "Snapshot generated",
-      "dashboard.explanation_generated_at": "Explanation generated",
-      "dashboard.weekly_status": "Status",
-      "dashboard.status_published": "Published",
-      "dashboard.weekly_file_count": "Full file count",
-      "dashboard.weekly_explanation": "Weekly explanation",
+      "dashboard.new_materials_count": "{count} new materials",
       "dashboard.files_unavailable": "Files unavailable",
       "dashboard.no_weekly_files": "No files",
       "dashboard.no_weekly_files_desc": "No files in this period",
@@ -199,7 +193,7 @@ const markup = renderToStaticMarkup(
   />,
 );
 assert.equal((markup.match(/data-testid="weekly-file-row-/g) || []).length, 8);
-assert.match(markup, /Full file count[^0-9]*12/);
+assert.match(markup, /12 new materials/);
 assert.match(markup, /English explanation/);
 assert.match(markup, /break-words/);
 assert.match(markup, /overflow-wrap:anywhere/);
@@ -216,10 +210,6 @@ const missingExplanationMarkup = renderToStaticMarkup(
   />,
 );
 assert.match(missingExplanationMarkup, /Not generated/);
-assert.match(missingExplanationMarkup, />—</);
-assert.doesNotMatch(missingExplanationMarkup, /\b(?:dateTime|title)=""/i);
-assert.doesNotMatch(missingExplanationMarkup, /<time[^>]*>—<\/time>/);
-assert.match(missingExplanationMarkup, /<span[^>]*>—<\/span>/);
 
 const failedMarkup = renderToStaticMarkup(
   <WeeklyDashboardSection
@@ -229,14 +219,7 @@ const failedMarkup = renderToStaticMarkup(
       ...translations.zh,
       "dashboard.this_week_additions": "最新周报新增资料",
       "dashboard.view_all": "查看全部",
-      "dashboard.weekly_period_start": "周期开始",
-      "dashboard.weekly_period_end": "周期结束",
-      "dashboard.snapshot_generated_at": "快照生成时间",
-      "dashboard.explanation_generated_at": "说明生成时间",
-      "dashboard.weekly_status": "状态",
-      "dashboard.status_published": "已发布",
-      "dashboard.weekly_file_count": "完整文件数",
-      "dashboard.weekly_explanation": "本周说明",
+      "dashboard.new_materials_count": "新增 {count} 份材料",
       "dashboard.files_unavailable": "文件不可用",
       "dashboard.no_weekly_files": "暂无文件",
       "dashboard.no_weekly_files_desc": "本周期没有文件",
@@ -248,7 +231,7 @@ const failedMarkup = renderToStaticMarkup(
   />,
 );
 assert.match(failedMarkup, /生成失败/);
-assert.match(failedMarkup, /完整文件数[^0-9]*12/);
+assert.match(failedMarkup, /新增 12 份材料/);
 assert.equal((failedMarkup.match(/data-testid="weekly-file-row-/g) || []).length, 8);
 
 console.log("Issue #268 weekly dashboard executable assertions passed");

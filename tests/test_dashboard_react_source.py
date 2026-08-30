@@ -41,14 +41,7 @@ def test_dashboard_i18n_has_customer_facing_en_and_zh_labels():
         "dashboard.browse_materials",
         "dashboard.ask_agent",
         "dashboard.no_weekly_files",
-        "dashboard.weekly_period_start",
-        "dashboard.weekly_period_end",
-        "dashboard.snapshot_generated_at",
-        "dashboard.explanation_generated_at",
-        "dashboard.weekly_status",
-        "dashboard.status_published",
-        "dashboard.weekly_file_count",
-        "dashboard.weekly_explanation",
+        "dashboard.new_materials_count",
         "dashboard.explanation_missing",
         "dashboard.explanation_empty",
         "dashboard.explanation_unavailable",
@@ -58,12 +51,40 @@ def test_dashboard_i18n_has_customer_facing_en_and_zh_labels():
         "dashboard.no_weekly_snapshot",
         "dashboard.no_weekly_snapshot_desc",
         "dashboard.files_unavailable",
+        "weekly.title",
+        "weekly.subtitle",
+        "weekly.no_highlights",
+        "weekly.no_highlights_desc",
+        "weekly.load_error",
     ]
     for key in expected_keys:
         assert src.count(f'"{key}"') == 2
 
     assert "Ask Agent" in src
     assert "询问 Agent" in src
+
+
+def test_dashboard_weekly_card_drops_backend_metadata_keys():
+    src = I18N_TS.read_text(encoding="utf-8")
+
+    banned_keys = [
+        "dashboard.weekly_period_start",
+        "dashboard.weekly_period_end",
+        "dashboard.snapshot_generated_at",
+        "dashboard.explanation_generated_at",
+        "dashboard.weekly_status",
+        "dashboard.status_published",
+        "dashboard.weekly_file_count",
+        "dashboard.weekly_explanation",
+    ]
+    for key in banned_keys:
+        assert f'"{key}"' not in src
+
+    # Human-facing placeholder copy replaces the technical
+    # "Explanation has not been generated" wording.
+    assert "Explanation has not been generated" not in src
+    assert "A summary for this week is being prepared." in src
+    assert "本周摘要正在生成中" in src
 
 
 def test_dashboard_has_single_categories_link_in_preview_header():
